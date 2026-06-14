@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/kedube/ha-hellofresh/issues",
   "loggers": ["custom_components.hellofresh"],
   "requirements": ["beautifulsoup4>=4.12.3"],
-  "version": "0.91"
+  "version": "0.92"
 }
