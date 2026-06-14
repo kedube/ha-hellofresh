@@ -1,7 +1,4 @@
 {
   "name": "HelloFresh",
-  "domains": [
-    "hellofresh"
-  ],
   "render_readme": true
 }
