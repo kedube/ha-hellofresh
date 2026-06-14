@@ -22,10 +22,6 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
         translation_key="needs_meal_selection",
     ),
     BinarySensorEntityDescription(
-        key="selection_deadline_passed",
-        translation_key="selection_deadline_passed",
-    ),
-    BinarySensorEntityDescription(
         key="account_menu_api_available",
         translation_key="account_menu_api_available",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -96,8 +92,6 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return the state."""
-        if self.entity_description.key == "selection_deadline_passed":
-            return self.coordinator.data.selection_deadline_passed
         if self.entity_description.key == "account_menu_api_available":
             return self.coordinator.data.capabilities.supports_account_menu_api
         if self.entity_description.key == "write_actions_available":
@@ -122,8 +116,6 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
 
         if self.entity_description.key == "needs_meal_selection":
             return "mdi:silverware-fork-knife" if is_on else "mdi:silverware-clean"
-        if self.entity_description.key == "selection_deadline_passed":
-            return "mdi:clock-alert-outline" if is_on else "mdi:clock-check-outline"
         if self.entity_description.key == "account_menu_api_available":
             return "mdi:api" if is_on else "mdi:api-off"
         if self.entity_description.key == "write_actions_available":
