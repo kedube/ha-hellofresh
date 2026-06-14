@@ -69,7 +69,7 @@
         "name": "Delivery count this week"
       },
       "next_box_total_price": {
-        "name": "Next box total price"
+        "name": "Next delivery total price"
       },
       "account_credit": {
         "name": "Account credit"
@@ -138,7 +138,7 @@
         "name": "Next order ID"
       },
       "next_box_coupon": {
-        "name": "Next box coupon"
+        "name": "Next delivery coupon"
       },
       "next_delivery_tracking_url": {
         "name": "Tracked shipment URL"
@@ -203,7 +203,7 @@
     },
     "switch": {
       "skip_next_modifiable_week": {
-        "name": "Skip next delivery week"
+        "name": "Skip next selectable delivery week"
       }
     },
     "todo": {
