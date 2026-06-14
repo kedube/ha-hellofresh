@@ -1,4 +1,5 @@
 {
   "name": "HelloFresh",
+  "country": ["AU", "CA", "DE", "GB", "NL", "US"],
   "render_readme": true
 }
