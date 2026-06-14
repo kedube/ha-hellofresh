@@ -81,7 +81,7 @@
         "name": "Available menu recipe count"
       },
       "subscription_count": {
-        "name": "Subscription count"
+        "name": "Account subscription count"
       },
       "number_of_people": {
         "name": "Number of people"
@@ -99,7 +99,7 @@
         "name": "Upcoming delivery count"
       },
       "next_delivery_subscription": {
-        "name": "Delivery subscription ID"
+        "name": "Account delivery subscription ID"
       },
       "next_delivery_slot": {
         "name": "Delivery Window"
@@ -127,6 +127,9 @@
       },
       "next_selectable_delivery_week": {
         "name": "Next selectable delivery week"
+      },
+      "next_selectable_delivery_selection_deadline": {
+        "name": "Next selectable delivery selection deadline"
       },
       "api_base_url": {
         "name": "API base URL"
@@ -188,9 +191,6 @@
     "button": {
       "refresh_data": {
         "name": "Refresh data"
-      },
-      "confirm_next_selection": {
-        "name": "Confirm next selection"
       }
     },
     "calendar": {
@@ -201,11 +201,6 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Skip next selectable delivery week"
-      }
-    },
-    "todo": {
-      "meal_selection": {
-        "name": "Meal selection"
       }
     }
   },

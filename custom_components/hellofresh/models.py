@@ -431,6 +431,19 @@ class HelloFreshAccountData:
         return self._next_skipped_week
 
     @property
+    def next_delivery_week_obj(self) -> HelloFreshWeek | None:
+        """Return the week for the subscription's next delivery.
+
+        Anchored to the subscription's ``next_delivery_week`` handle (``nextDeliveryWeek``,
+        a ``YYYY-Www`` ISO week). Used to read that week's cutoff for the next-delivery
+        selection deadline, distinct from the later modifiable week.
+        """
+        subscription = self.primary_subscription
+        if subscription is None or not subscription.next_delivery_week:
+            return None
+        return self.get_week(subscription.next_delivery_week)
+
+    @property
     def next_modifiable_week(self) -> HelloFreshWeek | None:
         """Return the next delivery week that can still be modified.
 
