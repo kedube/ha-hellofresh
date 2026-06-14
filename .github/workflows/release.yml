@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Bump manifest and publish release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Skip stale workflow runs
+        id: head_check
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha="$(git rev-parse origin/main)"
+          if [ "$current_sha" = "$EXPECTED_SHA" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Skipping stale run for $EXPECTED_SHA because main is already at $current_sha."
+          echo "should_release=false" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.head_check.outputs.should_release == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Bump manifest version
+        if: steps.head_check.outputs.should_release == 'true'
+        id: bump
+        run: |
+          new_version="$(python .github/scripts/bump_manifest_version.py)"
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit release version
+        if: steps.head_check.outputs.should_release == 'true'
+        id: commit_release
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/hellofresh/manifest.json
+          git commit -m "chore(release): $NEW_VERSION [skip ci]"
+          echo "release_target=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit
+        if: steps.head_check.outputs.should_release == 'true'
+        run: git push origin HEAD:main
+
+      - name: Create GitHub release
+        if: steps.head_check.outputs.should_release == 'true'
+        uses: actions/github-script@v9
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target }}
+        with:
+          script: |
+            const tag = process.env.NEW_VERSION
+            const target = process.env.RELEASE_TARGET
+            const { owner, repo } = context.repo
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag,
+              })
+              core.info(`Release ${tag} already exists; skipping creation.`)
+              return
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error
+              }
+            }
+
+            await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              target_commitish: target,
+              name: tag,
+              generate_release_notes: true,
+            })
