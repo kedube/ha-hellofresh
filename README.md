@@ -8,7 +8,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 
 ![Alt screenshot](images/hellofresh_screenshot.png)
 
-[![CI](https://github.com/kedube/HA-HelloFresh/actions/workflows/ci.yml/badge.svg)](https://github.com/kedube/HA-HelloFresh/actions/workflows/ci.yml)
+[![CI](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml/badge.svg)](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
 
 ## Contents
@@ -31,7 +31,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 
 1. In Home Assistant, open **HACS**.
 2. Open the menu in the top-right corner (**⋮**) and select **Custom repositories**.
-3. Paste this repository's URL: `https://github.com/kedube/HA-HelloFresh`
+3. Paste this repository's URL: `https://github.com/kedube/ha-hellofresh`
 4. Set the category to **Integration** and click **Add**.
 5. Search for **HelloFresh** in HACS, open it, and click **Download**.
 6. Restart Home Assistant.

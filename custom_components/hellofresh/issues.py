@@ -28,7 +28,7 @@ def async_create_account_data_issue(hass, entry_id: str, entry_title: str) -> No
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_ACCOUNT_DATA_UNAVAILABLE,
         translation_placeholders={"entry_title": entry_title},
-        learn_more_url="https://github.com/kedube/HA-HelloFresh#current-scope",
+        learn_more_url="https://github.com/kedube/ha-hellofresh#current-scope",
     )
 
 
@@ -48,7 +48,7 @@ def async_create_account_menu_fallback_issue(hass, entry_id: str, entry_title: s
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_ACCOUNT_MENU_FALLBACK,
         translation_placeholders={"entry_title": entry_title},
-        learn_more_url="https://github.com/kedube/HA-HelloFresh#current-scope",
+        learn_more_url="https://github.com/kedube/ha-hellofresh#current-scope",
     )
 
 
@@ -68,7 +68,7 @@ def async_create_payload_shape_changed_issue(hass, entry_id: str, entry_title: s
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_PAYLOAD_SHAPE_CHANGED,
         translation_placeholders={"entry_title": entry_title},
-        learn_more_url="https://github.com/kedube/HA-HelloFresh/issues",
+        learn_more_url="https://github.com/kedube/ha-hellofresh/issues",
     )
 
 
@@ -88,5 +88,5 @@ def async_create_write_actions_issue(hass, entry_id: str, entry_title: str) -> N
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_WRITE_ACTIONS_UNAVAILABLE,
         translation_placeholders={"entry_title": entry_title},
-        learn_more_url="https://github.com/kedube/HA-HelloFresh#current-scope",
+        learn_more_url="https://github.com/kedube/ha-hellofresh#current-scope",
     )
