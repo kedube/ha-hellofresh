@@ -304,6 +304,29 @@ If the orders endpoint fails or returns no usable data, the integration falls ba
 
 The customer UUID is extracted from nested `uuid` fields on the subscription's raw payload. The integration reads `createdAt` from `DEBIT` transactions and uses the latest date as `recent_payment_date` for subscriptions where the orders endpoint produced no result.
 
+### Account credit balance
+
+The integration reads the account credit balance — the amount the website surfaces as "$X that will apply automatically to your next order" — from a dedicated payments endpoint:
+
+| Purpose | Method | Path | Params |
+| --- | --- | --- | --- |
+| Account credit balance | `GET` | `/gw/payments/customers/{customerUUID}/balance` | `business_unit=<CC>&country=<CC>` |
+
+The customer UUID is extracted from nested `uuid` fields on the subscription's raw payload (same source as the transactions feed above). The response is a flat object:
+
+```json
+{
+  "amount": 0,
+  "cash": 0,
+  "bonus": 0,
+  "currencyCode": "USD",
+  "restrictedAmount": 0,
+  "cancellableCredits": 0
+}
+```
+
+`amount` is the spendable credit that applies to the next order and backs the `account_credit` sensor; `currencyCode` becomes the sensor's unit. The lookup is best-effort — a missing UUID or a failed/non-object response leaves `account_credit` unset rather than raising.
+
 ### Account profile / customer attributes
 
 The integration now probes authenticated account-profile endpoints for long-lived account metrics that are not present in the subscription or upcoming-delivery payloads:

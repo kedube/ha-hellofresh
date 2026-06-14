@@ -81,6 +81,12 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:cash",
     ),
     SensorEntityDescription(
+        key="account_credit",
+        translation_key="account_credit",
+        device_class=_MONETARY_DEVICE_CLASS,
+        icon="mdi:cash-plus",
+    ),
+    SensorEntityDescription(
         key="selected_plan",
         translation_key="selected_plan",
         icon="mdi:food-variant",
@@ -164,6 +170,18 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         translation_key="next_delivery_week",
         # ISO week label (e.g. "2026-W25"), not a date — no DATE device class.
         icon="mdi:calendar-week-outline",
+    ),
+    SensorEntityDescription(
+        key="next_selectable_delivery_date",
+        translation_key="next_selectable_delivery_date",
+        device_class=SensorDeviceClass.DATE,
+        icon="mdi:calendar-edit-outline",
+    ),
+    SensorEntityDescription(
+        key="next_selectable_delivery_week",
+        translation_key="next_selectable_delivery_week",
+        # ISO week label (e.g. "2026-W25"), not a date — no DATE device class.
+        icon="mdi:calendar-week-begin-outline",
     ),
     SensorEntityDescription(
         key="api_base_url",
@@ -275,12 +293,14 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
         """Return the unit of measurement."""
         if self.entity_description.key == "next_box_total_price":
             return self.coordinator.data.next_delivery_total_currency
+        if self.entity_description.key == "account_credit":
+            return self.coordinator.data.account_credit_currency
         return self.entity_description.native_unit_of_measurement
 
     @property
     def suggested_display_precision(self) -> int | None:
         """Return the suggested display precision where supported by Home Assistant."""
-        if self.entity_description.key == "next_box_total_price":
+        if self.entity_description.key in ("next_box_total_price", "account_credit"):
             return 2
         return None
 

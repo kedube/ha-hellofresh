@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
@@ -22,6 +23,7 @@ from custom_components.hellofresh.binary_sensor import (
 )
 from custom_components.hellofresh.sensor import SENSORS as SENSOR_DESCRIPTIONS
 from custom_components.hellofresh.sensor import HelloFreshSensor
+from custom_components.hellofresh.switch import SWITCHES, HelloFreshSwitch
 
 
 def _build_coordinator() -> SimpleNamespace:
@@ -232,6 +234,41 @@ def test_price_sensor_exposes_precision_on_entity() -> None:
     assert _sensor_for("next_box_total_price").suggested_display_precision == 2
 
 
+def test_account_credit_sensor_reports_amount_currency_and_precision() -> None:
+    """The account credit sensor reads the model amount, currency, and 2-dp precision."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "account_credit")
+    data = HelloFreshAccountData(account_credit=12.5, account_credit_currency="USD").finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+        last_update_success=True,
+    )
+    sensor = HelloFreshSensor(coordinator, description)
+    sensor.coordinator = coordinator
+
+    assert sensor.native_value == 12.5
+    assert sensor.native_unit_of_measurement == "USD"
+    assert sensor.suggested_display_precision == 2
+
+
+def test_account_credit_sensor_handles_missing_credit() -> None:
+    """With no credit data the sensor reports None value and no currency unit."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "account_credit")
+    data = HelloFreshAccountData().finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+        last_update_success=True,
+    )
+    sensor = HelloFreshSensor(coordinator, description)
+    sensor.coordinator = coordinator
+
+    assert sensor.native_value is None
+    assert sensor.native_unit_of_measurement is None
+
+
 def test_static_sensor_icons_match_entity_purpose() -> None:
     """Static icons should remain distinct and aligned with entity meaning."""
     assert _sensor_for("required_meal_count").icon == "mdi:numeric"
@@ -281,25 +318,24 @@ def test_new_binary_sensors_reflect_api_capabilities() -> None:
     assert _binary_sensor_for("payload_shape_changed").is_on is True
 
 
-def test_next_delivery_week_is_iso_week_label_not_the_delivery_date() -> None:
-    """next_delivery_week emits the ISO week id, distinct from next_delivery_date's date."""
-    # Delivery on Friday 2026-06-19 (ISO week 2026-W25).
-    week = HelloFreshWeek(
-        week_id="2026-W25",
-        display_name="Classic Box",
-        subscription_id="sub-1",
-        delivery_date=date(2026, 6, 19),
-        meals_required=3,
-        meals_selected=1,
-    )
-    order = HelloFreshOrder(
-        order_id="ord-1",
-        week_id="2026-W25",
-        status="scheduled",
-        subscription_id="sub-1",
-        delivery_date=date(2026, 6, 19),
-    )
-    data = HelloFreshAccountData(weeks=[week], orders=[order]).finalize()
+def test_delivery_sensors_read_subscription_api_fields() -> None:
+    """The delivery/selectable sensors source from the subscription's API fields.
+
+    next_delivery_date/week come from nextDelivery/nextDeliveryWeek; the selectable
+    pair from nextModifiableDeliveryDate/Week; weeks emit the ISO week label.
+    """
+    data = HelloFreshAccountData(
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                next_delivery=date(2026, 6, 19),  # Friday, ISO week 2026-W25
+                next_delivery_week="2026-W25",
+                next_modifiable_delivery_date=date(2026, 6, 26),  # ISO week 2026-W26
+                next_modifiable_delivery_week="2026-W26",
+                next_cutoff_date=datetime(2026, 6, 17, 23, 59),
+            )
+        ],
+    ).finalize()
     coordinator = SimpleNamespace(
         data=data,
         config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
@@ -310,8 +346,12 @@ def test_next_delivery_week_is_iso_week_label_not_the_delivery_date() -> None:
         desc = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
         return HelloFreshSensor(coordinator, desc).native_value
 
+    assert _value("next_delivery_date") == date(2026, 6, 19)
     assert _value("next_delivery_week") == "2026-W25"  # ISO week identifier (a label)
-    assert _value("next_delivery_date") == date(2026, 6, 19)  # the actual delivery date
+    assert _value("next_selectable_delivery_date") == date(2026, 6, 26)
+    assert _value("next_selectable_delivery_week") == "2026-W26"
+    # next_selection_deadline now reflects the subscription's nextCutoffDate.
+    assert _value("next_selection_deadline") == datetime(2026, 6, 17, 23, 59)
 
 
 def test_required_meal_count_falls_back_to_subscription_plan() -> None:
@@ -359,9 +399,9 @@ def test_selected_meal_count_uses_next_upcoming_week_when_selection_complete() -
     assert HelloFreshSensor(coordinator, description).native_value == 3
 
 
-def test_next_selection_deadline_uses_next_upcoming_week_when_selection_complete() -> None:
-    """Next selection deadline should remain available for a fully selected upcoming week."""
-    deadline = datetime(2026, 6, 10, 18, 0)
+def test_next_selection_deadline_reads_subscription_cutoff_date() -> None:
+    """Next selection deadline comes from the subscription's nextCutoffDate, not the week."""
+    cutoff = datetime(2026, 6, 10, 18, 0)
     data = HelloFreshAccountData(
         weeks=[
             HelloFreshWeek(
@@ -369,10 +409,14 @@ def test_next_selection_deadline_uses_next_upcoming_week_when_selection_complete
                 display_name="Classic Box",
                 subscription_id="sub-1",
                 delivery_date=date(2026, 6, 15),
-                selection_deadline=deadline,
+                # A different week deadline must NOT be used now.
+                selection_deadline=datetime(2026, 1, 1, 0, 0),
                 meals_required=3,
                 meals_selected=3,
             )
+        ],
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1", next_cutoff_date=cutoff),
         ],
     ).finalize()
     coordinator = SimpleNamespace(
@@ -385,11 +429,13 @@ def test_next_selection_deadline_uses_next_upcoming_week_when_selection_complete
     )
     sensor = HelloFreshSensor(coordinator, description)
 
-    assert sensor.native_value == deadline
+    assert sensor.native_value == cutoff
+    # The deadline sensor still carries the per-week context in its attributes, where the
+    # week keeps its own selection_deadline (the dashboard's per-week table reads this).
     assert sensor.extra_state_attributes is not None
     assert (
         sensor.extra_state_attributes["next_selection_week"]["selection_deadline"]
-        == deadline.isoformat()
+        == datetime(2026, 1, 1, 0, 0).isoformat()
     )  # type: ignore[index]
 
 
@@ -412,3 +458,123 @@ def test_selection_deadline_passed_is_true_when_deadline_passed_and_meals_select
     assert data.next_selection_week is None
     assert data.next_configurable_week is not None
     assert data.selection_deadline_passed is True
+
+
+def _modifiable_week_data(*, skipped: bool, has_handle: bool = True) -> HelloFreshAccountData:
+    """Build account data whose next modifiable week is W26."""
+    return HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W25",
+                display_name="Week 25",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 15),
+                status="locked",
+            ),
+            HelloFreshWeek(
+                week_id="2026-W26",
+                display_name="Week 26",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 22),
+                is_skipped=skipped,
+            ),
+        ],
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                next_modifiable_delivery_week="2026-W26" if has_handle else None,
+            )
+        ],
+    ).finalize()
+
+
+def test_next_modifiable_week_resolves_from_subscription_handle() -> None:
+    """The model anchors on the subscription handle, not the next undelivered week."""
+    data = _modifiable_week_data(skipped=False)
+
+    week = data.next_modifiable_week
+    assert week is not None
+    assert week.week_id == "2026-W26"
+
+
+def test_next_modifiable_week_is_none_without_handle() -> None:
+    """No modifiable week when the subscription does not advertise one."""
+    assert _modifiable_week_data(skipped=False, has_handle=False).next_modifiable_week is None
+
+
+def _switch(data: HelloFreshAccountData) -> HelloFreshSwitch:
+    """Return the skip switch backed by the given account data."""
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(skipped=[], unskipped=[]),
+        last_update_success=True,
+    )
+
+    async def _skip(week_id: str) -> None:
+        coordinator.client.skipped.append(week_id)
+
+    async def _unskip(week_id: str) -> None:
+        coordinator.client.unskipped.append(week_id)
+
+    async def _refresh() -> None:
+        coordinator.refreshed = True
+
+    coordinator.client.async_skip_week = _skip
+    coordinator.client.async_unskip_week = _unskip
+    coordinator.async_request_refresh = _refresh
+    description = next(d for d in SWITCHES if d.key == "skip_next_modifiable_week")
+    switch = HelloFreshSwitch(coordinator, description)
+    switch.coordinator = coordinator
+    return switch
+
+
+def _run(coro) -> None:
+    """Run a coroutine on a fresh event loop (matches the repo's async test style)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(coro)
+
+
+def test_skip_switch_reflects_skipped_state() -> None:
+    """is_on tracks whether the next modifiable week is skipped."""
+    assert _switch(_modifiable_week_data(skipped=True)).is_on is True
+    assert _switch(_modifiable_week_data(skipped=False)).is_on is False
+
+
+def test_skip_switch_unavailable_without_modifiable_week() -> None:
+    """The switch hides when no modifiable week exists."""
+    switch = _switch(_modifiable_week_data(skipped=False, has_handle=False))
+    assert switch.available is False
+    assert switch.is_on is None
+
+
+def test_skip_switch_turn_on_skips_the_modifiable_week() -> None:
+    """Turning on calls skip for the modifiable week's id."""
+    switch = _switch(_modifiable_week_data(skipped=False))
+    _run(switch.async_turn_on())
+    assert switch.coordinator.client.skipped == ["2026-W26"]
+    assert switch.coordinator.client.unskipped == []
+
+
+def test_skip_switch_turn_off_restores_the_modifiable_week() -> None:
+    """Turning off calls unskip for the modifiable week's id."""
+    switch = _switch(_modifiable_week_data(skipped=True))
+    _run(switch.async_turn_off())
+    assert switch.coordinator.client.unskipped == ["2026-W26"]
+    assert switch.coordinator.client.skipped == []
+
+
+def test_skip_switch_noop_when_already_in_target_state() -> None:
+    """No client call when the week is already in the requested state."""
+    switch = _switch(_modifiable_week_data(skipped=True))
+    _run(switch.async_turn_on())
+    assert switch.coordinator.client.skipped == []
+
+
+def test_switch_descriptions_have_translation_names() -> None:
+    """Every declared switch should have a matching translation string."""
+    strings = json.loads(Path("custom_components/hellofresh/strings.json").read_text())
+    translated_keys = set(strings["entity"].get("switch", {}))
+
+    assert {description.key for description in SWITCHES} <= translated_keys

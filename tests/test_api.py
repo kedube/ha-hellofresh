@@ -4012,3 +4012,58 @@ def test_recent_payment_date_none_when_charge_is_still_in_the_future() -> None:
     client._apply_recent_payment_dates(subscriptions, latest, future)
 
     assert subscriptions[0].recent_payment_date is None
+
+
+def test_enrich_account_credit_reads_balance_amount_and_currency() -> None:
+    """The credit balance endpoint populates account_credit and its currency."""
+    client = _make_client()
+    captured: dict[str, object] = {}
+
+    async def fake_api_get(path, params=None, **_kwargs):
+        captured["path"] = path
+        captured["params"] = params
+        return object()
+
+    async def fake_response_json(_response):
+        return {
+            "amount": 12.5,
+            "cash": 12.5,
+            "bonus": 0,
+            "currencyCode": "USD",
+            "restrictedAmount": 0,
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    data = HelloFreshAccountData()
+    subscription = HelloFreshSubscription(subscription_id="sub-1", raw={"uuid": "cust-uuid-1"})
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_enrich_account_credit(data, [subscription]))
+
+    assert data.account_credit == 12.5
+    assert data.account_credit_currency == "USD"
+    assert captured["path"] == "/gw/payments/customers/cust-uuid-1/balance"
+    assert captured["params"] == {"business_unit": "US", "country": "US"}
+
+
+def test_enrich_account_credit_skips_without_customer_uuid() -> None:
+    """No credit is recorded when the subscription payload has no customer UUID."""
+    client = _make_client()
+
+    async def fail_api_get(*_args, **_kwargs):
+        raise AssertionError("balance endpoint should not be called without a UUID")
+
+    client._async_api_get = fail_api_get  # type: ignore[method-assign]
+
+    data = HelloFreshAccountData()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_enrich_account_credit(data, [HelloFreshSubscription(subscription_id="s")])
+    )
+
+    assert data.account_credit is None
+    assert data.account_credit_currency is None

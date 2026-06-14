@@ -362,6 +362,8 @@ class HelloFreshAccountData:
     debug_trace: dict[str, Any] = field(default_factory=dict)
     next_delivery_total: float | None = None
     next_delivery_total_currency: str | None = None
+    account_credit: float | None = None
+    account_credit_currency: str | None = None
     recent_order_id: str | None = None
     _serialized_orders: list[dict[str, Any]] | None = field(default=None)
     _serialized_weeks: list[dict[str, Any]] | None = field(default=None)
@@ -427,6 +429,19 @@ class HelloFreshAccountData:
     def next_skipped_week(self) -> HelloFreshWeek | None:
         """Return the earliest skipped week."""
         return self._next_skipped_week
+
+    @property
+    def next_modifiable_week(self) -> HelloFreshWeek | None:
+        """Return the next delivery week that can still be modified.
+
+        Anchored to the subscription's ``next_modifiable_delivery_week`` handle (a
+        ``YYYY-Www`` ISO week) rather than the next undelivered week, so skip/restore
+        actions target the soonest week the customer is actually allowed to change.
+        """
+        subscription = self.primary_subscription
+        if subscription is None or not subscription.next_modifiable_delivery_week:
+            return None
+        return self.get_week(subscription.next_modifiable_delivery_week)
 
     @property
     def delivery_count_this_week(self) -> int:

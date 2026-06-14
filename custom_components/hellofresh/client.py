@@ -254,6 +254,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         ) = await self._async_get_initial_account_payloads(subscriptions)
 
         await self._async_enrich_subscription_payment_dates(subscriptions, all_orders, data)
+        await self._async_enrich_account_credit(data, subscriptions)
 
         all_weeks = self._backfill_account_weeks_from_subscriptions(
             subscriptions=subscriptions,
@@ -1148,6 +1149,65 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 "params": params,
                 "status": self._response_status(response),
                 "recent_payment_date": latest_date.isoformat(),
+            },
+        )
+
+    async def _async_enrich_account_credit(
+        self,
+        data: HelloFreshAccountData,
+        subscriptions: Sequence[HelloFreshSubscription],
+    ) -> None:
+        """Read the account credit balance that applies automatically to the next order.
+
+        Source: ``/gw/payments/customers/{customerUUID}/balance``. The response's
+        ``amount`` is the spendable credit the website surfaces as "$X that will apply
+        automatically to your next order"; ``currencyCode`` gives the unit.
+        """
+        if self._session is None:
+            return
+        customer_uuid = next(
+            (
+                uuid
+                for subscription in subscriptions
+                if (uuid := self._find_first_nested_value(subscription.raw, ("uuid",)))
+            ),
+            None,
+        )
+        if not isinstance(customer_uuid, str) or not customer_uuid:
+            return
+
+        path = f"/gw/payments/customers/{customer_uuid}/balance"
+        params = {
+            "business_unit": self._country.upper(),
+            "country": self._country.upper(),
+        }
+        try:
+            response = await self._async_api_get(path, params=params)
+            payload = await self._async_response_json(response)
+        except HelloFreshError as err:
+            self._record_debug_attempt(
+                "payment_attempts",
+                {"path": "/gw/payments/customers/{uuid}/balance", "error": str(err)},
+            )
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        amount = coerce_float(payload.get("amount"))
+        if amount is None:
+            return
+        data.account_credit = amount
+        currency = payload.get("currencyCode")
+        data.account_credit_currency = currency if isinstance(currency, str) and currency else None
+
+        self._record_debug_attempt(
+            "payment_attempts",
+            {
+                "path": "/gw/payments/customers/{uuid}/balance",
+                "status": self._response_status(response),
+                "account_credit": amount,
+                "currency": data.account_credit_currency,
             },
         )
 

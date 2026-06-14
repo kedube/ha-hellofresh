@@ -71,6 +71,9 @@
       "next_box_total_price": {
         "name": "Next box total price"
       },
+      "account_credit": {
+        "name": "Account credit"
+      },
       "selected_plan": {
         "name": "Selected plan"
       },
@@ -99,7 +102,7 @@
         "name": "Delivery subscription ID"
       },
       "next_delivery_slot": {
-        "name": "Next delivery slot"
+        "name": "Delivery Window"
       },
       "tracked_shipment_carrier": {
         "name": "Tracked shipment carrier"
@@ -118,6 +121,12 @@
       },
       "next_delivery_week": {
         "name": "Next delivery week"
+      },
+      "next_selectable_delivery_date": {
+        "name": "Next selectable delivery date"
+      },
+      "next_selectable_delivery_week": {
+        "name": "Next selectable delivery week"
       },
       "api_base_url": {
         "name": "API base URL"
@@ -185,17 +194,16 @@
       },
       "confirm_next_selection": {
         "name": "Confirm next selection"
-      },
-      "skip_next_selection_week": {
-        "name": "Skip next selection week"
-      },
-      "restore_next_skipped_week": {
-        "name": "Restore next skipped week"
       }
     },
     "calendar": {
       "delivery_schedule": {
         "name": "Delivery schedule"
+      }
+    },
+    "switch": {
+      "skip_next_modifiable_week": {
+        "name": "Skip next delivery week"
       }
     },
     "todo": {
