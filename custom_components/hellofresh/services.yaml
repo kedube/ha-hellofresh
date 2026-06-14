@@ -1,0 +1,96 @@
+refresh_data:
+  name: Refresh data
+  description: Refresh HelloFresh account data immediately.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+select_meals:
+  name: Select meals
+  description: Submit meal selections for a delivery week.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      selector:
+        text:
+    recipe_ids:
+      required: true
+      selector:
+        object:
+
+skip_week:
+  name: Skip week
+  description: Skip a specific HelloFresh delivery week.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      selector:
+        text:
+
+unskip_week:
+  name: Unskip week
+  description: Restore a previously skipped HelloFresh delivery week.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      selector:
+        text:
+
+reschedule_week:
+  name: Reschedule week
+  description: >-
+    Move a single HelloFresh delivery week to a different delivery option
+    (slot/day). One-off change; does not affect the recurring schedule.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      selector:
+        text:
+    delivery_option:
+      required: true
+      selector:
+        text:
+
+change_delivery_weekday:
+  name: Change delivery weekday
+  description: >-
+    Change the recurring delivery option and interval for a subscription's plan.
+    Affects all future deliveries.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    delivery_option:
+      required: true
+      selector:
+        text:
+    delivery_interval:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
+    subscription_id:
+      required: false
+      selector:
+        text:

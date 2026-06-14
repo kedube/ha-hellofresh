@@ -1,0 +1,25 @@
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["custom_components", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "UP017",   # datetime.UTC alias — codebase consistently uses timezone.utc
+]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components.hellofresh"]
+
+[tool.ruff.format]
+line-ending = "lf"

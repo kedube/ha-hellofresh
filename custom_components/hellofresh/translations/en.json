@@ -1,0 +1,323 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect HelloFresh",
+        "description": "Sign in with your HelloFresh account email and password. Home Assistant uses them to log in and keep the connection refreshed automatically.",
+        "data": {
+          "country": "Country",
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect HelloFresh",
+        "description": "Enter your HelloFresh account email and password to restore access.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect",
+      "invalid_auth": "Invalid authentication"
+    },
+    "abort": {
+      "already_configured": "This HelloFresh account is already configured",
+      "reauth_successful": "HelloFresh was reconnected successfully"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HelloFresh options",
+        "data": {
+          "scan_interval_minutes": "Refresh interval (minutes)",
+          "enable_public_menu_fallback": "Use public menu fallback"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_delivery_date": {
+        "name": "Next delivery date"
+      },
+      "next_order_status": {
+        "name": "Next order status"
+      },
+      "shipment_tracking_status": {
+        "name": "Shipment tracking status"
+      },
+      "shipment_tracking_number": {
+        "name": "Shipment tracking number"
+      },
+      "weeks_needing_selection": {
+        "name": "Weeks needing meal selection"
+      },
+      "next_selection_deadline": {
+        "name": "Next selection deadline"
+      },
+      "selected_meal_count": {
+        "name": "Selected meal count"
+      },
+      "required_meal_count": {
+        "name": "Number of meals"
+      },
+      "delivery_count_this_week": {
+        "name": "Delivery count this week"
+      },
+      "next_box_total_price": {
+        "name": "Next box total price"
+      },
+      "selected_plan": {
+        "name": "Selected plan"
+      },
+      "public_menu_recipe_count": {
+        "name": "Available menu recipe count"
+      },
+      "subscription_count": {
+        "name": "Subscription count"
+      },
+      "number_of_people": {
+        "name": "Number of people"
+      },
+      "delivery_address": {
+        "name": "Delivery address"
+      },
+      "recent_payment_date": {
+        "name": "Recent payment date"
+      },
+      "next_payment_date": {
+        "name": "Next payment date"
+      },
+      "upcoming_delivery_count": {
+        "name": "Upcoming delivery count"
+      },
+      "next_delivery_subscription": {
+        "name": "Delivery subscription ID"
+      },
+      "next_delivery_slot": {
+        "name": "Next delivery slot"
+      },
+      "tracked_shipment_carrier": {
+        "name": "Tracked shipment carrier"
+      },
+      "skipped_week_count": {
+        "name": "Skipped week count"
+      },
+      "next_skipped_week": {
+        "name": "Next skipped week"
+      },
+      "boxes_received": {
+        "name": "Boxes received"
+      },
+      "last_delivery_date": {
+        "name": "Last delivery date"
+      },
+      "next_delivery_week": {
+        "name": "Next delivery week"
+      },
+      "api_base_url": {
+        "name": "API base URL"
+      },
+      "account_id": {
+        "name": "Account ID"
+      },
+      "recent_order_id": {
+        "name": "Next order ID"
+      },
+      "next_box_coupon": {
+        "name": "Next box coupon"
+      },
+      "next_delivery_tracking_url": {
+        "name": "Next delivery tracking URL"
+      },
+      "next_holiday_delivery_date": {
+        "name": "Holiday delivery date"
+      },
+      "next_holiday_message": {
+        "name": "Holiday delivery message"
+      },
+      "next_delivery_blocked": {
+        "name": "Next delivery blocked"
+      },
+      "access_token_minutes_remaining": {
+        "name": "Access token time remaining"
+      },
+      "refresh_token_days_remaining": {
+        "name": "Refresh token time remaining"
+      }
+    },
+    "binary_sensor": {
+      "needs_meal_selection": {
+        "name": "Needs meal selection"
+      },
+      "selection_deadline_passed": {
+        "name": "Selection deadline passed"
+      },
+      "account_menu_api_available": {
+        "name": "Account menu API available"
+      },
+      "write_actions_available": {
+        "name": "Write actions available"
+      },
+      "reschedule_available": {
+        "name": "Reschedule available"
+      },
+      "delivery_weekday_change_available": {
+        "name": "Delivery weekday change available"
+      },
+      "tracked_shipment_available": {
+        "name": "Tracked shipment available"
+      },
+      "payload_shape_changed": {
+        "name": "Payload shape changed"
+      },
+      "first_box_delivered": {
+        "name": "First box delivered"
+      }
+    },
+    "button": {
+      "refresh_data": {
+        "name": "Refresh data"
+      },
+      "confirm_next_selection": {
+        "name": "Confirm next selection"
+      },
+      "skip_next_selection_week": {
+        "name": "Skip next selection week"
+      },
+      "restore_next_skipped_week": {
+        "name": "Restore next skipped week"
+      }
+    },
+    "calendar": {
+      "delivery_schedule": {
+        "name": "Delivery schedule"
+      }
+    },
+    "todo": {
+      "meal_selection": {
+        "name": "Meal selection"
+      }
+    }
+  },
+  "issues": {
+    "account_data_unavailable": {
+      "title": "HelloFresh account data is unavailable for {entry_title}",
+      "description": "HelloFresh could not load authenticated account data for **{entry_title}**. The integration is currently falling back to public menu data only. Refresh the integration, or reauthenticate with your HelloFresh email and password if sign-in has stopped working."
+    },
+    "account_menu_fallback": {
+      "title": "HelloFresh menu fallback is active for {entry_title}",
+      "description": "HelloFresh could not load structured menu data for **{entry_title}** from authenticated API responses, so the integration is currently using the public menu page as a fallback. Delivery tracking may still work, but recipe details can be less complete until the API payload is recognized again."
+    },
+    "payload_shape_changed": {
+      "title": "HelloFresh account payloads changed for {entry_title}",
+      "description": "HelloFresh returned authenticated data for **{entry_title}**, but the payload no longer matched the delivery shapes this integration knows how to parse. Diagnostics from this config entry will help confirm whether a regional API variation or a website change needs to be supported."
+    },
+    "write_actions_unavailable": {
+      "title": "HelloFresh write actions are not verified for {entry_title}",
+      "description": "You tried to use a HelloFresh action that changes account data for **{entry_title}**, such as selecting meals or skipping a week. The integration attempted the known best-effort write endpoints for your account, but none accepted the request, so the action was blocked instead of guessing further."
+    }
+  },
+  "services": {
+    "refresh_data": {
+      "name": "Refresh data",
+      "description": "Refresh HelloFresh account data immediately.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "select_meals": {
+      "name": "Select meals",
+      "description": "Submit meal selections for a delivery week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        },
+        "recipe_ids": {
+          "name": "Recipe IDs",
+          "description": "The recipe identifiers to select for that week."
+        }
+      }
+    },
+    "skip_week": {
+      "name": "Skip week",
+      "description": "Skip a specific HelloFresh delivery week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        }
+      }
+    },
+    "unskip_week": {
+      "name": "Unskip week",
+      "description": "Restore a previously skipped HelloFresh delivery week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        }
+      }
+    },
+    "reschedule_week": {
+      "name": "Reschedule week",
+      "description": "Move a single HelloFresh delivery week to a different delivery option (slot/day). One-off change; does not affect the recurring schedule.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        },
+        "delivery_option": {
+          "name": "Delivery option",
+          "description": "The delivery-option handle to move the week to (e.g. US-2-0800-2000)."
+        }
+      }
+    },
+    "change_delivery_weekday": {
+      "name": "Change delivery weekday",
+      "description": "Change the recurring delivery option and interval for a subscription's plan. Affects all future deliveries.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "delivery_option": {
+          "name": "Delivery option",
+          "description": "The recurring delivery-option handle (e.g. US-1-0800-2000)."
+        },
+        "delivery_interval": {
+          "name": "Delivery interval",
+          "description": "How often deliveries recur, in weeks (1 = every week). Defaults to 1."
+        },
+        "subscription_id": {
+          "name": "Subscription ID",
+          "description": "Which subscription to change when multiple exist. Defaults to the primary subscription."
+        }
+      }
+    }
+  }
+}

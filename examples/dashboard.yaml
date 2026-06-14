@@ -1,0 +1,416 @@
+# HelloFresh — example Lovelace dashboard
+#
+# A ready-to-use dashboard built from the entities this integration exposes,
+# laid out for how you actually use HelloFresh: act-on-it banners first, then the
+# next box, meal selection, shipment tracking, planning, billing, diagnostics last.
+#
+# ── How to use ────────────────────────────────────────────────────────────────
+# 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new dashboard in YAML
+#    mode) and paste the contents of this file.
+# 2. Fix the entity-ID prefix. With `has_entity_name`, entity IDs are derived
+#    from your config-entry title, e.g. a "HelloFresh (US)" account produces
+#    `sensor.hellofresh_us_next_delivery_date`. This file uses that `hellofresh_us_`
+#    prefix throughout — find/replace it to match your account (check
+#    Settings → Devices & Services → HelloFresh → entities for the real IDs).
+# 3. Conditional cards (banners, the tracking card) only render when relevant,
+#    so they stay hidden in the normal case.
+#
+# ── Custom cards (HACS) ─────────────────────────────────────────────────────────
+# The Overview view uses two popular HACS frontend cards for a more visual,
+# scannable layout:
+#   • Mushroom        — https://github.com/piitaya/lovelace-mushroom
+#   • auto-entities    — https://github.com/thomasloven/lovelace-auto-entities  (optional)
+# Install both via HACS → Frontend before importing, or see the comments on each
+# card for the built-in (`glance`/`entities`) fallback that needs no add-ons.
+# The Planning, Account, and Diagnostics views are 100% built-in Lovelace.
+
+title: HelloFresh
+views:
+  # ── Overview ────────────────────────────────────────────────────────────────
+  - title: HelloFresh
+    path: hellofresh
+    icon: mdi:food-takeout-box
+    cards:
+      # ── Attention banners — only render when there's something to act on ──────
+
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_needs_meal_selection
+            state: "on"
+        card:
+          type: markdown
+          content: >
+            ### 🍽️ Meals need choosing
+
+            {{ states('sensor.hellofresh_us_weeks_needing_selection') }} week(s)
+            still need a selection. Next deadline:
+            **{{ as_timestamp(states('sensor.hellofresh_us_next_selection_deadline'), 0)
+            | timestamp_custom('%a %b %-d, %-I:%M %p', true) }}**
+            ({{ relative_time(states('sensor.hellofresh_us_next_selection_deadline')
+            | as_datetime) if states('sensor.hellofresh_us_next_selection_deadline')
+            not in ['unknown','unavailable'] else 'no deadline' }} away).
+
+      - type: conditional
+        conditions:
+          - entity: sensor.hellofresh_us_next_holiday_message
+            state_not: "unknown"
+          - entity: sensor.hellofresh_us_next_holiday_message
+            state_not: "unavailable"
+        card:
+          type: markdown
+          content: >
+            ### 🎄 Holiday delivery change
+
+            {{ states('sensor.hellofresh_us_next_holiday_message') }}
+
+            New date:
+            **{{ states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
+
+      - type: conditional
+        conditions:
+          - entity: sensor.hellofresh_us_refresh_token_days_remaining
+            state_not: "unknown"
+        card:
+          type: markdown
+          content: >
+            {% set days = states('sensor.hellofresh_us_refresh_token_days_remaining')
+            | int(999) %}
+            {% if days <= 7 %}
+            ### 🔑 Reauthentication needed soon
+
+            HelloFresh login expires in **{{ days }} day(s)**. Reconnect the
+            integration before it lapses to avoid losing data.
+            {% endif %}
+
+      # Integration is returning data that no longer matches the expected shape —
+      # values may be stale or wrong. PROBLEM binary sensor; disabled by default,
+      # so this banner only appears if you've enabled the entity.
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_payload_shape_changed
+            state: "on"
+        card:
+          type: markdown
+          content: >
+            ### ⚠️ HelloFresh data shape changed
+
+            The API returned an unexpected payload, so some values may be stale
+            or missing. If this persists, check for an integration update.
+
+      # ── The headline: next box ────────────────────────────────────────────────
+      # Mushroom template card — big, glanceable, with a relative countdown and a
+      # status-driven icon color. Fallback (built-in, no HACS): replace this single
+      # card with the `glance` card commented out at the bottom of this view.
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set d = states('sensor.hellofresh_us_next_delivery_date') %}
+          {% if d in ['unknown','unavailable'] %}No upcoming box
+          {% else %}{{ as_timestamp(d) | timestamp_custom('%A, %b %-d') }}{% endif %}
+        secondary: >
+          {% set d = states('sensor.hellofresh_us_next_delivery_date') %}
+          {% set slot = states('sensor.hellofresh_us_next_delivery_slot') %}
+          {{ states('sensor.hellofresh_us_next_order_status') | title }}
+          {%- if slot not in ['unknown','unavailable'] %} · {{ slot }}{% endif %}
+          {%- if d not in ['unknown','unavailable'] %} · {{ relative_time(d | as_datetime) }} away{% endif %}
+        icon: mdi:package-variant-closed
+        icon_color: >
+          {% set s = states('sensor.hellofresh_us_next_order_status') | lower %}
+          {% if s in ['delivered','complete','completed'] %}green
+          {% elif s in ['in_transit','out_for_delivery','shipped'] %}blue
+          {% elif s in ['cancelled','canceled','skipped'] %}red
+          {% else %}grey{% endif %}
+        multiline_secondary: true
+        tap_action:
+          action: more-info
+          entity: sensor.hellofresh_us_next_order_status
+
+      # Key box facts as compact chips beneath the hero.
+      - type: custom:mushroom-chips-card
+        alignment: center
+        chips:
+          - type: entity
+            entity: sensor.hellofresh_us_next_box_total_price
+            icon: mdi:cash
+          - type: entity
+            entity: sensor.hellofresh_us_number_of_people
+            icon: mdi:account-group-outline
+          - type: entity
+            entity: sensor.hellofresh_us_selected_plan
+            icon: mdi:food-variant
+          - type: entity
+            entity: sensor.hellofresh_us_next_box_coupon
+            icon: mdi:ticket-percent-outline
+
+      # ── Meal selection ────────────────────────────────────────────────────────
+      # Progress at a glance: chosen vs required, colored by completeness.
+      - type: gauge
+        name: Meals chosen
+        entity: sensor.hellofresh_us_selected_meal_count
+        min: 0
+        max: 6
+        needle: true
+        # `max` is a static cap (most plans need 2–6 meals); the gauge can't read
+        # `required_meal_count` dynamically. The Meal selection card below shows the
+        # exact chosen/required pair for this week. Severity isn't used because
+        # "full" isn't inherently good/bad without knowing the per-week requirement.
+
+      - type: entities
+        title: Meal selection
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: sensor.hellofresh_us_selected_meal_count
+            name: Meals chosen
+          - entity: sensor.hellofresh_us_required_meal_count
+            name: Meals required
+          - entity: sensor.hellofresh_us_next_selection_deadline
+            name: Selection deadline
+          - entity: binary_sensor.hellofresh_us_selection_deadline_passed
+            name: Deadline passed
+          - type: divider
+          - entity: button.hellofresh_us_confirm_next_selection
+            name: Confirm current selection
+            icon: mdi:check-bold
+          - entity: button.hellofresh_us_skip_next_selection_week
+            name: Skip next week
+          - entity: button.hellofresh_us_restore_next_skipped_week
+            name: Restore skipped week
+
+      # Per-week breakdown, read from the `weeks` attribute on the deadline sensor
+      # (a list of {display_name, delivery_date, selection_deadline,
+      # meals_selected, meals_required} dicts — these are NOT separate entities,
+      # so a templated markdown card is the right tool, not auto-entities).
+      # Only renders while at least one week needs a selection.
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_needs_meal_selection
+            state: "on"
+        card:
+          type: markdown
+          title: Weeks needing selection
+          content: >
+            {% set weeks = state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks') or [] %}
+            {% if weeks | count == 0 %}
+            All caught up — nothing to choose.
+            {% else %}
+            | Week | Chosen | Deadline |
+            | --- | :---: | --- |
+            {% for w in weeks -%}
+            {% set sel = w.meals_selected if w.meals_selected is not none else 0 -%}
+            {% set req = w.meals_required if w.meals_required is not none else '?' -%}
+            {% set dl = w.selection_deadline -%}
+            | {{ w.display_name or w.delivery_date or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) | timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
+            {% endfor %}
+            {% endif %}
+
+      # The meal to-do list — one item per week needing selection.
+      - type: todo-list
+        title: Meals to choose
+        entity: todo.hellofresh_us_meal_selection
+
+      # ── Shipment tracking ─────────────────────────────────────────────────────
+      # Whole card is conditional: with no in-flight shipment these rows are all
+      # "unknown", so we hide the card entirely until there's a tracked order.
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
+            state: "on"
+        card:
+          # Stack so a clickable "Track shipment" button can sit under the details.
+          type: vertical-stack
+          cards:
+            - type: entities
+              title: Shipment tracking
+              show_header_toggle: false
+              state_color: true
+              entities:
+                - entity: sensor.hellofresh_us_shipment_tracking_status
+                  name: Status
+                - entity: sensor.hellofresh_us_tracked_shipment_carrier
+                  name: Carrier
+                - entity: sensor.hellofresh_us_shipment_tracking_number
+                  name: Tracking number
+            # Clickable carrier link, built from the `tracking_url` attribute on the
+            # status sensor. Only shown when a URL is present; tapping opens it in a
+            # new tab. (Built-in fallback: an `attribute` row shows the URL as text
+            # but isn't clickable — see the commented row below.)
+            - type: conditional
+              conditions:
+                - entity: sensor.hellofresh_us_next_delivery_tracking_url
+                  state_not: "unknown"
+                - entity: sensor.hellofresh_us_next_delivery_tracking_url
+                  state_not: "unavailable"
+              card:
+                type: custom:mushroom-template-card
+                primary: Track shipment
+                secondary: >
+                  {{ states('sensor.hellofresh_us_tracked_shipment_carrier') }} ·
+                  {{ states('sensor.hellofresh_us_shipment_tracking_number') }}
+                icon: mdi:open-in-new
+                icon_color: blue
+                tap_action:
+                  action: url
+                  url_path: >
+                    {{ state_attr('sensor.hellofresh_us_shipment_tracking_status', 'tracking_url') }}
+                # Built-in fallback (no Mushroom): replace the card above with —
+                # row:
+                #   type: attribute
+                #   entity: sensor.hellofresh_us_shipment_tracking_status
+                #   attribute: tracking_url
+                #   name: Tracking link
+
+      # ── Built-in fallback for the hero (no HACS) ────────────────────────────────
+      # If you don't want Mushroom, delete the two custom:mushroom-* cards above and
+      # uncomment this glance card — it covers the same key facts with core Lovelace.
+      #
+      # - type: glance
+      #   title: Next box
+      #   columns: 3
+      #   state_color: true
+      #   entities:
+      #     - entity: sensor.hellofresh_us_next_delivery_date
+      #       name: Delivery
+      #     - entity: sensor.hellofresh_us_next_order_status
+      #       name: Status
+      #     - entity: sensor.hellofresh_us_next_delivery_slot
+      #       name: Window
+      #     - entity: sensor.hellofresh_us_next_box_total_price
+      #       name: Total
+      #     - entity: sensor.hellofresh_us_number_of_people
+      #       name: Servings
+      #     - entity: sensor.hellofresh_us_selected_plan
+      #       name: Plan
+
+  # ── Planning & history ──────────────────────────────────────────────────────
+  - title: Planning
+    path: planning
+    icon: mdi:calendar-month
+    cards:
+      - type: calendar
+        title: Delivery schedule
+        initial_view: dayGridMonth
+        entities:
+          - calendar.hellofresh_us_delivery_schedule
+
+      - type: glance
+        title: At a glance
+        columns: 3
+        entities:
+          - entity: sensor.hellofresh_us_upcoming_delivery_count
+            name: Upcoming
+          - entity: sensor.hellofresh_us_delivery_count_this_week
+            name: This week
+          - entity: sensor.hellofresh_us_skipped_week_count
+            name: Skipped
+          - entity: sensor.hellofresh_us_next_skipped_week
+            name: Next skipped
+          - entity: sensor.hellofresh_us_boxes_received
+            name: Boxes received
+          - entity: sensor.hellofresh_us_public_menu_recipe_count
+            name: Menu recipes
+
+      - type: entities
+        title: Dates
+        show_header_toggle: false
+        entities:
+          - entity: sensor.hellofresh_us_next_delivery_week
+            name: Next delivery week
+          - entity: sensor.hellofresh_us_last_delivery_date
+            name: Last delivery
+          - entity: sensor.hellofresh_us_next_delivery_blocked
+            name: Next delivery blocked
+          - entity: sensor.hellofresh_us_next_holiday_delivery_date
+            name: Holiday delivery date
+
+      - type: history-graph
+        title: Deliveries over time
+        hours_to_show: 2160 # ~90 days
+        entities:
+          - entity: sensor.hellofresh_us_next_order_status
+            name: Order status
+          - entity: sensor.hellofresh_us_shipment_tracking_status
+            name: Tracking
+
+  # ── Account & billing ───────────────────────────────────────────────────────
+  - title: Account
+    path: account
+    icon: mdi:account-cog
+    cards:
+      - type: entities
+        title: Billing
+        show_header_toggle: false
+        entities:
+          - entity: sensor.hellofresh_us_next_box_total_price
+            name: Next box total
+          - entity: sensor.hellofresh_us_next_payment_date
+            name: Next payment
+          - entity: sensor.hellofresh_us_recent_payment_date
+            name: Most recent payment
+          - entity: sensor.hellofresh_us_next_box_coupon
+            name: Active coupon
+
+      - type: entities
+        title: Subscription
+        show_header_toggle: false
+        entities:
+          - entity: sensor.hellofresh_us_selected_plan
+            name: Plan
+          - entity: sensor.hellofresh_us_number_of_people
+            name: Servings
+          - entity: sensor.hellofresh_us_subscription_count
+            name: Subscriptions
+          - entity: sensor.hellofresh_us_delivery_address
+            name: Delivery address
+          - entity: sensor.hellofresh_us_recent_order_id
+            name: Next order ID
+
+      - type: entities
+        title: Actions
+        show_header_toggle: false
+        entities:
+          - entity: button.hellofresh_us_refresh_data
+            name: Refresh now
+
+  # ── Diagnostics ─────────────────────────────────────────────────────────────
+  # Health/credential entities — useful for troubleshooting, not daily use.
+  # Several of these are DISABLED by default in the entity registry
+  # (account_menu_api_available, write_actions_available, reschedule_available,
+  # delivery_weekday_change_available, first_box_delivered, payload_shape_changed,
+  # api_base_url). They'll read "unavailable" here until you enable them under
+  # Settings → Devices & Services → HelloFresh → entities.
+  - title: Diagnostics
+    path: diagnostics
+    icon: mdi:stethoscope
+    cards:
+      - type: entities
+        title: Token health
+        show_header_toggle: false
+        entities:
+          - entity: sensor.hellofresh_us_access_token_minutes_remaining
+            name: Access token expires in
+          - entity: sensor.hellofresh_us_refresh_token_days_remaining
+            name: Refresh token expires in
+
+      - type: entities
+        title: Integration health
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: binary_sensor.hellofresh_us_account_menu_api_available
+            name: Account menu API
+          - entity: binary_sensor.hellofresh_us_write_actions_available
+            name: Write actions
+          - entity: binary_sensor.hellofresh_us_reschedule_available
+            name: Reschedule available
+          - entity: binary_sensor.hellofresh_us_delivery_weekday_change_available
+            name: Delivery weekday change
+          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
+            name: Tracked shipment
+          - entity: binary_sensor.hellofresh_us_first_box_delivered
+            name: First box delivered
+          - entity: binary_sensor.hellofresh_us_payload_shape_changed
+            name: Payload shape changed
+          - entity: sensor.hellofresh_us_account_id
+            name: Account ID
+          - entity: sensor.hellofresh_us_api_base_url
+            name: API base URL
