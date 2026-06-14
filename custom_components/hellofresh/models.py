@@ -449,19 +449,6 @@ class HelloFreshAccountData:
         return self._delivery_count_this_week
 
     @property
-    def selection_deadline_passed(self) -> bool:
-        """Return True if the next upcoming week's selection deadline has passed."""
-        next_week = self._next_configurable_week
-        if next_week is None or next_week.selection_deadline is None:
-            return False
-        now = (
-            datetime.now(next_week.selection_deadline.tzinfo)
-            if next_week.selection_deadline.tzinfo is not None
-            else datetime.now()
-        )
-        return next_week.selection_deadline < now
-
-    @property
     def current_public_menu(self) -> HelloFreshWeek | None:
         """Return the currently visible public menu week."""
         return self._current_public_menu

@@ -290,7 +290,7 @@ The integration uses this endpoint to populate `recent_payment_date` and `next_p
 - `next_payment_date` is the `deliveryDate` of the soonest upcoming order (delivery date on or after today) for that subscription
 - if no upcoming order is found in the orders response, `next_payment_date` falls back to `next_cutoff_date + 1 second` from the subscription payload (a provisional estimate that the billing-API value overrides whenever it is available)
 - `next_delivery_total` (the `next_box_total_price` sensor) is the **sum of `grandTotal` across all order items sharing the earliest upcoming delivery date** — a single delivery can have multiple charges (box + add-ons + fees), so they are accumulated rather than deduplicated
-- `recent_order_id` (the `Next order ID` sensor) is the `orderNr` of that earliest upcoming order
+- `recent_order_id` (the `Next delivery order ID` sensor) is the `orderNr` of that earliest upcoming order
 
 The subscription id is extracted from `orderLines[0].subscription.id`. If that field is absent or null, the order item is skipped.
 
@@ -834,14 +834,24 @@ Binary sensor backed by subscription data:
 
 Recent delivered-history records are also included in sensor attributes through `serialized_past_delivery_weeks`, while upcoming-delivery, selection, and shipment entities continue to use the active account week/order models.
 
+Delivery/selection sensors backed by the **primary subscription's** API fields:
+
+| Sensor key | UI label | Backing data | Notes |
+| --- | --- | --- | --- |
+| `next_delivery_date` | Next delivery date | `subscription.next_delivery` (`nextDelivery`) | Date of the subscription's next delivery |
+| `next_delivery_week` | Next delivery week | `iso_week_label(subscription.next_delivery_week, …next_delivery)` (`nextDeliveryWeek`) | **ISO week identifier** (e.g. `2026-W25`) of the next delivery, normalized/validated against `next_delivery` as a fallback — a week label, deliberately distinct from `next_delivery_date` |
+| `next_selectable_delivery_date` | Next selectable delivery date | `subscription.next_modifiable_delivery_date` (`nextModifiableDeliveryDate`) | The next delivery the customer can still modify |
+| `next_selectable_delivery_week` | Next selectable delivery week | `iso_week_label(subscription.next_modifiable_delivery_week, …next_modifiable_delivery_date)` (`nextModifiableDeliveryWeek`) | ISO week identifier of the next modifiable delivery |
+| `next_selection_deadline` | Next delivery selection deadline | `next_modifiable_week.selection_deadline` (the week's `cutoffDate`), falling back to `subscription.next_cutoff_date` (`nextCutoffDate`) | Deadline to modify the next selectable delivery — the value the web UI shows as "Edit delivery by …". The per-week `cutoffDate` (from `/gw/api/subscriptions/{id}/delivery_dates/{week}`) is authoritative; `nextCutoffDate` is a fallback for accounts that populate it but where the week isn't resolved |
+
 Sensors backed by the next configurable week:
 
 | Sensor key | Backing data | Notes |
 | --- | --- | --- |
-| `next_delivery_week` | `iso_week_label(next_configurable_week.week_id, …delivery_date)` | **ISO week identifier** (e.g. `2026-W25`) of the next configurable week, from the `week_id` with the delivery date's ISO week as a fallback — a week label, deliberately distinct from `next_delivery_date`. Attributes include full week context (`week_id`, `display_name`, `selection_deadline`, `selection_progress`, etc.) |
-| `next_selection_deadline` | `HelloFreshAccountData.next_configurable_week.selection_deadline` | Cutoff datetime for the same week |
 | `selected_meal_count` | `HelloFreshAccountData.next_configurable_week.meals_selected` | Meals chosen so far for the next upcoming week |
 | `required_meal_count` | `HelloFreshAccountData.next_configurable_week.meals_required` | Meals required for the next upcoming week, falls back to subscription default |
+
+The `next_selection_deadline` sensor still carries per-week context in its attributes (the `next_selection_week` summary and the `weeks` list the example dashboard reads), even though its **state** now comes from the modifiable week's `cutoffDate` (with `nextCutoffDate` as a fallback).
 
 Current UI-facing labels that differ from the raw entity ids:
 
@@ -855,7 +865,6 @@ Entity behavior notes:
 - `sensor.required_meal_count` uses the next pending week's `meals_required` value and falls back to the subscription plan meal count when the delivery payload is sparse
 - `sensor.next_payment_date` is the delivery date of the soonest upcoming order, not the order creation date; it falls back to `next_cutoff_date + 1s` if no upcoming order is found
 - `sensor.selected_plan` is sourced from normalized subscription plan/display fields
-- `binary_sensor.selection_deadline_passed` fires when the next upcoming week's selection deadline has passed, including weeks where meals are already fully chosen (HelloFresh still allows recipe swaps until cutoff)
 - `binary_sensor.first_box_delivered` is a diagnostic entity disabled by default; it becomes permanently `True` once the first box is delivered and is not useful for recurring automations
 - `binary_sensor.account_menu_api_available` is a diagnostic entity disabled by default; when `using_public_menu_fallback` is `True` the coordinator raises a Repairs issue, which is the primary user-facing signal for menu fallback state
 
@@ -1075,9 +1084,10 @@ And it derives summary views such as:
 - `upcoming_orders` — all orders with a delivery date today or later, sorted ascending; backs `upcoming_delivery_count`
 - `tracked_order`
 - `weeks_needing_selection`
-- `next_selection_week` — the next week that still needs meal selection; used by `selection_deadline_passed` and selection-related sensors
-- `next_configurable_week` — broader fallback: returns `next_selection_week` when one exists, otherwise the soonest non-skipped upcoming week with any selection-related context; used by `selected_meal_count`, `required_meal_count`, `next_selection_deadline`, and `next_delivery_week` sensors
-- `primary_subscription` — first entry in the subscriptions list; source for plan, servings, address, and payment-date sensors
+- `next_selection_week` — the next week that still needs meal selection; used by selection-related sensors and the `next_selection_deadline` attribute context
+- `next_configurable_week` — broader fallback: returns `next_selection_week` when one exists, otherwise the soonest non-skipped upcoming week with any selection-related context; used by `selected_meal_count` and `required_meal_count`
+- `next_modifiable_week` — the next delivery week the customer can still modify, resolved from the subscription's `nextModifiableDeliveryWeek` handle via `get_week`; used by the `skip_next_modifiable_week` switch
+- `primary_subscription` — first entry in the subscriptions list; source for plan, servings, address, payment-date, and the delivery/selectable-delivery/cutoff sensors (`next_delivery_date`/`week`, `next_selectable_delivery_date`/`week`, `next_selection_deadline`)
 - `next_skipped_week`
 - `delivery_count_this_week`
 - `boxes_received`

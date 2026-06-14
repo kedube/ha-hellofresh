@@ -57,7 +57,7 @@
         "name": "Weeks needing meal selection"
       },
       "next_selection_deadline": {
-        "name": "Next selection deadline"
+        "name": "Next delivery selection deadline"
       },
       "selected_meal_count": {
         "name": "Selected meal count"
@@ -93,7 +93,7 @@
         "name": "Recent payment date"
       },
       "next_payment_date": {
-        "name": "Next payment date"
+        "name": "Next delivery payment date"
       },
       "upcoming_delivery_count": {
         "name": "Upcoming delivery count"
@@ -135,7 +135,7 @@
         "name": "Account ID"
       },
       "recent_order_id": {
-        "name": "Next order ID"
+        "name": "Next delivery order ID"
       },
       "next_box_coupon": {
         "name": "Next delivery coupon"
@@ -162,9 +162,6 @@
     "binary_sensor": {
       "needs_meal_selection": {
         "name": "Needs meal selection"
-      },
-      "selection_deadline_passed": {
-        "name": "Selection deadline passed"
       },
       "account_menu_api_available": {
         "name": "Account menu API available"
