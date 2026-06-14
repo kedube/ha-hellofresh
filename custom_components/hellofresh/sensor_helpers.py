@@ -57,9 +57,10 @@ def _sub_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
 
 
 VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
-    "next_delivery_date": _next_order_value("delivery_date"),
+    "next_delivery_date": _sub_value("next_delivery"),
     "next_order_status": _next_order_value("status"),
     "next_box_total_price": lambda data: data.next_delivery_total,
+    "account_credit": lambda data: data.account_credit,
     "next_delivery_subscription": _next_order_value("subscription_id"),
     "next_delivery_slot": _next_order_value("slot_label"),
     "upcoming_delivery_count": lambda data: len(data.upcoming_orders),
@@ -67,7 +68,7 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "shipment_tracking_number": _tracked_order_value("tracking_number"),
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
     "weeks_needing_selection": lambda data: len(data.weeks_needing_selection),
-    "next_selection_deadline": _week_value("selection_deadline"),
+    "next_selection_deadline": _sub_value("next_cutoff_date"),
     "selected_meal_count": lambda data: (
         (data.next_configurable_week.meals_selected or 0) if data.next_configurable_week else 0
     ),
@@ -85,16 +86,25 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "delivery_address": _sub_value("delivery_address"),
     "recent_payment_date": _sub_value("recent_payment_date"),
     "next_payment_date": _sub_value("next_payment_date"),
-    # The ISO week identifier of the next configurable delivery week (e.g. "2026-W25"), so
-    # this reads as a distinct "which week" value rather than duplicating next_delivery_date.
-    # Falls back to the ISO week derived from the delivery date when week_id isn't a usable
-    # ISO id.
+    # ISO week identifier of the subscription's next delivery (e.g. "2026-W25"), from the
+    # API's nextDeliveryWeek. Normalized/validated against the next_delivery date as a fallback.
     "next_delivery_week": lambda data: (
         iso_week_label(
-            data.next_configurable_week.week_id,
-            data.next_configurable_week.delivery_date,
+            data.primary_subscription.next_delivery_week,
+            data.primary_subscription.next_delivery,
         )
-        if data.next_configurable_week
+        if data.primary_subscription
+        else None
+    ),
+    # The next delivery the customer can still modify, from the API's
+    # nextModifiableDeliveryDate / nextModifiableDeliveryWeek.
+    "next_selectable_delivery_date": _sub_value("next_modifiable_delivery_date"),
+    "next_selectable_delivery_week": lambda data: (
+        iso_week_label(
+            data.primary_subscription.next_modifiable_delivery_week,
+            data.primary_subscription.next_modifiable_delivery_date,
+        )
+        if data.primary_subscription
         else None
     ),
     "delivery_count_this_week": lambda data: data.delivery_count_this_week,

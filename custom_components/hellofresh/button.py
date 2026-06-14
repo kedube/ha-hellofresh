@@ -29,18 +29,6 @@ BUTTONS: tuple[ButtonEntityDescription, ...] = (
         entity_registry_enabled_default=True,
         icon="mdi:check-bold",
     ),
-    ButtonEntityDescription(
-        key="skip_next_selection_week",
-        translation_key="skip_next_selection_week",
-        entity_registry_enabled_default=True,
-        icon="mdi:calendar-remove-outline",
-    ),
-    ButtonEntityDescription(
-        key="restore_next_skipped_week",
-        translation_key="restore_next_skipped_week",
-        entity_registry_enabled_default=True,
-        icon="mdi:calendar-check-outline",
-    ),
 )
 
 
@@ -84,22 +72,6 @@ class HelloFreshButton(HelloFreshCoordinatorEntity, ButtonEntity):
                         "The next HelloFresh week does not have enough selected recipes to confirm."
                     )
                 await self.coordinator.client.async_select_meals(week.week_id, recipe_ids)
-                await self.coordinator.async_request_refresh()
-                return
-
-            if self.entity_description.key == "skip_next_selection_week":
-                week = self.coordinator.data.next_selection_week
-                if week is None:
-                    raise HomeAssistantError("No HelloFresh week is available to skip.")
-                await self.coordinator.client.async_skip_week(week.week_id)
-                await self.coordinator.async_request_refresh()
-                return
-
-            if self.entity_description.key == "restore_next_skipped_week":
-                week = self.coordinator.data.next_skipped_week
-                if week is None:
-                    raise HomeAssistantError("No skipped HelloFresh week is available to restore.")
-                await self.coordinator.client.async_unskip_week(week.week_id)
                 await self.coordinator.async_request_refresh()
         except HelloFreshError as err:
             # A known integration/write failure: raise a Repairs issue and surface a
