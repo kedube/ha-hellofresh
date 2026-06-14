@@ -9,7 +9,12 @@ from pathlib import Path
 
 
 def _bump_minor(version: str) -> str:
-    """Return the next major.minor version, ignoring any patch segment."""
+    """Return the next major.minor version, ignoring any patch segment.
+
+    The minor segment supports 00-99 and is zero-padded to two digits (e.g. ``0.89``).
+    Bumping ``0.99`` rolls the minor over to ``00`` and increments the major, yielding
+    ``1.00``.
+    """
     parts = version.split(".")
     if len(parts) < 2:
         raise ValueError(
@@ -17,7 +22,12 @@ def _bump_minor(version: str) -> str:
         )
 
     major, minor = (int(part) for part in parts[:2])
-    return f"{major}.{minor + 1}"
+    if minor >= 99:
+        major += 1
+        minor = 0
+    else:
+        minor += 1
+    return f"{major}.{minor:02d}"
 
 
 def main() -> int:

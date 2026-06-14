@@ -68,14 +68,19 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "shipment_tracking_number": _tracked_order_value("tracking_number"),
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
     "weeks_needing_selection": lambda data: len(data.weeks_needing_selection),
-    # Cutoff to modify the next selectable delivery. Primary source is the modifiable
-    # week's selection_deadline (parsed from that week's cutoffDate, the value the web UI
-    # shows as "Edit delivery by ..."); falls back to the subscription's nextCutoffDate for
-    # accounts where the delivery week isn't resolved but the subscription field is populated.
+    # Cutoff (cutoffDate) for the NEXT DELIVERY week (nextDeliveryWeek). Falls back to the
+    # subscription's nextCutoffDate when that week object isn't resolved but the field is set.
     "next_selection_deadline": lambda data: (
-        data.next_modifiable_week.selection_deadline
-        if data.next_modifiable_week and data.next_modifiable_week.selection_deadline is not None
+        data.next_delivery_week_obj.selection_deadline
+        if data.next_delivery_week_obj
+        and data.next_delivery_week_obj.selection_deadline is not None
         else (data.primary_subscription.next_cutoff_date if data.primary_subscription else None)
+    ),
+    # Cutoff (cutoffDate) for the next MODIFIABLE delivery week (nextModifiableDeliveryWeek) —
+    # typically the week after next_delivery_week. This is the "Edit delivery by ..." deadline
+    # the web UI shows for the soonest box the customer can still change.
+    "next_selectable_delivery_selection_deadline": lambda data: (
+        data.next_modifiable_week.selection_deadline if data.next_modifiable_week else None
     ),
     "selected_meal_count": lambda data: (
         (data.next_configurable_week.meals_selected or 0) if data.next_configurable_week else 0

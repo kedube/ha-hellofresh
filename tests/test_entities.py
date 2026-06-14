@@ -400,31 +400,63 @@ def test_selected_meal_count_uses_next_upcoming_week_when_selection_complete() -
     assert HelloFreshSensor(coordinator, description).native_value == 3
 
 
-def test_next_selection_deadline_uses_modifiable_week_cutoff() -> None:
-    """The deadline comes from the modifiable week's cutoff (the UI's 'Edit delivery by').
+def test_delivery_deadlines_track_their_respective_weeks() -> None:
+    """Two deadline sensors target two different weeks by their per-week cutoffDate.
 
-    The modifiable week's selection_deadline (its cutoffDate) wins over the subscription's
-    nextCutoffDate when the week is resolved. Mirrors the live HAR: W26 cutoff = Jun 18.
+    next_selection_deadline -> next delivery week (nextDeliveryWeek) cutoff.
+    next_selectable_delivery_selection_deadline -> modifiable week (the week after) cutoff.
+    Mirrors the live HAR: W25 ships next, W26 is the editable one (cutoff = Jun 18).
     """
-    week_cutoff = datetime(2026, 6, 18, 23, 59, 59)
+    delivery_cutoff = datetime(2026, 6, 11, 23, 59, 59)
+    modifiable_cutoff = datetime(2026, 6, 18, 23, 59, 59)
     data = HelloFreshAccountData(
         weeks=[
             HelloFreshWeek(
+                week_id="2026-W25",
+                display_name="Week 25",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 16),
+                selection_deadline=delivery_cutoff,
+            ),
+            HelloFreshWeek(
                 week_id="2026-W26",
-                display_name="Classic Box",
+                display_name="Week 26",
                 subscription_id="sub-1",
                 delivery_date=date(2026, 6, 23),
-                selection_deadline=week_cutoff,
-                meals_required=3,
-                meals_selected=3,
-            )
+                selection_deadline=modifiable_cutoff,
+            ),
         ],
         subscriptions=[
             HelloFreshSubscription(
                 subscription_id="sub-1",
+                next_delivery_week="2026-W25",
                 next_modifiable_delivery_week="2026-W26",
-                # A stale/absent subscription cutoff must not win over the resolved week.
-                next_cutoff_date=datetime(2026, 1, 1, 0, 0),
+            ),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+
+    def _value(key: str):
+        desc = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
+        return HelloFreshSensor(coordinator, desc).native_value
+
+    assert _value("next_selection_deadline") == delivery_cutoff
+    assert _value("next_selectable_delivery_selection_deadline") == modifiable_cutoff
+
+
+def test_next_selection_deadline_falls_back_to_subscription_cutoff() -> None:
+    """When the next delivery week isn't resolved, the deadline uses nextCutoffDate."""
+    fallback = datetime(2026, 6, 11, 23, 59, 59)
+    data = HelloFreshAccountData(
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                next_delivery_week="2026-W25",  # no matching week object exists
+                next_cutoff_date=fallback,
             ),
         ],
     ).finalize()
@@ -436,9 +468,8 @@ def test_next_selection_deadline_uses_modifiable_week_cutoff() -> None:
     description = next(
         item for item in SENSOR_DESCRIPTIONS if item.key == "next_selection_deadline"
     )
-    sensor = HelloFreshSensor(coordinator, description)
 
-    assert sensor.native_value == week_cutoff
+    assert HelloFreshSensor(coordinator, description).native_value == fallback
 
 
 def test_configurable_week_falls_back_to_fully_selected_upcoming_week() -> None:

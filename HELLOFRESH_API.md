@@ -842,7 +842,8 @@ Delivery/selection sensors backed by the **primary subscription's** API fields:
 | `next_delivery_week` | Next delivery week | `iso_week_label(subscription.next_delivery_week, …next_delivery)` (`nextDeliveryWeek`) | **ISO week identifier** (e.g. `2026-W25`) of the next delivery, normalized/validated against `next_delivery` as a fallback — a week label, deliberately distinct from `next_delivery_date` |
 | `next_selectable_delivery_date` | Next selectable delivery date | `subscription.next_modifiable_delivery_date` (`nextModifiableDeliveryDate`) | The next delivery the customer can still modify |
 | `next_selectable_delivery_week` | Next selectable delivery week | `iso_week_label(subscription.next_modifiable_delivery_week, …next_modifiable_delivery_date)` (`nextModifiableDeliveryWeek`) | ISO week identifier of the next modifiable delivery |
-| `next_selection_deadline` | Next delivery selection deadline | `next_modifiable_week.selection_deadline` (the week's `cutoffDate`), falling back to `subscription.next_cutoff_date` (`nextCutoffDate`) | Deadline to modify the next selectable delivery — the value the web UI shows as "Edit delivery by …". The per-week `cutoffDate` (from `/gw/api/subscriptions/{id}/delivery_dates/{week}`) is authoritative; `nextCutoffDate` is a fallback for accounts that populate it but where the week isn't resolved |
+| `next_selection_deadline` | Next delivery selection deadline | `next_delivery_week_obj.selection_deadline` (the **next delivery** week's `cutoffDate`), falling back to `subscription.next_cutoff_date` (`nextCutoffDate`) | Cutoff for the next delivery week (`nextDeliveryWeek`). The per-week `cutoffDate` (from `/gw/api/subscriptions/{id}/delivery_dates/{week}`) is authoritative; `nextCutoffDate` is a fallback for accounts that populate it but where the week isn't resolved |
+| `next_selectable_delivery_selection_deadline` | Next selectable delivery selection deadline | `next_modifiable_week.selection_deadline` (the **modifiable** week's `cutoffDate`) | Cutoff for the next *modifiable* delivery week (`nextModifiableDeliveryWeek`, typically the week after) — the "Edit delivery by …" deadline the web UI shows for the soonest box the customer can still change |
 
 Sensors backed by the next configurable week:
 
@@ -851,13 +852,13 @@ Sensors backed by the next configurable week:
 | `selected_meal_count` | `HelloFreshAccountData.next_configurable_week.meals_selected` | Meals chosen so far for the next upcoming week |
 | `required_meal_count` | `HelloFreshAccountData.next_configurable_week.meals_required` | Meals required for the next upcoming week, falls back to subscription default |
 
-The `next_selection_deadline` sensor still carries per-week context in its attributes (the `next_selection_week` summary and the `weeks` list the example dashboard reads), even though its **state** now comes from the modifiable week's `cutoffDate` (with `nextCutoffDate` as a fallback).
+The `next_selection_deadline` sensor still carries per-week context in its attributes (the `next_selection_week` summary and the `weeks` list the example dashboard reads), even though its **state** comes from the next delivery week's `cutoffDate` (with `nextCutoffDate` as a fallback). The separate `next_selectable_delivery_selection_deadline` sensor tracks the later *modifiable* week's `cutoffDate`.
 
 Current UI-facing labels that differ from the raw entity ids:
 
 - `sensor.required_meal_count` is shown as `Number of meals`
 - `sensor.public_menu_recipe_count` is shown as `Available menu recipe count`
-- `sensor.next_delivery_subscription` is shown as `Delivery subscription ID`
+- `sensor.next_delivery_subscription` is shown as `Account delivery subscription ID`
 
 Entity behavior notes:
 

@@ -184,6 +184,12 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:calendar-week-begin-outline",
     ),
     SensorEntityDescription(
+        key="next_selectable_delivery_selection_deadline",
+        translation_key="next_selectable_delivery_selection_deadline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:clock-edit-outline",
+    ),
+    SensorEntityDescription(
         key="api_base_url",
         translation_key="api_base_url",
         entity_category=EntityCategory.DIAGNOSTIC,
