@@ -45,13 +45,13 @@
         "name": "Next delivery date"
       },
       "next_order_status": {
-        "name": "Next order status"
+        "name": "Tracked shipment status"
       },
       "shipment_tracking_status": {
-        "name": "Shipment tracking status"
+        "name": "Next delivery status"
       },
       "shipment_tracking_number": {
-        "name": "Shipment tracking number"
+        "name": "Tracked shipment number"
       },
       "weeks_needing_selection": {
         "name": "Weeks needing meal selection"
@@ -141,7 +141,7 @@
         "name": "Next box coupon"
       },
       "next_delivery_tracking_url": {
-        "name": "Next delivery tracking URL"
+        "name": "Tracked shipment URL"
       },
       "next_holiday_delivery_date": {
         "name": "Holiday delivery date"
