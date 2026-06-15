@@ -300,8 +300,38 @@ def test_static_sensor_icons_match_entity_purpose() -> None:
 
 def test_status_entities_use_state_aware_icons() -> None:
     """Status sensors should expose icons that reflect delivery progress."""
-    assert _sensor_for("next_order_status").icon == "mdi:package-variant-closed"
+    # The fixture's next order is "scheduled" -> being prepared (plus icon).
+    assert _sensor_for("next_order_status").icon == "mdi:package-variant-closed-plus"
     assert _sensor_for("shipment_tracking_status").icon == "mdi:truck-delivery-outline"
+
+
+def test_next_order_status_icons_cover_box_lifecycle_states() -> None:
+    """Each box-lifecycle state maps to a meaningful icon."""
+    from datetime import date as _date
+
+    from custom_components.hellofresh.sensor_helpers import sensor_icon
+
+    cases = {
+        "PREPARING": "mdi:package-variant-closed-plus",
+        "RUNNING": "mdi:package-variant-closed-plus",
+        "ON_THE_WAY": "mdi:truck-delivery-outline",
+        "out_for_delivery": "mdi:truck-delivery-outline",
+        "DELIVERED": "mdi:package-variant-closed-check",
+        "PAUSED": "mdi:package-variant-closed-remove",
+    }
+    for state, expected_icon in cases.items():
+        data = HelloFreshAccountData(
+            orders=[
+                HelloFreshOrder(
+                    order_id="o",
+                    week_id="w",
+                    status=state,
+                    subscription_id="sub-1",
+                    delivery_date=_date.today(),
+                )
+            ]
+        ).finalize()
+        assert sensor_icon("next_order_status", data, None) == expected_icon
 
 
 def test_new_sensor_entities_include_context_attributes() -> None:

@@ -39,6 +39,21 @@ _COUNTRY_CURRENCIES = {
 class HelloFreshPayloadNormalizer:
     """Mixin for pure-ish HelloFresh payload normalization methods."""
 
+    @staticmethod
+    def _effective_week_status(raw_week: dict[str, Any]) -> str:
+        """Return the week's status, preferring the live ``state`` lifecycle field.
+
+        HelloFresh's top-level ``status`` can be stale: a box still being prepared was
+        observed with ``status="DELIVERED"`` while ``state="PREPARING"``. The ``state``
+        field tracks the actual lifecycle (e.g. ``PREPARING``/``RUNNING``/``DELIVERED``),
+        so when it says the box has *not* been delivered it takes precedence; otherwise
+        fall back to ``status``/``deliveryStatus``.
+        """
+        state = raw_week.get("state")
+        if isinstance(state, str) and state.strip() and state.strip().upper() != "DELIVERED":
+            return state
+        return raw_week.get("status") or raw_week.get("deliveryStatus") or state or "scheduled"
+
     def _normalize_weeks_payload(
         self,
         payload: dict[str, Any],
@@ -123,7 +138,7 @@ class HelloFreshPayloadNormalizer:
                     or raw_week.get("cutoffDate")
                     or raw_week.get("deadline")
                 ),
-                status=raw_week.get("status") or raw_week.get("deliveryStatus") or "scheduled",
+                status=self._effective_week_status(raw_week),
                 meals_required=meals_required,
                 meals_selected=meals_selected,
                 is_skipped=bool(

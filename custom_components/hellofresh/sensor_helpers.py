@@ -206,9 +206,16 @@ def sensor_icon(key: str, data: HelloFreshAccountData, default_icon: str | None)
         status = next_order.status.casefold()
         if status in {"delivered", "complete", "completed"}:
             return "mdi:package-variant-closed-check"
-        if status in {"in_transit", "out_for_delivery", "shipped"}:
+        # In-transit states. HelloFresh box lifecycle uses `on_the_way`; carrier-level
+        # tracking adds in_transit/out_for_delivery/shipped. (A distinct "out for
+        # delivery" box state may appear on delivery day — capture pending; it will
+        # match here once its raw value is confirmed.)
+        if status in {"on_the_way", "in_transit", "out_for_delivery", "shipped"}:
             return "mdi:truck-delivery-outline"
-        if status in {"cancelled", "canceled", "skipped"}:
+        # Box is being assembled / scheduled but not yet shipped.
+        if status in {"preparing", "running", "scheduled", "pending"}:
+            return "mdi:package-variant-closed-plus"
+        if status in {"cancelled", "canceled", "skipped", "paused"}:
             return "mdi:package-variant-closed-remove"
         return "mdi:package-variant-closed"
 
