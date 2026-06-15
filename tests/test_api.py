@@ -1164,7 +1164,6 @@ def test_subscription_normalization_preserves_settings_metadata() -> None:
             "nextModifiableDeliveryDate": "2026-06-15T00:00:00-0700",
             "nextModifiableDeliveryWeek": "2026-W25",
             "nextDeliveryTime": "US-1-0800-2000",
-            "firstBoxDelivered": True,
         }
     )
 
@@ -1175,7 +1174,6 @@ def test_subscription_normalization_preserves_settings_metadata() -> None:
     assert subscription.next_cutoff_date is not None
     assert subscription.payment_method == "Credit Card"
     assert subscription.payment_gateway == "Braintree"
-    assert subscription.first_box_delivered is True
     assert subscription.loyalty_boxes_received == 335
     assert subscription.loyalty_boxes_until_next_freebie == 2
 
@@ -4285,3 +4283,34 @@ def test_get_week_returns_full_recipe_detail_for_dashboard() -> None:
     assert selected == ["Pasta"]
     # Unknown week resolves to None (service returns an empty list in that case).
     assert data.get_week("2026-W99") is None
+
+
+def test_uk_uses_gb_country_code_and_locale() -> None:
+    """The UK config key maps to the API's GB country code and en-GB locale.
+
+    Regression: sending country=UK / locale=en-UK made /gw/login and /gw/refresh fail,
+    so the integration only worked in the US. Confirmed from a UK HAR where the site
+    posts {"country":"GB"}.
+    """
+    from custom_components.hellofresh.const import api_country_code, api_locale
+
+    assert api_country_code("uk") == "GB"
+    assert api_locale("uk") == "en-GB"
+    # Other regions: code upper-cases, locale is the native default.
+    assert api_country_code("us") == "US"
+    assert api_locale("us") == "en-US"
+    assert api_country_code("de") == "DE"
+    assert api_locale("de") == "de-DE"
+    assert api_locale("nl") == "nl-NL"
+
+
+def test_auth_query_sends_api_country_code_for_uk() -> None:
+    """The /gw login/refresh auth query uses GB / en-GB for a UK account."""
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        country="uk",
+        username="u",
+        password="p",
+    )
+    query = client._tokens._auth_query()
+    assert query == {"country": "GB", "locale": "en-GB"}

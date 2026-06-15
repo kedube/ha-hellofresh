@@ -64,3 +64,34 @@ COUNTRY_BASE_URLS: dict[str, str] = {
     "de": "https://www.hellofresh.de",
     "nl": "https://www.hellofresh.nl",
 }
+
+# The config-flow key is not always the ISO 3166 country code HelloFresh's API expects.
+# Notably the UK site selects `uk` but the API uses `GB` (confirmed from a HAR:
+# `/gw/auth/email/status` posts `{"country":"GB"}`). Sending the wrong code (e.g. `UK`)
+# makes /gw/login and /gw/refresh fail, which is why the integration didn't work outside
+# the US. Map each config key to the API country code; unlisted keys upper-case as-is.
+COUNTRY_API_CODES: dict[str, str] = {
+    "uk": "GB",
+}
+
+# Default API locale per config key. The frontends use the native locale (e.g. `de-DE`).
+# A subscription's own `locale` from the account payload overrides this once loaded; this
+# is only the value used for the initial pre-subscription calls (including login/refresh).
+COUNTRY_API_LOCALES: dict[str, str] = {
+    "us": "en-US",
+    "ca": "en-CA",
+    "uk": "en-GB",
+    "au": "en-AU",
+    "de": "de-DE",
+    "nl": "nl-NL",
+}
+
+
+def api_country_code(country: str) -> str:
+    """Return the ISO country code HelloFresh's API expects for a config-flow key."""
+    return COUNTRY_API_CODES.get(country, country.upper())
+
+
+def api_locale(country: str) -> str:
+    """Return the default API locale for a config-flow key."""
+    return COUNTRY_API_LOCALES.get(country, f"en-{api_country_code(country)}")

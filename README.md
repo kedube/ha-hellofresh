@@ -164,7 +164,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | Skipped week count | `sensor.skipped_week_count` | Number of upcoming weeks marked as skipped. |
 | Next skipped week | `sensor.next_skipped_week` | Display name of the nearest upcoming skipped week (e.g. `2026-W24`); `None` when none are skipped. |
 
-**Diagnostic** (shown under the device's *Diagnostic* section; some disabled by default)
+**Diagnostic** (shown under the device's *Diagnostic* section)
 
 | Name | Entity | Description |
 | --- | --- | --- |

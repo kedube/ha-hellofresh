@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import ClientError, ClientResponse, ClientSession
 from bs4 import BeautifulSoup
 
-from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY
+from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY, api_country_code, api_locale
 from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
@@ -646,7 +646,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             return False
 
         path = f"/gw/api/subscriptions/{week.subscription_id}/delivery_dates/{week.week_id}"
-        params = {"country": self._country.upper(), "locale": self._locale_for_country()}
+        params = {"country": api_country_code(self._country), "locale": self._locale_for_country()}
         json_payload = {
             "delivery": {
                 "cutoffDate": cutoff_date,
@@ -667,7 +667,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         for subscription in self._cached_subscriptions or []:
             if subscription.locale:
                 return subscription.locale
-        return f"en-{self._country.upper()}"
+        return api_locale(self._country)
 
     async def async_change_one_off_delivery(self, week_id: str, delivery_option: str) -> None:
         """Reschedule a single week's delivery to a different delivery option (slot/day).
@@ -690,7 +690,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             )
 
         path = f"/gw/api/subscriptions/{week.subscription_id}/oneoff"
-        params = {"country": self._country.upper(), "locale": self._locale_for_country()}
+        params = {"country": api_country_code(self._country), "locale": self._locale_for_country()}
         json_payload = {
             "id": week.subscription_id,
             "delivery_option": delivery_option.strip(),
@@ -726,7 +726,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             )
 
         path = f"/gw/api/plans/{plan_id}/changePlanDeliveryDetails"
-        params = {"country": self._country.upper()}
+        params = {"country": api_country_code(self._country)}
         json_payload = {
             "deliveryOption": delivery_option.strip(),
             "deliveryInterval": delivery_interval,
@@ -792,7 +792,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         locale = next(
             (s.locale for s in (self._cached_subscriptions or []) if s.locale),
-            "en-US",
+            api_locale(self._country),
         )
         candidate_paths = (
             "/gw/api/customers/me/info",
@@ -803,7 +803,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         for path in candidate_paths:
             try:
                 params = (
-                    {"country": self._country.upper(), "locale": locale}
+                    {"country": api_country_code(self._country), "locale": locale}
                     if path == "/gw/api/customers/me/info"
                     else None
                 )
@@ -1031,8 +1031,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             response = await self._async_api_get(
                 "/gw/api/customers/me/orders",
                 params={
-                    "country": self._country.lower(),
-                    "locale": subscriptions[0].locale or "en-US",
+                    "country": api_country_code(self._country).lower(),
+                    "locale": subscriptions[0].locale or api_locale(self._country),
                     "limit": 200,
                 },
             )
@@ -1186,8 +1186,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         path = f"/gw/payments/customers/{customer_uuid}/balance"
         params = {
-            "business_unit": self._country.upper(),
-            "country": self._country.upper(),
+            "business_unit": api_country_code(self._country),
+            "country": api_country_code(self._country),
         }
         try:
             response = await self._async_api_get(path, params=params)
@@ -1515,13 +1515,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         locale = next(
             (s.locale for s in subscriptions if s.locale),
-            f"en-{self._country.upper()}",
+            api_locale(self._country),
         )
         week_ids = sorted(
             {week.week_id for week in (account_weeks or []) if week.week_id}
         )
         params: dict[str, Any] = {
-            "country": self._country.upper(),
+            "country": api_country_code(self._country),
             "locale": locale,
             "exclude": "",
         }
@@ -1693,7 +1693,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
         params = {
-            "country": self._country.upper(),
+            "country": api_country_code(self._country),
             "locale": locale,
         }
 
@@ -1881,7 +1881,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "planID": plan_id,
             "couponCode": None,
             "locale": locale,
-            "country": self._country.upper(),
+            "country": api_country_code(self._country),
         }
 
     async def _async_get_cart_price_for_week(
@@ -2062,7 +2062,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "products": products,
             "shippingAddress": shipping_address,
             "locale": locale,
-            "country": self._country.upper(),
+            "country": api_country_code(self._country),
         }
 
     def _extract_shipping_address_payload(self, node: Any) -> dict[str, Any] | None:
@@ -2274,7 +2274,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 for subscription in subscriptions
                 if isinstance(subscription.locale, str) and subscription.locale.strip()
             ),
-            "en-US",
+            api_locale(self._country),
         )
 
         for order in orders:
@@ -2286,7 +2286,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         for public_id, matched_orders in orders_by_public_id.items():
             path = f"/gw/scm/tracking-ids/track/public-id/{public_id}"
             params = {
-                "country": self._country.upper(),
+                "country": api_country_code(self._country),
                 "locale": locale,
             }
             try:
