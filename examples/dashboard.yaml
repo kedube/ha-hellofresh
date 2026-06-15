@@ -335,9 +335,9 @@ views:
         hours_to_show: 2160 # ~90 days
         entities:
           - entity: sensor.hellofresh_us_next_order_status
-            name: Tracked shipment status
-          - entity: sensor.hellofresh_us_shipment_tracking_status
             name: Next delivery status
+          - entity: sensor.hellofresh_us_shipment_tracking_status
+            name: Tracked shipment status
 
   # ── Account & billing ───────────────────────────────────────────────────────
   - title: Account

@@ -150,8 +150,8 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Next delivery status | `sensor.shipment_tracking_status` | Tracking status of the best-tracked order (in transit, delivered, exception). The icon reflects the state; `None` when no tracked shipment exists. |
-| Tracked shipment status | `sensor.next_order_status` | Status of the next upcoming order (e.g. `pending`, `shipped`, `delivered`). The icon reflects the current state. |
+| Tracked shipment status | `sensor.shipment_tracking_status` | Carrier tracking status of the best-tracked shipment (in transit, out for delivery, delivered, exception), from the SCM tracking feed. The icon reflects the state; `None` when no tracked shipment exists. |
+| Next delivery status | `sensor.next_order_status` | Box lifecycle status of the next delivery (e.g. `preparing`, `running`, `on_the_way`, `delivered`). The icon reflects the current state. |
 | Tracked shipment number | `sensor.shipment_tracking_number` | Parcel/tracking number for the tracked shipment; shares attributes with the tracking-status sensor. |
 | Tracked shipment carrier | `sensor.tracked_shipment_carrier` | Carrier for the tracked shipment (e.g. `UPS`, `FedEx`, `DoorDash`); `None` when no tracking data is present. |
 | Tracked shipment URL | `sensor.next_delivery_tracking_url` | Direct carrier tracking link for the best-tracked order; `None` when no link is available. |
@@ -196,7 +196,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes, and authenticated history endpoints feed recent delivered-week context into the delivery-history sensors' attributes. Full per-week recipe lists are intentionally **not** included in attributes (to stay under the recorder's size limit — see [Recorder attribute sizes](#recorder-attribute-sizes)); they remain available in the diagnostics export.
 
-Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Tracked shipment status**, `sensor.shipment_tracking_status` as **Next delivery status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
+Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Next delivery status**, `sensor.shipment_tracking_status` as **Tracked shipment status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
 
 ### Voice and Assist
 
