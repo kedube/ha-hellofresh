@@ -45,10 +45,10 @@
         "name": "Next delivery date"
       },
       "next_order_status": {
-        "name": "Tracked shipment status"
+        "name": "Next delivery status"
       },
       "shipment_tracking_status": {
-        "name": "Next delivery status"
+        "name": "Tracked shipment status"
       },
       "shipment_tracking_number": {
         "name": "Tracked shipment number"
