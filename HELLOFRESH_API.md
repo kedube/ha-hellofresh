@@ -61,10 +61,28 @@ The `<token_type>` from the auth object is used in place of `Bearer` when the se
 All `/gw` auth endpoints take the same regional query string (built by `_auth_query`):
 
 ```text
-?country=<CC>&locale=en-<CC>
+?country=<CC>&locale=<locale>
 ```
 
-where `<CC>` is the uppercased country code (e.g. `country=US&locale=en-US`).
+where `<CC>` is the **API country code** and `<locale>` the **API locale** for the
+configured region — *not* simply the uppercased config-flow key. The config key is the
+base-URL selector and is not always the ISO 3166 code the API wants. The mapping
+(`api_country_code` / `api_locale` in `const.py`):
+
+| Config key | Country code | Locale |
+| --- | --- | --- |
+| `us` | `US` | `en-US` |
+| `ca` | `CA` | `en-CA` |
+| `uk` | **`GB`** | **`en-GB`** |
+| `au` | `AU` | `en-AU` |
+| `de` | `DE` | `de-DE` |
+| `nl` | `NL` | `nl-NL` |
+
+The `uk → GB` mapping is essential: sending `country=UK` makes `/gw/login` and
+`/gw/refresh` fail, which is why the integration previously only worked in the US.
+Confirmed from a UK HAR where the site posts `{"country":"GB"}` to `/gw/auth/email/status`.
+A subscription's own `locale` from the account payload overrides the default locale once
+loaded.
 
 All three auth POSTs (`_auth_headers`) present **browser-like headers** — a current Chrome `User-Agent`, `Accept-Language`, and `Origin`/`Referer` derived from the regional base URL. HelloFresh fronts its endpoints with bot protection that fingerprints non-browser clients; a recognizable headless `User-Agent` is challenged with an HTML block page instead of a JSON API response. The browser UA is a best-effort way past that layer and can break whenever the protection is retuned.
 
@@ -614,7 +632,6 @@ This is HTML, not JSON. Recipe names and visible menu labels are extracted from 
 | `shipping_method` | `shippingMethod`, `deliveryType` |
 | `status` | `status` |
 | `next_cutoff_date` | `nextCutoffDate` |
-| `first_box_delivered` | `firstBoxDelivered`, `isFirstBoxDelivered`, nested profile fields |
 | `loyalty_boxes_received` | `loyaltyBoxesReceived`, `totalBoxesReceived`, nested profile fields |
 | `loyalty_boxes_until_next_freebie` | `loyaltyBoxesUntilNextFreebie`, `boxesUntilNextFreebie`, nested profile fields |
 | `recent_payment_date` | populated from order history (`createdAt` of the most recent order already charged, i.e. `createdAt <= today`) |

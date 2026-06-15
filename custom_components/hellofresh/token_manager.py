@@ -17,7 +17,13 @@ from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
 
-from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY, GW_CLIENT_ID
+from .const import (
+    COUNTRY_BASE_URLS,
+    DEFAULT_COUNTRY,
+    GW_CLIENT_ID,
+    api_country_code,
+    api_locale,
+)
 from .models import HelloFreshAuthError, HelloFreshError
 from .parsers import coerce_int, decode_jwt_claims
 
@@ -296,7 +302,7 @@ class TokenManager:
 
     def _auth_query(self) -> dict[str, str]:
         """Return the ``country``/``locale`` query the /gw auth endpoints expect."""
-        return {"country": self._country.upper(), "locale": f"en-{self._country.upper()}"}
+        return {"country": api_country_code(self._country), "locale": api_locale(self._country)}
 
     def _auth_headers(self) -> dict[str, str]:
         """Return browser-like headers for the /gw auth POSTs.
