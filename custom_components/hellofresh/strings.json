@@ -169,26 +169,14 @@
       "needs_meal_selection": {
         "name": "Needs meal selection"
       },
-      "account_menu_api_available": {
-        "name": "Account menu API available"
-      },
       "write_actions_available": {
         "name": "Write actions available"
-      },
-      "reschedule_available": {
-        "name": "Reschedule available"
-      },
-      "delivery_weekday_change_available": {
-        "name": "Delivery weekday change available"
       },
       "tracked_shipment_available": {
         "name": "Tracked shipment available"
       },
       "payload_shape_changed": {
         "name": "Payload shape changed"
-      },
-      "first_box_delivered": {
-        "name": "First box delivered"
       }
     },
     "button": {

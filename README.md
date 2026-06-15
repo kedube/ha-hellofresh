@@ -171,20 +171,16 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | Account delivery subscription ID | `sensor.next_delivery_subscription` | Internal HelloFresh subscription ID for the next order. Diagnostic. |
 | Access token time remaining | `sensor.access_token_minutes_remaining` | Whole minutes until the current access token expires (unit `min`). Access tokens are short-lived (~30 min) and auto-refreshed. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
 | Refresh token time remaining | `sensor.refresh_token_days_remaining` | Whole days until the refresh token expires (unit `d`). When the refresh token expires the integration logs in again with your stored credentials; if that login fails you are prompted to reauthenticate. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
-| API base URL | `sensor.api_base_url` | Regional API base URL the integration is using. Diagnostic; **disabled by default**. |
+| API base URL | `sensor.api_base_url` | Regional API base URL the integration is using. Diagnostic. |
 
 #### Binary sensors
 
 | Entity | Notes |
 | --- | --- |
 | `binary_sensor.needs_meal_selection` | `True` when at least one upcoming delivery week still requires meal selection; the primary signal for reminder automations |
-| `binary_sensor.account_menu_api_available` | `True` when the integration has successfully loaded structured menu data from authenticated API responses; diagnostic entity, disabled by default; the Repairs issue is the primary signal when fallback is active |
-| `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.); diagnostic entity, disabled by default |
-| `binary_sensor.reschedule_available` | `True` when the account allows a one-off delivery change for an upcoming week (gates the `reschedule_week` service); diagnostic entity, disabled by default |
-| `binary_sensor.delivery_weekday_change_available` | `True` when the account allows changing the recurring delivery weekday/interval (gates the `change_delivery_weekday` service); diagnostic entity, disabled by default |
+| `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.); diagnostic entity |
 | `binary_sensor.tracked_shipment_available` | `True` when the most-recent order has active shipment tracking data (carrier, tracking number, or tracking URL) |
-| `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised |
-| `binary_sensor.first_box_delivered` | `True` once the account has received at least one box; becomes permanently `True` after the first delivery; diagnostic entity, disabled by default |
+| `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised; diagnostic entity |
 
 #### Other
 

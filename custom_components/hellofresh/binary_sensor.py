@@ -23,28 +23,9 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
         translation_key="needs_meal_selection",
     ),
     BinarySensorEntityDescription(
-        key="account_menu_api_available",
-        translation_key="account_menu_api_available",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    BinarySensorEntityDescription(
         key="write_actions_available",
         translation_key="write_actions_available",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    BinarySensorEntityDescription(
-        key="reschedule_available",
-        translation_key="reschedule_available",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    BinarySensorEntityDescription(
-        key="delivery_weekday_change_available",
-        translation_key="delivery_weekday_change_available",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
     ),
     BinarySensorEntityDescription(
         key="tracked_shipment_available",
@@ -54,13 +35,6 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
         key="payload_shape_changed",
         translation_key="payload_shape_changed",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_registry_enabled_default=False,
-    ),
-    BinarySensorEntityDescription(
-        key="first_box_delivered",
-        translation_key="first_box_delivered",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
     ),
 )
 
@@ -94,21 +68,12 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return the state."""
-        if self.entity_description.key == "account_menu_api_available":
-            return self.coordinator.data.capabilities.supports_account_menu_api
         if self.entity_description.key == "write_actions_available":
             return self.coordinator.data.capabilities.supports_write_actions
-        if self.entity_description.key == "reschedule_available":
-            return self.coordinator.data.capabilities.supports_one_off_change
-        if self.entity_description.key == "delivery_weekday_change_available":
-            return self.coordinator.data.capabilities.supports_update_delivery_weekday
         if self.entity_description.key == "tracked_shipment_available":
             return self.coordinator.data.tracked_order is not None
         if self.entity_description.key == "payload_shape_changed":
             return self.coordinator.data.capabilities.payload_shape_changed
-        if self.entity_description.key == "first_box_delivered":
-            primary = self.coordinator.data.primary_subscription
-            return bool(primary.first_box_delivered) if primary else False
         return bool(self.coordinator.data.weeks_needing_selection)
 
     @property
@@ -118,14 +83,8 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
 
         if self.entity_description.key == "needs_meal_selection":
             return "mdi:silverware-fork-knife" if is_on else "mdi:silverware-clean"
-        if self.entity_description.key == "account_menu_api_available":
-            return "mdi:api" if is_on else "mdi:api-off"
         if self.entity_description.key == "write_actions_available":
             return "mdi:pencil-box-outline" if is_on else "mdi:pencil-off-outline"
-        if self.entity_description.key == "reschedule_available":
-            return "mdi:calendar-edit" if is_on else "mdi:calendar-remove-outline"
-        if self.entity_description.key == "delivery_weekday_change_available":
-            return "mdi:calendar-sync" if is_on else "mdi:calendar-remove-outline"
         if self.entity_description.key == "tracked_shipment_available":
             return (
                 "mdi:package-variant-closed-check"
@@ -134,8 +93,6 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
             )
         if self.entity_description.key == "payload_shape_changed":
             return "mdi:alert-octagon" if is_on else "mdi:check-circle-outline"
-        if self.entity_description.key == "first_box_delivered":
-            return "mdi:package-variant-closed-check" if is_on else "mdi:package-variant-closed"
         return None
 
     @property
