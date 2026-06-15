@@ -830,12 +830,6 @@ Sensors backed by subscription data (primary subscription):
 | `recent_payment_date` | `HelloFreshSubscription.recent_payment_date` | Date of most recent charge |
 | `next_payment_date` | `HelloFreshSubscription.next_payment_date` | Estimated date of next charge |
 
-Binary sensor backed by subscription data:
-
-| Binary sensor key | Backing data | Notes |
-| --- | --- | --- |
-| `first_box_delivered` | `HelloFreshSubscription.first_box_delivered` | Diagnostic, disabled by default; True once the first box has been delivered |
-
 Recent delivered-history records are also included in sensor attributes through `serialized_past_delivery_weeks`, while upcoming-delivery, selection, and shipment entities continue to use the active account week/order models.
 
 Delivery/selection sensors backed by the **primary subscription's** API fields:
@@ -871,8 +865,7 @@ Entity behavior notes:
 - `sensor.required_meal_count` uses the next pending week's `meals_required` value and falls back to the subscription plan meal count when the delivery payload is sparse
 - `sensor.next_payment_date` is the delivery date of the soonest upcoming order, not the order creation date; it falls back to `next_cutoff_date + 1s` if no upcoming order is found
 - `sensor.selected_plan` is sourced from normalized subscription plan/display fields
-- `binary_sensor.first_box_delivered` is a diagnostic entity disabled by default; it becomes permanently `True` once the first box is delivered and is not useful for recurring automations
-- `binary_sensor.account_menu_api_available` is a diagnostic entity disabled by default; when `using_public_menu_fallback` is `True` the coordinator raises a Repairs issue, which is the primary user-facing signal for menu fallback state
+- when `using_public_menu_fallback` is `True` the coordinator raises a Repairs issue, which is the primary user-facing signal for menu fallback state
 
 ## Public Menu Scraping
 

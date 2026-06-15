@@ -358,10 +358,7 @@ def test_new_sensor_entities_include_context_attributes() -> None:
 
 def test_new_binary_sensors_reflect_api_capabilities() -> None:
     """Additional binary sensors should mirror capability and tracking state."""
-    assert _binary_sensor_for("account_menu_api_available").is_on is True
     assert _binary_sensor_for("write_actions_available").is_on is True
-    assert _binary_sensor_for("reschedule_available").is_on is True
-    assert _binary_sensor_for("delivery_weekday_change_available").is_on is True
     assert _binary_sensor_for("tracked_shipment_available").is_on is True
     assert _binary_sensor_for("payload_shape_changed").is_on is True
 

@@ -384,12 +384,8 @@ views:
             name: Skip next selectable delivery week
 
   # ── Diagnostics ─────────────────────────────────────────────────────────────
-  # Health/credential entities — useful for troubleshooting, not daily use.
-  # Several of these are DISABLED by default in the entity registry
-  # (account_menu_api_available, write_actions_available, reschedule_available,
-  # delivery_weekday_change_available, first_box_delivered, payload_shape_changed,
-  # api_base_url). They'll read "unavailable" here until you enable them under
-  # Settings → Devices & Services → HelloFresh → entities.
+  # Health/credential entities — useful for troubleshooting, not daily use. All enabled
+  # by default.
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
@@ -403,64 +399,21 @@ views:
           - entity: sensor.hellofresh_us_refresh_token_days_remaining
             name: Refresh token expires in
 
-      # Always-available integration-health entities (enabled by default).
       - type: entities
         title: Integration health
         show_header_toggle: false
         state_color: true
         entities:
+          - entity: binary_sensor.hellofresh_us_write_actions_available
+            name: Write actions available
+          - entity: binary_sensor.hellofresh_us_payload_shape_changed
+            name: Payload shape changed
           - entity: binary_sensor.hellofresh_us_tracked_shipment_available
             name: Tracked shipment
           - entity: sensor.hellofresh_us_account_id
             name: Account ID
-
-      # Diagnostic entities that are DISABLED by default. This card stays hidden until
-      # you enable at least one of them under Settings → Devices & Services → HelloFresh
-      # → entities, so a fresh dashboard paste doesn't show a wall of "not found" rows.
-      # `visibility` uses OR logic, so the card appears as soon as any one is enabled.
-      - type: entities
-        title: Integration health (advanced — enable to use)
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: binary_sensor.hellofresh_us_account_menu_api_available
-            name: Account menu API
-          - entity: binary_sensor.hellofresh_us_write_actions_available
-            name: Write actions
-          - entity: binary_sensor.hellofresh_us_reschedule_available
-            name: Reschedule available
-          - entity: binary_sensor.hellofresh_us_delivery_weekday_change_available
-            name: Delivery weekday change
-          - entity: binary_sensor.hellofresh_us_first_box_delivered
-            name: First box delivered
-          - entity: binary_sensor.hellofresh_us_payload_shape_changed
-            name: Payload shape changed
           - entity: sensor.hellofresh_us_api_base_url
             name: API base URL
-        visibility:
-          - condition: or
-            conditions:
-              - condition: state
-                entity: binary_sensor.hellofresh_us_account_menu_api_available
-                state_not: unavailable
-              - condition: state
-                entity: binary_sensor.hellofresh_us_write_actions_available
-                state_not: unavailable
-              - condition: state
-                entity: binary_sensor.hellofresh_us_reschedule_available
-                state_not: unavailable
-              - condition: state
-                entity: binary_sensor.hellofresh_us_delivery_weekday_change_available
-                state_not: unavailable
-              - condition: state
-                entity: binary_sensor.hellofresh_us_first_box_delivered
-                state_not: unavailable
-              - condition: state
-                entity: binary_sensor.hellofresh_us_payload_shape_changed
-                state_not: unavailable
-              - condition: state
-                entity: sensor.hellofresh_us_api_base_url
-                state_not: unavailable
 
   # ── Meal planner (scroll between weeks, see selected meals, skip) ─────────────
   # Per-week recipes are NOT in entity attributes (they'd exceed the recorder's

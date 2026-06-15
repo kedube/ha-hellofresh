@@ -199,7 +199,6 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         key="api_base_url",
         translation_key="api_base_url",
         entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
         icon="mdi:api",
     ),
     SensorEntityDescription(
