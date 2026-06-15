@@ -227,7 +227,6 @@ class HelloFreshSubscription:
     recent_payment_date: date | None = None
     next_payment_date: date | None = None
     coupon_code: str | None = None
-    first_box_delivered: bool | None = None
     loyalty_boxes_received: int | None = None
     loyalty_boxes_until_next_freebie: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
@@ -269,7 +268,6 @@ class HelloFreshSubscription:
                 self.next_payment_date.isoformat() if self.next_payment_date else None
             ),
             "coupon_code": self.coupon_code,
-            "first_box_delivered": self.first_box_delivered,
             "loyalty_boxes_received": self.loyalty_boxes_received,
             "loyalty_boxes_until_next_freebie": self.loyalty_boxes_until_next_freebie,
         }
