@@ -15,16 +15,19 @@ class HelloFreshCoordinatorEntity(CoordinatorEntity[HelloFreshDataUpdateCoordina
 
     _attr_has_entity_name = True
 
-    def _stable_object_id(self, key: str) -> str:
-        """Return a name-independent suggested object id: ``<title-slug>_<key>``.
+    def _pin_entity_id(self, entity_id_format: str, key: str) -> None:
+        """Pin ``self.entity_id`` to ``<domain>.<title-slug>_<key>``.
 
         With ``has_entity_name`` the entity_id would otherwise derive from the
         (translated, user-facing) display name, so renaming a sensor would silently
-        change its entity_id. Pinning the object id to the stable ``key`` keeps
-        entity_ids constant across display-name changes and matches the IDs the
-        README and example dashboard reference (e.g. ``sensor.hellofresh_us_<key>``).
+        change its entity_id. Setting ``entity_id`` explicitly suggests a stable id
+        based on the ``key`` instead, so ids stay constant across display-name changes
+        and match the ids the README and example dashboard reference
+        (e.g. ``sensor.hellofresh_us_<key>``). ``entity_id_format`` is the platform's
+        ``ENTITY_ID_FORMAT`` (e.g. ``"sensor.{}"``).
         """
-        return f"{slugify(self.coordinator.config_entry.title)}_{key}"
+        object_id = f"{slugify(self.coordinator.config_entry.title)}_{key}"
+        self.entity_id = entity_id_format.format(object_id)
 
     @property
     def device_info(self) -> DeviceInfo:

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from homeassistant.components.calendar import CalendarEntity, CalendarEvent
+from homeassistant.components.calendar import (
+    ENTITY_ID_FORMAT,
+    CalendarEntity,
+    CalendarEvent,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -34,7 +38,7 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
         """Initialize the calendar."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_delivery_schedule"
-        self._attr_suggested_object_id = self._stable_object_id("delivery_schedule")
+        self._pin_entity_id(ENTITY_ID_FORMAT, "delivery_schedule")
         self._events = self._build_events()
 
     @property

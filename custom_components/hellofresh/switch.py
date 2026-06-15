@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
+from homeassistant.components.switch import (
+    ENTITY_ID_FORMAT,
+    SwitchEntity,
+    SwitchEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -52,7 +56,7 @@ class HelloFreshSwitch(HelloFreshCoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._attr_suggested_object_id = self._stable_object_id(description.key)
+        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
 
     @property
     def available(self) -> bool:

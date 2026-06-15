@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.components.button import (
+    ENTITY_ID_FORMAT,
+    ButtonEntity,
+    ButtonEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -45,7 +49,7 @@ class HelloFreshButton(HelloFreshCoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._attr_suggested_object_id = self._stable_object_id(description.key)
+        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
 
     async def async_press(self) -> None:
         """Handle the button press."""
