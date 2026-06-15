@@ -147,12 +147,16 @@ def test_week_summary_dict_omits_recipes_but_full_dict_keeps_them() -> None:
 
 def test_account_data_finalize_builds_serialized_views() -> None:
     """Serialized attribute payloads should be derived in one place."""
+    today = date.today()
+    current_week_id = f"{today.isocalendar().year}-W{today.isocalendar().week:02d}"
+    last_week = today - timedelta(days=7)
+    last_week_id = f"{last_week.isocalendar().year}-W{last_week.isocalendar().week:02d}"
     week = HelloFreshWeek(
-        week_id="2026-W24",
+        week_id=current_week_id,
         display_name="Jun 10 - Jun 16",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 12),
-        selection_deadline=datetime(2026, 6, 9, 18, 0),
+        delivery_date=today,
+        selection_deadline=datetime.combine(today, datetime.min.time()).replace(hour=18),
         meals_required=3,
         meals_selected=1,
         recipes=[
@@ -184,10 +188,10 @@ def test_account_data_finalize_builds_serialized_views() -> None:
         orders=[order],
         past_delivery_weeks=[
             HelloFreshWeek(
-                week_id="2026-W23",
+                week_id=last_week_id,
                 display_name="Jun 03 - Jun 09",
                 subscription_id="sub-1",
-                delivery_date=date(2026, 6, 5),
+                delivery_date=last_week,
                 status="delivered",
                 source="past_deliveries",
             )
@@ -214,11 +218,12 @@ def test_account_data_finalize_builds_serialized_views() -> None:
     assert data.serialized_past_delivery_weeks[0]["source"] == "past_deliveries"
     assert data.serialized_subscriptions[0]["display_name"] == "Classic Plan"
     assert data.next_selection_week is not None
-    assert data.next_selection_week.week_id == "2026-W24"
+    assert data.serialized_weeks_needing_selection[0]["week_id"] == current_week_id
+    assert data.next_selection_week.week_id == current_week_id
     assert data.delivery_count_this_week == 1
     assert data.past_delivery_count == 1
     assert data.last_delivery_week is not None
-    assert data.last_delivery_week.week_id == "2026-W23"
+    assert data.last_delivery_week.week_id == last_week_id
 
 
 def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:

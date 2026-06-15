@@ -2131,7 +2131,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         """Return whether a normalized week is still in the future for pricing queries."""
         if week.delivery_date is None:
             return False
-        return week.delivery_date > date.today()
+        return week.delivery_date >= date.today()
 
     async def _async_get_public_menu_data(self) -> dict[str, list[HelloFreshWeek] | list[str]]:
         """Fetch and parse the public HelloFresh menus page."""
