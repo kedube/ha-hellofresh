@@ -209,6 +209,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 ### Services
 
 - `hellofresh.refresh_data`
+- `hellofresh.get_weeks` — **returns a response**: delivery weeks with full recipe and selection detail (recipes aren't exposed as entity attributes). Optionally filter to one `week_id`. Powers the example "Meal planner" dashboard view that scrolls between weeks and shows selected meals.
 - `hellofresh.select_meals`
 - `hellofresh.skip_week`
 - `hellofresh.unskip_week`

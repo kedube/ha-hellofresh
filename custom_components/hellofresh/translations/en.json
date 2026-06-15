@@ -236,6 +236,20 @@
         }
       }
     },
+    "get_weeks": {
+      "name": "Get weeks",
+      "description": "Return HelloFresh delivery weeks with full recipe and selection detail. Read-only; returns a response. Optionally filter to a single week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "Optional HelloFresh delivery week identifier to return just that week."
+        }
+      }
+    },
     "select_meals": {
       "name": "Select meals",
       "description": "Submit meal selections for a delivery week.",

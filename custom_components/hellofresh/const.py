@@ -38,6 +38,7 @@ PLATFORMS = [
 ]
 
 SERVICE_REFRESH_DATA = "refresh_data"
+SERVICE_GET_WEEKS = "get_weeks"
 SERVICE_SELECT_MEALS = "select_meals"
 SERVICE_SKIP_WEEK = "skip_week"
 SERVICE_UNSKIP_WEEK = "unskip_week"
