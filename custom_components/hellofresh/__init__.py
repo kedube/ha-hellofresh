@@ -8,7 +8,7 @@ import inspect
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -41,6 +41,7 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
+    SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
     SERVICE_RESCHEDULE_WEEK,
     SERVICE_SELECT_MEALS,
@@ -285,6 +286,28 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             lambda coordinator, _: coordinator.async_request_refresh(),
         )
 
+    async def async_get_weeks(service_call: ServiceCall) -> ServiceResponse:
+        """Return delivery weeks with full recipe detail for a single account.
+
+        Read-only. Recipes are intentionally absent from sensor attributes (16 KB
+        recorder cap), so this response service is how a dashboard reads per-week
+        recipes/selection on demand. Optionally filter to one ``week_id``.
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        coordinator = coordinators[0]
+        data = coordinator.data
+        week_id = service_call.data.get(ATTR_WEEK_ID)
+        if week_id is not None:
+            week = data.get_week(week_id)
+            weeks = [week] if week is not None else []
+        else:
+            weeks = list(data.weeks)
+        return {"weeks": [week.as_dict() for week in weeks]}
+
     async def async_select_meals(service_call: ServiceCall) -> None:
         """Submit meal selections."""
         week_id = service_call.data[ATTR_WEEK_ID]
@@ -359,6 +382,18 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         SERVICE_REFRESH_DATA,
         async_refresh_data,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_WEEKS,
+        async_get_weeks,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Optional(ATTR_WEEK_ID): str,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,

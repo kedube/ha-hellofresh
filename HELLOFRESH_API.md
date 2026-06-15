@@ -811,6 +811,8 @@ The integration does not mirror every reverse-engineered endpoint as a separate 
 
 **Attribute size policy.** Home Assistant's recorder drops any state attribute payload over 16 KB. A single week's recipe catalog (from the authenticated menu API) can exceed that on its own, so sensor attributes never embed it: single-week context objects use `HelloFreshWeek.as_summary_dict()` (scalar metadata only — dates, deadline, counts, slot), and the per-week `weeks` list on `next_selection_deadline` / `weeks_needing_selection` uses `summarized_weeks_needing_selection`. The full recipe-bearing `as_dict()` is reserved for the diagnostics export and the live week objects that the write actions read. No consumer reads recipes out of a sensor attribute.
 
+**On-demand recipe access (`hellofresh.get_weeks`).** Because recipes are deliberately kept out of attributes, the integration exposes a read-only, response-returning service (`SupportsResponse.ONLY`) so a dashboard or automation can fetch per-week recipes when needed. It returns `{"weeks": [HelloFreshWeek.as_dict(), …]}` (full recipe list with `is_selected`), optionally filtered to one `week_id`, resolved against a single coordinator (requires `config_entry_id` when multiple accounts are configured). This is the recorder-safe data path behind the example "Meal planner" dashboard view (scroll between weeks, see selected meals); a future custom Lovelace card would consume the same service.
+
 Sensors backed by authenticated profile and history endpoints:
 
 | Sensor key | Backing data | Notes |

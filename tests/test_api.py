@@ -4114,3 +4114,43 @@ def test_enrich_account_credit_skips_without_customer_uuid() -> None:
 
     assert data.account_credit is None
     assert data.account_credit_currency is None
+
+
+def test_get_week_returns_full_recipe_detail_for_dashboard() -> None:
+    """The get_weeks service reads per-week recipes via get_week + as_dict.
+
+    Recipes are kept out of sensor attributes, so the dashboard relies on this
+    serialization carrying recipe names and is_selected for the chosen week.
+    """
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W25",
+                display_name="Week 25",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 16),
+                meals_required=2,
+                meals_selected=1,
+                recipes=[
+                    HelloFreshRecipe(recipe_id="r1", name="Pasta", is_selected=True),
+                    HelloFreshRecipe(recipe_id="r2", name="Tacos", is_selected=False),
+                ],
+            ),
+            HelloFreshWeek(
+                week_id="2026-W26",
+                display_name="Week 26",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 23),
+            ),
+        ],
+    ).finalize()
+
+    week = data.get_week("2026-W25")
+    assert week is not None
+    payload = week.as_dict()
+    assert payload["week_id"] == "2026-W25"
+    assert payload["meals_selected"] == 1
+    selected = [r["name"] for r in payload["recipes"] if r["is_selected"]]
+    assert selected == ["Pasta"]
+    # Unknown week resolves to None (service returns an empty list in that case).
+    assert data.get_week("2026-W99") is None
