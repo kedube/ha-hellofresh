@@ -682,6 +682,73 @@ def test_normalize_weeks_payload_extracts_tracking_and_meals() -> None:
     assert orders[0].subscription_id == "sub-1"
 
 
+def test_week_status_prefers_live_state_over_stale_status() -> None:
+    """A box still in transit must not read as delivered from a stale top-level status.
+
+    Observed in live data (today's box): status="DELIVERED" while state="ON_THE_WAY".
+    The live `state` wins so next_order_status reflects the box that's still coming.
+    HelloFresh box states seen: PREPARING, RUNNING, ON_THE_WAY, DELIVERED.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", locale="en-US")
+
+    for stale_status, live_state in [
+        ("DELIVERED", "ON_THE_WAY"),
+        ("DELIVERED", "PREPARING"),
+        ("DELIVERED", "RUNNING"),
+    ]:
+        payload = {"items": [{"id": "wk", "status": stale_status, "state": live_state}]}
+        weeks, _ = client._normalize_weeks_payload(payload, subscription=subscription)
+        assert weeks[0].status == live_state
+
+    # When state actually is DELIVERED, status is used as-is.
+    delivered = {"items": [{"id": "2026-W24", "status": "DELIVERED", "state": "DELIVERED"}]}
+    weeks2, _ = client._normalize_weeks_payload(delivered, subscription=subscription)
+    assert weeks2[0].status == "DELIVERED"
+
+
+def test_next_order_status_reflects_on_the_way_box_today() -> None:
+    """End to end: today's 'on the way' box is next_order with the live state, not stale."""
+    today = date.today()
+    weeks = [
+        HelloFreshWeek(
+            week_id="prev",
+            display_name="Prev",
+            subscription_id="sub-1",
+            delivery_date=today - timedelta(days=7),
+            status="DELIVERED",
+        ),
+        HelloFreshWeek(
+            week_id="today",
+            display_name="Today",
+            subscription_id="sub-1",
+            delivery_date=today,
+            status="ON_THE_WAY",
+        ),
+    ]
+    orders = [
+        HelloFreshOrder(
+            order_id="prev",
+            week_id="prev",
+            status="DELIVERED",
+            subscription_id="sub-1",
+            delivery_date=today - timedelta(days=7),
+        ),
+        HelloFreshOrder(
+            order_id="today",
+            week_id="today",
+            status="ON_THE_WAY",
+            subscription_id="sub-1",
+            delivery_date=today,
+        ),
+    ]
+    data = HelloFreshAccountData(weeks=weeks, orders=orders).finalize()
+
+    assert data.next_order is not None
+    assert data.next_order.order_id == "today"
+    assert data.next_order.status == "ON_THE_WAY"
+
+
 def test_normalize_weeks_payload_preserves_action_and_schedule_metadata() -> None:
     """Upcoming-delivery payloads should keep holiday, one-off, and action flags."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
