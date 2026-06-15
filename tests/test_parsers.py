@@ -212,6 +212,26 @@ def test_extract_scm_tracking_prefers_external_status() -> None:
     assert details["tracking_number"] == "TRACK123"
 
 
+def test_extract_scm_tracking_reads_out_for_delivery() -> None:
+    """The 'out for delivery' carrier status (SCM feed) is surfaced as tracking_status.
+
+    Confirmed from live data: the box lifecycle `state` stays ON_THE_WAY while the SCM
+    tracking box reports out_for_delivery under last_status.status / internal_status.
+    """
+    details = extract_scm_tracking_details(
+        {
+            "carrier": "OnTrac",
+            "tracking_code": "TRK",
+            "internal_status": "out_for_delivery",
+            "last_status": {
+                "status": "out_for_delivery",
+                "internal_status": "out_for_delivery",
+            },
+        }
+    )
+    assert details["tracking_status"] == "out_for_delivery"
+
+
 # ---------------------------------------------------------------------------
 # find_nested_collection (unified recursive walker)
 # ---------------------------------------------------------------------------
