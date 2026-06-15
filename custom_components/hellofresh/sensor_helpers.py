@@ -85,6 +85,11 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "selected_meal_count": lambda data: (
         (data.next_configurable_week.meals_selected or 0) if data.next_configurable_week else 0
     ),
+    # Meals selected so far for the next MODIFIABLE delivery week (nextModifiableDeliveryWeek),
+    # the same week the next-selectable-delivery sensors track.
+    "next_selectable_delivery_meal_count": lambda data: (
+        (data.next_modifiable_week.meals_selected or 0) if data.next_modifiable_week else 0
+    ),
     "required_meal_count": lambda data: (
         data.next_configurable_week.meals_required
         if data.next_configurable_week and data.next_configurable_week.meals_required is not None

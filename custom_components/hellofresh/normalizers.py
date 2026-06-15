@@ -518,10 +518,14 @@ class HelloFreshPayloadNormalizer:
 
     @staticmethod
     def _build_delivery_history_range() -> dict[str, str]:
-        """Return a conservative range for account delivery history lookups."""
+        """Return the range for account delivery lookups.
+
+        Spans 12 weeks of history for delivered-box context and 6 weeks ahead so the
+        upcoming-delivery sensors see subsequent scheduled weeks, not just the next one.
+        """
         today = datetime.now(UTC).date()
         start = today - timedelta(weeks=12)
-        end = today + timedelta(weeks=1)
+        end = today + timedelta(weeks=6)
         start_iso = start.isocalendar()
         end_iso = end.isocalendar()
         return {

@@ -65,6 +65,11 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:silverware-fork-knife",
     ),
     SensorEntityDescription(
+        key="next_selectable_delivery_meal_count",
+        translation_key="next_selectable_delivery_meal_count",
+        icon="mdi:silverware-variant",
+    ),
+    SensorEntityDescription(
         key="required_meal_count",
         translation_key="required_meal_count",
         icon="mdi:numeric",

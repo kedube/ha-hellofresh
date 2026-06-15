@@ -60,13 +60,16 @@
         "name": "Next delivery selection deadline"
       },
       "selected_meal_count": {
-        "name": "Selected meal count"
+        "name": "Next delivery meal count"
+      },
+      "next_selectable_delivery_meal_count": {
+        "name": "Next selectable delivery meal count"
       },
       "required_meal_count": {
         "name": "Number of meals"
       },
       "delivery_count_this_week": {
-        "name": "Delivery count this week"
+        "name": "Next delivery count"
       },
       "next_box_total_price": {
         "name": "Next delivery total price"
