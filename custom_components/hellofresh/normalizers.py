@@ -618,11 +618,6 @@ class HelloFreshPayloadNormalizer:
             payment_method=raw_subscription.get("paymentMethod"),
             payment_gateway=raw_subscription.get("paymentGateway"),
             coupon_code=raw_subscription.get("couponCode"),
-            first_box_delivered=(
-                bool(raw_subscription.get("firstBoxDelivered"))
-                if raw_subscription.get("firstBoxDelivered") is not None
-                else None
-            ),
             loyalty_boxes_received=coerce_int(
                 raw_subscription.get("loyaltyBoxesReceived")
                 or raw_subscription.get("totalBoxesReceived")
