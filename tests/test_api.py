@@ -269,6 +269,48 @@ def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
     assert [o.order_id for o in data.upcoming_orders] == ["future-next", "future-later"]
 
 
+def test_upcoming_orders_exclude_skipped_weeks() -> None:
+    """A skipped upcoming week ships no box, so it drops out of upcoming_orders/next_order."""
+    today = date.today()
+    weeks = [
+        HelloFreshWeek(
+            week_id="w-next",
+            display_name="Next",
+            subscription_id="sub-1",
+            delivery_date=today + timedelta(days=4),
+            is_skipped=True,  # skipped: no delivery this week
+        ),
+        HelloFreshWeek(
+            week_id="w-later",
+            display_name="Later",
+            subscription_id="sub-1",
+            delivery_date=today + timedelta(days=11),
+        ),
+    ]
+    orders = [
+        HelloFreshOrder(
+            order_id="skipped-next",
+            week_id="w-next",
+            status="skipped",
+            subscription_id="sub-1",
+            delivery_date=today + timedelta(days=4),
+        ),
+        HelloFreshOrder(
+            order_id="future-later",
+            week_id="w-later",
+            status="scheduled",
+            subscription_id="sub-1",
+            delivery_date=today + timedelta(days=11),
+        ),
+    ]
+    data = HelloFreshAccountData(weeks=weeks, orders=orders).finalize()
+
+    # The skipped week is excluded; next real delivery is the later week.
+    assert [o.order_id for o in data.upcoming_orders] == ["future-later"]
+    assert data.next_order is not None
+    assert data.next_order.order_id == "future-later"
+
+
 def test_next_order_includes_todays_delivery() -> None:
     """A delivery scheduled for today still counts as upcoming."""
     today = date.today()

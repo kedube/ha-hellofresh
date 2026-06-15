@@ -472,6 +472,55 @@ def test_next_selection_deadline_falls_back_to_subscription_cutoff() -> None:
     assert HelloFreshSensor(coordinator, description).native_value == fallback
 
 
+def test_next_selectable_delivery_meal_count_reads_modifiable_week() -> None:
+    """The sensor reports meals_selected for the resolved modifiable week."""
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W26",
+                display_name="Week 26",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 23),
+                meals_required=3,
+                meals_selected=2,
+            )
+        ],
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                next_modifiable_delivery_week="2026-W26",
+            ),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    description = next(
+        item for item in SENSOR_DESCRIPTIONS if item.key == "next_selectable_delivery_meal_count"
+    )
+
+    assert HelloFreshSensor(coordinator, description).native_value == 2
+
+
+def test_next_selectable_delivery_meal_count_zero_without_modifiable_week() -> None:
+    """With no resolved modifiable week the count is 0."""
+    data = HelloFreshAccountData(
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    description = next(
+        item for item in SENSOR_DESCRIPTIONS if item.key == "next_selectable_delivery_meal_count"
+    )
+
+    assert HelloFreshSensor(coordinator, description).native_value == 0
+
+
 def test_configurable_week_falls_back_to_fully_selected_upcoming_week() -> None:
     """A fully selected upcoming week is still the configurable week (none needs selection)."""
     data = HelloFreshAccountData(

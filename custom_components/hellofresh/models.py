@@ -561,17 +561,24 @@ class HelloFreshAccountData:
                 week.week_id,
             )
         )
-        # Only deliveries today or later are "upcoming". The deliveries endpoint returns a
-        # wide window (≈12 weeks back to 1 week ahead), so without this filter next_order
-        # would resolve to the *oldest* historical delivery instead of the next one.
+        self._weeks_by_id = {week.week_id: week for week in self.weeks}
+        # Only non-skipped deliveries today or later are "upcoming". The deliveries endpoint
+        # returns a wide window (≈12 weeks back to 6 weeks ahead) including weeks the customer
+        # skipped, where no box ships — those are excluded so the count and next_order reflect
+        # real upcoming deliveries. Without the date filter, next_order would resolve to the
+        # oldest historical delivery instead of the next one. Skip state is read from the
+        # week (its is_skipped is computed robustly) rather than the order status string.
         today = date.today()
         self._upcoming_orders = [
             order
             for order in self.orders
-            if order.delivery_date is not None and order.delivery_date >= today
+            if order.delivery_date is not None
+            and order.delivery_date >= today
+            and not (
+                (week := self._weeks_by_id.get(order.week_id)) is not None and week.is_skipped
+            )
         ]
         self._next_order = self._upcoming_orders[0] if self._upcoming_orders else None
-        self._weeks_by_id = {week.week_id: week for week in self.weeks}
         tracked_orders = [
             order
             for order in self.orders

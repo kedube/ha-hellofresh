@@ -99,12 +99,13 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Next delivery date | `sensor.next_delivery_date` | Delivery date of the next upcoming order (today or later). Sourced from the order record. `Date` device class. |
-| Next order status | `sensor.next_order_status` | Status of the next upcoming order (e.g. `pending`, `shipped`, `delivered`). The icon reflects the current state. |
-| Next delivery slot | `sensor.next_delivery_slot` | Delivery time-slot label for the next order (e.g. `Mondays: 8AM - 8PM`); `None` when no preferred window is set. |
-| Upcoming delivery count | `sensor.upcoming_delivery_count` | Number of orders with a delivery date today or later. |
-| Delivery count this week | `sensor.delivery_count_this_week` | Number of deliveries scheduled within the current calendar week (Mon–Sun). |
-| Next delivery week | `sensor.next_delivery_week` | **ISO week identifier** of the next configurable delivery week (e.g. `2026-W25`) — the same week used by the meal-selection sensors below. A week label, deliberately distinct from `Next delivery date` (which is the box's actual delivery day); derived from the week's ISO id, falling back to the delivery date's ISO week. Plain string (no device class). |
+| Next delivery date | `sensor.next_delivery_date` | Delivery date of the subscription's next delivery (API `nextDelivery`). `Date` device class. |
+| Next delivery week | `sensor.next_delivery_week` | **ISO week identifier** of the next delivery (e.g. `2026-W25`), from the API `nextDeliveryWeek` and normalized against the delivery date. A week label, deliberately distinct from `Next delivery date`. Plain string (no device class). |
+| Next selectable delivery date | `sensor.next_selectable_delivery_date` | Date of the next delivery the customer can still modify (API `nextModifiableDeliveryDate`) — typically the week after the next delivery. `Date` device class. |
+| Next selectable delivery week | `sensor.next_selectable_delivery_week` | **ISO week identifier** of the next modifiable delivery (API `nextModifiableDeliveryWeek`). Plain string (no device class). |
+| Delivery Window | `sensor.next_delivery_slot` | Delivery time-slot label for the next order (e.g. `Mondays: 8AM - 8PM`); `None` when no preferred window is set. |
+| Upcoming delivery count | `sensor.upcoming_delivery_count` | Number of non-skipped deliveries with a delivery date today or later. |
+| Next delivery count | `sensor.delivery_count_this_week` | Number of deliveries scheduled within the current calendar week (Mon–Sun). |
 | Next delivery blocked | `sensor.next_delivery_blocked` | `True`/`False` flag for whether HelloFresh has blocked delivery for the next configurable week (e.g. unavailable in your area that week). |
 | Holiday delivery date | `sensor.next_holiday_delivery_date` | Rescheduled delivery date when the next week's box is shifted for a holiday; `None` when no holiday shift applies. `Date` device class. |
 | Holiday delivery message | `sensor.next_holiday_message` | HelloFresh's holiday-shift notice for the next week (e.g. why the date moved); `None` when no holiday message is present. |
@@ -114,19 +115,22 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | Name | Entity | Description |
 | --- | --- | --- |
 | Weeks needing meal selection | `sensor.weeks_needing_selection` | Count of upcoming weeks that still require meal selection. Attributes list every pending week. |
-| Next selection deadline | `sensor.next_selection_deadline` | Cutoff timestamp (date + time) for the next configurable week — useful for reminder automations. `Timestamp` device class. |
-| Selected meal count | `sensor.selected_meal_count` | Meals already chosen for the next pending week; `0` when none is pending. Excludes add-on and market items. |
+| Next delivery selection deadline | `sensor.next_selection_deadline` | Cutoff timestamp for the **next delivery** week (that week's `cutoffDate`, falling back to the subscription's `nextCutoffDate`) — the "Edit delivery by …" deadline. `Timestamp` device class. |
+| Next selectable delivery selection deadline | `sensor.next_selectable_delivery_selection_deadline` | Cutoff timestamp for the **next modifiable** delivery week (`nextModifiableDeliveryWeek`'s `cutoffDate`) — the soonest box the customer can still change. `Timestamp` device class. |
+| Next delivery meal count | `sensor.selected_meal_count` | Meals already chosen for the next pending/configurable week; `0` when none is pending. Excludes add-on and market items. |
+| Next selectable delivery meal count | `sensor.next_selectable_delivery_meal_count` | Meals already chosen for the next modifiable delivery week (`nextModifiableDeliveryWeek`); `0` when no modifiable week is resolved. |
 | Number of meals | `sensor.required_meal_count` | Meals that must be selected for the next pending week; falls back to the subscription's plan count when the week doesn't specify one. |
 
 **Billing & payments**
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Next box total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. |
+| Next delivery total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. |
+| Account credit | `sensor.account_credit` | Spendable account credit that applies automatically to the next order (API `/gw/payments/customers/{uuid}/balance` → `amount`). Monetary device class; unit from `currencyCode`. |
 | Recent payment date | `sensor.recent_payment_date` | Date of the most recent HelloFresh charge that has **already been billed** (the order's `createdAt`), from order history. Because HelloFresh bills a box a few days before it ships, this reflects your last actual charge even when that box's delivery is still upcoming. Charges dated in the future are ignored. `Date` device class. |
-| Next payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
-| Next order ID | `sensor.recent_order_id` | Order number for the next upcoming delivery, as shown in the HelloFresh UI (the `orderNr` field). |
-| Next box coupon | `sensor.next_box_coupon` | Active promo/coupon code applied to the primary subscription; `None` when no coupon is on file. |
+| Next delivery payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
+| Next delivery order ID | `sensor.recent_order_id` | Order number for the next upcoming delivery, as shown in the HelloFresh UI (the `orderNr` field). |
+| Next delivery coupon | `sensor.next_box_coupon` | Active promo/coupon code applied to the primary subscription; `None` when no coupon is on file. |
 
 **Account & subscription**
 
@@ -134,7 +138,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | --- | --- | --- |
 | Selected plan | `sensor.selected_plan` | Plan name from the primary subscription (e.g. `Meat & Veggies`); shows the display name when a specific plan name isn't returned. |
 | Number of people | `sensor.number_of_people` | Servings-per-box setting from the primary subscription (e.g. `2`). |
-| Subscription count | `sensor.subscription_count` | Number of active HelloFresh subscriptions on the account. |
+| Account subscription count | `sensor.subscription_count` | Number of subscriptions on the account. Most sensors report on the primary (first) subscription only, so a value above 1 means additional subscriptions aren't individually surfaced. |
 | Delivery address | `sensor.delivery_address` | Single-line delivery address from the primary subscription; redacted in diagnostics exports. |
 | Account ID | `sensor.account_id` | HelloFresh customer account ID. |
 | Boxes received | `sensor.boxes_received` | Lifetime count of boxes delivered to the account, from the authenticated profile endpoint. |
@@ -144,10 +148,11 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Shipment tracking status | `sensor.shipment_tracking_status` | Tracking status of the best-tracked order (in transit, delivered, exception). The icon reflects the state; `None` when no tracked shipment exists. |
-| Shipment tracking number | `sensor.shipment_tracking_number` | Parcel/tracking number for the tracked shipment; shares attributes with the tracking-status sensor. |
+| Next delivery status | `sensor.shipment_tracking_status` | Tracking status of the best-tracked order (in transit, delivered, exception). The icon reflects the state; `None` when no tracked shipment exists. |
+| Tracked shipment status | `sensor.next_order_status` | Status of the next upcoming order (e.g. `pending`, `shipped`, `delivered`). The icon reflects the current state. |
+| Tracked shipment number | `sensor.shipment_tracking_number` | Parcel/tracking number for the tracked shipment; shares attributes with the tracking-status sensor. |
 | Tracked shipment carrier | `sensor.tracked_shipment_carrier` | Carrier for the tracked shipment (e.g. `UPS`, `FedEx`, `DoorDash`); `None` when no tracking data is present. |
-| Next delivery tracking URL | `sensor.next_delivery_tracking_url` | Direct carrier tracking link for the best-tracked order; `None` when no link is available. |
+| Tracked shipment URL | `sensor.next_delivery_tracking_url` | Direct carrier tracking link for the best-tracked order; `None` when no link is available. |
 
 **History & skipped weeks**
 
@@ -161,7 +166,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Delivery subscription ID | `sensor.next_delivery_subscription` | Internal HelloFresh subscription ID for the next order. Diagnostic. |
+| Account delivery subscription ID | `sensor.next_delivery_subscription` | Internal HelloFresh subscription ID for the next order. Diagnostic. |
 | Access token time remaining | `sensor.access_token_minutes_remaining` | Whole minutes until the current access token expires (unit `min`). Access tokens are short-lived (~30 min) and auto-refreshed. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
 | Refresh token time remaining | `sensor.refresh_token_days_remaining` | Whole days until the refresh token expires (unit `d`). When the refresh token expires the integration logs in again with your stored credentials; if that login fails you are prompted to reauthenticate. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
 | API base URL | `sensor.api_base_url` | Regional API base URL the integration is using. Diagnostic; **disabled by default**. |
@@ -171,7 +176,6 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | Entity | Notes |
 | --- | --- |
 | `binary_sensor.needs_meal_selection` | `True` when at least one upcoming delivery week still requires meal selection; the primary signal for reminder automations |
-| `binary_sensor.selection_deadline_passed` | `True` when the next pending selection week's cutoff timestamp has passed; fires even when meals are already chosen, because HelloFresh allows swaps until the deadline |
 | `binary_sensor.account_menu_api_available` | `True` when the integration has successfully loaded structured menu data from authenticated API responses; diagnostic entity, disabled by default; the Repairs issue is the primary signal when fallback is active |
 | `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.); diagnostic entity, disabled by default |
 | `binary_sensor.reschedule_available` | `True` when the account allows a one-off delivery change for an upcoming week (gates the `reschedule_week` service); diagnostic entity, disabled by default |
@@ -185,15 +189,12 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | Entity | Notes |
 | --- | --- |
 | `calendar.delivery_schedule` | Calendar entity showing all upcoming and recent HelloFresh deliveries as calendar events; each event title includes the delivery week and order status |
-| `todo.meal_selection` | To-do list with one item per week that needs meal selection; marking an item complete submits the currently selected recipes for that week to HelloFresh |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
-| `button.confirm_next_selection` | Submits meal confirmation for the next pending selection week using the current recipe selections |
-| `button.skip_next_selection_week` | Marks the next upcoming delivery week as skipped on the HelloFresh account |
-| `button.restore_next_skipped_week` | Restores (unskips) the nearest upcoming skipped delivery week |
+| `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
 
 Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes, and authenticated history endpoints feed recent delivered-week context into the delivery-history sensors' attributes. Full per-week recipe lists are intentionally **not** included in attributes (to stay under the recorder's size limit — see [Recorder attribute sizes](#recorder-attribute-sizes)); they remain available in the diagnostics export.
 
-A few entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.public_menu_recipe_count` as **Available menu recipe count**, and `sensor.recent_order_id` as **Next order ID** (see the Name column above).
+Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Tracked shipment status**, `sensor.shipment_tracking_status` as **Next delivery status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
 
 ### Voice and Assist
 
@@ -218,17 +219,16 @@ When multiple HelloFresh accounts are configured, service calls can target a spe
 
 The integration also supports a lightweight actionable flow inside Home Assistant:
 
-- marking a `todo.meal_selection` item complete submits the currently selected recipes for that week
-- `button.confirm_next_selection` attempts to confirm the next pending week
-- `button.skip_next_selection_week` and `button.restore_next_skipped_week` attempt the matching account action
+- `switch.skip_next_modifiable_week` (**Skip next selectable delivery week**) skips or restores the next modifiable delivery week; turning it on skips the box, turning it off ships it
+- the `hellofresh.skip_week` / `hellofresh.unskip_week` services do the same for a chosen week
 
-Meal selection and skip/unskip use the same write endpoints the HelloFresh website uses. If one is unavailable for your region or account shape, the integration tries a small set of fallbacks and, if none work, raises a Repairs issue instead of silently sending more guesses.
+Skip/unskip use the same write endpoints the HelloFresh website uses. If one is unavailable for your region or account shape, the integration tries a small set of fallbacks and, if none work, raises a Repairs issue instead of silently sending more guesses.
 
 ## Example Dashboard
 
 A ready-to-use Lovelace dashboard is included at [`examples/dashboard.yaml`](examples/dashboard.yaml), organized around how you actually use HelloFresh:
 
-- **Overview** — a hero "next box" card (date with a relative countdown and status-colored icon) plus key facts as chips, meal-selection progress as a gauge with the confirm/skip/restore buttons, a per-week breakdown table of weeks still needing a selection, the meal to-do list, and a shipment-tracking card with a tappable carrier link. Conditional banners surface only when relevant: meals needing selection, a holiday delivery change, an approaching reauthentication deadline, or an unexpected-payload warning.
+- **Overview** — a hero "next box" card (date with a relative countdown and status-colored icon) plus key facts as chips, meal-selection progress as a gauge with the skip switch, a per-week breakdown table of weeks still needing a selection, and a shipment-tracking card with a tappable carrier link. Conditional banners surface only when relevant: meals needing selection, a holiday delivery change, an approaching reauthentication deadline, or an unexpected-payload warning.
 - **Planning** — the delivery calendar, upcoming/skipped counts, key dates, and a 90-day order/tracking history graph.
 - **Account** — billing dates, active coupon, subscription details, and a manual refresh button.
 - **Diagnostics** — token-expiry and integration-health entities, tucked out of the way.
@@ -247,7 +247,7 @@ To use it:
 
 Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required.
 
-The complete recipe data is still available where it matters: the meal-selection actions read it from the live integration state, and a full serialization (with recipes) is included in the redacted **diagnostics** export for debugging.
+The complete recipe data is still available where it matters: the `hellofresh.select_meals` service reads it from the live integration state, and a full serialization (with recipes) is included in the redacted **diagnostics** export for debugging.
 
 ## Current Scope
 
@@ -264,9 +264,8 @@ What works:
 - shipment tracking extraction and SCM enrichment when the payload includes carrier, parcel, or HelloFresh tracking-page details
 - public menu scraping from the regional `/menus` page
 - reminders driven by `binary_sensor.needs_meal_selection`
-- delivery calendar plus deadline timestamp and binary deadline sensors
-- meal-selection to-do list generation with completion-to-confirm support
-- service and button write actions for meal selection and skip/unskip, using the website's own write endpoints with conservative fallbacks
+- delivery calendar plus selection-deadline timestamp sensors for the next delivery and the next selectable delivery
+- service and switch write actions for meal selection and skip/unskip, using the website's own write endpoints with conservative fallbacks
 - Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
 
 What is not implemented yet:
