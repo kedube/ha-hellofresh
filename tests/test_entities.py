@@ -124,18 +124,17 @@ def test_entity_ids_are_pinned_to_key_not_display_name() -> None:
 
     Regression: renaming a sensor's display name would otherwise change its
     entity_id (has_entity_name derives the id from the name), breaking dashboards
-    and the documented sensor.<title>_<key> ids. suggested_object_id pins them.
+    and the documented <domain>.<title>_<key> ids. Pinning entity_id keeps them stable.
     """
-    # Title "HelloFresh" -> slug "hellofresh"; object id is "<slug>_<key>".
-    assert _sensor_for("next_order_status")._attr_suggested_object_id == "hellofresh_next_order_status"
+    # Title "HelloFresh" -> slug "hellofresh"; entity_id is "<domain>.<slug>_<key>".
+    assert _sensor_for("next_order_status").entity_id == "sensor.hellofresh_next_order_status"
     assert (
-        _sensor_for("selected_meal_count")._attr_suggested_object_id
-        == "hellofresh_selected_meal_count"
+        _sensor_for("selected_meal_count").entity_id == "sensor.hellofresh_selected_meal_count"
     )
     # Switch and binary sensor use the same pinning.
     sw_desc = next(d for d in SWITCHES if d.key == "skip_next_modifiable_week")
     switch = HelloFreshSwitch(_build_coordinator(), sw_desc)
-    assert switch._attr_suggested_object_id == "hellofresh_skip_next_modifiable_week"
+    assert switch.entity_id == "switch.hellofresh_skip_next_modifiable_week"
 
 
 def _binary_sensor_for(key: str) -> HelloFreshBinarySensor:
