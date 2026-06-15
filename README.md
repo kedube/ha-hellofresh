@@ -17,9 +17,11 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 - [Configuration](#configuration)
 - [What It Provides](#what-it-provides)
 - [Example Dashboard](#example-dashboard)
+- [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
 - [Diagnostics](#diagnostics)
 - [Development](#development)
+- [References](#references)
 
 ## Installation
 
@@ -229,10 +231,11 @@ Skip/unskip use the same write endpoints the HelloFresh website uses. If one is 
 
 A ready-to-use Lovelace dashboard is included at [`examples/dashboard.yaml`](examples/dashboard.yaml), organized around how you actually use HelloFresh:
 
-- **Overview** — a hero "next box" card (date with a relative countdown and status-colored icon) plus key facts as chips, meal-selection progress as a gauge with the skip switch, a per-week breakdown table of weeks still needing a selection, and a shipment-tracking card with a tappable carrier link. Conditional banners surface only when relevant: meals needing selection, a holiday delivery change, an approaching reauthentication deadline, or an unexpected-payload warning.
-- **Planning** — the delivery calendar, upcoming/skipped counts, key dates, and a 90-day order/tracking history graph.
-- **Account** — billing dates, active coupon, subscription details, and a manual refresh button.
+- **Overview** — a hero "next box" card (date with a relative countdown and status-colored icon) plus key facts as chips (including account credit), meal-selection progress as a gauge, the next/selectable delivery meal counts and deadlines, the skip switch, a per-week breakdown table of weeks still needing a selection, and a shipment-tracking card with a tappable carrier link. Conditional banners surface only when relevant: meals needing selection, a holiday delivery change, an approaching reauthentication deadline, or an unexpected-payload warning.
+- **Planning** — the delivery calendar, upcoming/skipped counts, key dates (next + next-selectable delivery), and a 90-day order/tracking history graph.
+- **Account** — billing dates, account credit, active coupon, subscription details, and refresh + skip actions.
 - **Diagnostics** — token-expiry and integration-health entities, tucked out of the way.
+- **Meal planner** — a week-cursor pattern (an `input_number` index with ◀ ▶) that reads per-week recipes and selection state on demand via the `hellofresh.get_weeks` service, plus per-week skip. Requires a couple of helper entities documented inline in the file; for full recipe-with-images browsing a custom card would consume the same service.
 
 The **Overview** view uses two popular HACS frontend cards — [Mushroom](https://github.com/piitaya/lovelace-mushroom) (hero card, chips, tappable tracking link) and is otherwise built-in. The Planning, Account, and Diagnostics views need no add-ons. Each Mushroom card has a commented built-in fallback (e.g. a `glance` "next box" and a plain `attribute` tracking row) inline in the file, so you can drop the HACS dependency entirely if you prefer.
 
@@ -246,7 +249,7 @@ To use it:
 
 ### Recorder attribute sizes
 
-Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required.
+Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required. When you do need per-week recipes (names, selection state, images), call the read-only `hellofresh.get_weeks` service, which returns them on demand without touching the recorder.
 
 The complete recipe data is still available where it matters: the `hellofresh.select_meals` service reads it from the live integration state, and a full serialization (with recipes) is included in the redacted **diagnostics** export for debugging.
 
@@ -265,8 +268,10 @@ What works:
 - shipment tracking extraction and SCM enrichment when the payload includes carrier, parcel, or HelloFresh tracking-page details
 - public menu scraping from the regional `/menus` page
 - reminders driven by `binary_sensor.needs_meal_selection`
-- delivery calendar plus selection-deadline timestamp sensors for the next delivery and the next selectable delivery
-- service and switch write actions for meal selection and skip/unskip, using the website's own write endpoints with conservative fallbacks
+- delivery calendar plus selection-deadline timestamp sensors for both the next delivery and the next selectable (modifiable) delivery
+- account credit balance from the payments balance endpoint
+- skipping/restoring the next modifiable delivery week from a switch, plus `skip_week` / `unskip_week` / `select_meals` services that use the website's own write endpoints with conservative fallbacks
+- on-demand per-week recipe and selection detail via the response-returning `hellofresh.get_weeks` service (recipes are kept out of entity attributes to respect the recorder size limit)
 - Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
 
 What is not implemented yet:
@@ -274,7 +279,7 @@ What is not implemented yet:
 - a first-party OAuth / account-linking flow (the integration logs in directly with your stored email and password instead)
 - verification of the write endpoints beyond the US site (the US meal-selection and skip/unskip requests are confirmed; other regions fall back to best-effort guesses)
 - live push updates from HelloFresh, if an official push channel exists
-- a packaged custom Lovelace card (an example YAML dashboard is provided — built-in cards plus optional Mushroom on the Overview view, see [Example Dashboard](#example-dashboard))
+- a packaged custom Lovelace card for browsing recipes week-by-week (the data path exists — the `hellofresh.get_weeks` service returns full per-week recipe detail — and an example YAML "Meal planner" dashboard view drives it with built-in cards plus optional Mushroom, see [Example Dashboard](#example-dashboard))
 
 Because HelloFresh does not publish a stable consumer integration contract here, write actions stay cautious: the integration uses the website's confirmed write endpoints first, tries a small set of fallbacks if those don't fit your account, and stops with a clear error rather than guessing endlessly.
 
@@ -319,7 +324,7 @@ This repository is structured as a HACS-compatible custom integration repository
 It also includes:
 
 - a pytest suite for API normalization, serialization behavior, the email/password auth and token-refresh lifecycle, and richer capability helpers
-- a GitHub Actions workflow for `hassfest` and `python -m pytest -q`
+- GitHub Actions workflows for HACS validation, `hassfest`, and `python -m pytest -q`
 - issue templates for bug reports and feature requests
 - a [contributing guide](CONTRIBUTING.md)
 - a ready-to-use [example dashboard](examples/dashboard.yaml) (see [Example Dashboard](#example-dashboard))
