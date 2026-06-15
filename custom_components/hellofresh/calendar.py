@@ -34,6 +34,7 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
         """Initialize the calendar."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_delivery_schedule"
+        self._attr_suggested_object_id = self._stable_object_id("delivery_schedule")
         self._events = self._build_events()
 
     @property

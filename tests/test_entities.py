@@ -119,6 +119,25 @@ def _sensor_for(key: str) -> HelloFreshSensor:
     return HelloFreshSensor(_build_coordinator(), description)
 
 
+def test_entity_ids_are_pinned_to_key_not_display_name() -> None:
+    """Entity ids derive from the stable key, not the (renamable) display name.
+
+    Regression: renaming a sensor's display name would otherwise change its
+    entity_id (has_entity_name derives the id from the name), breaking dashboards
+    and the documented sensor.<title>_<key> ids. suggested_object_id pins them.
+    """
+    # Title "HelloFresh" -> slug "hellofresh"; object id is "<slug>_<key>".
+    assert _sensor_for("next_order_status")._attr_suggested_object_id == "hellofresh_next_order_status"
+    assert (
+        _sensor_for("selected_meal_count")._attr_suggested_object_id
+        == "hellofresh_selected_meal_count"
+    )
+    # Switch and binary sensor use the same pinning.
+    sw_desc = next(d for d in SWITCHES if d.key == "skip_next_modifiable_week")
+    switch = HelloFreshSwitch(_build_coordinator(), sw_desc)
+    assert switch._attr_suggested_object_id == "hellofresh_skip_next_modifiable_week"
+
+
 def _binary_sensor_for(key: str) -> HelloFreshBinarySensor:
     """Return a binary sensor entity for the requested key."""
     description = next(item for item in BINARY_SENSORS if item.key == key)
