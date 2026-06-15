@@ -212,7 +212,7 @@ def test_account_data_finalize_builds_serialized_views() -> None:
 
     assert data.serialized_orders[0]["order_id"] == "ord-1"
     assert data.serialized_orders[0]["tracking_number"] == "TRACK123"
-    assert data.serialized_weeks_needing_selection[0]["week_id"] == "2026-W24"
+    assert data.serialized_weeks_needing_selection[0]["week_id"] == current_week_id
     assert data.serialized_weeks_needing_selection[0]["subscription_id"] == "sub-1"
     assert data.serialized_public_menu_weeks[0]["source"] == "public_menu"
     assert data.serialized_past_delivery_weeks[0]["source"] == "past_deliveries"
