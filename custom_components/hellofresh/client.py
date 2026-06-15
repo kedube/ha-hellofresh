@@ -289,7 +289,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         self._reconcile_menu_fallback_with_recipes(data)
 
-        if not account_payload_found and data.public_menu_weeks:
+        # Only flag a changed payload shape when we genuinely ended up with NO usable
+        # account weeks. The primary deliveries probe returning nothing is not enough on
+        # its own: weeks are also recovered from the subscription backfill and the
+        # authenticated menu API, and when either yields weeks the data is fine. Flagging
+        # on `account_payload_found` alone produced a false "data shape changed" banner on
+        # accounts whose deliveries endpoint returns only past weeks but whose upcoming
+        # week is filled in from the subscription/menu payloads.
+        usable_account_weeks = any(week.source != "public_menu" for week in all_weeks)
+        if not account_payload_found and not usable_account_weeks and data.public_menu_weeks:
             _LOGGER.info(
                 "HelloFresh menu data loaded, but no verified upcoming-deliveries payload was "
                 "available for this account token."

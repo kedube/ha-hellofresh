@@ -490,6 +490,70 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     assert result.last_delivery_week.week_id == "2026-W23"
 
 
+def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
+    """No 'shape changed' flag when the primary deliveries probe is empty but the
+    subscription payload backfills a usable upcoming week (regression: the banner fired
+    falsely on accounts whose deliveries endpoint returns only past weeks)."""
+    client = HelloFreshClient(
+        session=object(),  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=True,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="sub-1",
+        account_id="acct-1",
+        locale="en-US",
+        meals_required=3,
+        # The backfill reads next-delivery metadata from the raw subscription payload.
+        raw={
+            "nextModifiableDeliveryWeek": "2026-W26",
+            "nextModifiableDeliveryDate": "2026-06-23",
+        },
+    )
+
+    async def fake_get_subscriptions():
+        return [subscription]
+
+    async def fake_get_boxes_received():
+        return 0
+
+    async def fake_get_past_delivery_weeks(_subscriptions):
+        return []
+
+    async def fake_get_upcoming_deliveries(_subscription):
+        # Primary deliveries probe finds nothing -> account_payload_found is False.
+        return ([], [])
+
+    async def fake_get_account_menu_data(_subscriptions, _weeks):
+        # No menu API; public-menu fallback will load instead.
+        return None
+
+    async def fake_get_public_menu_data():
+        return {"weeks": [HelloFreshWeek(week_id="pub", display_name="Menu", source="public_menu")], "available_labels": []}
+
+    async def fake_noop(*_args, **_kwargs):
+        return None
+
+    client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
+    client._async_get_boxes_received = fake_get_boxes_received  # type: ignore[method-assign]
+    client._async_get_past_delivery_weeks = fake_get_past_delivery_weeks  # type: ignore[method-assign]
+    client._async_get_upcoming_deliveries = fake_get_upcoming_deliveries  # type: ignore[method-assign]
+    client._async_get_account_menu_data = fake_get_account_menu_data  # type: ignore[method-assign]
+    client._async_get_public_menu_data = fake_get_public_menu_data  # type: ignore[method-assign]
+    client._async_enrich_order_tracking = fake_noop  # type: ignore[method-assign]
+    client._async_enrich_subscription_payment_dates = fake_noop  # type: ignore[method-assign]
+    client._async_enrich_account_credit = fake_noop  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client.async_get_account_data())
+
+    # The backfilled upcoming week is present, so the shape-changed flag stays off
+    # even though public-menu weeks were also loaded.
+    assert any(w.week_id == "2026-W26" and w.source != "public_menu" for w in result.weeks)
+    assert result.capabilities.payload_shape_changed is False
+
+
 def test_initial_account_payloads_are_fetched_concurrently() -> None:
     """Independent account payload calls should start before any one waits to finish."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
