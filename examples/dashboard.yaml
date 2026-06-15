@@ -66,21 +66,23 @@ views:
             New date:
             **{{ states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
 
+      # Only render when the refresh token is actually close to expiring (≤ 7 days).
+      # The gating MUST live in `conditions` — a markdown card whose template renders
+      # empty still draws an empty card box, so an always-true condition with an inner
+      # {% if %} produced a blank card on healthy installs.
       - type: conditional
         conditions:
-          - entity: sensor.hellofresh_us_refresh_token_days_remaining
-            state_not: "unknown"
+          - condition: numeric_state
+            entity: sensor.hellofresh_us_refresh_token_days_remaining
+            below: 8
         card:
           type: markdown
           content: >
-            {% set days = states('sensor.hellofresh_us_refresh_token_days_remaining')
-            | int(999) %}
-            {% if days <= 7 %}
             ### 🔑 Reauthentication needed soon
 
-            HelloFresh login expires in **{{ days }} day(s)**. Reconnect the
-            integration before it lapses to avoid losing data.
-            {% endif %}
+            HelloFresh login expires in
+            **{{ states('sensor.hellofresh_us_refresh_token_days_remaining') }} day(s)**.
+            Reconnect the integration before it lapses to avoid losing data.
 
       # Integration is returning data that no longer matches the expected shape —
       # values may be stale or wrong. PROBLEM binary sensor; disabled by default,
@@ -145,17 +147,21 @@ views:
             icon: mdi:ticket-percent-outline
 
       # ── Meal selection ────────────────────────────────────────────────────────
-      # Progress at a glance: chosen vs required, colored by completeness.
+      # Progress at a glance: meals chosen for the next delivery week.
+      # Severity bands give the dial color/meaning so it doesn't read as an empty
+      # circle with a bare number. `max` is a static cap (most plans need 2–6 meals);
+      # the gauge can't read `required_meal_count` dynamically, so the Meal selection
+      # card below shows the exact chosen/required pair for the week.
       - type: gauge
-        name: Meals chosen
+        name: Meals chosen (next delivery)
         entity: sensor.hellofresh_us_selected_meal_count
         min: 0
         max: 6
         needle: true
-        # `max` is a static cap (most plans need 2–6 meals); the gauge can't read
-        # `required_meal_count` dynamically. The Meal selection card below shows the
-        # exact chosen/required pair for this week. Severity isn't used because
-        # "full" isn't inherently good/bad without knowing the per-week requirement.
+        severity:
+          green: 3
+          yellow: 1
+          red: 0
 
       - type: entities
         title: Meal selection
@@ -397,8 +403,23 @@ views:
           - entity: sensor.hellofresh_us_refresh_token_days_remaining
             name: Refresh token expires in
 
+      # Always-available integration-health entities (enabled by default).
       - type: entities
         title: Integration health
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
+            name: Tracked shipment
+          - entity: sensor.hellofresh_us_account_id
+            name: Account ID
+
+      # Diagnostic entities that are DISABLED by default. This card stays hidden until
+      # you enable at least one of them under Settings → Devices & Services → HelloFresh
+      # → entities, so a fresh dashboard paste doesn't show a wall of "not found" rows.
+      # `visibility` uses OR logic, so the card appears as soon as any one is enabled.
+      - type: entities
+        title: Integration health (advanced — enable to use)
         show_header_toggle: false
         state_color: true
         entities:
@@ -410,16 +431,36 @@ views:
             name: Reschedule available
           - entity: binary_sensor.hellofresh_us_delivery_weekday_change_available
             name: Delivery weekday change
-          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
-            name: Tracked shipment
           - entity: binary_sensor.hellofresh_us_first_box_delivered
             name: First box delivered
           - entity: binary_sensor.hellofresh_us_payload_shape_changed
             name: Payload shape changed
-          - entity: sensor.hellofresh_us_account_id
-            name: Account ID
           - entity: sensor.hellofresh_us_api_base_url
             name: API base URL
+        visibility:
+          - condition: or
+            conditions:
+              - condition: state
+                entity: binary_sensor.hellofresh_us_account_menu_api_available
+                state_not: unavailable
+              - condition: state
+                entity: binary_sensor.hellofresh_us_write_actions_available
+                state_not: unavailable
+              - condition: state
+                entity: binary_sensor.hellofresh_us_reschedule_available
+                state_not: unavailable
+              - condition: state
+                entity: binary_sensor.hellofresh_us_delivery_weekday_change_available
+                state_not: unavailable
+              - condition: state
+                entity: binary_sensor.hellofresh_us_first_box_delivered
+                state_not: unavailable
+              - condition: state
+                entity: binary_sensor.hellofresh_us_payload_shape_changed
+                state_not: unavailable
+              - condition: state
+                entity: sensor.hellofresh_us_api_base_url
+                state_not: unavailable
 
   # ── Meal planner (scroll between weeks, see selected meals, skip) ─────────────
   # Per-week recipes are NOT in entity attributes (they'd exceed the recorder's
@@ -461,7 +502,29 @@ views:
     path: meal-planner
     icon: mdi:silverware-variant
     cards:
-      # Week cursor: ◀ ▶ step through weeks by index.
+      # Setup notice — shown ONLY until you create the week-cursor helper, so this
+      # view doesn't present "not found" cards on first paste. Once
+      # input_number.hellofresh_week_index exists, this card hides and the browser
+      # cards below appear.
+      - type: markdown
+        content: >
+          ### 🧭 Meal planner setup
+
+          This view needs two helper entities and a small script (documented in the
+          comments above this view in `dashboard.yaml`):
+
+          - `input_number.hellofresh_week_index` — the week cursor
+          - `input_text.hellofresh_weeks_cache` — caches the `hellofresh.get_weeks` response
+          - `script.hellofresh_cache_weeks` — fetches weeks into the cache
+
+          Create them under **Settings → Devices & Services → Helpers** (and add the
+          script to `configuration.yaml`), then this notice disappears.
+        visibility:
+          - condition: state
+            entity: input_number.hellofresh_week_index
+            state: unavailable
+
+      # Week cursor: ◀ ▶ step through weeks by index. Hidden until the helper exists.
       - type: entities
         title: Week browser
         show_header_toggle: false
@@ -473,6 +536,10 @@ views:
               - entity: script.hellofresh_cache_weeks
                 name: Refresh weeks
                 icon: mdi:refresh
+        visibility:
+          - condition: state
+            entity: input_number.hellofresh_week_index
+            state_not: unavailable
 
       # Renders the week at the current cursor from the cached service response.
       # Replace the cache read with your stored structure; this shows the shape.
@@ -495,13 +562,15 @@ views:
           (optionally with `week_id`) — it returns each recipe's name and
           `is_selected`._
           {% endif %}
+        visibility:
+          - condition: state
+            entity: input_number.hellofresh_week_index
+            state_not: unavailable
 
-      # Skip / restore the week at the cursor, using its week_id from the cache.
-      # Wire these buttons to call hellofresh.skip_week / unskip_week with the
-      # cursor's week_id (templated from your cached structure). The account-wide
-      # switch below skips the next modifiable week without needing the cursor.
+      # The account-wide skip switch works without the cursor helpers, so it is
+      # always shown.
       - type: entities
-        title: Actions for this week
+        title: Skip a delivery
         show_header_toggle: false
         entities:
           - entity: switch.hellofresh_us_skip_next_modifiable_week
