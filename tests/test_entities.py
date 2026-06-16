@@ -28,11 +28,20 @@ from custom_components.hellofresh.switch import SWITCHES, HelloFreshSwitch
 
 def _build_coordinator() -> SimpleNamespace:
     """Create a minimal coordinator stand-in for entity unit tests."""
+    # Delivery/selection dates are anchored to ``today`` so the upcoming-order selection in
+    # ``finalize()`` (which filters orders to ``delivery_date >= today``) stays deterministic
+    # regardless of when the suite runs. Payment and holiday dates remain fixed literals --
+    # those are asserted by value and aren't gated on today.
+    today = date.today()
+    next_delivery = today + timedelta(days=2)
+    tracked_delivery = today + timedelta(days=5)
+    skipped_delivery = today + timedelta(days=9)
+    past_delivery = today - timedelta(days=7)
     next_selection_week = HelloFreshWeek(
         week_id="2026-W25",
         display_name="Week 25",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 15),
+        delivery_date=next_delivery,
         selection_deadline=datetime(2026, 6, 10, 18, 0),
         meals_required=3,
         meals_selected=1,
@@ -44,7 +53,7 @@ def _build_coordinator() -> SimpleNamespace:
         week_id="2026-W26",
         display_name="Week 26",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 22),
+        delivery_date=skipped_delivery,
         meals_required=3,
         meals_selected=3,
         is_skipped=True,
@@ -54,7 +63,7 @@ def _build_coordinator() -> SimpleNamespace:
         week_id="2026-W25",
         status="scheduled",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 15),
+        delivery_date=next_delivery,
         total_price=97.5,
         currency="USD",
         slot_label="Mon 8:00 AM - 8:00 PM",
@@ -64,7 +73,7 @@ def _build_coordinator() -> SimpleNamespace:
         week_id="2026-W24",
         status="in_transit",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 18),
+        delivery_date=tracked_delivery,
         tracking_number="TRACK123",
         tracking_status="in_transit",
         carrier="UPS",
@@ -74,7 +83,7 @@ def _build_coordinator() -> SimpleNamespace:
         week_id="2026-W23",
         display_name="Week 23",
         subscription_id="sub-1",
-        delivery_date=date(2026, 6, 8),
+        delivery_date=past_delivery,
         status="delivered",
     )
     data = HelloFreshAccountData(
@@ -157,7 +166,7 @@ def test_new_sensor_entities_reflect_account_data() -> None:
     assert _sensor_for("skipped_week_count").native_value == 1
     assert _sensor_for("next_skipped_week").native_value == "Week 26"
     assert _sensor_for("boxes_received").native_value == 14
-    assert _sensor_for("last_delivery_date").native_value == date(2026, 6, 8)
+    assert _sensor_for("last_delivery_date").native_value == date.today() - timedelta(days=7)
     assert _sensor_for("next_box_coupon").native_value == "WELCOME20"
     assert (
         _sensor_for("next_delivery_tracking_url").native_value
