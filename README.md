@@ -80,14 +80,14 @@ Open the integration options to adjust:
 
 Choose the matching country during setup:
 
-| Region | Code | Website |
-| --- | --- | --- |
-| United States | `us` | https://www.hellofresh.com |
-| Canada | `ca` | https://www.hellofresh.ca |
-| United Kingdom | `uk` | https://www.hellofresh.co.uk |
-| Australia | `au` | https://www.hellofresh.com.au |
-| Germany | `de` | https://www.hellofresh.de |
-| Netherlands | `nl` | https://www.hellofresh.nl |
+| Region | Code | Website | Status |
+| --- | --- | --- | --- |
+| United States | `us` | https://www.hellofresh.com | ✅ |
+| Canada | `ca` | https://www.hellofresh.ca | Untested |
+| United Kingdom | `uk` | https://www.hellofresh.co.uk | Untested |  
+| Australia | `au` | https://www.hellofresh.com.au | Untested |
+| Germany | `de` | https://www.hellofresh.de | Untested |
+| Netherlands | `nl` | https://www.hellofresh.nl | Untested |
 
 ## What It Provides
 

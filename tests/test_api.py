@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+from typing import cast
 
 import pytest
 
@@ -20,6 +21,11 @@ from custom_components.hellofresh.api import (
     HelloFreshWeek,
 )
 from custom_components.hellofresh.sensor_helpers import sensor_extra_state_attributes
+
+
+def _menu_weeks(result: dict[str, list[HelloFreshWeek] | list[str]]) -> list[HelloFreshWeek]:
+    """Extract the typed week list from an account menu data result."""
+    return cast("list[HelloFreshWeek]", result["weeks"])
 
 # Home Assistant recorder drops state attributes larger than this many bytes.
 _RECORDER_ATTR_CAP_BYTES = 16384
@@ -1407,7 +1413,7 @@ def test_account_menu_data_does_not_duplicate_single_payload_across_subscription
     result = loop.run_until_complete(client._async_get_account_menu_data(subscriptions))
 
     assert result is not None
-    weeks = result["weeks"]
+    weeks = _menu_weeks(result)
     assert len(weeks) == 2
     assert weeks[0].subscription_id == "sub-1"
     assert weeks[1].subscription_id == "sub-2"
@@ -1495,7 +1501,7 @@ def test_account_menu_data_accepts_nested_menu_payload_shape() -> None:
     result = loop.run_until_complete(client._async_get_account_menu_data(subscriptions))
 
     assert result is not None
-    weeks = result["weeks"]
+    weeks = _menu_weeks(result)
     assert len(weeks) == 1
     assert weeks[0].subscription_id == "sub-1"
     assert weeks[0].display_name == "Menu sub-1"
@@ -1542,7 +1548,7 @@ def test_account_menu_data_accepts_wrapped_recipe_collections() -> None:
     result = loop.run_until_complete(client._async_get_account_menu_data(subscriptions))
 
     assert result is not None
-    weeks = result["weeks"]
+    weeks = _menu_weeks(result)
     assert len(weeks) == 1
     assert weeks[0].display_name == "Menu sub-1"
     assert weeks[0].recipes[0].name == "Pasta"
@@ -1589,7 +1595,7 @@ def test_account_menu_data_falls_back_to_subscription_scoped_menu_endpoint() -> 
         "/gw/api/customers/me/menu",
         "/gw/api/customers/me/subscriptions/sub-1/menu",
     ]
-    weeks = result["weeks"]
+    weeks = _menu_weeks(result)
     assert len(weeks) == 1
     assert weeks[0].recipes[0].name == "Pasta"
 
@@ -1737,7 +1743,7 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
         "subscription": "6959884",
         "week": "2026-W25",
     }
-    weeks = result["weeks"]
+    weeks = _menu_weeks(result)
     assert len(weeks) == 1
     assert weeks[0].display_name == "Jun 15 - Jun 21"
     assert weeks[0].recipes[0].name == "Honey Garlic Shrimp Po'Boys"
@@ -2034,6 +2040,9 @@ def test_account_data_enriches_order_price_from_cart_endpoint() -> None:
         access_token="token",
         country="us",
     )
+    # The week must stay in the future so the cart-price path treats it as the next order
+    # (``isFutureWeek=true``). ``week_id`` is just an opaque label echoed into ``hfWeek``.
+    future_delivery = date.today() + timedelta(days=7)
     subscription = HelloFreshSubscription(
         subscription_id="6959884",
         account_id="15259216",
@@ -2060,7 +2069,7 @@ def test_account_data_enriches_order_price_from_cart_endpoint() -> None:
                     week_id="2026-W25",
                     display_name="Week 25",
                     subscription_id="6959884",
-                    delivery_date=date(2026, 6, 15),
+                    delivery_date=future_delivery,
                     meals_required=3,
                     meals_selected=3,
                     raw={
@@ -2078,7 +2087,7 @@ def test_account_data_enriches_order_price_from_cart_endpoint() -> None:
                     week_id="2026-W25",
                     status="scheduled",
                     subscription_id="6959884",
-                    delivery_date=date(2026, 6, 15),
+                    delivery_date=future_delivery,
                     total_price=76.93,
                     currency="USD",
                 )
@@ -2781,7 +2790,7 @@ def test_concurrent_401s_rotate_refresh_token_only_once() -> None:
     asyncio.set_event_loop(loop)
     results = loop.run_until_complete(_hammer())
 
-    assert all(r.status == 200 for r in results)
+    assert all(cast("DummyResponse", r).status == 200 for r in results)
     # The crux: five concurrent 401s, but exactly one refresh-token rotation.
     assert refresh_calls == 1
 
@@ -4089,9 +4098,12 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
 def test_accumulate_order_prices_next_order_nr_is_earliest_future() -> None:
     """next_order_nr_by_subscription should point to the nearest upcoming delivery."""
     client = _make_client()
+    today = datetime.now(timezone.utc).date()
+    nearest_future = today + timedelta(days=3)
+    farther_future = today + timedelta(days=10)
     items = [
-        _billing_item("sub-1", "2026-06-22", 90.00, order_nr="99999999999"),
-        _billing_item("sub-1", "2026-06-15", 97.50, order_nr="28192254942"),
+        _billing_item("sub-1", farther_future.isoformat(), 90.00, order_nr="99999999999"),
+        _billing_item("sub-1", nearest_future.isoformat(), 97.50, order_nr="28192254942"),
     ]
     _, _, next_order_nr, _ = client._accumulate_order_prices(items)
 
@@ -4110,7 +4122,7 @@ def test_compute_next_delivery_total_sums_across_subscriptions() -> None:
         "sub-1": (date(2026, 6, 15), datetime(2026, 6, 11, tzinfo=timezone.utc)),
     }
     next_order_nr = {"sub-1": "28192254942"}
-    price_by_key = {
+    price_by_key: dict[tuple[str, date], tuple[float, str | None]] = {
         ("sub-1", date(2026, 6, 15)): (97.50, "USD"),
         ("sub-1", date(2026, 6, 22)): (85.00, "USD"),
     }
