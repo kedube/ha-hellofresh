@@ -49,6 +49,7 @@ from .const import (
     SERVICE_UNSKIP_WEEK,
 )
 from .coordinator import HelloFreshDataUpdateCoordinator
+from .frontend import async_register_meal_planner_card
 from .intent import async_register_intents
 from .issues import async_create_write_actions_issue
 
@@ -107,6 +108,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         async_register_intents(hass)
         hass.data[INTENTS_REGISTERED_KEY] = True
     await _async_register_services(hass)
+    await async_register_meal_planner_card(hass)
     return True
 
 
