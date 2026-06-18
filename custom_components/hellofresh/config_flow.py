@@ -10,10 +10,13 @@ import voluptuous as vol
 
 from .api import HelloFreshAuthError, HelloFreshClient, HelloFreshError
 from .const import (
+    CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_MINUTES,
+    CONF_TOKEN,
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
@@ -23,6 +26,7 @@ from .const import (
     MAX_SCAN_INTERVAL_MINUTES,
     MIN_SCAN_INTERVAL_MINUTES,
 )
+from .parsers import token_payload_to_entry_data
 
 
 def _entry_data_from_credentials(username: str, password: str, country: str) -> dict[str, object]:
@@ -50,7 +54,14 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_country = DEFAULT_COUNTRY
 
     async def async_step_user(self, user_input: dict[str, str] | None = None):
-        """Handle the initial step: collect country + HelloFresh credentials."""
+        """Present a menu choosing how to authenticate."""
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["credentials", "token"],
+        )
+
+    async def async_step_credentials(self, user_input: dict[str, str] | None = None):
+        """Recommended path: collect country + HelloFresh credentials."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -66,7 +77,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return result
 
         return self.async_show_form(
-            step_id="user",
+            step_id="credentials",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_COUNTRY, default=DEFAULT_COUNTRY): vol.In(
@@ -79,11 +90,51 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_token(self, user_input: dict[str, str] | None = None):
+        """Advanced path: provide an apiV2Auth token blob (or bare access token).
+
+        Stores the parsed access/refresh tokens directly; no credentials are kept, so the
+        entry works until the refresh token expires (~60 days) or HelloFresh rotates it, at
+        which point a reauth prompt is raised. This is the backup for when the bot-protection
+        bypass cannot complete a credential login.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            country = user_input[CONF_COUNTRY]
+            self._selected_country = country
+            token_data = token_payload_to_entry_data(user_input.get(CONF_TOKEN))
+            if token_data is None:
+                errors["base"] = "invalid_token"
+            else:
+                result = await self._async_finish_token_auth(country, token_data, errors)
+                if result is not None:
+                    return result
+
+        return self.async_show_form(
+            step_id="token",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_COUNTRY, default=self._selected_country): vol.In(
+                        sorted(COUNTRY_BASE_URLS)
+                    ),
+                    vol.Required(CONF_TOKEN): str,
+                }
+            ),
+            errors=errors,
+        )
+
     async def async_step_reauth(self, entry_data: dict[str, str]):
-        """Handle reauth flow start."""
+        """Handle reauth flow start.
+
+        Credential entries re-collect username/password; token-only entries (no stored
+        username) re-collect a token, since the user never supplied a password.
+        """
         self._reauth_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         if self._reauth_entry is not None:
             self._selected_country = self._reauth_entry.data.get(CONF_COUNTRY, DEFAULT_COUNTRY)
+            if not self._reauth_entry.data.get(CONF_USERNAME):
+                return await self.async_step_reauth_token()
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input: dict[str, str] | None = None):
@@ -115,6 +166,34 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reauth_token(self, user_input: dict[str, str] | None = None):
+        """Re-collect a token for a token-only entry whose tokens have expired."""
+        errors: dict[str, str] = {}
+        if self._reauth_entry is None:
+            return self.async_abort(reason="invalid_auth")
+
+        if user_input is not None:
+            country = self._selected_country
+            token_data = token_payload_to_entry_data(user_input.get(CONF_TOKEN))
+            if token_data is None:
+                errors["base"] = "invalid_token"
+            else:
+                account = await self._async_validate_token(country, token_data, errors)
+                if account is not None:
+                    # Replace the stale token fields; drop any older timing keys not present
+                    # in the new payload so expiry math reflects only the fresh token.
+                    return self.async_update_reload_and_abort(
+                        self._reauth_entry,
+                        data={CONF_COUNTRY: country, **token_data},
+                        reason="reauth_successful",
+                    )
+
+        return self.async_show_form(
+            step_id="reauth_token",
+            data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}),
+            errors=errors,
+        )
+
     async def _async_finish_user_auth(
         self,
         username: str,
@@ -133,6 +212,25 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
             data=_entry_data_from_credentials(username, password, country),
+        )
+
+    async def _async_finish_token_auth(
+        self,
+        country: str,
+        token_data: dict[str, object],
+        errors: dict[str, str],
+    ):
+        """Validate a pasted token and create a token-only config entry."""
+        account = await self._async_validate_token(country, token_data, errors)
+        if account is None:
+            return None
+
+        account_id = account.get("account_id") or account.get("subscription_id")
+        await self.async_set_unique_id(f"{country}::{account_id}")
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=f"HelloFresh ({country.upper()})",
+            data={CONF_COUNTRY: country, **token_data},
         )
 
     async def _async_finish_reauth(
@@ -187,6 +285,29 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await client.async_validate_credentials()
         except HelloFreshAuthError:
             errors["base"] = "invalid_auth"
+            return None
+        except HelloFreshError:
+            errors["base"] = "cannot_connect"
+            return None
+
+    async def _async_validate_token(
+        self,
+        country: str,
+        token_data: dict[str, object],
+        errors: dict[str, str],
+    ) -> dict | None:
+        """Validate pasted tokens against a real account endpoint, or None on error."""
+        session = async_get_clientsession(self.hass)
+        client = HelloFreshClient(
+            session=session,
+            country=country,
+            access_token=token_data.get(CONF_ACCESS_TOKEN),  # type: ignore[arg-type]
+            refresh_token=token_data.get(CONF_REFRESH_TOKEN),  # type: ignore[arg-type]
+        )
+        try:
+            return await client.async_validate_credentials()
+        except HelloFreshAuthError:
+            errors["base"] = "invalid_token"
             return None
         except HelloFreshError:
             errors["base"] = "cannot_connect"
