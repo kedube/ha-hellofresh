@@ -48,15 +48,34 @@ Default region: `us`.
 
 The integration authenticates the same way the HelloFresh web app does: it logs in with the account **email and password** through HelloFresh's own `/gw` auth gateway and then renews the resulting short-lived access token with a long-lived refresh token. There is no OAuth app, Auth0 `/oauth/token` exchange, or pasted bearer token — the user supplies only credentials during setup, and the access/refresh tokens are obtained and maintained entirely at runtime.
 
-Authenticated API calls send:
+Authenticated API calls send a full Chrome-on-Windows-11 header set (`_DEFAULT_HEADERS` + the shared `_BROWSER_CLIENT_HINTS`):
 
 ```http
 Authorization: Bearer <access_token>
 Accept: application/json, text/plain, */*
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36
+Accept-Language: en-US,en;q=0.9
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+Priority: u=1, i
+sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+sec-ch-ua-platform-version: "15.0.0"
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+Origin: <regional base URL>
+Referer: <regional base URL>/
 ```
 
-The `<token_type>` from the auth object is used in place of `Bearer` when the server returns a different one. The `User-Agent` is a current browser string rather than a headless identifier — HelloFresh's bot protection challenges recognizable non-browser clients (see [Bot-protection handling](#bot-protection-waf-handling)).
+The `<token_type>` from the auth object is used in place of `Bearer` when the server returns a different one.
+
+The integration presents as **Google Chrome on Windows 11** rather than a headless identifier — HelloFresh's bot protection challenges recognizable non-browser clients (see [Bot-protection handling](#bot-protection-waf-handling)). A real Chrome emits all of the above on every XHR, and the *absence* of the Client Hints / `Sec-Fetch-*` metadata is itself a fingerprint tell, so they are sent alongside the `User-Agent`. Notes on internal consistency (mismatched fields are exactly what fingerprinting looks for):
+
+- **Windows 11 is invisible in the legacy UA string** — it still reports `Windows NT 10.0; Win64; x64`, the same as Windows 10, by design. The only header that distinguishes Windows 11 is the high-entropy `sec-ch-ua-platform-version` client hint (`"15.0.0"`; Windows 11 maps to `13.0.0`+, Windows 10 stays at `10.0.0` or below).
+- **The Chrome major version is a single source of truth** (`_CHROME_MAJOR_VERSION` in `token_manager.py`): both the `User-Agent` `Chrome/NNN` token and the `sec-ch-ua` brand versions derive from it, so they can never drift apart. Bump it periodically to track Chrome stable.
+- `Origin`/`Referer` point at the regional base URL so `Sec-Fetch-Site: same-origin` is consistent with an in-page XHR.
+
+> These changes only address the **application-layer** fingerprint. `aiohttp` does not reproduce Chrome's TLS/HTTP-2 fingerprint (JA3 / Akamai header-order signatures), so a determined TLS-fingerprinting WAF can still distinguish the integration from a real browser.
 
 All `/gw` auth endpoints take the same regional query string (built by `_auth_query`):
 
@@ -84,7 +103,7 @@ Confirmed from a UK HAR where the site posts `{"country":"GB"}` to `/gw/auth/ema
 A subscription's own `locale` from the account payload overrides the default locale once
 loaded.
 
-All three auth POSTs (`_auth_headers`) present **browser-like headers** — a current Chrome `User-Agent`, `Accept-Language`, and `Origin`/`Referer` derived from the regional base URL. HelloFresh fronts its endpoints with bot protection that fingerprints non-browser clients; a recognizable headless `User-Agent` is challenged with an HTML block page instead of a JSON API response. The browser UA is a best-effort way past that layer and can break whenever the protection is retuned.
+All three auth POSTs (`_auth_headers`) present the same **Chrome-on-Windows-11 header set** — the current Chrome `User-Agent`, `Accept-Language`, `Priority`, the `sec-ch-ua*` Client Hints and `Sec-Fetch-*` metadata (shared `_BROWSER_CLIENT_HINTS`), and `Origin`/`Referer` derived from the regional base URL (the `Referer` is `<base>/login`, matching the login page the web app sends these from). HelloFresh fronts its endpoints with bot protection that fingerprints non-browser clients; a recognizable headless `User-Agent` is challenged with an HTML block page instead of a JSON API response. Presenting a full browser header set is a best-effort way past that layer and can break whenever the protection is retuned.
 
 ### Bot-protection (WAF) handling
 
@@ -149,12 +168,20 @@ When a live (non-expired) refresh token is available, the access token is renewe
 The `/gw` auth POSTs (login, refresh, app-token) send the browser-like header set built by `_auth_headers()`:
 
 ```http
-Accept: application/json
+Accept: application/json, text/plain, */*
 Accept-Language: en-US,en;q=0.9
 Content-Type: application/json
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+Priority: u=1, i
+sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+sec-ch-ua-platform-version: "15.0.0"
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
 Origin: <base_url>
-Referer: <base_url>/
+Referer: <base_url>/login
 ```
 
 Refresh-response handling (`_async_refresh_with_token`):
@@ -609,7 +636,7 @@ If the authenticated and structured-JSON menu sources are both unavailable and f
 | --- | --- | --- |
 | Fetch public menu HTML | `GET` | `/menus` |
 
-This is HTML, not JSON. Recipe names and visible menu labels are extracted from the page.
+This is HTML, not JSON. Recipe names and visible menu labels are extracted from the page. Because it is a **top-level document load** rather than a CORS XHR, this request overrides the shared XHR headers with the navigation values a real browser sends for a page (`Accept: text/html,…`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: none`, `Sec-Fetch-User: ?1`, `Upgrade-Insecure-Requests: 1`) while keeping the same `User-Agent` and Client Hints.
 
 ## Normalized Data Model
 
