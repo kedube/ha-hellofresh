@@ -20,7 +20,7 @@
       },
       "token": {
         "title": "Connect to HelloFresh",
-        "description": "Advanced backup option for when email and password sign-in is blocked. It works for up to ~60 days, until the token expires — then you'll be asked for a new one.\n\nTo get your `apiV2Auth` token:\n1. In a desktop browser, sign in at your HelloFresh website ({site_example}) so you reach your account page.\n2. Open the browser developer tools: right-click the page and choose **Inspect**, or press **F12** (Windows) / **⌥⌘I** (Mac).\n3. Go to the **Application** tab (in Firefox, **Storage**). In the left sidebar, expand **Cookies** and select your HelloFresh site.\n4. Find the cookie named **`apiV2Auth`** and copy its entire **Value**.\n5. Paste it below. (A raw access token also works, but a full `apiV2Auth` value includes the refresh token for the longest-lasting connection.)\n\n**Country** is the HelloFresh region your account belongs to (for example US, GB, AU) — pick the one matching the website you copied the token from.",
+        "description": "Advanced backup option for when email and password sign-in is blocked. It works for up to ~60 days, until the token expires — then you'll be asked for a new one.\n\nTo get your `apiV2Auth` token:\n1. In a desktop browser, sign in at your HelloFresh website ({site_example}) so you reach your account page.\n2. Open the browser developer tools: right-click the page and choose **Inspect**, or press **F12** (Windows) / **⌥⌘I** (Mac).\n3. Open the cookies view for your HelloFresh site:\n   - **Chrome / Edge:** **Application** tab → in the left sidebar, expand **Cookies** → select your HelloFresh site.\n   - **Firefox:** **Storage** tab → expand **Cookies** → select your HelloFresh site.\n   - **Safari:** enable the Develop menu (Settings → Advanced → \"Show features for web developers\"), then **Storage** tab → **Cookies** → your HelloFresh site.\n4. Find the cookie named **`apiV2Auth`** and copy its entire **Value**.\n5. Paste it below. (A raw access token also works, but a full `apiV2Auth` value includes the refresh token for the longest-lasting connection.)\n\n**Country** is the HelloFresh region your account belongs to (for example US, GB, AU) — pick the one matching the website you copied the token from.",
         "data": {
           "country": "Country",
           "token": "apiV2Auth token"
@@ -36,7 +36,7 @@
       },
       "reauth_token": {
         "title": "Reconnect to HelloFresh",
-        "description": "Your HelloFresh token has expired. Paste a fresh `apiV2Auth` token to restore access.\n\nTo get it: sign in at your HelloFresh website, open developer tools (right-click → **Inspect**, or **F12**), go to **Application** → **Cookies**, select your HelloFresh site, and copy the **Value** of the **`apiV2Auth`** cookie.",
+        "description": "Your HelloFresh token has expired. Paste a fresh `apiV2Auth` token to restore access.\n\nTo get it: sign in at your HelloFresh website and open developer tools (right-click → **Inspect**, or **F12**). Open the cookies view — **Chrome / Edge:** **Application** → **Cookies**; **Firefox:** **Storage** → **Cookies** — select your HelloFresh site, and copy the **Value** of the **`apiV2Auth`** cookie.",
         "data": {
           "token": "apiV2Auth token"
         }
