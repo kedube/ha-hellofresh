@@ -2,16 +2,16 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect HelloFresh",
-        "description": "Choose how to connect your HelloFresh account.",
+        "title": "Connect to HelloFresh",
+        "description": "Choose how to connect your HelloFresh account:\n\n- **Email and password (recommended)** — Home Assistant signs in for you and keeps the connection refreshed automatically.\n- **Access token (advanced)** — paste a token from your browser session. Use this only if signing in with email and password does not work.",
         "menu_options": {
-          "credentials": "Sign in with email and password (recommended)",
-          "token": "Provide an access token (advanced)"
+          "credentials": "Email and password (recommended)",
+          "token": "Access token (advanced)"
         }
       },
       "credentials": {
-        "title": "Connect HelloFresh",
-        "description": "Sign in with your HelloFresh account email and password. Home Assistant uses them to log in and keep the connection refreshed automatically.",
+        "title": "Connect to HelloFresh",
+        "description": "Sign in with your HelloFresh account email and password. Home Assistant uses them to log in and keep the connection refreshed automatically.\n\n**Country** is the HelloFresh region your account belongs to (for example US, GB, AU). HelloFresh runs a separate site per country, so this selects the correct one to sign in to and read your plan, deliveries, and menu from.",
         "data": {
           "country": "Country",
           "username": "Email",
@@ -19,15 +19,15 @@
         }
       },
       "token": {
-        "title": "Connect HelloFresh with a token",
-        "description": "Advanced backup option. Paste your HelloFresh `apiV2Auth` value (from the website's browser cookies) or a raw access token. This works for up to ~60 days, until the refresh token expires — then you'll be asked to provide a new one. Use email and password instead unless that path is blocked.",
+        "title": "Connect to HelloFresh",
+        "description": "Advanced backup option for when email and password sign-in is blocked. It works for up to ~60 days, until the token expires — then you'll be asked for a new one.\n\nTo get your `apiV2Auth` token:\n1. In a desktop browser, sign in at your HelloFresh website (for example https://www.hellofresh.com) so you reach your account page.\n2. Open the browser developer tools: right-click the page and choose **Inspect**, or press **F12** (Windows) / **⌥⌘I** (Mac).\n3. Go to the **Application** tab (in Firefox, **Storage**). In the left sidebar, expand **Cookies** and select your HelloFresh site.\n4. Find the cookie named **`apiV2Auth`** and copy its entire **Value**.\n5. Paste it below. (A raw access token also works, but a full `apiV2Auth` value includes the refresh token for the longest-lasting connection.)\n\n**Country** is the HelloFresh region your account belongs to (for example US, GB, AU) — pick the one matching the website you copied the token from.",
         "data": {
           "country": "Country",
           "token": "apiV2Auth token"
         }
       },
       "reauth_confirm": {
-        "title": "Reconnect HelloFresh",
+        "title": "Reconnect to HelloFresh",
         "description": "Enter your HelloFresh account email and password to restore access.",
         "data": {
           "username": "Email",
@@ -35,8 +35,8 @@
         }
       },
       "reauth_token": {
-        "title": "Reconnect HelloFresh",
-        "description": "Your HelloFresh token has expired. Paste a fresh `apiV2Auth` value or access token to restore access.",
+        "title": "Reconnect to HelloFresh",
+        "description": "Your HelloFresh token has expired. Paste a fresh `apiV2Auth` token to restore access.\n\nTo get it: sign in at your HelloFresh website, open developer tools (right-click → **Inspect**, or **F12**), go to **Application** → **Cookies**, select your HelloFresh site, and copy the **Value** of the **`apiV2Auth`** cookie.",
         "data": {
           "token": "apiV2Auth token"
         }
