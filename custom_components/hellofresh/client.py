@@ -39,6 +39,7 @@ from .parsers import (
 )
 from .token_manager import (
     _BROWSER_CLIENT_HINTS,
+    _BROWSER_FETCH_HEADERS,
     _BROWSER_USER_AGENT,
     _TOKEN_MIN_REMAINING_BEFORE_REFRESH,  # noqa: F401 - re-exported for back-compat imports
     _TOKEN_REFRESH_AT_LIFETIME_FRACTION,  # noqa: F401 - re-exported for back-compat imports
@@ -64,6 +65,7 @@ _DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": _BROWSER_USER_AGENT,
     "Priority": "u=1, i",
+    **_BROWSER_FETCH_HEADERS,
     **_BROWSER_CLIENT_HINTS,
 }
 

@@ -12,6 +12,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 import hashlib
+from importlib import util
 import logging
 from typing import Any
 
@@ -26,6 +27,7 @@ from .const import (
 )
 from .models import HelloFreshAuthError, HelloFreshError
 from .parsers import coerce_int, decode_jwt_claims
+from .tls_transport import AuthResponse, async_auth_post, tls_impersonation_available
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,6 +88,33 @@ _BROWSER_CLIENT_HINTS = {
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
+}
+
+
+def _browser_accept_encoding() -> str:
+    """Build an Accept-Encoding that matches Chrome but only claims what we can decode.
+
+    Real Chrome always sends ``gzip, deflate, br, zstd``. A "Chrome" UA that omits ``br``
+    is a bot tell -- no real Chrome lacks Brotli -- so we advertise ``br``/``zstd`` whenever
+    the matching decoder is importable (Home Assistant's container ships Brotli; ``brotli``
+    is also pinned in this integration's ``manifest.json`` requirements). We must NOT claim
+    an encoding aiohttp can't decode, or response bodies come back as undecodable bytes,
+    so each token is gated on its decoder actually being present.
+    """
+    encodings = ["gzip", "deflate"]
+    if util.find_spec("brotli") or util.find_spec("brotlicffi"):
+        encodings.append("br")
+    if util.find_spec("zstandard") or util.find_spec("zstd"):
+        encodings.append("zstd")
+    return ", ".join(encodings)
+
+
+# Cache-busting + encoding headers a real Chrome XHR sends. Accept-Encoding is computed once
+# at import from the decoders actually available in this environment (see above).
+_BROWSER_FETCH_HEADERS = {
+    "Accept-Encoding": _browser_accept_encoding(),
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
 
@@ -181,6 +210,15 @@ class TokenManager:
         self._base_url = COUNTRY_BASE_URLS.get(country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY])
         self._token_refresh_callback = token_refresh_callback
         self._refresh_lock = asyncio.Lock()
+        # Auth POSTs use a Chrome-TLS-impersonating transport when curl_cffi is installed,
+        # which is what gets past Cloudflare bot-management on stricter regions (e.g. UK).
+        # Log it once so a blocked user can confirm whether the impersonation path is active.
+        _LOGGER.debug(
+            "HelloFresh auth transport: %s",
+            "curl_cffi (Chrome TLS impersonation)"
+            if tls_impersonation_available()
+            else "aiohttp (no TLS impersonation; install curl_cffi to bypass strict WAFs)",
+        )
 
     # ------------------------------------------------------------------
     # Public surface used by the client
@@ -354,6 +392,7 @@ class TokenManager:
             "Origin": self._base_url,
             "Referer": f"{self._base_url}/login",
             "Priority": "u=1, i",
+            **_BROWSER_FETCH_HEADERS,
             **_BROWSER_CLIENT_HINTS,
         }
 
@@ -388,10 +427,11 @@ class TokenManager:
 
     async def _async_refresh_with_token(self) -> None:
         """Renew the access token via ``POST {base}/gw/refresh``."""
-        response = await self._session.post(
+        response = await async_auth_post(
+            self._session,
             f"{self._base_url}/gw/refresh",
             params=self._auth_query(),
-            json={"refresh_token": self._refresh_token},
+            json_payload={"refresh_token": self._refresh_token},
             headers=self._auth_headers(),
         )
         if response.status in _AUTH_FAILURE_STATUSES:
@@ -454,10 +494,11 @@ class TokenManager:
 
         await self._async_fetch_app_token()
 
-        response = await self._session.post(
+        response = await async_auth_post(
+            self._session,
             f"{self._base_url}/gw/login",
             params=self._auth_query(),
-            json={"username": self._username, "password": self._password},
+            json_payload={"username": self._username, "password": self._password},
             headers=self._auth_headers(),
         )
         if response.status in _AUTH_FAILURE_STATUSES:
@@ -504,7 +545,8 @@ class TokenManager:
         continue, since /gw/login was observed to succeed without an Authorization header.
         """
         try:
-            response = await self._session.post(
+            response = await async_auth_post(
+                self._session,
                 f"{self._base_url}/gw/auth/token",
                 params={"grant_type": "client_credentials", "client_id": GW_CLIENT_ID},
                 headers=self._auth_headers(),
@@ -517,7 +559,9 @@ class TokenManager:
                 "HelloFresh app-token request returned HTTP %s (non-fatal)", response.status
             )
 
-    async def _async_auth_payload(self, response: ClientResponse, context: str) -> dict[str, Any]:
+    async def _async_auth_payload(
+        self, response: ClientResponse | AuthResponse, context: str
+    ) -> dict[str, Any]:
         """Decode and minimally validate an auth-endpoint JSON response."""
         try:
             payload = await response.json(content_type=None)

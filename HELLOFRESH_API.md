@@ -56,6 +56,9 @@ Accept: application/json, text/plain, */*
 Accept-Language: en-US,en;q=0.9
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
 Priority: u=1, i
+Accept-Encoding: gzip, deflate, br, zstd
+Cache-Control: no-cache
+Pragma: no-cache
 sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
 sec-ch-ua-mobile: ?0
 sec-ch-ua-platform: "Windows"
@@ -73,9 +76,10 @@ The integration presents as **Google Chrome on Windows 11** rather than a headle
 
 - **Windows 11 is invisible in the legacy UA string** — it still reports `Windows NT 10.0; Win64; x64`, the same as Windows 10, by design. The only header that distinguishes Windows 11 is the high-entropy `sec-ch-ua-platform-version` client hint (`"15.0.0"`; Windows 11 maps to `13.0.0`+, Windows 10 stays at `10.0.0` or below).
 - **The Chrome major version is a single source of truth** (`_CHROME_MAJOR_VERSION` in `token_manager.py`): both the `User-Agent` `Chrome/NNN` token and the `sec-ch-ua` brand versions derive from it, so they can never drift apart. Bump it periodically to track Chrome stable.
+- **`Accept-Encoding` is computed from the decoders actually installed** (`_browser_accept_encoding`): `br`/`zstd` are only advertised when their decoder is importable, because aiohttp would otherwise hand back undecodable bytes. A "Chrome" UA that omits `br` is itself a tell, so the integration's `manifest.json` pins `Brotli` to guarantee `br` is advertised in production. `zstd` is advertised only if a zstandard module is present.
 - `Origin`/`Referer` point at the regional base URL so `Sec-Fetch-Site: same-origin` is consistent with an in-page XHR.
 
-> These changes only address the **application-layer** fingerprint. `aiohttp` does not reproduce Chrome's TLS/HTTP-2 fingerprint (JA3 / Akamai header-order signatures), so a determined TLS-fingerprinting WAF can still distinguish the integration from a real browser.
+> **These changes only address the application (HTTP) layer.** They do **not** change the TLS or HTTP/2 fingerprint. All HelloFresh regional properties sit behind **Cloudflare**, and `aiohttp` (Python + OpenSSL) produces a non-browser **JA3/JA4 TLS fingerprint** and HTTP/2 settings/header-order that do not match Chrome. A region with stricter Cloudflare Bot Management — observed on **`www.hellofresh.co.uk`**, which returns an HTML `403` to the integration while the US property accepts the identical headers — rejects the request on the TLS/transport fingerprint *before the headers are even evaluated*, so no header change can fix it. Defeating that requires a browser-impersonating TLS stack. The integration now does this for the auth POSTs: when `curl_cffi` is installed it routes `/gw/auth/token`, `/gw/login`, and `/gw/refresh` through a real Chrome TLS/HTTP2 fingerprint (see [TLS-impersonating auth transport](#tls-impersonating-auth-transport) below), falling back to `aiohttp` when it is not.
 
 All `/gw` auth endpoints take the same regional query string (built by `_auth_query`):
 
@@ -113,6 +117,23 @@ A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`) i
 - this keeps a block from surfacing to the user as "wrong password": the coordinator treats it as `UpdateFailed` / a skipped proactive refresh and retries on the next poll, rather than raising `ConfigEntryAuthFailed` and prompting for reauthentication
 - because the block raises `HelloFreshError` (not `HelloFreshAuthError`), the refresh-then-login fallback does **not** fire — the integration will not hammer the same WAF with a credential login, and the existing refresh token is preserved
 - a `401`/`403` with a JSON body is still a genuine credential/refresh-token rejection and raises `HelloFreshAuthError` as before
+
+**Regional Cloudflare differences (why some regions block even with perfect headers).** Every HelloFresh property is fronted by **Cloudflare** (confirmed by `server: cloudflare` / `cf-ray` on all six regional HARs). The bot-management *aggressiveness*, however, differs per region. The US property accepts the integration's requests; **`www.hellofresh.co.uk` returns an HTML `403`** to the same header set. Because Cloudflare evaluates the **TLS (JA3/JA4) and HTTP/2 fingerprint** of the connection *before* the application headers, and `aiohttp` (Python + OpenSSL) has a fingerprint no `User-Agent` can disguise, **no header change fixes a region tuned to block on transport fingerprint** — the request is rejected before the headers matter. Options if a region stays blocked:
+
+- **TLS-impersonating transport (implemented)** — the auth POSTs now go through `curl_cffi` when it is installed, giving them a real Chrome JA3/JA4 + HTTP/2 fingerprint. See below.
+- **Accept the retry behavior** — if `curl_cffi` is unavailable (or still blocked), the block is treated as transient (above), so the integration keeps retrying; it will succeed in windows where the region's rules are relaxed, but may stay blocked indefinitely if they are not.
+- **Front the auth through a real/headless browser** (e.g. Playwright) to obtain the tokens, then continue with `aiohttp` for the data calls. Highest fidelity, highest weight — not implemented.
+
+### TLS-impersonating auth transport
+
+[tls_transport.py](custom_components/hellofresh/tls_transport.py) routes the three `/gw` auth POSTs (`/gw/auth/token`, `/gw/login`, `/gw/refresh`) through [`curl_cffi`](https://github.com/lexiforest/curl_cffi) with `impersonate="chrome"`, which performs the TLS handshake and HTTP/2 framing with a **real Chrome fingerprint** — the part `aiohttp` cannot fake and the part stricter-region Cloudflare blocks on. `curl_cffi` is pinned in [manifest.json](custom_components/hellofresh/manifest.json) so Home Assistant installs it.
+
+Design notes:
+
+- **Scope is the auth POSTs only.** The high-volume authenticated data XHRs keep using HA's shared `aiohttp` session — they already succeed there, and `curl_cffi` is a heavier per-request transport not worth paying for on every poll. (If a region also blocks the *data* calls on TLS fingerprint, the same helper could be extended to them.)
+- **Graceful degradation.** `async_auth_post` falls back to the `aiohttp` session when `curl_cffi` is not importable **or** if a `curl_cffi` call raises at the transport level, so a missing/broken optional dependency never makes things worse than the `aiohttp`-only baseline. `TokenManager` logs (at debug) which transport is active on startup.
+- **Uniform response.** The `aiohttp` path returns its native response; the `curl_cffi` path returns a small `AuthResponse` adapter exposing the same `status` / `headers` / awaitable `text()` / `json()` slice, so the WAF/bot-block handling above is identical regardless of transport.
+- **Impersonation target** is the rolling `"chrome"` alias rather than a pinned `chromeNNN`, so a `curl_cffi` upgrade that drops an old version token doesn't break the integration.
 
 ### Login flow (`/gw/auth/token` → `/gw/login`)
 
@@ -173,6 +194,9 @@ Accept-Language: en-US,en;q=0.9
 Content-Type: application/json
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
 Priority: u=1, i
+Accept-Encoding: gzip, deflate, br, zstd
+Cache-Control: no-cache
+Pragma: no-cache
 sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
 sec-ch-ua-mobile: ?0
 sec-ch-ua-platform: "Windows"
