@@ -121,6 +121,13 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_TOKEN): str,
                 }
             ),
+            description_placeholders={
+                # Hassfest forbids literal URLs in translation strings, so the example
+                # HelloFresh site URL is injected as a placeholder instead.
+                "site_example": COUNTRY_BASE_URLS.get(
+                    self._selected_country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY]
+                ),
+            },
             errors=errors,
         )
 
