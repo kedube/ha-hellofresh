@@ -1,0 +1,99 @@
+"""Frontend resource registration for the HelloFresh meal-planner Lovelace card.
+
+The integration ships a hand-written Lovelace card (``www/hellofresh-meal-planner-card.js``)
+that reads per-week recipes on demand from the response-returning ``hellofresh.get_weeks``
+service. To make it usable without the user manually adding a resource, the integration:
+
+  1. serves the file from a stable URL via a static path, and
+  2. registers that URL as a Lovelace module resource (storage mode) / appends it to the
+     YAML-mode resource list, once per Home Assistant start.
+
+Registration is best-effort: a failure here never blocks integration setup, since the
+sensors/calendar/services work without the card.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from homeassistant.components.http import StaticPathConfig
+from homeassistant.core import HomeAssistant
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+CARD_FILENAME = "hellofresh-meal-planner-card.js"
+# Bump when the card file changes so HA/browsers cache-bust the resource URL.
+CARD_VERSION = "0.1.0"
+CARD_URL_PATH = f"/{DOMAIN}/{CARD_FILENAME}"
+CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
+
+_REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
+
+
+async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
+    """Serve and register the meal-planner card as a Lovelace resource (idempotent)."""
+    if hass.data.get(_REGISTERED_KEY):
+        return
+    hass.data[_REGISTERED_KEY] = True
+
+    card_path = Path(__file__).parent / "www" / CARD_FILENAME
+    if not card_path.is_file():
+        _LOGGER.warning("HelloFresh meal-planner card file not found at %s", card_path)
+        return
+
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_URL_PATH, str(card_path), cache_headers=False)]
+        )
+    except Exception:  # noqa: BLE001 - static serving is best-effort, never block setup
+        _LOGGER.exception("HelloFresh could not serve the meal-planner card file")
+        hass.data[_REGISTERED_KEY] = False
+        return
+
+    await _async_register_lovelace_resource(hass)
+
+
+async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
+    """Add the card URL to the Lovelace resource list when in storage mode.
+
+    In YAML-mode Lovelace the resources are user-managed, so we can only log guidance. In
+    storage mode we add the resource through the resources collection if it isn't present.
+    """
+    lovelace = hass.data.get("lovelace")
+    resources = getattr(lovelace, "resources", None)
+    if resources is None:
+        _LOGGER.debug("Lovelace resources unavailable; skipping auto-registration")
+        return
+
+    try:
+        if not resources.loaded:
+            await resources.async_load()
+            resources.loaded = True
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not load Lovelace resources; card must be added manually")
+        return
+
+    # YAML-mode resource stores don't support mutation (no store attribute).
+    if getattr(resources, "store", None) is None:
+        _LOGGER.info(
+            "HelloFresh meal-planner card is served at %s. Add it under Settings > "
+            "Dashboards > Resources (or your YAML `resources:`) as a JavaScript module.",
+            CARD_RESOURCE_URL,
+        )
+        return
+
+    already = any(
+        isinstance(item, dict) and str(item.get("url", "")).startswith(CARD_URL_PATH)
+        for item in resources.async_items()
+    )
+    if already:
+        return
+
+    try:
+        await resources.async_create_item({"res_type": "module", "url": CARD_RESOURCE_URL})
+        _LOGGER.info("Registered HelloFresh meal-planner card resource at %s", CARD_RESOURCE_URL)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("HelloFresh could not auto-register the card Lovelace resource")

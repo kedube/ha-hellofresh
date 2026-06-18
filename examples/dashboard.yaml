@@ -455,6 +455,20 @@ views:
     path: meal-planner
     icon: mdi:silverware-variant
     cards:
+      # Packaged custom card (shipped with the integration, auto-registered). Browses every
+      # week's full menu with images, highlights your selected meals, and lets you change the
+      # selection / skip on weeks that are still editable. Reads recipes on demand from the
+      # hellofresh.get_weeks service, so it needs no helper entities.
+      - type: custom:hellofresh-meal-planner-card
+        title: HelloFresh Meal Planner
+        # image_width: 400          # optional recipe-image width
+        # config_entry_id: <id>     # only needed with multiple HelloFresh accounts
+
+      # ── No-custom-card fallback (helper-driven week cursor) ──────────────────────
+      # Everything below is the original built-in fallback for users who would rather not
+      # use the packaged card. It needs the helper entities documented at the top of this
+      # view. Delete this whole block if you use the card above.
+      #
       # Setup notice — shown ONLY until you create the week-cursor helper, so this
       # view doesn't present "not found" cards on first paste. Once
       # input_number.hellofresh_week_index exists, this card hides and the browser

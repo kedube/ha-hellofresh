@@ -17,6 +17,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 - [Configuration](#configuration)
 - [What It Provides](#what-it-provides)
 - [Example Dashboard](#example-dashboard)
+  - [Meal planner card](#meal-planner-card)
 - [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
 - [Diagnostics](#diagnostics)
@@ -251,7 +252,31 @@ A ready-to-use Lovelace dashboard is included at [`examples/dashboard.yaml`](exa
 - **Planning** — the delivery calendar, upcoming/skipped counts, key dates (next + next-selectable delivery), and a 90-day order/tracking history graph.
 - **Account** — billing dates, account credit, active coupon, subscription details, and refresh + skip actions.
 - **Diagnostics** — token-expiry and integration-health entities, tucked out of the way.
-- **Meal planner** — a week-cursor pattern (an `input_number` index with ◀ ▶) that reads per-week recipes and selection state on demand via the `hellofresh.get_weeks` service, plus per-week skip. Requires a couple of helper entities documented inline in the file; for full recipe-with-images browsing a custom card would consume the same service.
+- **Meal planner** — the packaged [Meal planner card](#meal-planner-card) (below). The YAML file also keeps a built-in `input_number` week-cursor variant (◀ ▶) as a no-custom-card fallback that reads per-week recipes via `hellofresh.get_weeks`.
+
+### Meal planner card
+
+The integration ships a custom Lovelace card, **`custom:hellofresh-meal-planner-card`**, for browsing your delivery weeks recipe-by-recipe with images and changing the selection on weeks that are still editable. It reads full per-week recipe detail on demand from the response-returning `hellofresh.get_weeks` service (recipes aren't exposed as entity attributes, to stay under the recorder's size limit), so it shows the complete menu with images, your current picks highlighted, calories, and per-protein tags — none of which fit in a sensor attribute.
+
+The card is served and registered automatically when the integration loads (no manual resource step in storage-mode dashboards). Add it to any dashboard:
+
+```yaml
+type: custom:hellofresh-meal-planner-card
+# title: HelloFresh Meal Planner   # optional header
+# image_width: 400                 # optional recipe-image width
+# config_entry_id: <id>            # required only with multiple HelloFresh accounts
+```
+
+What it does:
+
+- **Week cursor** (‹ ›) across past, current, and upcoming weeks, opening on the next still-editable week.
+- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓.
+- **Tap to select** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): tap recipes to build the week's selection, which submits via `hellofresh.select_meals` once a full set is chosen, then re-reads to confirm. Locked/past weeks render read-only.
+- **Skip / unskip** the displayed week, and a refresh button.
+
+> Meal-selection writes are confirmed on the US site; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
+
+If your dashboard is in **YAML mode** (resources are user-managed), add the resource once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js`.
 
 The **Overview** view uses two popular HACS frontend cards — [Mushroom](https://github.com/piitaya/lovelace-mushroom) (hero card, chips, tappable tracking link) and is otherwise built-in. The Planning, Account, and Diagnostics views need no add-ons. Each Mushroom card has a commented built-in fallback (e.g. a `glance` "next box" and a plain `attribute` tracking row) inline in the file, so you can drop the HACS dependency entirely if you prefer.
 
@@ -297,7 +322,6 @@ What is not implemented yet:
 - a first-party OAuth / account-linking flow (the integration logs in directly with your stored email and password, or reuses a pasted token, instead)
 - verification of the write endpoints beyond the US site (the US meal-selection and skip/unskip requests are confirmed; other regions fall back to best-effort guesses)
 - live push updates from HelloFresh, if an official push channel exists
-- a packaged custom Lovelace card for browsing recipes week-by-week (the data path exists — the `hellofresh.get_weeks` service returns full per-week recipe detail — and an example YAML "Meal planner" dashboard view drives it with built-in cards plus optional Mushroom, see [Example Dashboard](#example-dashboard))
 
 Because HelloFresh does not publish a stable consumer integration contract here, write actions stay cautious: the integration uses the website's confirmed write endpoints first, tries a small set of fallbacks if those don't fit your account, and stops with a clear error rather than guessing endlessly.
 
