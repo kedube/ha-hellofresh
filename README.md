@@ -252,7 +252,7 @@ A ready-to-use Lovelace dashboard is included at [`examples/dashboard.yaml`](exa
 - **Planning** — the delivery calendar, upcoming/skipped counts, key dates (next + next-selectable delivery), and a 90-day order/tracking history graph.
 - **Account** — billing dates, account credit, active coupon, subscription details, and refresh + skip actions.
 - **Diagnostics** — token-expiry and integration-health entities, tucked out of the way.
-- **Meal planner** — the packaged [Meal planner card](#meal-planner-card) (below). The YAML file also keeps a built-in `input_number` week-cursor variant (◀ ▶) as a no-custom-card fallback that reads per-week recipes via `hellofresh.get_weeks`.
+- **Meal planner** — the packaged [Meal planner card](#meal-planner-card) (below): browse every week's full menu with images, see your selected meals highlighted, change the selection on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`.
 
 ### Meal planner card
 

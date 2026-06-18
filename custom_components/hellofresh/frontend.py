@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
 # Bump when the card file changes so HA/browsers cache-bust the resource URL.
-CARD_VERSION = "0.1.0"
+CARD_VERSION = "0.1.2"
 CARD_URL_PATH = f"/{DOMAIN}/{CARD_FILENAME}"
 CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
 
