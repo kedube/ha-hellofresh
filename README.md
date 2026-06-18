@@ -52,20 +52,39 @@ After restart, add the integration from Home Assistant:
 
 ## Configuration
 
-HelloFresh has no official API or OAuth app, so the integration logs in with your **HelloFresh account email and password**, the same way the website does. Home Assistant uses your credentials to obtain a short-lived access token plus a long-lived refresh token, then keeps the connection refreshed automatically — no developer tools, cookies, or token copying required.
+HelloFresh has no official API or OAuth app. Setup offers **two ways** to connect, chosen from a menu when you add the integration:
 
-### Setting up
+- **Email and password (recommended)** — the integration logs in the same way the website does, obtaining a short-lived access token plus a long-lived refresh token, then keeps the connection refreshed automatically. No developer tools or token copying required.
+- **Access token (advanced backup)** — paste your HelloFresh `apiV2Auth` token from a logged-in browser session. Use this only if email/password sign-in is blocked for you (see [Troubleshooting](#troubleshooting)). It works until the token expires (~60 days), then prompts you for a fresh one.
+
+### Setting up (email and password — recommended)
 
 1. Add the integration (see [Installation](#installation)).
-2. Choose your **Country** (see [Supported regions](#supported-regions)).
-3. Enter the **email** and **password** you use to sign in to HelloFresh.
-4. Submit. Home Assistant signs in, validates the account, and stores the resulting tokens so it can refresh access on its own.
+2. Choose **Email and password (recommended)**.
+3. Choose your **Country** (see [Supported regions](#supported-regions)).
+4. Enter the **email** and **password** you use to sign in to HelloFresh.
+5. Submit. Home Assistant signs in, validates the account, and stores the resulting tokens so it can refresh access on its own.
 
 > 🔒 **About your credentials.** Your email and password are stored in the Home Assistant config entry and used only to log in to HelloFresh's own login endpoint and to re-authenticate when the refresh token eventually expires. They are redacted from diagnostics exports. As with any third-party integration, the security of your credentials depends on the security of your Home Assistant installation.
 
+### Setting up (access token — advanced backup)
+
+Use this only when email/password sign-in is blocked. The setup dialog includes step-by-step directions; in short:
+
+1. Add the integration and choose **Access token (advanced)**, then your **Country**.
+2. In a desktop browser, sign in to your regional HelloFresh website so you reach your account page.
+3. Open developer tools (right-click → **Inspect**, or **F12**), open the cookies view (**Chrome/Edge:** Application → Cookies; **Firefox:** Storage → Cookies), select your HelloFresh site, and copy the **Value** of the **`apiV2Auth`** cookie.
+4. Paste it into the token field and submit. A full `apiV2Auth` value includes the refresh token for the longest-lasting connection; a bare access token also works but is shorter-lived.
+
+> ⚠️ A token-only entry **cannot self-heal**: when the refresh token expires (~60 days) or HelloFresh rotates it, there are no stored credentials to log back in, so Home Assistant raises a reauthentication prompt asking for a new token. Prefer email/password whenever it works.
+
+### Why bot protection can matter
+
+HelloFresh fronts its sites with Cloudflare. To pass that layer the integration presents as a real **Google Chrome on Windows 11** browser, including a genuine Chrome TLS/HTTP-2 fingerprint via the bundled `curl_cffi` dependency (installed automatically). Most regions accept this; a region with stricter bot-management rules may still block automated sign-in, which is what the access-token backup path is for.
+
 ### Reauthentication
 
-The integration renews the short-lived access token automatically using the long-lived refresh token, and falls back to a full login with your stored credentials when the refresh token is rejected or has expired. If a login ever fails (for example you changed your HelloFresh password), Home Assistant raises a reauthentication prompt for the config entry — just enter your current email and password to restore access.
+The integration renews the short-lived access token automatically using the long-lived refresh token. For **email/password** entries it falls back to a full login with your stored credentials when the refresh token is rejected or expired; if that login fails (for example you changed your password), Home Assistant prompts you to re-enter your email and password. For **token-only** entries there are no stored credentials, so reauthentication instead asks you to paste a fresh `apiV2Auth` token.
 
 ### Options
 
@@ -129,6 +148,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 | --- | --- | --- |
 | Next delivery total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. |
 | Account credit | `sensor.account_credit` | Spendable account credit that applies automatically to the next order (API `/gw/payments/customers/{uuid}/balance` → `amount`). Monetary device class; unit from `currencyCode`. |
+| Selected plan total price | `sensor.selected_plan_total_price` | Standing weekly plan price **including shipping** (the `grandTotal` from a recurring `/gw/calculate` for the primary subscription) — the price shown in plan settings, distinct from the next box's actual charge. Monetary device class; unit reflects the subscription currency. |
 | Recent payment date | `sensor.recent_payment_date` | Date of the most recent HelloFresh charge that has **already been billed** (the order's `createdAt`), from order history. Because HelloFresh bills a box a few days before it ships, this reflects your last actual charge even when that box's delivery is still upcoming. Charges dated in the future are ignored. `Date` device class. |
 | Next delivery payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
 | Next delivery order ID | `sensor.recent_order_id` | Order number for the next upcoming delivery, as shown in the HelloFresh UI (the `orderNr` field). |
@@ -254,6 +274,8 @@ The complete recipe data is still available where it matters: the `hellofresh.se
 What works:
 
 - email/password login through the HelloFresh `/gw` auth gateway, with automatic access-token refresh and credential-based re-login
+- an alternative token-only setup path (paste an `apiV2Auth` token) as a backup when login is blocked, valid until the refresh token expires
+- a real Chrome-on-Windows-11 browser fingerprint (Client Hints plus a genuine TLS/HTTP-2 fingerprint via `curl_cffi`) to pass Cloudflare bot protection on the auth and data requests
 - token validation against `/gw/api/customers/me/subscriptions`
 - account delivery and order parsing from verified or likely `/gw/...` delivery endpoints
 - aggregation across multiple subscriptions on the same HelloFresh account
@@ -272,7 +294,7 @@ What works:
 
 What is not implemented yet:
 
-- a first-party OAuth / account-linking flow (the integration logs in directly with your stored email and password instead)
+- a first-party OAuth / account-linking flow (the integration logs in directly with your stored email and password, or reuses a pasted token, instead)
 - verification of the write endpoints beyond the US site (the US meal-selection and skip/unskip requests are confirmed; other regions fall back to best-effort guesses)
 - live push updates from HelloFresh, if an official push channel exists
 - a packaged custom Lovelace card for browsing recipes week-by-week (the data path exists — the `hellofresh.get_weeks` service returns full per-week recipe detail — and an example YAML "Meal planner" dashboard view drives it with built-in cards plus optional Mushroom, see [Example Dashboard](#example-dashboard))
@@ -291,7 +313,7 @@ HelloFresh rejected the email/password. Double-check the credentials, confirm yo
 Home Assistant could not reach HelloFresh, or the response wasn't understood. Check Home Assistant's network access and try again; transient site errors usually clear on a retry.
 
 **The log shows "login BLOCKED by bot protection" (HTTP 403 with an HTML page).**
-HelloFresh's website fronts its login with bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration treats this as temporary and retries on its next poll, so it usually clears on its own. If it persists, confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear before the integration can sign in.
+HelloFresh's website fronts its login with Cloudflare bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration already presents a real Chrome TLS/HTTP-2 fingerprint (via the bundled `curl_cffi`) to get past this, and treats a block as temporary and retries on its next poll, so it usually clears on its own. If a region blocks email/password sign-in persistently, use the **access-token setup path** ([Setting up (access token)](#setting-up-access-token--advanced-backup)) as a backup — it bypasses the login step entirely by reusing a token from your own logged-in browser session. Confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear regardless.
 
 **Recipe details are missing or a "menu fallback" Repairs issue appears.**
 The integration couldn't load structured menu data from the authenticated API and fell back to scraping the public menu page. Delivery tracking still works; recipe details may be less complete until the API payload is recognized again.
@@ -319,7 +341,7 @@ This repository is structured as a HACS-compatible custom integration repository
 
 It also includes:
 
-- a pytest suite for API normalization, serialization behavior, the email/password auth and token-refresh lifecycle, and richer capability helpers
+- a pytest suite for API normalization, serialization behavior, the email/password auth and token-refresh lifecycle, the token-only setup/transport paths, and richer capability helpers
 - GitHub Actions workflows for HACS validation, `hassfest`, and `python -m pytest -q`
 - issue templates for bug reports and feature requests
 - a [contributing guide](CONTRIBUTING.md)
