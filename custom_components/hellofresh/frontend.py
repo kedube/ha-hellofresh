@@ -26,30 +26,37 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
 # Bump when the card file changes so HA/browsers cache-bust the resource URL.
-CARD_VERSION = "0.1.2"
-CARD_URL_PATH = f"/{DOMAIN}/{CARD_FILENAME}"
+CARD_VERSION = "0.4.0"
+# The integration's www/ directory is served at /hellofresh/, so every asset in it
+# (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
+WWW_URL_BASE = f"/{DOMAIN}"
+CARD_URL_PATH = f"{WWW_URL_BASE}/{CARD_FILENAME}"
 CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
+# Public URL of the bundled HelloFresh logo, usable in picture/markdown cards.
+LOGO_URL_PATH = f"{WWW_URL_BASE}/hellofresh-logo.png"
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
 
 
 async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
-    """Serve and register the meal-planner card as a Lovelace resource (idempotent)."""
+    """Serve the integration's www/ assets and register the card (idempotent)."""
     if hass.data.get(_REGISTERED_KEY):
         return
     hass.data[_REGISTERED_KEY] = True
 
-    card_path = Path(__file__).parent / "www" / CARD_FILENAME
-    if not card_path.is_file():
-        _LOGGER.warning("HelloFresh meal-planner card file not found at %s", card_path)
+    www_dir = Path(__file__).parent / "www"
+    if not (www_dir / CARD_FILENAME).is_file():
+        _LOGGER.warning("HelloFresh meal-planner card file not found in %s", www_dir)
         return
 
     try:
+        # Serve the whole www/ directory so the card JS and logo image are both reachable
+        # under /hellofresh/ (e.g. /hellofresh/hellofresh-logo.png) from a single mount.
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARD_URL_PATH, str(card_path), cache_headers=False)]
+            [StaticPathConfig(WWW_URL_BASE, str(www_dir), cache_headers=False)]
         )
     except Exception:  # noqa: BLE001 - static serving is best-effort, never block setup
-        _LOGGER.exception("HelloFresh could not serve the meal-planner card file")
+        _LOGGER.exception("HelloFresh could not serve the frontend assets")
         hass.data[_REGISTERED_KEY] = False
         return
 

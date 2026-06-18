@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.1.2";
+const CARD_VERSION = "0.4.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -51,6 +51,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._busy = false; // a write (select/skip) is in flight
     this._fetched = false; // guard so we only auto-fetch once per hass attach
     this._hass = null;
+    // Pending (unsaved) selection while the user edits a week, keyed by week_id -> Set of
+    // course_index. Null entry / absent key means "show the saved selection". The set is
+    // seeded from the server's is_selected on first edit, then mutated freely until the user
+    // saves (submitting once) or it is discarded on refresh.
+    this._pending = {};
   }
 
   setConfig(config) {
@@ -97,6 +102,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const result = await this._hass.callService("hellofresh", "get_weeks", data, undefined, false, true);
       const weeks = (result && result.response && result.response.weeks) || [];
       this._weeks = weeks;
+      this._pending = {}; // server is now the source of truth; drop any stale edits
       this._cursor = this._defaultCursor(weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -129,41 +135,88 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._render();
   }
 
-  async _toggleRecipe(week, recipe) {
-    if (this._busy || !this._isEditable(week)) return;
-    const selected = week.recipes.filter((r) => r.is_selected);
-    const isSelected = recipe.is_selected;
-    const required = week.meals_required;
-
-    // Optimistic UI: flip locally, then submit. On failure we re-fetch to resync.
-    if (isSelected) {
-      recipe.is_selected = false;
-    } else {
-      if (required && selected.length >= required) {
-        // At capacity: don't silently swap — ask the user to deselect one first.
-        this._flash(`This week takes ${required} meals. Deselect one before adding another.`);
-        return;
-      }
-      recipe.is_selected = true;
-    }
-    this._render();
-
-    const desired = week.recipes.filter((r) => r.is_selected);
-    // Only submit once a full valid selection is in place; partial selections aren't a valid
-    // cart for HelloFresh (it requires exactly meals_required).
-    if (required && desired.length !== required) {
-      return;
-    }
-    await this._submitSelection(week, desired.map((r) => r.recipe_id));
+  // The course_index set currently shown for a week: the user's pending edit if one is in
+  // progress, otherwise the server's saved selection.
+  _displaySelection(week) {
+    const pending = this._pending[week.week_id];
+    if (pending) return pending;
+    return new Set(
+      (week.recipes || []).filter((r) => this._isSelected(r)).map((r) => r.course_index)
+    );
   }
 
-  async _submitSelection(week, recipeIds) {
+  _savedSelection(week) {
+    return new Set(
+      (week.recipes || []).filter((r) => this._isSelected(r)).map((r) => r.course_index)
+    );
+  }
+
+  _isSelected(recipe) {
+    return recipe.is_selected === true || recipe.is_selected === "true";
+  }
+
+  // True when the pending edit differs from what's saved (i.e. there's something to save).
+  _isDirty(week) {
+    const pending = this._pending[week.week_id];
+    if (!pending) return false;
+    const saved = this._savedSelection(week);
+    if (pending.size !== saved.size) return true;
+    for (const idx of pending) if (!saved.has(idx)) return true;
+    return false;
+  }
+
+  // Tap a recipe tile: build up a pending selection without submitting. Adding past the
+  // required count is blocked; the user saves explicitly via the Save button.
+  _toggleRecipe(week, recipe) {
+    if (this._busy || !this._isEditable(week)) return;
+    const required = week.meals_required;
+    // Seed the pending set from the saved selection on first edit of this week.
+    let pending = this._pending[week.week_id];
+    if (!pending) {
+      pending = new Set(this._savedSelection(week));
+      this._pending[week.week_id] = pending;
+    }
+
+    const idx = recipe.course_index;
+    if (pending.has(idx)) {
+      pending.delete(idx);
+    } else {
+      // meals_required is the box's included count, not a hard cap — extra meals are allowed
+      // (HelloFresh treats them as add-ons, usually surcharged). So adding past `required` is
+      // permitted; we just nudge the user the first time they go over.
+      if (required && pending.size >= required) {
+        this._flash(`Adding a ${pending.size + 1}th meal — extras beyond ${required} may be charged as add-ons.`);
+      }
+      pending.add(idx);
+    }
+    this._render();
+  }
+
+  // Discard a week's pending edit (revert to the saved selection).
+  _cancelEdit(week) {
+    delete this._pending[week.week_id];
+    this._render();
+  }
+
+  async _saveSelection(week) {
+    const pending = this._pending[week.week_id];
+    if (!pending) return;
+    const required = week.meals_required;
+    if (required && pending.size < required) {
+      this._flash(`Choose at least ${required} meals before saving (${pending.size} selected).`);
+      return;
+    }
+    // Translate the chosen course_index values back into recipe ids for the service.
+    const byIndex = new Map((week.recipes || []).map((r) => [r.course_index, r.recipe_id]));
+    const recipeIds = [...pending].map((i) => byIndex.get(i)).filter(Boolean);
+
     this._busy = true;
     this._render();
     try {
       const data = { week_id: week.week_id, recipe_ids: recipeIds };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", "select_meals", data);
+      delete this._pending[week.week_id]; // saved — drop the pending overlay
       this._flash("Meal selection updated.");
     } catch (err) {
       this._flash(`Selection failed: ${(err && err.message) || err}`, true);
@@ -200,13 +253,27 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }, 4000);
   }
 
+  // The card header: an optional logo image plus the title. `logo: true` uses the bundled
+  // HelloFresh logo served by the integration; `logo: <url>` uses a custom image.
+  _renderCardHeader() {
+    const logo = this._config.logo;
+    const title = this._config.title;
+    if (!logo && !title) return "";
+    const logoUrl = logo === true ? "/hellofresh/hellofresh-logo.png" : logo;
+    return `
+      <div class="card-header">
+        ${logoUrl ? `<img class="logo" src="${this._esc(logoUrl)}" alt="HelloFresh">` : ""}
+        ${title ? `<span class="title-text">${this._esc(title)}</span>` : ""}
+      </div>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const week = this._weeks ? this._weeks[this._cursor] : null;
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
       <ha-card>
-        ${this._config.title ? `<h1 class="card-header">${this._esc(this._config.title)}</h1>` : ""}
+        ${this._renderCardHeader()}
         <div class="content">
           ${this._renderBody(week)}
         </div>
@@ -232,9 +299,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _renderHeader(week) {
     const editable = this._isEditable(week);
     const required = week.meals_required;
-    const selected = (week.recipes || []).filter((r) => r.is_selected).length;
+    const display = this._displaySelection(week);
+    const selected = display.size;
+    const dirty = this._isDirty(week);
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const rel = this._relativeWeek(week);
+    const canSave = !this._busy && (!required || selected >= required);
+    const extra = required && selected > required ? selected - required : 0;
     return `
       <div class="header">
         <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
@@ -249,11 +320,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         <button class="nav" data-action="next" aria-label="Next week">›</button>
       </div>
       <div class="statusrow">
-        <span class="chip ${required && selected >= required ? "ok" : "warn"}">
-          ${selected}${required ? `/${required}` : ""} chosen
+        <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
+          ${selected}${required ? `/${required}` : ""} chosen${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
         </span>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
+        ${editable ? `<span class="hint">Tap meals to choose, then Save.</span>` : ""}
+        ${dirty
+          ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Save selection</button>
+             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
+          : ""}
         ${week.allowed_actions && week.allowed_actions.mealSwap !== undefined
           ? `<button class="skipbtn" data-action="skip" ${this._busy ? "disabled" : ""}>${week.is_skipped ? "Unskip week" : "Skip week"}</button>`
           : ""}
@@ -268,23 +344,25 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No menu available for this week yet.</div>`;
     }
     const editable = this._isEditable(week);
-    // Selected meals first, otherwise keep the menu's order. Array.prototype.sort is stable
-    // in modern engines, so unselected recipes retain their original relative order.
-    const ordered = recipes
-      .slice()
-      .sort((a, b) => (b.is_selected ? 1 : 0) - (a.is_selected ? 1 : 0));
+    // Drive selection display off the current (possibly pending) selection set, by
+    // course_index. Selected meals sort first; otherwise the menu order is preserved
+    // (Array.prototype.sort is stable in modern engines).
+    const display = this._displaySelection(week);
+    const sel = (r) => display.has(r.course_index);
+    const ordered = recipes.slice().sort((a, b) => (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0));
     const cards = ordered
       .map((r) => {
         const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
         const cals = r.calories_kcal ? `${Math.round(r.calories_kcal)} kcal` : "";
+        const isSelected = sel(r);
         return `
-          <div class="recipe ${r.is_selected ? "selected" : ""} ${editable ? "editable" : ""}"
+          <div class="recipe ${isSelected ? "selected" : ""} ${editable ? "editable" : ""}"
                data-index="${this._esc(String(r.course_index))}">
             <div class="imgwrap">
               ${r.image_url
                 ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
                 : `<div class="noimg"></div>`}
-              ${r.is_selected ? `<div class="check">✓</div>` : ""}
+              ${isSelected ? `<div class="check">✓</div>` : ""}
             </div>
             <div class="meta">
               <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
@@ -307,6 +385,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         else if (action === "next") this._step(1);
         else if (action === "refresh") this._fetchWeeks();
         else if (action === "skip" && week) this._toggleSkip(week);
+        else if (action === "save" && week) this._saveSelection(week);
+        else if (action === "cancel" && week) this._cancelEdit(week);
       });
     });
     if (week && this._isEditable(week)) {
@@ -364,7 +444,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _styles() {
     return `
       ha-card { overflow: hidden; }
-      .card-header { padding: 16px 16px 0; }
+      .card-header {
+        display: flex; align-items: center; gap: 12px; padding: 16px 16px 0;
+        font-size: 1.5em; font-weight: 500;
+      }
+      .card-header .logo {
+        height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none;
+      }
       .content { padding: 8px 16px 16px; }
       .state { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
       .state.error, .toast.error { color: var(--error-color); }
@@ -394,6 +480,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .skipbtn + .skipbtn { margin-left: 4px; }
       .skipbtn:disabled { opacity: 0.5; cursor: default; }
+      .hint { font-size: 0.78em; color: var(--secondary-text-color); }
+      .savebtn {
+        margin-left: auto; font-size: 0.85em; padding: 5px 14px; border-radius: 14px;
+        border: none; background: var(--primary-color); color: var(--text-primary-color, #fff);
+        cursor: pointer; font-weight: 600;
+      }
+      .savebtn + .skipbtn { margin-left: 4px; }
+      .savebtn:disabled { opacity: 0.5; cursor: default; }
       .grid {
         display: grid; gap: 12px; margin-top: 4px;
         /* auto-fill spreads the catalog across as many ~180px columns as the card width
