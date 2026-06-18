@@ -80,6 +80,9 @@
       "selected_plan": {
         "name": "Selected plan"
       },
+      "selected_plan_total_price": {
+        "name": "Selected plan total price"
+      },
       "public_menu_recipe_count": {
         "name": "Available menu recipe count"
       },

@@ -3237,6 +3237,80 @@ def test_order_price_falls_back_to_calculate_when_cart_price_has_no_total() -> N
     assert order.currency == "USD"
 
 
+def test_enrich_selected_plan_price_reads_recurring_grand_total() -> None:
+    """The plan-price enrichment posts the recurring /gw/calculate and stores grandTotal."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        raw={
+            "customerPlanId": "plan-1",
+            "sku": "US-CBU-3-2-0",
+            "handle": "US-1-0800-2000",
+            "postcode": "01930",
+        },
+    )
+
+    requests: list[dict[str, object | None]] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        requests.append({"method": method, "path": path, "json_payload": json_payload})
+        return object()
+
+    async def fake_response_json(_response):
+        # grandTotal already includes shipping (subTotal 65.94 + shippingAmount 10.99).
+        return {
+            "grandTotal": 76.93,
+            "subTotal": 65.94,
+            "shippingAmount": 10.99,
+            "currency": "USD",
+        }
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    data = HelloFreshAccountData()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_enrich_selected_plan_price(data, [subscription]))
+
+    # Single recurring calculate call, with no per-week product (plan-level pricing).
+    assert [r["path"] for r in requests] == ["/gw/calculate"]
+    payload = requests[0]["json_payload"]
+    assert isinstance(payload, dict)
+    assert payload["isRecurring"] is True
+    assert payload["planID"] == "plan-1"
+    assert payload["products"] == [{"handle": "US-CBU-3-2-0", "deliveryOption": "US-1-0800-2000"}]
+    assert data.selected_plan_total_price == 76.93
+    assert data.selected_plan_total_price_currency == "USD"
+
+
+def test_enrich_selected_plan_price_skips_when_payload_cannot_be_built() -> None:
+    """With insufficient subscription metadata, no request is made and the price stays None."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    # Missing customerPlanId / sku / handle -> _build_calculate_payload returns None.
+    subscription = HelloFreshSubscription(subscription_id="6959884", account_id="15259216")
+
+    called = False
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        nonlocal called
+        called = True
+        return object()
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    data = HelloFreshAccountData()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_enrich_selected_plan_price(data, [subscription]))
+
+    assert called is False
+    assert data.selected_plan_total_price is None
+    assert data.selected_plan_total_price_currency is None
+
+
 def test_mutation_remembers_winning_endpoint_combo() -> None:
     """A write action that succeeds should be retried first next time (sticky writes)."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]

@@ -608,7 +608,12 @@ HAR-confirmed response shape (the total is the top-level `grandTotal`, which `_e
 }
 ```
 
-Responses are cached by request fingerprint like the cart-price endpoint. (Richer fields — `subTotal`, `shippingAmount`, `discountAmount` — are available here but not yet surfaced as separate entities.)
+Responses are cached by request fingerprint like the cart-price endpoint. (Richer fields — `subTotal`, `shippingAmount`, `discountAmount` — are available here but not surfaced as separate entities.)
+
+`/gw/calculate` is used two ways, sharing `_build_calculate_payload`:
+
+1. **Per-week fallback** (above): priced for a specific delivery week, overlaying `next_box_total_price`.
+2. **Plan-level recurring price**: called once per refresh for the primary subscription with **no week** (`_build_calculate_payload(subscription, week=None)`), drawing the product handle and delivery option from the subscription itself. This is the standing weekly plan price shown in plan settings; its `grandTotal` (shipping included) backs the **`selected_plan_total_price`** sensor (`HelloFreshAccountData.selected_plan_total_price` / `_currency`, populated by `_async_enrich_selected_plan_price`). Best-effort: an unbuildable payload or missing total leaves the sensor unavailable.
 
 If that endpoint cannot be built or does not return a recognizable payload, the client still probes older candidate menu endpoints before the structured-JSON and public-HTML menu fallbacks. These got **zero hits** in the US HAR (the live site uses `/gw/my-deliveries/menu`), so they are retained only as drift/other-region fallbacks and are tried last:
 
@@ -900,6 +905,7 @@ Sensors backed by subscription data (primary subscription):
 | Sensor key | Backing data | Notes |
 | --- | --- | --- |
 | `selected_plan` | `HelloFreshSubscription.plan_name` or `display_name` | Plan/product name |
+| `selected_plan_total_price` | `HelloFreshAccountData.selected_plan_total_price` (+ `_currency`) | Standing weekly plan price incl. shipping, from recurring `/gw/calculate` `grandTotal`; 2-dp, currency unit |
 | `number_of_people` | `HelloFreshSubscription.servings` | Box serving size |
 | `delivery_address` | `HelloFreshSubscription.delivery_address` | Single-line formatted shipping address; redacted in diagnostics |
 | `recent_payment_date` | `HelloFreshSubscription.recent_payment_date` | Date of most recent charge |
