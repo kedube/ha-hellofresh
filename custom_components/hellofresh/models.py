@@ -362,6 +362,8 @@ class HelloFreshAccountData:
     next_delivery_total_currency: str | None = None
     account_credit: float | None = None
     account_credit_currency: str | None = None
+    selected_plan_total_price: float | None = None
+    selected_plan_total_price_currency: str | None = None
     recent_order_id: str | None = None
     _serialized_orders: list[dict[str, Any]] | None = field(default=None)
     _serialized_weeks: list[dict[str, Any]] | None = field(default=None)

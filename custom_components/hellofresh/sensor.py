@@ -93,6 +93,12 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:cash-plus",
     ),
     SensorEntityDescription(
+        key="selected_plan_total_price",
+        translation_key="selected_plan_total_price",
+        device_class=_MONETARY_DEVICE_CLASS,
+        icon="mdi:cash",
+    ),
+    SensorEntityDescription(
         key="selected_plan",
         translation_key="selected_plan",
         icon="mdi:food-variant",
@@ -307,12 +313,18 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
             return self.coordinator.data.next_delivery_total_currency
         if self.entity_description.key == "account_credit":
             return self.coordinator.data.account_credit_currency
+        if self.entity_description.key == "selected_plan_total_price":
+            return self.coordinator.data.selected_plan_total_price_currency
         return self.entity_description.native_unit_of_measurement
 
     @property
     def suggested_display_precision(self) -> int | None:
         """Return the suggested display precision where supported by Home Assistant."""
-        if self.entity_description.key in ("next_box_total_price", "account_credit"):
+        if self.entity_description.key in (
+            "next_box_total_price",
+            "account_credit",
+            "selected_plan_total_price",
+        ):
             return 2
         return None
 

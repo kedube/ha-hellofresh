@@ -61,6 +61,7 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "next_order_status": _next_order_value("status"),
     "next_box_total_price": lambda data: data.next_delivery_total,
     "account_credit": lambda data: data.account_credit,
+    "selected_plan_total_price": lambda data: data.selected_plan_total_price,
     "next_delivery_subscription": _next_order_value("subscription_id"),
     "next_delivery_slot": _next_order_value("slot_label"),
     "upcoming_delivery_count": lambda data: len(data.upcoming_orders),
@@ -169,6 +170,7 @@ WEEK_ATTRIBUTE_KEYS = frozenset(
 SUBSCRIPTION_CONTEXT_KEYS = frozenset(
     {
         "selected_plan",
+        "selected_plan_total_price",
         "subscription_count",
         "number_of_people",
         "delivery_address",

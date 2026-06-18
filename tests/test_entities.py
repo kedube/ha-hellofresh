@@ -296,6 +296,44 @@ def test_account_credit_sensor_handles_missing_credit() -> None:
     assert sensor.native_unit_of_measurement is None
 
 
+def test_selected_plan_total_price_sensor_reports_amount_currency_and_precision() -> None:
+    """The plan total price sensor reads the model amount, currency, and 2-dp precision."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "selected_plan_total_price")
+    data = HelloFreshAccountData(
+        selected_plan_total_price=76.93,
+        selected_plan_total_price_currency="USD",
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+        last_update_success=True,
+    )
+    sensor = HelloFreshSensor(coordinator, description)
+    sensor.coordinator = coordinator
+
+    assert sensor.native_value == 76.93
+    assert sensor.native_unit_of_measurement == "USD"
+    assert sensor.suggested_display_precision == 2
+
+
+def test_selected_plan_total_price_sensor_handles_missing_price() -> None:
+    """With no plan price the sensor reports None value and no currency unit."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "selected_plan_total_price")
+    data = HelloFreshAccountData().finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+        last_update_success=True,
+    )
+    sensor = HelloFreshSensor(coordinator, description)
+    sensor.coordinator = coordinator
+
+    assert sensor.native_value is None
+    assert sensor.native_unit_of_measurement is None
+
+
 def test_static_sensor_icons_match_entity_purpose() -> None:
     """Static icons should remain distinct and aligned with entity meaning."""
     assert _sensor_for("required_meal_count").icon == "mdi:numeric"

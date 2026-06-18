@@ -262,6 +262,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         await self._async_enrich_subscription_payment_dates(subscriptions, all_orders, data)
         await self._async_enrich_account_credit(data, subscriptions)
+        await self._async_enrich_selected_plan_price(data, subscriptions)
 
         all_weeks = self._backfill_account_weeks_from_subscriptions(
             subscriptions=subscriptions,
@@ -1226,6 +1227,43 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             },
         )
 
+    async def _async_enrich_selected_plan_price(
+        self,
+        data: HelloFreshAccountData,
+        subscriptions: Sequence[HelloFreshSubscription],
+    ) -> None:
+        """Read the standing weekly plan price (incl. shipping) shown in plan settings.
+
+        Source: ``POST /gw/calculate`` for the primary subscription's recurring plan (no
+        specific week). The response's ``grandTotal`` is the shipping-included weekly total
+        (``subTotal`` + ``shippingAmount``); ``currency`` gives the unit. Best-effort: a
+        missing payload or total simply leaves the sensor unavailable.
+        """
+        if self._session is None or not subscriptions:
+            return
+
+        pricing = await self._async_get_calculate_price(subscriptions[0], week=None)
+        if pricing is None:
+            return
+
+        total = self._extract_total_price(pricing)
+        if total is None:
+            return
+        data.selected_plan_total_price = round(total, 2)
+        currency = self._extract_currency_code(pricing)
+        data.selected_plan_total_price_currency = currency or None
+
+        self._record_debug_attempt(
+            "pricing_attempts",
+            {
+                "subscription_id": subscriptions[0].subscription_id,
+                "path": "/gw/calculate",
+                "context": "selected_plan_total_price",
+                "selected_plan_total_price": data.selected_plan_total_price,
+                "currency": data.selected_plan_total_price_currency,
+            },
+        )
+
     async def _async_get_past_delivery_weeks(
         self,
         subscriptions: Sequence[HelloFreshSubscription],
@@ -1806,18 +1844,20 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     async def _async_get_calculate_price(
         self,
         subscription: HelloFreshSubscription,
-        week: HelloFreshWeek,
+        week: HelloFreshWeek | None = None,
     ) -> dict[str, Any] | None:
         """Fetch a box total from /gw/calculate (lighter than the cart-price endpoint).
 
-        HAR-confirmed request shape; the response body was NOT captured, so the total is
-        read with the same defensive field fallbacks used for other pricing payloads
+        HAR-confirmed request shape. With ``week`` it prices that specific delivery; without
+        it, the standing recurring plan (used for the plan-settings weekly price). The total
+        is read with the same defensive field fallbacks used for other pricing payloads
         (``grandTotal``/``total``/``amount``/…). Treated as best-effort.
         """
         json_payload = self._build_calculate_payload(subscription, week)
         if json_payload is None:
             return None
 
+        week_id = week.week_id if week is not None else None
         cache_key = self._request_fingerprint("/gw/calculate", None, json_payload)
         cached = self._cart_price_cache.get(cache_key)
         if cached is not None:
@@ -1833,7 +1873,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 "pricing_attempts",
                 {
                     "subscription_id": subscription.subscription_id,
-                    "week_id": week.week_id,
+                    "week_id": week_id,
                     "path": "/gw/calculate",
                     "error": str(err),
                 },
@@ -1846,7 +1886,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "pricing_attempts",
             {
                 "subscription_id": subscription.subscription_id,
-                "week_id": week.week_id,
+                "week_id": week_id,
                 "path": "/gw/calculate",
                 "status": self._response_status(response),
                 "payload_summary": self._summarize_payload(payload),
@@ -1857,17 +1897,23 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     def _build_calculate_payload(
         self,
         subscription: HelloFreshSubscription,
-        week: HelloFreshWeek,
+        week: HelloFreshWeek | None = None,
     ) -> dict[str, Any] | None:
-        """Build the /gw/calculate request body from subscription + week metadata."""
+        """Build the /gw/calculate request body from subscription + week metadata.
+
+        When ``week`` is omitted the request describes the standing recurring plan (the
+        "plan settings" weekly price), drawing the product handle and delivery option from
+        the subscription itself -- which is what the web app posts for that view.
+        """
+        raw_week = week.raw if week is not None else {}
         customer_id = coerce_int(subscription.account_id)
         subscription_id = coerce_int(subscription.subscription_id)
         plan_id = subscription.raw.get("customerPlanId")
         main_product_handle = self._find_first_nested_value(
-            week.raw.get("product"), ("handle", "sku")
+            raw_week.get("product"), ("handle", "sku")
         ) or self._find_first_nested_value(subscription.raw, ("sku",))
         delivery_option = self._find_first_nested_value(
-            week.raw.get("deliveryOption"), ("handle",)
+            raw_week.get("deliveryOption"), ("handle",)
         ) or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
         postcode = self._find_first_nested_value(subscription.raw, ("postcode", "postalCode"))
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
