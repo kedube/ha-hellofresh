@@ -3244,11 +3244,15 @@ def test_enrich_selected_plan_price_reads_recurring_grand_total() -> None:
         subscription_id="6959884",
         account_id="15259216",
         locale="en-US",
+        # Real subscription shape from the HAR: the delivery-option handle lives under
+        # deliveryOption.handle, while productType.handle ALSO holds the product SKU. A blind
+        # nested "handle" lookup would wrongly use the SKU as the delivery option.
         raw={
             "customerPlanId": "plan-1",
-            "sku": "US-CBU-3-2-0",
-            "handle": "US-1-0800-2000",
-            "postcode": "01930",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "productType": {"handle": "US-CBU-3-2-0"},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+            "shippingAddress": {"postcode": "01930"},
         },
     )
 
