@@ -12,7 +12,11 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 from custom_components.hellofresh import tls_transport
-from custom_components.hellofresh.tls_transport import AuthResponse, async_auth_post
+from custom_components.hellofresh.tls_transport import (
+    AuthResponse,
+    async_auth_post,
+    async_request,
+)
 
 
 def _run(coro):
@@ -47,7 +51,15 @@ class _FakeAiohttpSession:
         self.calls: list[dict] = []
 
     async def post(self, url, params=None, json=None, headers=None):
-        self.calls.append({"url": url, "params": params, "json": json, "headers": headers})
+        self.calls.append(
+            {"method": "POST", "url": url, "params": params, "json": json, "headers": headers}
+        )
+        return _FakeAiohttpResponse()
+
+    async def request(self, method, url, params=None, json=None, headers=None):
+        self.calls.append(
+            {"method": method, "url": url, "params": params, "json": json, "headers": headers}
+        )
         return _FakeAiohttpResponse()
 
 
@@ -61,9 +73,16 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, url, params=None, json=None, headers=None, impersonate=None):
+        async def request(
+            self, method, url, params=None, json=None, headers=None, impersonate=None
+        ):
             return await post(
-                url=url, params=params, json=json, headers=headers, impersonate=impersonate
+                method=method,
+                url=url,
+                params=params,
+                json=json,
+                headers=headers,
+                impersonate=impersonate,
             )
 
     requests_module = ModuleType("curl_cffi.requests")
@@ -100,9 +119,16 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     """When curl_cffi is present, the request goes through it with a Chrome impersonate target."""
     seen: dict = {}
 
-    async def fake_post(*, url, params, json, headers, impersonate):
+    async def fake_post(*, method, url, params, json, headers, impersonate):
         seen.update(
-            {"url": url, "params": params, "json": json, "headers": headers, "impersonate": impersonate}
+            {
+                "method": method,
+                "url": url,
+                "params": params,
+                "json": json,
+                "headers": headers,
+                "impersonate": impersonate,
+            }
         )
         return SimpleNamespace(
             status_code=200,
@@ -125,6 +151,7 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
 
     # curl_cffi path used; aiohttp session NOT touched.
     assert session.calls == []
+    assert seen["method"] == "POST"
     assert seen["url"].endswith("/gw/login")
     assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
     assert seen["json"] == {"username": "a", "password": "b"}
@@ -161,3 +188,53 @@ def test_auth_response_exposes_status_headers_text_and_json() -> None:
     assert resp.status == 403
     assert resp.headers["Content-Type"] == "text/html"
     assert _run(resp.text()) == "<html>blocked"
+
+
+def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> None:
+    """async_request routes data XHRs (any verb) through curl_cffi with the right method."""
+    seen: dict = {}
+
+    async def fake_request(*, method, url, params, json, headers, impersonate):
+        seen.update({"method": method, "url": url, "impersonate": impersonate})
+        return SimpleNamespace(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            text='{"weeks": []}',
+        )
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    session = _FakeAiohttpSession()
+
+    response = _run(
+        async_request(
+            session,  # type: ignore[arg-type]
+            "GET",
+            "https://www.hellofresh.co.uk/gw/api/customers/me/subscriptions",
+            headers={"Authorization": "Bearer t"},
+        )
+    )
+
+    assert session.calls == []  # aiohttp not touched
+    assert seen["method"] == "GET"
+    assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
+    assert isinstance(response, AuthResponse)
+    assert _run(response.json(content_type=None)) == {"weeks": []}
+
+
+def test_data_request_falls_back_to_session_request(monkeypatch) -> None:
+    """Without curl_cffi, async_request uses aiohttp's session.request (not .post)."""
+    monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", False)
+    session = _FakeAiohttpSession()
+
+    _run(
+        async_request(
+            session,  # type: ignore[arg-type]
+            "PATCH",
+            "https://www.hellofresh.com/gw/api/x",
+            json_payload={"a": 1},
+        )
+    )
+
+    assert len(session.calls) == 1
+    assert session.calls[0]["method"] == "PATCH"
+    assert session.calls[0]["json"] == {"a": 1}

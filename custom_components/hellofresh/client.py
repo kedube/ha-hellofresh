@@ -37,6 +37,7 @@ from .parsers import (
     parse_datetime,
     slugify,
 )
+from .tls_transport import AuthResponse, async_request
 from .token_manager import (
     _BROWSER_CLIENT_HINTS,
     _BROWSER_FETCH_HEADERS,
@@ -2409,7 +2410,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         path: str,
         params: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-    ) -> ClientResponse:
+    ) -> ClientResponse | AuthResponse:
         """GET an authenticated HelloFresh endpoint."""
         return await self._async_api_request(
             "GET",
@@ -2426,17 +2427,24 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         json_payload: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         _allow_refresh_retry: bool = True,
-    ) -> ClientResponse:
-        """Request an authenticated HelloFresh endpoint."""
+    ) -> ClientResponse | AuthResponse:
+        """Request an authenticated HelloFresh endpoint.
+
+        Goes through the Chrome-TLS-impersonating transport (``async_request``) so the data
+        XHRs present the same real-browser TLS/HTTP2 fingerprint as the auth POSTs; stricter
+        Cloudflare regions block on that fingerprint, not on the headers. Falls back to the
+        shared aiohttp session when curl_cffi is unavailable.
+        """
         await self._tokens.async_ensure_fresh()
         if not self._tokens.has_token:
             raise HelloFreshAuthError("No HelloFresh access token configured")
 
-        response = await self._session.request(
+        response = await async_request(
+            self._session,
             method,
             f"{self._base_url}{path}",
             params=params,
-            json=json_payload,
+            json_payload=json_payload,
             headers={
                 **_DEFAULT_HEADERS,
                 **_FEATURE_HEADERS,
@@ -2537,7 +2545,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     async def _async_fetch_app_token(self) -> None:
         await self._tokens._async_fetch_app_token()
 
-    async def _async_response_json(self, response: ClientResponse) -> dict[str, Any]:
+    async def _async_response_json(
+        self, response: ClientResponse | AuthResponse
+    ) -> dict[str, Any]:
         """Decode a JSON response."""
         try:
             return await response.json(content_type=None)

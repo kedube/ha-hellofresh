@@ -75,6 +75,36 @@ class AuthResponse:
         return _json.loads(self._body)
 
 
+async def async_request(
+    session: ClientSession,
+    method: str,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    json_payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> ClientResponse | AuthResponse:
+    """Send an HTTP request, preferring a Chrome-TLS-impersonating transport.
+
+    Uses curl_cffi (real Chrome JA3/JA4 + HTTP2 fingerprint) when available; otherwise falls
+    back to the shared aiohttp session and returns its native response. A curl_cffi
+    transport-level failure also falls back to aiohttp rather than failing the call outright,
+    so a broken optional dependency never makes the integration worse than the aiohttp-only
+    baseline. The returned object always exposes ``status``, ``headers`` and awaitable
+    ``text()``/``json()`` -- the slice every caller uses -- regardless of which transport ran.
+
+    This backs both the ``/gw`` auth POSTs and the authenticated data XHRs: stricter-region
+    Cloudflare fingerprints the TLS/HTTP2 connection, which is identical for both, so both
+    need the same impersonating transport to get past it.
+    """
+    curl = await _try_curl_cffi(method, url, params, json_payload, headers)
+    if curl is not None:
+        return curl
+    return await session.request(
+        method, url, params=params, json=json_payload, headers=headers
+    )
+
+
 async def async_auth_post(
     session: ClientSession,
     url: str,
@@ -83,40 +113,57 @@ async def async_auth_post(
     json_payload: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> ClientResponse | AuthResponse:
-    """POST an auth request, preferring a Chrome-TLS-impersonating transport.
+    """POST an auth request through the impersonating transport.
 
-    Uses curl_cffi (real Chrome JA3/JA4 + HTTP2 fingerprint) when available; otherwise falls
-    back to the shared aiohttp session and returns its native response. A curl_cffi
-    transport-level failure also falls back to aiohttp rather than failing the call outright,
-    so a broken optional dependency never makes the integration worse than the aiohttp-only
-    baseline. The returned object always exposes ``status``, ``headers`` and awaitable
-    ``text()``/``json()``.
+    Shares the curl_cffi core with :func:`async_request` but keeps a ``session.post`` aiohttp
+    fallback (rather than ``session.request``) to exactly preserve the original auth-POST
+    behavior.
     """
-    if _HAS_CURL_CFFI:
-        try:
-            return await _curl_cffi_post(
-                url, params=params, json_payload=json_payload, headers=headers
-            )
-        except Exception as err:  # noqa: BLE001 - any curl_cffi failure should degrade, not crash
-            _LOGGER.debug(
-                "curl_cffi auth POST to %s failed (%s); falling back to aiohttp", url, err
-            )
+    curl = await _try_curl_cffi("POST", url, params, json_payload, headers)
+    if curl is not None:
+        return curl
     return await session.post(url, params=params, json=json_payload, headers=headers)
 
 
-async def _curl_cffi_post(
+async def _try_curl_cffi(
+    method: str,
+    url: str,
+    params: dict[str, str] | None,
+    json_payload: dict[str, Any] | None,
+    headers: dict[str, str] | None,
+) -> AuthResponse | None:
+    """Attempt the request via curl_cffi; return ``None`` to signal "fall back to aiohttp".
+
+    Returns ``None`` when curl_cffi is unavailable, or when a curl_cffi call raises at the
+    transport level -- a broken optional dependency degrades to aiohttp rather than failing
+    the call outright.
+    """
+    if not _HAS_CURL_CFFI:
+        return None
+    try:
+        return await _curl_cffi_request(
+            method, url, params=params, json_payload=json_payload, headers=headers
+        )
+    except Exception as err:  # noqa: BLE001 - any curl_cffi failure should degrade, not crash
+        _LOGGER.debug("curl_cffi %s to %s failed (%s); falling back to aiohttp", method, url, err)
+        return None
+
+
+async def _curl_cffi_request(
+    method: str,
     url: str,
     *,
     params: dict[str, str] | None,
     json_payload: dict[str, Any] | None,
     headers: dict[str, str] | None,
 ) -> AuthResponse:
-    """Perform the POST through curl_cffi with Chrome impersonation."""
+    """Perform the request through curl_cffi with Chrome impersonation."""
     # Imported lazily so the module loads even when curl_cffi isn't installed.
     from curl_cffi.requests import AsyncSession  # noqa: PLC0415
 
     async with AsyncSession() as curl_session:
-        response = await curl_session.post(
+        response = await curl_session.request(
+            method,
             url,
             params=params,
             json=json_payload,
