@@ -43,14 +43,50 @@ _TOKEN_MIN_REMAINING_BEFORE_REFRESH = 300  # always refresh within 5 min of expi
 # A browser-like User-Agent. HelloFresh fronts its endpoints with bot protection that
 # fingerprints non-browser clients; a recognizable headless UA (e.g. "HomeAssistant-...")
 # gets challenged with an HTML block page instead of a JSON API response. Presenting a
-# current browser UA is a best-effort way to pass that layer. It can break whenever the
-# protection is retuned -- see _looks_like_bot_block for how a block is handled when it does.
+# current browser UA -- together with the Client Hints and Sec-Fetch metadata a real
+# Chrome always emits (see _BROWSER_CLIENT_HINTS below) -- is a best-effort way to pass
+# that layer. It can break whenever the protection is retuned: see _looks_like_bot_block
+# for how a block is handled when it does.
+#
+# We present as Google Chrome on Windows 11. Notes on staying internally consistent, since
+# mismatched fields are exactly what bot-protection fingerprinting looks for:
+#   * Windows 11 reports "Windows NT 10.0; Win64; x64" in the legacy UA string -- Win11 is
+#     deliberately indistinguishable from Win10 there. The only signal that says "Windows 11"
+#     is the high-entropy Sec-CH-UA-Platform-Version client hint (>= 13.0.0), set below.
+#   * The Chrome major version MUST match across the UA string and the Sec-CH-UA brand list,
+#     so both derive from _CHROME_MAJOR_VERSION.
+# Bump _CHROME_MAJOR_VERSION periodically to track Chrome stable.
+_CHROME_MAJOR_VERSION = "138"
+
+# Windows 11 22H2/23H2/24H2 all report platform version "15.0.0" via the UA-CH API
+# (Windows 11 maps to 13.0.0+; Windows 10 stays at 10.0.0 or below).
+_WINDOWS_PLATFORM_VERSION = "15.0.0"
+
 _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    f"(KHTML, like Gecko) Chrome/{_CHROME_MAJOR_VERSION}.0.0.0 Safari/537.36"
 )
 
 _AUTH_USER_AGENT = _BROWSER_USER_AGENT
+
+# User-Agent Client Hints and Sec-Fetch metadata that current Chrome sends on every XHR.
+# Their absence is a strong "not a real browser" tell, so we send them alongside the UA.
+# Sec-Fetch-Site is "same-origin" because every request targets the same regional host the
+# Origin/Referer point at. The brand list mirrors Chrome's GREASE format (a deliberately
+# varied "Not)A;Brand" entry plus the real Chrome/Chromium brands at the same version).
+_BROWSER_CLIENT_HINTS = {
+    "sec-ch-ua": (
+        f'"Google Chrome";v="{_CHROME_MAJOR_VERSION}", '
+        f'"Chromium";v="{_CHROME_MAJOR_VERSION}", '
+        '"Not)A;Brand";v="24"'
+    ),
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-ch-ua-platform-version": f'"{_WINDOWS_PLATFORM_VERSION}"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+}
 
 
 def _token_fingerprint(token: str | None) -> str:
@@ -311,12 +347,14 @@ class TokenManager:
         resembles the web app's XHR and is less likely to trip bot protection.
         """
         return {
-            "Accept": "application/json",
+            "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9",
             "Content-Type": "application/json",
             "User-Agent": _AUTH_USER_AGENT,
             "Origin": self._base_url,
-            "Referer": f"{self._base_url}/",
+            "Referer": f"{self._base_url}/login",
+            "Priority": "u=1, i",
+            **_BROWSER_CLIENT_HINTS,
         }
 
     async def _async_refresh_access_token(self, force: bool) -> None:

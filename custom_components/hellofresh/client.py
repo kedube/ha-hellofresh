@@ -38,6 +38,7 @@ from .parsers import (
     slugify,
 )
 from .token_manager import (
+    _BROWSER_CLIENT_HINTS,
     _BROWSER_USER_AGENT,
     _TOKEN_MIN_REMAINING_BEFORE_REFRESH,  # noqa: F401 - re-exported for back-compat imports
     _TOKEN_REFRESH_AT_LIFETIME_FRACTION,  # noqa: F401 - re-exported for back-compat imports
@@ -60,7 +61,10 @@ _CART_PRICE_CACHE_MAX = 32
 
 _DEFAULT_HEADERS = {
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": _BROWSER_USER_AGENT,
+    "Priority": "u=1, i",
+    **_BROWSER_CLIENT_HINTS,
 }
 
 # Feature/versioning headers the logged-in web app sends on its authenticated account and
@@ -2143,9 +2147,23 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     async def _async_get_public_menu_data(self) -> dict[str, list[HelloFreshWeek] | list[str]]:
         """Fetch and parse the public HelloFresh menus page."""
+        # This is a top-level HTML page load, not a CORS XHR, so it gets the navigation
+        # Accept/Sec-Fetch values a real browser sends for a document (overriding the XHR
+        # defaults from _DEFAULT_HEADERS, which come first so these win on the shared keys).
         response = await self._session.get(
             f"{self._base_url}/menus",
-            headers={"Accept": "text/html,application/xhtml+xml", **_DEFAULT_HEADERS},
+            headers={
+                **_DEFAULT_HEADERS,
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                    "image/avif,image/webp,image/apng,*/*;q=0.8"
+                ),
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            },
         )
         if response.status >= _HTTP_BAD_REQUEST:
             raise HelloFreshError(
@@ -2420,6 +2438,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             headers={
                 **_DEFAULT_HEADERS,
                 **_FEATURE_HEADERS,
+                # Origin/Referer match the regional host so "Sec-Fetch-Site: same-origin"
+                # (from _DEFAULT_HEADERS) is consistent with what a real in-page XHR sends.
+                "Origin": self._base_url,
+                "Referer": f"{self._base_url}/",
                 "Authorization": self._tokens.authorization_header(),
                 **(extra_headers or {}),
             },
