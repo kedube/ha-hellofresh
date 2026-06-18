@@ -417,9 +417,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         deduplicated_recipe_ids = list(dict.fromkeys(recipe_ids))
         if not deduplicated_recipe_ids:
             raise HelloFreshError("At least one recipe_id is required")
-        if week.meals_required is not None and len(deduplicated_recipe_ids) != week.meals_required:
+        # meals_required is the box's included meal count. Selecting FEWER than that is
+        # rejected (an under-filled box isn't a valid cart); selecting MORE is allowed —
+        # HelloFresh treats the extras as add-on meals (typically surcharged). The cart
+        # endpoint, not this client, is the authority on whether a given over-selection is
+        # accepted for the account/region, so we don't cap the upper bound here.
+        if week.meals_required is not None and len(deduplicated_recipe_ids) < week.meals_required:
             raise HelloFreshError(
-                f"Week {week_id} requires exactly {week.meals_required} recipes, "
+                f"Week {week_id} needs at least {week.meals_required} recipes, "
                 f"got {len(deduplicated_recipe_ids)}"
             )
 

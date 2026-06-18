@@ -43,6 +43,8 @@ views:
       # hellofresh.get_weeks service, so it needs no helper entities.
       - type: custom:hellofresh-meal-planner-card
         title: My Menu
+        logo: true                  # show the bundled HelloFresh logo in the header
+        # logo: /local/my-logo.png  # …or a custom image URL instead of `true`
         # image_width: 400          # optional recipe-image width
         # config_entry_id: <id>     # only needed with multiple HelloFresh accounts
 

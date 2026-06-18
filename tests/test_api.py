@@ -2619,6 +2619,84 @@ def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> Non
     ]
 
 
+def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, object | None]]]:
+    """Build a client + week wired for select_meals call-shape assertions."""
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        servings=2,
+        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="6959884",
+        selection_deadline=datetime(2026, 6, 17, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
+        meals_required=3,
+        meals_selected=0,
+        recipes=[HelloFreshRecipe(recipe_id=f"recipe-{i}", name=f"Meal {i}") for i in (11, 18, 20, 32)],
+        raw={
+            "product": {"handle": "US-CBU-3-2-0"},
+            "_menu_payload": {
+                "week": "2026-W26",
+                "meals": [
+                    {"index": i, "selection": {"limit": 2}, "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"}}
+                    for i in (11, 18, 20, 32)
+                ],
+            },
+        },
+    )
+    client._last_account_data = HelloFreshAccountData(weeks=[week]).finalize()
+    requests: list[dict[str, object | None]] = []
+
+    async def fake_get_subscriptions():
+        return [subscription]
+
+    async def fake_pref(_subscription):
+        return "quick"
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+        requests.append({"method": method, "path": path, "json_payload": json_payload})
+
+        class DummyResponse:
+            status = 200
+
+        return DummyResponse()
+
+    client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
+    client._async_get_subscription_plan_preference = fake_pref  # type: ignore[method-assign]
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    return client, requests
+
+
+def test_async_select_meals_allows_more_than_required() -> None:
+    """Selecting MORE meals than the box's required count is allowed (extra/add-on meals)."""
+    client, requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18", "recipe-20", "recipe-32"])
+    )
+    assert len(requests) == 1
+    meals = requests[0]["json_payload"]["meals"]
+    assert [m["index"] for m in meals] == [11, 18, 20, 32]
+
+
+def test_async_select_meals_rejects_fewer_than_required() -> None:
+    """Selecting FEWER meals than required is still rejected (an under-filled box)."""
+    client, _requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="at least 3"):
+        loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"]))
+
+
 def test_scm_tracking_prefers_external_status_label() -> None:
     """SCM tracking should prefer the customer-facing status over internal labels."""
     from custom_components.hellofresh.parsers import extract_scm_tracking_details
