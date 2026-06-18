@@ -115,13 +115,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Heal any legacy credentials-in-options before reading them (data-only from here on).
     _heal_credential_storage(hass, entry)
 
-    # Migration: pre-credentials entries stored only a pasted token. The auth flow now
-    # requires a username/password to log in and self-heal across token expiry, so trigger
-    # reauth to collect them. The existing access token keeps working until then.
-    if not entry.data.get(CONF_USERNAME) or not entry.data.get(CONF_PASSWORD):
+    # An entry must be able to authenticate by *some* means: either credentials (to log in
+    # and self-heal across token expiry) or a token (the deliberate token-only backup path).
+    # Only when BOTH are absent is the entry unusable -- that's a stale legacy entry, so
+    # trigger reauth to collect one or the other. A token-only entry is intentional and must
+    # NOT be forced to provide a password it doesn't have.
+    has_credentials = bool(entry.data.get(CONF_USERNAME) and entry.data.get(CONF_PASSWORD))
+    has_token = bool(entry.data.get(CONF_ACCESS_TOKEN) or entry.data.get(CONF_REFRESH_TOKEN))
+    if not has_credentials and not has_token:
         raise ConfigEntryAuthFailed(
-            "HelloFresh now signs in with your account email and password. "
-            "Please reauthenticate to continue."
+            "HelloFresh needs your account email and password, or a valid access token, "
+            "to connect. Please reauthenticate to continue."
         )
 
     session = async_get_clientsession(hass)

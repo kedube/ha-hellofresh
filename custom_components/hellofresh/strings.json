@@ -3,11 +3,27 @@
     "step": {
       "user": {
         "title": "Connect HelloFresh",
+        "description": "Choose how to connect your HelloFresh account.",
+        "menu_options": {
+          "credentials": "Sign in with email and password (recommended)",
+          "token": "Provide an access token (advanced)"
+        }
+      },
+      "credentials": {
+        "title": "Connect HelloFresh",
         "description": "Sign in with your HelloFresh account email and password. Home Assistant uses them to log in and keep the connection refreshed automatically.",
         "data": {
           "country": "Country",
           "username": "Email",
           "password": "Password"
+        }
+      },
+      "token": {
+        "title": "Connect HelloFresh with a token",
+        "description": "Advanced backup option. Paste your HelloFresh `apiV2Auth` value (from the website's browser cookies) or a raw access token. This works for up to ~60 days, until the refresh token expires — then you'll be asked to provide a new one. Use email and password instead unless that path is blocked.",
+        "data": {
+          "country": "Country",
+          "token": "apiV2Auth token"
         }
       },
       "reauth_confirm": {
@@ -17,11 +33,19 @@
           "username": "Email",
           "password": "Password"
         }
+      },
+      "reauth_token": {
+        "title": "Reconnect HelloFresh",
+        "description": "Your HelloFresh token has expired. Paste a fresh `apiV2Auth` value or access token to restore access.",
+        "data": {
+          "token": "apiV2Auth token"
+        }
       }
     },
     "error": {
       "cannot_connect": "Could not connect",
-      "invalid_auth": "Invalid authentication"
+      "invalid_auth": "Invalid authentication",
+      "invalid_token": "That token could not be read or was rejected"
     },
     "abort": {
       "already_configured": "This HelloFresh account is already configured",

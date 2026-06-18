@@ -9,7 +9,7 @@ It is derived from the integration source and its normalization tests:
 - Pure parsing/coercion helpers — [parsers.py](custom_components/hellofresh/parsers.py)
 - Payload normalization helpers — [normalizers.py](custom_components/hellofresh/normalizers.py)
 - Token refresh scheduling — [coordinator.py](custom_components/hellofresh/coordinator.py)
-- Setup / reauth (email + password) — [config_flow.py](custom_components/hellofresh/config_flow.py)
+- Setup / reauth (email + password, or pasted token) — [config_flow.py](custom_components/hellofresh/config_flow.py)
 - Normalization tests — [tests/test_api.py](tests/test_api.py)
 
 > **Module layout note:** the integration was originally a single `api.py`. It is now split across the modules above, with [api.py](custom_components/hellofresh/api.py) kept as a thin re-export shim so `from .api import ...` keeps working. Import from the specific modules in new code.
@@ -46,7 +46,14 @@ Default region: `us`.
 
 ## Authentication
 
-The integration authenticates the same way the HelloFresh web app does: it logs in with the account **email and password** through HelloFresh's own `/gw` auth gateway and then renews the resulting short-lived access token with a long-lived refresh token. There is no OAuth app, Auth0 `/oauth/token` exchange, or pasted bearer token — the user supplies only credentials during setup, and the access/refresh tokens are obtained and maintained entirely at runtime.
+The integration authenticates the same way the HelloFresh web app does: it logs in with the account **email and password** through HelloFresh's own `/gw` auth gateway and then renews the resulting short-lived access token with a long-lived refresh token. There is no OAuth app or Auth0 `/oauth/token` exchange — the access/refresh tokens are obtained and maintained entirely at runtime.
+
+Setup offers **two paths** (a menu in [config_flow.py](custom_components/hellofresh/config_flow.py)):
+
+1. **Credentials (recommended)** — store email + password; the runtime logs in and self-heals across token expiry/rotation indefinitely.
+2. **Token (advanced backup)** — paste the website's `apiV2Auth` value (a JSON auth object, plain or URL-encoded) or a bare access token. No credentials are stored, so the entry works only until the refresh token expires (~60 days) or HelloFresh rotates/invalidates it, at which point a reauth prompt is raised. This path exists as a fallback for when the Cloudflare bot-protection bypass cannot complete a credential `/gw/login` (see [Bot-protection handling](#bot-protection-waf-handling)). The paste is parsed by `parsers.token_payload_to_entry_data` (URL-decoded if needed; missing timing backfilled from the access token's JWT `iat`/`exp`).
+
+Either way, `async_setup_entry` requires an entry to carry **either** credentials **or** a token; a stale entry with neither triggers reauth. Token-only entries are intentional and are never forced to supply a password — reauth for them re-collects a token.
 
 Authenticated API calls send a full Chrome-on-Windows-11 header set (`_DEFAULT_HEADERS` + the shared `_BROWSER_CLIENT_HINTS`):
 
@@ -1202,7 +1209,7 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 | [parsers.py](custom_components/hellofresh/parsers.py) | Pure parsing/coercion helpers (dates, numbers, tracking, recursive payload search) |
 | [normalizers.py](custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
 | [coordinator.py](custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
-| [config_flow.py](custom_components/hellofresh/config_flow.py) | Email/password setup, options, and reauthentication flows |
+| [config_flow.py](custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
 | [const.py](custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds |
 | [api.py](custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
 | [services.yaml](custom_components/hellofresh/services.yaml) | Service definitions |

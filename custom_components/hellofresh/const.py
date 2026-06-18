@@ -18,6 +18,10 @@ CONF_REFRESH_TOKEN_ISSUED_AT = "refresh_token_issued_at"
 CONF_SCAN_INTERVAL_MINUTES = "scan_interval_minutes"
 CONF_TOKEN_TYPE = "token_type"
 CONF_USERNAME = "username"
+# Config-flow-only field: the raw apiV2Auth blob (or bare access token) pasted in the
+# token setup step. It is parsed into the CONF_ACCESS_TOKEN/CONF_REFRESH_TOKEN/timing keys
+# and is never itself persisted to the config entry.
+CONF_TOKEN = "token"
 
 # Public web-client id used by the HelloFresh frontend for the /gw/auth/token and
 # /gw/login calls (observed as ``client_id=senf`` / ``NEXT_PUBLIC_GW_CLIENT_ID``).

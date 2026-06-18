@@ -14,7 +14,7 @@ from datetime import date, datetime
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 # Maximum recursion depth when heuristically searching nested payloads.
 MAX_SEARCH_DEPTH = 8
@@ -120,6 +120,92 @@ def decode_jwt_claims(token: str | None) -> dict[str, Any] | None:
     except (binascii.Error, ValueError):
         return None
     return claims if isinstance(claims, dict) else None
+
+
+_MAX_URL_DECODE_PASSES = 3
+
+
+def loads_possibly_url_encoded(text: str | None) -> Any:
+    """Parse JSON that may be plain, URL-encoded, or double-URL-encoded.
+
+    The browser exposes the ``apiV2Auth`` cookie value, which users commonly paste in its
+    URL-encoded form (``%7B%22access_token%22...``). A plain ``json.loads`` fails on that, so
+    we retry after ``unquote`` up to a few times to recover from single or double encoding.
+    Returns the decoded object, or ``None`` when nothing parses.
+    """
+    if not text:
+        return None
+    candidate = text.strip()
+    for _ in range(_MAX_URL_DECODE_PASSES):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            decoded = unquote(candidate)
+            if decoded == candidate:
+                # No further decoding is possible; the value is not JSON.
+                return None
+            candidate = decoded
+    return None
+
+
+def token_payload_to_entry_data(text: str | None) -> dict[str, Any] | None:
+    """Map a pasted token blob to config-entry token fields.
+
+    Accepts either a full ``apiV2Auth`` auth object (``{"access_token", "refresh_token",
+    "expires_in", "refresh_expires_in", "token_type"}``, plain or URL-encoded) or a bare
+    access-token string. Returns a dict keyed by the integration's CONF_* token keys, or
+    ``None`` when no access token can be recovered. Timing fields absent from the payload are
+    backfilled from the access token's own JWT ``iat``/``exp`` claims so the expiry sensors
+    and proactive refresh still work.
+
+    The returned keys deliberately match ``const.CONF_*`` string values so callers can store
+    the dict straight into ``entry.data``.
+    """
+    if not text:
+        return None
+
+    payload = loads_possibly_url_encoded(text)
+    if isinstance(payload, dict):
+        access_token = payload.get("access_token")
+    else:
+        # Not a JSON object: treat the raw input as a bare access token.
+        access_token = text.strip()
+        payload = {}
+
+    if not isinstance(access_token, str) or not access_token.strip():
+        return None
+    access_token = access_token.strip()
+
+    claims = decode_jwt_claims(access_token) or {}
+    issued_at = coerce_int(payload.get("issued_at")) or coerce_int(claims.get("iat"))
+    expires_in = coerce_int(payload.get("expires_in"))
+    if expires_in is None:
+        exp = coerce_int(claims.get("exp"))
+        if exp is not None and issued_at is not None:
+            expires_in = exp - issued_at
+
+    refresh_token = payload.get("refresh_token")
+    refresh_token = refresh_token.strip() if isinstance(refresh_token, str) else None
+
+    data: dict[str, Any] = {"access_token": access_token}
+    if refresh_token:
+        data["refresh_token"] = refresh_token
+    if issued_at is not None:
+        data["issued_at"] = issued_at
+        # The refresh token's own 60-day clock is anchored to the same issue time when the
+        # blob does not carry an explicit refresh issue time.
+        data["refresh_token_issued_at"] = (
+            coerce_int(payload.get("refresh_token_issued_at")) or issued_at
+        )
+    if expires_in is not None:
+        data["expires_in"] = expires_in
+    refresh_expires_in = coerce_int(payload.get("refresh_expires_in"))
+    if refresh_expires_in is not None:
+        data["refresh_expires_in"] = refresh_expires_in
+    token_type = payload.get("token_type")
+    if isinstance(token_type, str) and token_type.strip():
+        data["token_type"] = token_type.strip()
+    return data
 
 
 def coerce_int(value: Any) -> int | None:

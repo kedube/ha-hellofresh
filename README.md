@@ -84,7 +84,7 @@ Choose the matching country during setup:
 | --- | --- | --- | --- |
 | United States | `us` | https://www.hellofresh.com | ✅ |
 | Canada | `ca` | https://www.hellofresh.ca | Untested |
-| United Kingdom | `uk` | https://www.hellofresh.co.uk | Untested |  
+| United Kingdom | `uk` | https://www.hellofresh.co.uk | ✅ |  
 | Australia | `au` | https://www.hellofresh.com.au | Untested |
 | Germany | `de` | https://www.hellofresh.de | Untested |
 | Netherlands | `nl` | https://www.hellofresh.nl | Untested |
