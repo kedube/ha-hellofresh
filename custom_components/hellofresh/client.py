@@ -1912,9 +1912,18 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         main_product_handle = self._find_first_nested_value(
             raw_week.get("product"), ("handle", "sku")
         ) or self._find_first_nested_value(subscription.raw, ("sku",))
-        delivery_option = self._find_first_nested_value(
-            raw_week.get("deliveryOption"), ("handle",)
-        ) or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
+        # The delivery-option handle (e.g. "US-1-0800-2000") must come from the
+        # subscription's deliveryOption object specifically -- a blind nested "handle"
+        # search collides with productType.handle (the product SKU, "US-CBU-3-2-0"), which
+        # makes /gw/calculate mis-price or reject the request and leaves the sensor unknown.
+        delivery_option = (
+            self._find_first_nested_value(raw_week.get("deliveryOption"), ("handle",))
+            or self._find_first_nested_value(subscription.raw.get("deliveryOption"), ("handle",))
+            or self._find_first_nested_value(
+                subscription.raw.get("nextDeliveryOption"), ("handle",)
+            )
+            or self._find_first_nested_value(subscription.raw, ("deliveryOptionHandle",))
+        )
         postcode = self._find_first_nested_value(subscription.raw, ("postcode", "postalCode"))
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
 
