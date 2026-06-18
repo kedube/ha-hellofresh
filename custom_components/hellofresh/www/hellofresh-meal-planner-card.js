@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.1.2";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -268,7 +268,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No menu available for this week yet.</div>`;
     }
     const editable = this._isEditable(week);
-    const cards = recipes
+    // Selected meals first, otherwise keep the menu's order. Array.prototype.sort is stable
+    // in modern engines, so unselected recipes retain their original relative order.
+    const ordered = recipes
+      .slice()
+      .sort((a, b) => (b.is_selected ? 1 : 0) - (a.is_selected ? 1 : 0));
+    const cards = ordered
       .map((r) => {
         const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
         const cals = r.calories_kcal ? `${Math.round(r.calories_kcal)} kcal` : "";
@@ -391,7 +396,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .skipbtn:disabled { opacity: 0.5; cursor: default; }
       .grid {
         display: grid; gap: 12px; margin-top: 4px;
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        /* auto-fill spreads the catalog across as many ~180px columns as the card width
+           allows. In a panel-mode view (full page width) this becomes a wide multi-column
+           grid; in a normal column it falls back to one or two columns. */
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
       }
       .grid.busy { opacity: 0.6; pointer-events: none; }
       .recipe {

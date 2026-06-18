@@ -26,6 +26,26 @@
 
 title: HelloFresh
 views:
+  # ── Meal planner ──────────────────────────────────────────────────────────────
+  # Per-week recipes are NOT in entity attributes (they'd exceed the recorder's 16 KB
+  # cap), so the packaged card below reads them on demand from the response-returning
+  # `hellofresh.get_weeks` service — full menu, images, and your current selections.
+  # `panel: true` makes the single card fill the page width so the recipe grid spreads
+  # into many columns instead of one narrow sidebar column.
+  - title: Meal planner
+    path: meal-planner
+    icon: mdi:silverware-variant
+    panel: true
+    cards:
+      # Packaged custom card (shipped with the integration, auto-registered). Browses every
+      # week's full menu with images, highlights your selected meals, and lets you change the
+      # selection / skip on weeks that are still editable. Reads recipes on demand from the
+      # hellofresh.get_weeks service, so it needs no helper entities.
+      - type: custom:hellofresh-meal-planner-card
+        title: My Menu
+        # image_width: 400          # optional recipe-image width
+        # config_entry_id: <id>     # only needed with multiple HelloFresh accounts
+
   # ── Overview ────────────────────────────────────────────────────────────────
   - title: HelloFresh
     path: hellofresh
@@ -414,131 +434,3 @@ views:
             name: Account ID
           - entity: sensor.hellofresh_us_api_base_url
             name: API base URL
-
-  # ── Meal planner (scroll between weeks, see selected meals, skip) ─────────────
-  # Per-week recipes are NOT in entity attributes (they'd exceed the recorder's
-  # 16 KB cap), so this view reads them on demand from the response-returning
-  # `hellofresh.get_weeks` service and caches the result in an input_text helper.
-  #
-  # ── Prerequisites (add to configuration.yaml or via the UI) ───────────────────
-  # input_number:
-  #   hellofresh_week_index:
-  #     name: HelloFresh week index
-  #     min: 0
-  #     max: 25          # upper bound; clamp in the script to the real week count
-  #     step: 1
-  #     initial: 0
-  # input_text:
-  #   hellofresh_weeks_cache:
-  #     name: HelloFresh weeks cache
-  #     max: 255          # holds compact JSON; raise if your menus are large
-  #
-  # ── Script: fetch weeks and cache them as JSON ────────────────────────────────
-  # Calls the response service and stores a trimmed list (week_id, display_name,
-  # delivery_date, meals_selected/required, is_skipped, recipe name+selected) so
-  # the card can render any week without re-fetching. Trigger it on a schedule or
-  # from the Refresh button below.
-  # script:
-  #   hellofresh_cache_weeks:
-  #     sequence:
-  #       - service: hellofresh.get_weeks
-  #         response_variable: result
-  #       - service: input_text.set_value
-  #         target: { entity_id: input_text.hellofresh_weeks_cache }
-  #         data:
-  #           value: >-
-  #             {{ (result.weeks | map(attribute='week_id') | list) | to_json }}
-  #     # For full recipe rendering, store more fields — but mind the 255-char
-  #     # input_text limit; a `template` sensor or a custom card is better for the
-  #     # full catalog. The pattern below shows the week-cursor mechanics.
-  - title: Meal planner
-    path: meal-planner
-    icon: mdi:silverware-variant
-    cards:
-      # Packaged custom card (shipped with the integration, auto-registered). Browses every
-      # week's full menu with images, highlights your selected meals, and lets you change the
-      # selection / skip on weeks that are still editable. Reads recipes on demand from the
-      # hellofresh.get_weeks service, so it needs no helper entities.
-      - type: custom:hellofresh-meal-planner-card
-        title: HelloFresh Meal Planner
-        # image_width: 400          # optional recipe-image width
-        # config_entry_id: <id>     # only needed with multiple HelloFresh accounts
-
-      # ── No-custom-card fallback (helper-driven week cursor) ──────────────────────
-      # Everything below is the original built-in fallback for users who would rather not
-      # use the packaged card. It needs the helper entities documented at the top of this
-      # view. Delete this whole block if you use the card above.
-      #
-      # Setup notice — shown ONLY until you create the week-cursor helper, so this
-      # view doesn't present "not found" cards on first paste. Once
-      # input_number.hellofresh_week_index exists, this card hides and the browser
-      # cards below appear.
-      - type: markdown
-        content: >
-          ### 🧭 Meal planner setup
-
-          This view needs two helper entities and a small script (documented in the
-          comments above this view in `dashboard.yaml`):
-
-          - `input_number.hellofresh_week_index` — the week cursor
-          - `input_text.hellofresh_weeks_cache` — caches the `hellofresh.get_weeks` response
-          - `script.hellofresh_cache_weeks` — fetches weeks into the cache
-
-          Create them under **Settings → Devices & Services → Helpers** (and add the
-          script to `configuration.yaml`), then this notice disappears.
-        visibility:
-          - condition: state
-            entity: input_number.hellofresh_week_index
-            state: unavailable
-
-      # Week cursor: ◀ ▶ step through weeks by index. Hidden until the helper exists.
-      - type: entities
-        title: Week browser
-        show_header_toggle: false
-        entities:
-          - entity: input_number.hellofresh_week_index
-            name: Week index
-          - type: buttons
-            entities:
-              - entity: script.hellofresh_cache_weeks
-                name: Refresh weeks
-                icon: mdi:refresh
-        visibility:
-          - condition: state
-            entity: input_number.hellofresh_week_index
-            state_not: unavailable
-
-      # Renders the week at the current cursor from the cached service response.
-      # Replace the cache read with your stored structure; this shows the shape.
-      - type: markdown
-        title: Selected meals for this week
-        content: >
-          {% set weeks = state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks') or [] %}
-          {% set idx = states('input_number.hellofresh_week_index') | int(0) %}
-          {% if weeks | count == 0 %}
-          No week data — run **Refresh weeks** (calls `hellofresh.get_weeks`).
-          {% else %}
-          {% set w = weeks[idx % (weeks | count)] %}
-          ### {{ w.display_name or w.week_id }}
-          Delivery: **{{ w.delivery_date or '—' }}** ·
-          Chosen: **{{ w.meals_selected if w.meals_selected is not none else 0 }}/{{ w.meals_required if w.meals_required is not none else '?' }}**
-          {% if w.is_skipped %} · ⏭️ **Skipped**{% endif %}
-
-          _Note: the summary attribute carries scalar week metadata only. For the
-          full recipe list with selection state, call `hellofresh.get_weeks`
-          (optionally with `week_id`) — it returns each recipe's name and
-          `is_selected`._
-          {% endif %}
-        visibility:
-          - condition: state
-            entity: input_number.hellofresh_week_index
-            state_not: unavailable
-
-      # The account-wide skip switch works without the cursor helpers, so it is
-      # always shown.
-      - type: entities
-        title: Skip a delivery
-        show_header_toggle: false
-        entities:
-          - entity: switch.hellofresh_us_skip_next_modifiable_week
-            name: Skip next selectable delivery week
