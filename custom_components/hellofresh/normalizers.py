@@ -270,6 +270,7 @@ class HelloFreshPayloadNormalizer:
             name=name,
             preference=recipe_data.get("preference") or recipe_data.get("category"),
             is_selected=is_selected,
+            course_index=coerce_int(raw_meal.get("index")),
             image_url=recipe_data.get("imagePath")
             or recipe_data.get("image")
             or recipe_data.get("imageUrl"),
@@ -831,14 +832,24 @@ class HelloFreshPayloadNormalizer:
                 merged_weeks.append(account_week)
                 continue
 
-            selected_recipe_ids = {
-                recipe.recipe_id for recipe in account_week.recipes if recipe.is_selected
-            }
-            if not selected_recipe_ids and account_week.recipes:
-                selected_recipe_ids = {recipe.recipe_id for recipe in account_week.recipes}
-
-            for recipe in menu_week.recipes:
-                recipe.is_selected = recipe.recipe_id in selected_recipe_ids
+            # Resolve which recipes are selected, from whichever source actually knows.
+            #
+            # Two payload shapes exist:
+            #  * The account/deliveries week lists the chosen recipes directly. Here the
+            #    presence of a recipe (or its is_selected flag) IS the selection, so derive
+            #    the selected id set from the account week and project it onto the catalog.
+            #  * The account week carries no recipes (the common case: the deliveries endpoint
+            #    returns counts but no recipe list). Then the MENU week is authoritative — each
+            #    chosen meal arrives with selection.quantity > 0, which _recipe_from_raw_meal
+            #    has already turned into is_selected. In that case we must PRESERVE the menu
+            #    week's own flags; recomputing from the (empty) account week would blank every
+            #    recipe even though the menu payload said which were chosen.
+            if account_week.recipes:
+                account_selected_ids = {
+                    recipe.recipe_id for recipe in account_week.recipes if recipe.is_selected
+                } or {recipe.recipe_id for recipe in account_week.recipes}
+                for recipe in menu_week.recipes:
+                    recipe.is_selected = recipe.recipe_id in account_selected_ids
 
             account_week.recipes = menu_week.recipes
             account_week.menu_title = menu_week.menu_title or account_week.menu_title

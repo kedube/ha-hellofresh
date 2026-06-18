@@ -1953,6 +1953,55 @@ def test_account_data_merges_authenticated_menu_catalog_into_delivery_week() -> 
     assert result.weeks[0].recipes[1].is_selected is False
 
 
+def test_merge_preserves_menu_selection_when_account_week_has_no_recipes() -> None:
+    """When the deliveries payload lists no recipes, the menu week's own selection wins.
+
+    The live /gw/api/customers/me/deliveries payload returns counts but no recipe list, so
+    account_week.recipes is empty; the per-recipe selection comes from /gw/my-deliveries/menu
+    (each chosen meal has selection.quantity > 0). Regression guard: the merge previously
+    recomputed is_selected from the empty account week and blanked every recipe.
+    """
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    account_week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Classic Box",
+        subscription_id="sub-1",
+        meals_required=3,
+        meals_selected=3,
+        recipes=[],
+    )
+    menu_week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Classic Box",
+        subscription_id="sub-1",
+        source="account_menu_api",
+        recipes=[
+            HelloFreshRecipe(
+                recipe_id="chosen-a", name="Fajitas", course_index=11, is_selected=True
+            ),
+            HelloFreshRecipe(
+                recipe_id="not-chosen", name="Burger", course_index=12, is_selected=False
+            ),
+            HelloFreshRecipe(
+                recipe_id="chosen-b", name="Ravioli", course_index=20, is_selected=True
+            ),
+        ],
+    )
+
+    merged = client._merge_menu_weeks_into_account_weeks(
+        account_weeks=[account_week],
+        menu_weeks=[menu_week],
+    )
+
+    selected = {recipe.recipe_id for recipe in merged[0].recipes if recipe.is_selected}
+    assert selected == {"chosen-a", "chosen-b"}
+    assert [recipe.course_index for recipe in merged[0].recipes] == [11, 12, 20]
+
+
 def test_account_data_collects_debug_trace_for_menu_and_delivery_attempts() -> None:
     """Debug trace should expose endpoint attempts for diagnostics."""
     client = HelloFreshClient(
