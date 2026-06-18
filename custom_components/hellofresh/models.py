@@ -30,6 +30,11 @@ class HelloFreshRecipe:
     name: str
     preference: str | None = None
     is_selected: bool = False
+    # Course index within the week's menu (the cart's ``recipeIndexes`` unit). HelloFresh
+    # identifies a selection by this index, not the recipe id, and the same dish can appear
+    # under several ids/indexes (portion variants), so the index is the robust key for
+    # building meal-selection writes and for a dashboard card to round-trip selections.
+    course_index: int | None = None
     image_url: str | None = None
     description: str | None = None
     ingredients: list[str] = field(default_factory=list)
@@ -49,6 +54,7 @@ class HelloFreshRecipe:
             "name": self.name,
             "preference": self.preference,
             "is_selected": self.is_selected,
+            "course_index": self.course_index,
             "image_url": self.image_url,
             "description": self.description,
             "ingredients": self.ingredients,
