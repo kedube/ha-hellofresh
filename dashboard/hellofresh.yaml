@@ -1,8 +1,7 @@
 # HelloFresh — example Lovelace dashboard
 #
-# A ready-to-use dashboard built from the entities this integration exposes,
-# laid out for how you actually use HelloFresh: act-on-it banners first, then the
-# next box, meal selection, shipment tracking, planning, billing, diagnostics last.
+# A ready-to-use dashboard built from the entities this integration exposes, in six views:
+# Meal planner, Shipment Tracking, Meal Selection, Planning, Account, and Diagnostics.
 #
 # ── How to use ────────────────────────────────────────────────────────────────
 # 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new dashboard in YAML
@@ -12,17 +11,13 @@
 #    `sensor.hellofresh_us_next_delivery_date`. This file uses that `hellofresh_us_`
 #    prefix throughout — find/replace it to match your account (check
 #    Settings → Devices & Services → HelloFresh → entities for the real IDs).
-# 3. Conditional cards (banners, the tracking card) only render when relevant,
-#    so they stay hidden in the normal case.
+# 3. Some cards are conditional (holiday banner, shipment tracking) and only render
+#    when relevant, so they stay hidden in the normal case.
 #
-# ── Custom cards (HACS) ─────────────────────────────────────────────────────────
-# The Overview view uses two popular HACS frontend cards for a more visual,
-# scannable layout:
-#   • Mushroom        — https://github.com/piitaya/lovelace-mushroom
-#   • auto-entities    — https://github.com/thomasloven/lovelace-auto-entities  (optional)
-# Install both via HACS → Frontend before importing, or see the comments on each
-# card for the built-in (`glance`/`entities`) fallback that needs no add-ons.
-# The Planning, Account, and Diagnostics views are 100% built-in Lovelace.
+# ── Add-ons ─────────────────────────────────────────────────────────────────────
+# The only custom card is the integration's own `custom:hellofresh-meal-planner-card`
+# (on the Meal planner view), which the integration auto-registers — no HACS frontend
+# add-on is required. Every other view is 100% built-in Lovelace.
 
 title: HelloFresh
 views:
@@ -35,9 +30,25 @@ views:
         title: My Menu
         logo: true
   - title: Shipment Tracking
-    path: hellofresh
+    path: shipment-tracking
     icon: mdi:package-variant-closed
     cards:
+      # Always-visible "next box" summary so this view is never blank (the tracking and
+      # holiday cards below are conditional and hide when there's nothing in transit).
+      - type: glance
+        title: Next box
+        columns: 2
+        state_color: true
+        entities:
+          - entity: sensor.hellofresh_us_next_delivery_date
+            name: Delivery date
+          - entity: sensor.hellofresh_us_next_order_status
+            name: Status
+          - entity: sensor.hellofresh_us_next_delivery_slot
+            name: Delivery slot
+          - entity: sensor.hellofresh_us_next_box_total_price
+            name: Box total
+      # Holiday banner — only when HelloFresh has shifted the next delivery for a holiday.
       - type: conditional
         conditions:
           - entity: sensor.hellofresh_us_next_holiday_message
@@ -53,6 +64,7 @@ views:
 
             New date: **{{
             states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
+      # Carrier tracking — only renders when a shipment is actually in transit.
       - type: conditional
         conditions:
           - entity: binary_sensor.hellofresh_us_tracked_shipment_available
@@ -69,16 +81,20 @@ views:
               name: Carrier
             - entity: sensor.hellofresh_us_shipment_tracking_number
               name: Tracking number
-            - entity: sensor.hellofresh_us_next_delivery_date
-              name: Delivery date
-            - entity: sensor.hellofresh_us_next_delivery_slot
-              name: Delivery slot
             - entity: sensor.hellofresh_us_next_delivery_tracking_url
               name: Tracking link
   - title: Meal Selection
     path: meal-selection
     icon: mdi:silverware-fork-knife
     cards:
+      # To actually choose meals, use the Meal planner tab (images + tap-to-select). This
+      # view is the at-a-glance selection status / deadlines.
+      - type: markdown
+        content: >
+          ℹ️ Choose meals on the **Meal planner** tab. This view shows selection status.
+      # `max` is a static cap (most plans need 2–6 meals); a gauge can't read
+      # `required_meal_count` dynamically, so the card below shows the exact chosen/required
+      # pair. Severity bands give the dial meaning rather than a bare number on a ring.
       - type: gauge
         name: Meals chosen (next delivery)
         entity: sensor.hellofresh_us_selected_meal_count
@@ -94,11 +110,6 @@ views:
         show_header_toggle: false
         state_color: true
         entities:
-          - entity: sensor.hellofresh_us_number_of_people
-            name: Number of people
-          - entity: sensor.hellofresh_us_selected_plan
-            name: Selected plan
-          - type: divider
           - entity: sensor.hellofresh_us_selected_meal_count
             name: Next delivery meals chosen
           - entity: sensor.hellofresh_us_required_meal_count
