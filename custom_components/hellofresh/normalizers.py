@@ -407,11 +407,17 @@ class HelloFreshPayloadNormalizer:
         price_cents = coerce_int(price_catalog.get("basePrice"))
         price = round(price_cents / 100, 2) if price_cents is not None else None
 
-        # Selected quantity lives on the item's selection block when the cart has it chosen.
+        # Selected quantity lives on the item's `selection` block when chosen. Market add-ons use
+        # `oneOffQuantity` (this-week add) + `preselectedQuantity` (recurring add) — NOT `quantity`
+        # (which is what meals use). Unselected items have `selection: null`.
         selection = (
             raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
         )
-        selected_quantity = coerce_int(selection.get("quantity") or raw_item.get("quantity"))
+        one_off = coerce_int(selection.get("oneOffQuantity")) or 0
+        preselected = coerce_int(selection.get("preselectedQuantity")) or 0
+        selected_quantity = (one_off + preselected) or coerce_int(
+            selection.get("quantity") or raw_item.get("quantity")
+        )
         is_selected = bool(selected_quantity and selected_quantity > 0)
 
         return HelloFreshMarketItem(
@@ -433,7 +439,9 @@ class HelloFreshPayloadNormalizer:
             max_quantity=coerce_int(raw_item.get("maxQuantity")),
             is_selected=is_selected,
             selected_quantity=selected_quantity if is_selected else None,
+            preselected_quantity=preselected or None,
             is_locked=bool(raw_item.get("isLocked")),
+            is_sold_out=bool(raw_item.get("isSoldOut")),
         )
 
     def _build_market_items(self, raw_week: dict[str, Any]) -> list[HelloFreshMarketItem]:

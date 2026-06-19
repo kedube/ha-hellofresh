@@ -116,8 +116,12 @@ class HelloFreshMarketItem:
     currency: str | None = None
     max_quantity: int | None = None
     is_selected: bool = False
+    # Total selected servings (one-off + preselected). preselected_quantity is the recurring
+    # portion (carried week to week); the cart write preserves it and applies changes as one-off.
     selected_quantity: int | None = None
+    preselected_quantity: int | None = None
     is_locked: bool = False
+    is_sold_out: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize market-item data for the get_weeks response / dashboard card."""
@@ -139,7 +143,9 @@ class HelloFreshMarketItem:
             "max_quantity": self.max_quantity,
             "is_selected": self.is_selected,
             "selected_quantity": self.selected_quantity,
+            "preselected_quantity": self.preselected_quantity,
             "is_locked": self.is_locked,
+            "is_sold_out": self.is_sold_out,
         }
 
 

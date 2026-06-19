@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.1.0";
+const MARKET_CARD_VERSION = "0.2.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -363,13 +363,16 @@ class HelloFreshMarketCard extends HTMLElement {
     );
     const stats = [];
     if (item.calories_kcal != null) stats.push(`${Math.round(item.calories_kcal)} kcal`);
+    // Sold-out items can't be added (but a still-selected sold-out item can be reduced/removed).
+    const soldOut = item.is_sold_out === true;
     return `
-      <div class="item ${qty > 0 ? "selected" : ""}" data-id="${idAttr}">
+      <div class="item ${qty > 0 ? "selected" : ""} ${soldOut ? "soldout" : ""}" data-id="${idAttr}">
         <div class="imgwrap">
           ${item.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(item.image_url, this._config.image_width))}" alt="${this._esc(item.name)}">`
             : `<div class="noimg"></div>`}
           ${qty > 0 ? `<div class="qtybadge">${qty}×</div>` : ""}
+          ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
           ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency))}</div>` : ""}
         </div>
         <div class="meta">
@@ -378,9 +381,9 @@ class HelloFreshMarketCard extends HTMLElement {
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${editable
             ? `<div class="stepper">
-                 <button class="qbtn" data-qty="dec" data-id="${idAttr}" title="Fewer">−</button>
+                 <button class="qbtn" data-qty="dec" data-id="${idAttr}" ${qty <= 0 ? "disabled" : ""} title="Fewer">−</button>
                  <span class="qval">${qty}</span>
-                 <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap ? "disabled" : ""} title="More">+</button>
+                 <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap || soldOut ? "disabled" : ""} title="More">+</button>
                </div>`
             : qty > 0 ? `<div class="cals">${qty} selected</div>` : ""}
         </div>
@@ -516,6 +519,12 @@ class HelloFreshMarketCard extends HTMLElement {
       .price {
         position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 10px;
         background: rgba(0,0,0,0.72); color: #fff; font-size: 0.74em; font-weight: 700;
+      }
+      .item.soldout .imgwrap img { opacity: 0.5; }
+      .soldoutflag {
+        position: absolute; top: 6px; left: 6px; padding: 2px 8px; border-radius: 10px;
+        background: rgba(0,0,0,0.78); color: #fff; font-size: 0.68em; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.03em;
       }
       .meta { padding: 8px; }
       .name { font-size: 0.9em; font-weight: 600; }
