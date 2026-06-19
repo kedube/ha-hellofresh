@@ -49,6 +49,27 @@ select_meals:
       selector:
         object:
 
+select_market_items:
+  name: Select market items
+  description: Set the HelloFresh Market add-on (extras) selection for a delivery week.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      selector:
+        text:
+    quantities:
+      required: true
+      description: >-
+        Map of market item id/sku/index to quantity (0 removes the item). Items
+        omitted from the map are left unselected.
+      example: '{ "6a043d4f11906cfcd0513cee": 2 }'
+      selector:
+        object:
+
 skip_week:
   name: Skip week
   description: Skip a specific HelloFresh delivery week.

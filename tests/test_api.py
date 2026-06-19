@@ -2834,6 +2834,103 @@ def test_async_select_meals_rejects_invalid_quantity() -> None:
     assert requests == []
 
 
+def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, object | None]]]:
+    """Client + week wired with a market catalog for select_market_items assertions."""
+    from custom_components.hellofresh.models import HelloFreshMarketItem
+
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="6959884",
+        selection_deadline=datetime(2026, 7, 22, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
+        meals_required=3,
+        recipes=[
+            HelloFreshRecipe(
+                recipe_id="recipe-11", name="Meal 11", is_selected=True, course_index=11
+            ),
+        ],
+        market_items=[
+            HelloFreshMarketItem(
+                item_id="m-app", name="Salmon Bites", index=70185, sku="US-AAB-0-0-0",
+                group_type="appetizer", max_quantity=6,
+            ),
+            HelloFreshMarketItem(
+                item_id="m-des", name="Bundt Cake", index=70200, sku="US-DES-0-0-0",
+                group_type="dessert", max_quantity=4,
+            ),
+        ],
+        raw={"product": {"handle": "US-CBU-3-2-0"}, "_menu_payload": {"week": "2026-W26"}},
+    )
+    client._last_account_data = HelloFreshAccountData(weeks=[week]).finalize()
+    requests: list[dict[str, object | None]] = []
+
+    async def fake_subs():
+        return [subscription]
+
+    async def fake_pref(_s):
+        return "quick"
+
+    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+        requests.append({"method": method, "path": path, "json_payload": json_payload})
+
+        class R:
+            status = 200
+
+        return R()
+
+    client._async_get_subscriptions = fake_subs  # type: ignore[method-assign]
+    client._async_get_subscription_plan_preference = fake_pref  # type: ignore[method-assign]
+    client._async_api_request = fake_req  # type: ignore[method-assign]
+    return client, requests
+
+
+def test_select_market_items_writes_extras_and_preserves_meals() -> None:
+    """Market selection writes extras[] and keeps the existing meal selection in the cart."""
+    client, requests = _build_market_select_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-app": 2}))
+
+    assert len(requests) == 1
+    payload = requests[0]["json_payload"]
+    assert payload["extras"] == [{"index": 70185, "quantity": 2}]
+    # The selected meal is preserved so a market write doesn't clear the box's meals.
+    assert payload["meals"] == [{"index": 11, "quantity": 1}]
+
+
+def test_select_market_items_rejects_over_max_quantity() -> None:
+    """Requesting more than a market item's max_quantity is rejected before any request."""
+    client, requests = _build_market_select_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="at most 4"):
+        loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-des": 5}))
+    assert requests == []
+
+
+def test_select_market_items_resolves_by_sku_and_index() -> None:
+    """Items can be addressed by id, sku, or index; zero-qty entries are dropped."""
+    client, requests = _build_market_select_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_market_items("2026-W26", {"US-AAB-0-0-0": 1, "70200": 0})
+    )
+    payload = requests[0]["json_payload"]
+    assert payload["extras"] == [{"index": 70185, "quantity": 1}]
+
+
 def test_scm_tracking_prefers_external_status_label() -> None:
     """SCM tracking should prefer the customer-facing status over internal labels."""
     from custom_components.hellofresh.parsers import extract_scm_tracking_details

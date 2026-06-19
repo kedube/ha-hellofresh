@@ -91,6 +91,59 @@ class HelloFreshRecipe:
 
 
 @dataclass(slots=True)
+class HelloFreshMarketItem:
+    """A HelloFresh Market add-on (appetizer, side, dessert, protein, etc.) for a week.
+
+    Distinct from a meal recipe: market items are billed per-quantity extras, identified in the
+    cart by their ``index``/``sku`` and ordered with a quantity up to ``max_quantity``.
+    """
+
+    item_id: str
+    name: str
+    # Cart selection unit for extras (mirrors a meal's course_index).
+    index: int | None = None
+    sku: str | None = None
+    group_type: str | None = None  # appetizer / breakfast / dessert / protein / ...
+    image_url: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] = field(default_factory=list)
+    nutrition: dict[str, str] = field(default_factory=dict)
+    calories_kcal: float | None = None
+    # Base (single-unit) price in cents and a derived display amount in major units.
+    price_cents: int | None = None
+    price: float | None = None
+    currency: str | None = None
+    max_quantity: int | None = None
+    is_selected: bool = False
+    selected_quantity: int | None = None
+    is_locked: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize market-item data for the get_weeks response / dashboard card."""
+        return {
+            "item_id": self.item_id,
+            "name": self.name,
+            "index": self.index,
+            "sku": self.sku,
+            "group_type": self.group_type,
+            "image_url": self.image_url,
+            "description": self.description,
+            "category": self.category,
+            "tags": self.tags,
+            "nutrition": self.nutrition,
+            "calories_kcal": self.calories_kcal,
+            "price_cents": self.price_cents,
+            "price": self.price,
+            "currency": self.currency,
+            "max_quantity": self.max_quantity,
+            "is_selected": self.is_selected,
+            "selected_quantity": self.selected_quantity,
+            "is_locked": self.is_locked,
+        }
+
+
+@dataclass(slots=True)
 class HelloFreshWeek:
     """Customer week/menu selection state."""
 
@@ -104,6 +157,7 @@ class HelloFreshWeek:
     meals_selected: int | None = None
     is_skipped: bool = False
     recipes: list[HelloFreshRecipe] = field(default_factory=list)
+    market_items: list[HelloFreshMarketItem] = field(default_factory=list)
     source: str = "account"
     menu_title: str | None = None
     slot_label: str | None = None
@@ -188,6 +242,7 @@ class HelloFreshWeek:
             **self.as_summary_dict(),
             "allowed_actions": self.allowed_actions,
             "recipes": [recipe.as_dict() for recipe in self.recipes],
+            "market_items": [item.as_dict() for item in self.market_items],
         }
 
 

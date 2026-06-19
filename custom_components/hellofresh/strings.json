@@ -287,6 +287,24 @@
         }
       }
     },
+    "select_market_items": {
+      "name": "Select market items",
+      "description": "Set the HelloFresh Market add-on (extras) selection for a delivery week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        },
+        "quantities": {
+          "name": "Quantities",
+          "description": "Map of market item id/sku/index to quantity (0 removes the item). Items omitted are left unselected."
+        }
+      }
+    },
     "skip_week": {
       "name": "Skip week",
       "description": "Skip a specific HelloFresh delivery week.",

@@ -45,6 +45,7 @@ from .const import (
     SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
     SERVICE_RESCHEDULE_WEEK,
+    SERVICE_SELECT_MARKET_ITEMS,
     SERVICE_SELECT_MEALS,
     SERVICE_SKIP_WEEK,
     SERVICE_UNSKIP_WEEK,
@@ -387,6 +388,18 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             ),
         )
 
+    async def async_select_market_items(service_call: ServiceCall) -> None:
+        """Submit HelloFresh Market add-on (extras) selections for a week."""
+        week_id = service_call.data[ATTR_WEEK_ID]
+        quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
+        await _for_each_coordinator(
+            service_call,
+            lambda coordinator, _: _async_mutation(
+                coordinator,
+                coordinator.client.async_select_market_items(week_id, quantities),
+            ),
+        )
+
     async def async_skip_week(service_call: ServiceCall) -> None:
         """Skip a delivery week."""
         week_id = service_call.data[ATTR_WEEK_ID]
@@ -475,6 +488,20 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 # Optional per-recipe serving counts: {recipe_id: positive int}. Recipes absent
                 # from the map default to one serving.
                 vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
+            }
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SELECT_MARKET_ITEMS,
+        async_select_market_items,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_WEEK_ID): str,
+                # Map of market item id/sku/index -> quantity (>=1). Items omitted (or set to 0)
+                # are removed from the week's extras.
+                vol.Required(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=0))},
             }
         ),
     )

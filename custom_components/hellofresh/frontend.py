@@ -26,14 +26,24 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
 # Bump when the card file changes so HA/browsers cache-bust the resource URL.
-CARD_VERSION = "0.12.0"
+CARD_VERSION = "0.13.0"
+MARKET_CARD_FILENAME = "hellofresh-market-card.js"
+MARKET_CARD_VERSION = "0.1.0"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"
 CARD_URL_PATH = f"{WWW_URL_BASE}/{CARD_FILENAME}"
 CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
+MARKET_CARD_URL_PATH = f"{WWW_URL_BASE}/{MARKET_CARD_FILENAME}"
+MARKET_CARD_RESOURCE_URL = f"{MARKET_CARD_URL_PATH}?v={MARKET_CARD_VERSION}"
 # Public URL of the bundled HelloFresh logo, usable in picture/markdown cards.
 LOGO_URL_PATH = f"{WWW_URL_BASE}/hellofresh-logo.png"
+
+# Cards the integration ships and auto-registers: (filename, url_path, resource_url).
+_CARDS = (
+    (CARD_FILENAME, CARD_URL_PATH, CARD_RESOURCE_URL),
+    (MARKET_CARD_FILENAME, MARKET_CARD_URL_PATH, MARKET_CARD_RESOURCE_URL),
+)
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
 
@@ -60,14 +70,14 @@ async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
         hass.data[_REGISTERED_KEY] = False
         return
 
-    await _async_register_lovelace_resource(hass)
+    await _async_register_lovelace_resources(hass)
 
 
-async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
-    """Add the card URL to the Lovelace resource list when in storage mode.
+async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
+    """Add each card URL to the Lovelace resource list when in storage mode.
 
     In YAML-mode Lovelace the resources are user-managed, so we can only log guidance. In
-    storage mode we add the resource through the resources collection if it isn't present.
+    storage mode we add each resource through the resources collection if not already present.
     """
     lovelace = hass.data.get("lovelace")
     resources = getattr(lovelace, "resources", None)
@@ -80,27 +90,27 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
             await resources.async_load()
             resources.loaded = True
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("Could not load Lovelace resources; card must be added manually")
+        _LOGGER.debug("Could not load Lovelace resources; cards must be added manually")
         return
 
     # YAML-mode resource stores don't support mutation (no store attribute).
     if getattr(resources, "store", None) is None:
+        urls = ", ".join(resource_url for _, _, resource_url in _CARDS)
         _LOGGER.info(
-            "HelloFresh meal-planner card is served at %s. Add it under Settings > "
-            "Dashboards > Resources (or your YAML `resources:`) as a JavaScript module.",
-            CARD_RESOURCE_URL,
+            "HelloFresh cards are served at %s. Add them under Settings > Dashboards > "
+            "Resources (or your YAML `resources:`) as JavaScript modules.",
+            urls,
         )
         return
 
-    already = any(
-        isinstance(item, dict) and str(item.get("url", "")).startswith(CARD_URL_PATH)
-        for item in resources.async_items()
-    )
-    if already:
-        return
-
-    try:
-        await resources.async_create_item({"res_type": "module", "url": CARD_RESOURCE_URL})
-        _LOGGER.info("Registered HelloFresh meal-planner card resource at %s", CARD_RESOURCE_URL)
-    except Exception:  # noqa: BLE001
-        _LOGGER.exception("HelloFresh could not auto-register the card Lovelace resource")
+    existing = [
+        str(item.get("url", "")) for item in resources.async_items() if isinstance(item, dict)
+    ]
+    for _filename, url_path, resource_url in _CARDS:
+        if any(url.startswith(url_path) for url in existing):
+            continue
+        try:
+            await resources.async_create_item({"res_type": "module", "url": resource_url})
+            _LOGGER.info("Registered HelloFresh card resource at %s", resource_url)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("HelloFresh could not auto-register card resource %s", resource_url)
