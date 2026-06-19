@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.8.0";
+const CARD_VERSION = "0.9.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -146,24 +146,51 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
   }
 
-  // The course_index set currently shown for a week: the user's pending edit if one is in
-  // progress, otherwise the server's saved selection.
+  // Max servings the +/- stepper allows for one meal (HelloFresh's typical per-recipe cap).
+  static get MAX_QUANTITY() {
+    return 4;
+  }
+
+  // The course_index -> quantity map currently shown for a week: the user's pending edit if one
+  // is in progress, otherwise the server's saved selection.
   _displaySelection(week) {
     const pending = this._pending[week.week_id];
     if (pending) return pending;
-    return new Set(
-      (week.recipes || []).filter((r) => this._isSelected(r)).map((r) => r.course_index)
-    );
+    return this._savedSelection(week);
   }
 
+  // Saved selection as a Map of course_index -> serving quantity (>=1 for chosen meals).
   _savedSelection(week) {
-    return new Set(
-      (week.recipes || []).filter((r) => this._isSelected(r)).map((r) => r.course_index)
-    );
+    const map = new Map();
+    for (const r of week.recipes || []) {
+      if (this._isSelected(r)) map.set(r.course_index, this._recipeQuantity(r));
+    }
+    return map;
   }
 
   _isSelected(recipe) {
     return recipe.is_selected === true || recipe.is_selected === "true";
+  }
+
+  // The recipe's currently-saved serving count (defaults to 1 when selected but unspecified).
+  _recipeQuantity(recipe) {
+    const q = Number(recipe.selected_quantity);
+    return Number.isFinite(q) && q > 0 ? q : 1;
+  }
+
+  // Total servings in a selection map (sum of quantities) — this is what counts toward the
+  // box's required-meal minimum, matching HelloFresh's box math.
+  _servingsTotal(selectionMap) {
+    let total = 0;
+    for (const q of selectionMap.values()) total += q;
+    return total;
+  }
+
+  // The quantity currently shown for a tile, accounting for collapsed-duplicate aliases.
+  _displayedQuantity(week, recipe) {
+    const display = this._displaySelection(week);
+    const idx = (recipe._aliasIndexes || [recipe.course_index]).find((i) => display.has(i));
+    return idx === undefined ? 0 : display.get(idx);
   }
 
   // True when the pending edit differs from what's saved (i.e. there's something to save).
@@ -172,38 +199,70 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (!pending) return false;
     const saved = this._savedSelection(week);
     if (pending.size !== saved.size) return true;
-    for (const idx of pending) if (!saved.has(idx)) return true;
+    for (const [idx, qty] of pending) if (saved.get(idx) !== qty) return true;
     return false;
   }
 
-  // Tap a recipe tile: build up a pending selection without submitting. Adding past the
-  // required count is blocked; the user saves explicitly via the Save button.
-  _toggleRecipe(week, recipe) {
-    if (this._busy || !this._isEditable(week)) return;
-    const required = week.meals_required;
-    // Seed the pending set from the saved selection on first edit of this week.
+  // Seed (once) and return the mutable pending selection map for a week.
+  _ensurePending(week) {
     let pending = this._pending[week.week_id];
     if (!pending) {
-      pending = new Set(this._savedSelection(week));
+      pending = new Map(this._savedSelection(week));
       this._pending[week.week_id] = pending;
     }
+    return pending;
+  }
 
-    // For a collapsed-duplicate tile, any of its indexes may be the one currently selected.
-    const idx = recipe.course_index;
-    const allIdx = recipe._aliasIndexes || [idx];
+  // The course_index this tile writes to: the one already in the pending selection (for a
+  // collapsed duplicate that may be saved under an alias), else the representative index.
+  _activeIndex(pending, recipe) {
+    const allIdx = recipe._aliasIndexes || [recipe.course_index];
     const chosen = allIdx.find((i) => pending.has(i));
-    if (chosen !== undefined) {
-      pending.delete(chosen);
+    return chosen !== undefined ? chosen : recipe.course_index;
+  }
+
+  // Tap a recipe tile: toggle it in/out of the selection at quantity 1 (or remove if present).
+  _toggleRecipe(week, recipe) {
+    if (this._busy || !this._isEditable(week)) return;
+    const pending = this._ensurePending(week);
+    const idx = this._activeIndex(pending, recipe);
+    if (pending.has(idx)) {
+      pending.delete(idx);
     } else {
-      // meals_required is the box's included count, not a hard cap — extra meals are allowed
-      // (HelloFresh treats them as add-ons, usually surcharged). So adding past `required` is
-      // permitted; we just nudge the user the first time they go over.
-      if (required && pending.size >= required) {
-        this._flash(`Adding a ${pending.size + 1}th meal — extras beyond ${required} may be charged as add-ons.`);
-      }
-      pending.add(idx);
+      this._nudgeIfOver(week, pending, 1);
+      pending.set(idx, 1);
     }
     this._render();
+  }
+
+  // +/- stepper: change a meal's serving count by delta, clamped to [0, MAX_QUANTITY].
+  // Reaching 0 removes the meal entirely.
+  _changeQuantity(week, recipe, delta) {
+    if (this._busy || !this._isEditable(week)) return;
+    const pending = this._ensurePending(week);
+    const idx = this._activeIndex(pending, recipe);
+    const current = pending.get(idx) || 0;
+    const next = Math.max(0, Math.min(HelloFreshMealPlannerCard.MAX_QUANTITY, current + delta));
+    if (next === current) return;
+    if (next === 0) {
+      pending.delete(idx);
+    } else {
+      if (delta > 0) this._nudgeIfOver(week, pending, next - current);
+      pending.set(idx, next);
+    }
+    this._render();
+  }
+
+  // meals_required is the box's included serving count, not a hard cap — extras are allowed
+  // (HelloFresh bills them as add-ons). Nudge once when an increase pushes total over the box.
+  _nudgeIfOver(week, pending, added) {
+    const required = week.meals_required;
+    const total = this._servingsTotal(pending);
+    if (required && total >= required) {
+      this._flash(
+        `Adding ${added} serving${added > 1 ? "s" : ""} past the included ${required} — extras may be charged as add-ons.`
+      );
+    }
   }
 
   // Discard a week's pending edit (revert to the saved selection).
@@ -216,18 +275,27 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const pending = this._pending[week.week_id];
     if (!pending) return;
     const required = week.meals_required;
-    if (required && pending.size < required) {
-      this._flash(`Choose at least ${required} meals before saving (${pending.size} selected).`);
+    const servings = this._servingsTotal(pending);
+    if (required && servings < required) {
+      this._flash(`Choose at least ${required} servings before saving (${servings} selected).`);
       return;
     }
-    // Translate the chosen course_index values back into recipe ids for the service.
+    // Translate chosen course_index values back into recipe ids + per-recipe quantities.
     const byIndex = new Map((week.recipes || []).map((r) => [r.course_index, r.recipe_id]));
-    const recipeIds = [...pending].map((i) => byIndex.get(i)).filter(Boolean);
+    const recipeIds = [];
+    const quantities = {};
+    for (const [idx, qty] of pending) {
+      const recipeId = byIndex.get(idx);
+      if (!recipeId) continue;
+      recipeIds.push(recipeId);
+      if (qty > 1) quantities[recipeId] = qty; // 1 is the default; only send overrides
+    }
 
     this._busy = true;
     this._render();
     try {
       const data = { week_id: week.week_id, recipe_ids: recipeIds };
+      if (Object.keys(quantities).length) data.quantities = quantities;
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", "select_meals", data);
       delete this._pending[week.week_id]; // saved — drop the pending overlay
@@ -349,7 +417,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const editable = this._isEditable(week);
     const required = week.meals_required;
     const display = this._displaySelection(week);
-    const selected = display.size;
+    // Count total servings (a 2× meal fills two slots), matching HelloFresh's box math.
+    const selected = this._servingsTotal(display);
     const dirty = this._isDirty(week);
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const rel = this._relativeWeek(week);
@@ -370,7 +439,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       </div>
       <div class="statusrow">
         <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
-          ${selected}${required ? `/${required}` : ""} chosen${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
+          ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
         </span>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
@@ -461,14 +530,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs).
         const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious", "Veggie", "Vegan"];
         const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
+        // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
+        const qty = isSelected ? this._displayedQuantity(week, r) : 0;
+        const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
+        const idxAttr = this._esc(String(r.course_index));
         return `
           <div class="recipe ${isSelected ? "selected" : ""} ${editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
-               data-index="${this._esc(String(r.course_index))}">
+               data-index="${idxAttr}">
             <div class="imgwrap">
               ${r.image_url
                 ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
                 : `<div class="noimg"></div>`}
               ${isSelected ? `<div class="check">✓</div>` : ""}
+              ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
               ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
               ${variantTitle
                 ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
@@ -485,6 +559,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
                    </div>`
                 : ""}
               ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
+              ${editable && isSelected
+                ? `<div class="stepper" data-stepper="${idxAttr}">
+                     <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="Fewer servings">−</button>
+                     <span class="qval">${qty}</span>
+                     <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
+                     <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
+                   </div>`
+                : ""}
             </div>
           </div>`;
       })
@@ -508,11 +590,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       });
     });
     if (week && this._isEditable(week)) {
+      const findRecipe = (index) =>
+        (this._renderedRecipes || week.recipes || []).find(
+          (r) => String(r.course_index) === index
+        );
+      // Quantity steppers first; stop propagation so the +/- taps don't also toggle the tile.
+      root.querySelectorAll(".qbtn").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const recipe = findRecipe(el.getAttribute("data-index"));
+          if (recipe) this._changeQuantity(week, recipe, el.getAttribute("data-qty") === "inc" ? 1 : -1);
+        });
+      });
       root.querySelectorAll(".recipe.editable").forEach((el) => {
         const index = el.getAttribute("data-index");
         el.addEventListener("click", () => {
-          const source = this._renderedRecipes || week.recipes || [];
-          const recipe = source.find((r) => String(r.course_index) === index);
+          const recipe = findRecipe(index);
           if (recipe) this._toggleRecipe(week, recipe);
         });
       });
@@ -648,10 +741,29 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         border-radius: 50%; display: flex; align-items: center; justify-content: center;
         font-weight: 700;
       }
+      .qtybadge {
+        position: absolute; top: 38px; right: 6px; min-width: 26px; height: 22px; padding: 0 6px;
+        box-sizing: border-box; background: var(--primary-color); color: var(--text-primary-color, #fff);
+        border-radius: 11px; display: flex; align-items: center; justify-content: center;
+        font-size: 0.78em; font-weight: 700;
+      }
       .surcharge {
         position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 10px;
         background: rgba(0,0,0,0.72); color: #fff; font-size: 0.72em; font-weight: 700;
       }
+      .stepper {
+        display: flex; align-items: center; gap: 8px; margin-top: 8px;
+      }
+      .qbtn {
+        width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--divider-color);
+        background: var(--card-background-color); color: var(--primary-text-color);
+        font-size: 1.1em; font-weight: 700; line-height: 1; cursor: pointer; flex: none;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .qbtn:hover:not([disabled]) { border-color: var(--primary-color); color: var(--primary-color); }
+      .qbtn[disabled] { opacity: 0.4; cursor: default; }
+      .qval { font-weight: 700; min-width: 12px; text-align: center; }
+      .qlabel { font-size: 0.78em; color: var(--secondary-text-color); }
       .variant-flag {
         position: absolute; top: 6px; left: 6px; max-width: calc(100% - 12px);
         padding: 2px 7px; border-radius: 10px;

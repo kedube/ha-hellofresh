@@ -280,6 +280,10 @@
         "recipe_ids": {
           "name": "Recipe IDs",
           "description": "The recipe identifiers to select for that week."
+        },
+        "quantities": {
+          "name": "Quantities",
+          "description": "Optional map of recipe ID to serving count (positive integer). Recipes omitted default to one serving; the required-meal minimum is checked against total servings."
         }
       }
     },

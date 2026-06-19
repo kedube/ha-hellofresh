@@ -39,6 +39,15 @@ select_meals:
       required: true
       selector:
         object:
+    quantities:
+      required: false
+      description: >-
+        Optional map of recipe_id to serving count (positive integer). Recipes
+        omitted from the map default to one serving. The week's required-meal
+        minimum is checked against total servings.
+      example: '{ "69a9b548e566b4ce79049c5b": 2 }'
+      selector:
+        object:
 
 skip_week:
   name: Skip week

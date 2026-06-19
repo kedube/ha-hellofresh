@@ -259,6 +259,14 @@ class HelloFreshPayloadNormalizer:
             is_selected = bool(
                 raw_meal.get("selected", recipe_data.get("selected", default_selected))
             )
+        # Persist the chosen serving count so the dashboard can show/edit quantity. When the
+        # meal is selected but the payload gave no explicit count, treat it as a single serving.
+        if selection_quantity and selection_quantity > 0:
+            selected_quantity = selection_quantity
+        elif is_selected:
+            selected_quantity = 1
+        else:
+            selected_quantity = None
 
         protein_g = coerce_float(nutrition.get("protein") or recipe_data.get("protein"))
 
@@ -292,6 +300,7 @@ class HelloFreshPayloadNormalizer:
             name=name,
             preference=recipe_data.get("preference") or recipe_data.get("category"),
             is_selected=is_selected,
+            selected_quantity=selected_quantity,
             course_index=course_index,
             image_url=recipe_data.get("imagePath")
             or recipe_data.get("image")

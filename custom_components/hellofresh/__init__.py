@@ -21,6 +21,7 @@ from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_DELIVERY_INTERVAL,
     ATTR_DELIVERY_OPTION,
+    ATTR_QUANTITIES,
     ATTR_RECIPE_IDS,
     ATTR_SUBSCRIPTION_ID,
     ATTR_WEEK_ID,
@@ -360,11 +361,12 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """Submit meal selections."""
         week_id = service_call.data[ATTR_WEEK_ID]
         recipe_ids = list(service_call.data[ATTR_RECIPE_IDS])
+        quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
         await _for_each_coordinator(
             service_call,
             lambda coordinator, _: _async_mutation(
                 coordinator,
-                coordinator.client.async_select_meals(week_id, recipe_ids),
+                coordinator.client.async_select_meals(week_id, recipe_ids, quantities),
             ),
         )
 
@@ -453,6 +455,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
                 vol.Required(ATTR_WEEK_ID): str,
                 vol.Required(ATTR_RECIPE_IDS): vol.All([str], vol.Length(min=1)),
+                # Optional per-recipe serving counts: {recipe_id: positive int}. Recipes absent
+                # from the map default to one serving.
+                vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
             }
         ),
     )
