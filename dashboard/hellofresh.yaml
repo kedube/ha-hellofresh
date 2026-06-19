@@ -29,12 +29,10 @@ views:
       - type: custom:hellofresh-meal-planner-card
         title: My Menu
         logo: true
-  - title: Shipment Tracking
-    path: shipment-tracking
-    icon: mdi:package-variant-closed
+  - title: Meal Schedule
+    path: planning
+    icon: mdi:calendar-month
     cards:
-      # Always-visible "next box" summary so this view is never blank (the tracking and
-      # holiday cards below are conditional and hide when there's nothing in transit).
       - type: glance
         title: Next box
         columns: 2
@@ -48,7 +46,6 @@ views:
             name: Delivery slot
           - entity: sensor.hellofresh_us_next_box_total_price
             name: Box total
-      # Holiday banner — only when HelloFresh has shifted the next delivery for a holiday.
       - type: conditional
         conditions:
           - entity: sensor.hellofresh_us_next_holiday_message
@@ -64,7 +61,6 @@ views:
 
             New date: **{{
             states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
-      # Carrier tracking — only renders when a shipment is actually in transit.
       - type: conditional
         conditions:
           - entity: binary_sensor.hellofresh_us_tracked_shipment_available
@@ -83,70 +79,6 @@ views:
               name: Tracking number
             - entity: sensor.hellofresh_us_next_delivery_tracking_url
               name: Tracking link
-  - title: Meal Selection
-    path: meal-selection
-    icon: mdi:silverware-fork-knife
-    cards:
-      # To actually choose meals, use the Meal planner tab (images + tap-to-select). This
-      # view is the at-a-glance selection status / deadlines.
-      - type: markdown
-        content: >
-          ℹ️ Choose meals on the **Meal planner** tab. This view shows selection status.
-      # `max` is a static cap (most plans need 2–6 meals); a gauge can't read
-      # `required_meal_count` dynamically, so the card below shows the exact chosen/required
-      # pair. Severity bands give the dial meaning rather than a bare number on a ring.
-      - type: gauge
-        name: Meals chosen (next delivery)
-        entity: sensor.hellofresh_us_selected_meal_count
-        min: 0
-        max: 6
-        needle: true
-        severity:
-          green: 3
-          yellow: 1
-          red: 0
-      - type: entities
-        title: Meal selection
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: sensor.hellofresh_us_selected_meal_count
-            name: Next delivery meals chosen
-          - entity: sensor.hellofresh_us_required_meal_count
-            name: Meals required
-          - entity: sensor.hellofresh_us_next_selection_deadline
-            name: Next delivery selection deadline
-          - type: divider
-          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
-            name: Next selectable delivery meals chosen
-          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
-            name: Next selectable delivery deadline
-          - type: divider
-          - entity: switch.hellofresh_us_skip_next_modifiable_week
-            name: Skip next selectable delivery week
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_needs_meal_selection
-            state: "on"
-        card:
-          type: markdown
-          title: Weeks needing selection
-          content: >
-            {% set weeks =
-            state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks')
-            or [] %} {% if weeks | count == 0 %} All caught up — nothing to
-            choose. {% else %} | Week | Chosen | Deadline | | --- | :---: | ---
-            | {% for w in weeks -%} {% set sel = w.meals_selected if
-            w.meals_selected is not none else 0 -%} {% set req =
-            w.meals_required if w.meals_required is not none else '?' -%} {% set
-            dl = w.selection_deadline -%} | {{ w.display_name or w.delivery_date
-            or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) |
-            timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
-            {% endfor %} {% endif %}
-  - title: Planning
-    path: planning
-    icon: mdi:calendar-month
-    cards:
       - type: calendar
         title: Delivery schedule
         initial_view: dayGridMonth
@@ -198,6 +130,50 @@ views:
     path: account
     icon: mdi:account-cog
     cards:
+      - type: gauge
+        name: Meals chosen (next delivery)
+        entity: sensor.hellofresh_us_selected_meal_count
+        min: 0
+        max: 6
+        needle: true
+        severity:
+          green: 3
+          yellow: 1
+          red: 0
+      - type: entities
+        title: Meal selection
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: sensor.hellofresh_us_selected_meal_count
+            name: Next delivery meals chosen
+          - entity: sensor.hellofresh_us_required_meal_count
+            name: Meals required
+          - entity: sensor.hellofresh_us_next_selection_deadline
+            name: Next delivery selection deadline
+          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
+            name: Next selectable delivery meals chosen
+          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
+            name: Next selectable delivery deadline
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_needs_meal_selection
+            state: "on"
+        card:
+          type: markdown
+          title: Weeks needing selection
+          content: >
+            {% set weeks =
+            state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks')
+            or [] %} {% if weeks | count == 0 %} All caught up — nothing to
+            choose. {% else %} | Week | Chosen | Deadline | | --- | :---: | ---
+            | {% for w in weeks -%} {% set sel = w.meals_selected if
+            w.meals_selected is not none else 0 -%} {% set req =
+            w.meals_required if w.meals_required is not none else '?' -%} {% set
+            dl = w.selection_deadline -%} | {{ w.display_name or w.delivery_date
+            or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) |
+            timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
+            {% endfor %} {% endif %}
       - type: entities
         title: Billing
         show_header_toggle: false
@@ -228,12 +204,8 @@ views:
             name: Account subscription count
           - entity: sensor.hellofresh_us_delivery_address
             name: Delivery address
-      - type: entities
-        title: Actions
-        show_header_toggle: false
-        entities:
-          - entity: button.hellofresh_us_refresh_data
-            name: Refresh now
+          - entity: sensor.hellofresh_us_account_id
+            name: Account ID
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
@@ -257,7 +229,11 @@ views:
             name: Payload shape changed
           - entity: binary_sensor.hellofresh_us_tracked_shipment_available
             name: Tracked shipment
-          - entity: sensor.hellofresh_us_account_id
-            name: Account ID
           - entity: sensor.hellofresh_us_api_base_url
             name: API base URL
+      - type: entities
+        title: Actions
+        show_header_toggle: false
+        entities:
+          - entity: button.hellofresh_us_refresh_data
+            name: Refresh now
