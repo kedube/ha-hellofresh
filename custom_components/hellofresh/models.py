@@ -207,6 +207,12 @@ class HelloFreshOrder:
     total_price: float | None = None
     currency: str | None = None
     slot_label: str | None = None
+    # Authoritative total of all billing charges for this delivery (summed per
+    # subscription+delivery date from the billing API), the same figure the
+    # ``next_box_total_price`` sensor reports. Kept separate from ``total_price`` (which a
+    # later cart/calculate estimate may overwrite) so the billed amount is preserved.
+    billed_total_price: float | None = None
+    billed_total_currency: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize order data for Home Assistant state attributes."""
@@ -222,6 +228,8 @@ class HelloFreshOrder:
             "carrier": self.carrier,
             "total_price": self.total_price,
             "currency": self.currency,
+            "billed_total_price": self.billed_total_price,
+            "billed_total_currency": self.billed_total_currency,
             "slot_label": self.slot_label,
         }
 

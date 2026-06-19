@@ -62,24 +62,6 @@ views:
 
             New date: **{{
             states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
-            state: "on"
-        card:
-          type: entities
-          title: Shipment tracking
-          show_header_toggle: false
-          state_color: true
-          entities:
-            - entity: sensor.hellofresh_us_shipment_tracking_status
-              name: Status
-            - entity: sensor.hellofresh_us_tracked_shipment_carrier
-              name: Carrier
-            - entity: sensor.hellofresh_us_shipment_tracking_number
-              name: Tracking number
-            - entity: sensor.hellofresh_us_next_delivery_tracking_url
-              name: Tracking link
       - type: calendar
         title: Delivery schedule
         initial_view: dayGridMonth
@@ -119,28 +101,10 @@ views:
             name: Next delivery blocked
           - entity: sensor.hellofresh_us_next_holiday_delivery_date
             name: Holiday delivery date
-      - type: history-graph
-        title: Deliveries over time
-        hours_to_show: 2160
-        entities:
-          - entity: sensor.hellofresh_us_next_order_status
-            name: Next delivery status
-          - entity: sensor.hellofresh_us_shipment_tracking_status
-            name: Tracked shipment status
   - title: Account
     path: account
     icon: mdi:account-cog
     cards:
-      - type: gauge
-        name: Meals chosen (next delivery)
-        entity: sensor.hellofresh_us_selected_meal_count
-        min: 0
-        max: 6
-        needle: true
-        severity:
-          green: 3
-          yellow: 1
-          red: 0
       - type: entities
         title: Meal selection
         show_header_toggle: false

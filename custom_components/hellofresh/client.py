@@ -1062,9 +1062,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             if price_entry is None:
                 continue
             grand_total, currency = price_entry
-            order.total_price = round(grand_total, 2)
+            rounded_total = round(grand_total, 2)
+            order.total_price = rounded_total
+            # Preserve the summed billing total separately: a later cart/calculate estimate may
+            # overwrite total_price, but billed_total_price stays the authoritative charge sum
+            # (matching the next_box_total_price sensor).
+            order.billed_total_price = rounded_total
             if currency:
                 order.currency = currency
+                order.billed_total_currency = currency
 
     async def _async_enrich_subscription_payment_dates(
         self,
