@@ -348,14 +348,23 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             weeks = [week] if week is not None else []
         else:
             weeks = list(data.weeks)
+
+        def _week_dict(week: object) -> dict[str, object]:
+            # Attach the week's matching order (tracking, status, carrier, order id, price) so a
+            # dashboard card can show shipment/billing detail alongside the recipes for that week.
+            payload = week.as_dict()
+            order = data.get_order_for_week(week.week_id)
+            payload["order"] = order.as_dict() if order is not None else None
+            return payload
+
         if service_call.data.get("include_debug"):
             return {
-                "weeks": [week.as_dict() for week in weeks],
+                "weeks": [_week_dict(week) for week in weeks],
                 "variation_debug": [
                     _variation_join_debug(week) for week in weeks
                 ],
             }
-        return {"weeks": [week.as_dict() for week in weeks]}
+        return {"weeks": [_week_dict(week) for week in weeks]}
 
     async def async_select_meals(service_call: ServiceCall) -> None:
         """Submit meal selections."""

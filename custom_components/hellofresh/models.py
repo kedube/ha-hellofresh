@@ -573,6 +573,18 @@ class HelloFreshAccountData:
         """Return a cached week by id."""
         return self._weeks_by_id.get(week_id)
 
+    def get_order_for_week(self, week_id: str) -> HelloFreshOrder | None:
+        """Return the best order for a week id.
+
+        A week can have several order records (a generic state-only one plus a richer one with
+        shipment tracking); prefer the one with concrete tracking/details via the same ranking
+        used for the tracked-shipment sensor.
+        """
+        candidates = [order for order in self.orders if order.week_id == week_id]
+        if not candidates:
+            return None
+        return max(candidates, key=_tracked_order_sort_key)
+
     def finalize(self) -> HelloFreshAccountData:
         """Populate serialized views used by entities and diagnostics."""
         self.orders.sort(key=lambda order: order.delivery_date or date.max)
