@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.4.0";
+const CARD_VERSION = "0.5.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -133,6 +133,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const count = this._weeks.length;
     this._cursor = (this._cursor + delta + count) % count;
     this._render();
+  }
+
+  // Jump the cursor to the first week that still needs a meal selection (banner tap).
+  _gotoNeedsChoice() {
+    const needing = this._weeksNeedingChoice();
+    if (needing.length === 0) return;
+    const target = this._weeks.indexOf(needing[0]);
+    if (target >= 0) {
+      this._cursor = target;
+      this._render();
+    }
   }
 
   // The course_index set currently shown for a week: the user's pending edit if one is in
@@ -267,6 +278,40 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       </div>`;
   }
 
+  // A week still needs a selection when it's editable and fewer meals are saved than the
+  // box requires. Returns the list of such weeks (in cursor order).
+  _weeksNeedingChoice() {
+    return (this._weeks || []).filter((w) => {
+      if (!this._isEditable(w)) return false;
+      const required = w.meals_required;
+      if (!required) return false;
+      return this._savedSelection(w).size < required;
+    });
+  }
+
+  // Banner summarizing weeks that still need meals chosen, with the soonest deadline. Moved
+  // here from the dashboard's Overview view so the prompt lives with the planner that fixes
+  // it; tapping the banner jumps the week cursor to the first week needing a choice.
+  _renderNeedsChoosingBanner() {
+    const pending = this._weeksNeedingChoice();
+    if (pending.length === 0) return "";
+    const deadlines = pending
+      .map((w) => (w.selection_deadline ? new Date(w.selection_deadline) : null))
+      .filter(Boolean)
+      .sort((a, b) => a - b);
+    const soonest = deadlines[0];
+    const plural = pending.length === 1 ? "week" : "weeks";
+    return `
+      <div class="banner" data-action="goto-needs" role="button" tabindex="0">
+        <span class="banner-icon">🍽️</span>
+        <span class="banner-text">
+          <strong>${pending.length} ${plural}</strong> still need a meal selection${
+            soonest ? ` · next deadline ${this._esc(this._fmtDateTime(soonest))}` : ""
+          }
+        </span>
+      </div>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     const week = this._weeks ? this._weeks[this._cursor] : null;
@@ -274,6 +319,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       <style>${this._styles()}</style>
       <ha-card>
         ${this._renderCardHeader()}
+        ${this._renderNeedsChoosingBanner()}
         <div class="content">
           ${this._renderBody(week)}
         </div>
@@ -387,6 +433,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         else if (action === "skip" && week) this._toggleSkip(week);
         else if (action === "save" && week) this._saveSelection(week);
         else if (action === "cancel" && week) this._cancelEdit(week);
+        else if (action === "goto-needs") this._gotoNeedsChoice();
       });
     });
     if (week && this._isEditable(week)) {
@@ -451,6 +498,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .card-header .logo {
         height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none;
       }
+      .banner {
+        display: flex; align-items: center; gap: 10px; cursor: pointer;
+        margin: 12px 16px 0; padding: 10px 14px; border-radius: 10px;
+        background: var(--warning-color, #ff9800); color: #fff;
+      }
+      .banner:hover { filter: brightness(1.05); }
+      .banner-icon { font-size: 1.2em; flex: none; }
+      .banner-text { font-size: 0.92em; }
       .content { padding: 8px 16px 16px; }
       .state { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
       .state.error, .toast.error { color: var(--error-color); }
