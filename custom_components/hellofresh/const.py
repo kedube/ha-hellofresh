@@ -51,6 +51,7 @@ SERVICE_CHANGE_DELIVERY_WEEKDAY = "change_delivery_weekday"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_RECIPE_IDS = "recipe_ids"
+ATTR_QUANTITIES = "quantities"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_DELIVERY_OPTION = "delivery_option"
 ATTR_DELIVERY_INTERVAL = "delivery_interval"

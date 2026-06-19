@@ -416,25 +416,53 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             account_payload_found,
         )
 
-    async def async_select_meals(self, week_id: str, recipe_ids: list[str]) -> None:
-        """Submit meal choices for a week."""
+    async def async_select_meals(
+        self,
+        week_id: str,
+        recipe_ids: list[str],
+        quantities: dict[str, int] | None = None,
+    ) -> None:
+        """Submit meal choices for a week.
+
+        ``recipe_ids`` is the set of chosen recipes. ``quantities`` optionally maps a recipe id
+        to how many servings of that meal to order (matching HelloFresh's per-recipe quantity
+        stepper); recipes absent from the map default to a quantity of 1. The included-meal
+        minimum is checked against TOTAL servings (sum of quantities), mirroring HelloFresh's
+        box math where a meal at quantity 2 fills two of the box's slots.
+        """
         week = self._get_known_week_or_raise(week_id)
         deduplicated_recipe_ids = list(dict.fromkeys(recipe_ids))
         if not deduplicated_recipe_ids:
             raise HelloFreshError("At least one recipe_id is required")
-        # meals_required is the box's included meal count. Selecting FEWER than that is
-        # rejected (an under-filled box isn't a valid cart); selecting MORE is allowed —
+        quantities = quantities or {}
+        for recipe_id, quantity in quantities.items():
+            if not isinstance(quantity, int) or quantity < 1:
+                raise HelloFreshError(
+                    f"Quantity for recipe {recipe_id} must be a positive integer, got {quantity!r}"
+                )
+
+        def _qty(recipe_id: str) -> int:
+            return quantities.get(recipe_id, 1)
+
+        total_servings = sum(_qty(recipe_id) for recipe_id in deduplicated_recipe_ids)
+        # meals_required is the box's included meal count. Filling FEWER servings than that is
+        # rejected (an under-filled box isn't a valid cart); filling MORE is allowed —
         # HelloFresh treats the extras as add-on meals (typically surcharged). The cart
         # endpoint, not this client, is the authority on whether a given over-selection is
         # accepted for the account/region, so we don't cap the upper bound here.
-        if week.meals_required is not None and len(deduplicated_recipe_ids) < week.meals_required:
+        if week.meals_required is not None and total_servings < week.meals_required:
             raise HelloFreshError(
-                f"Week {week_id} needs at least {week.meals_required} recipes, "
-                f"got {len(deduplicated_recipe_ids)}"
+                f"Week {week_id} needs at least {week.meals_required} servings, "
+                f"got {total_servings}"
             )
 
-        selected_recipe_ids = [recipe.recipe_id for recipe in week.recipes if recipe.is_selected]
-        if selected_recipe_ids and set(selected_recipe_ids) == set(deduplicated_recipe_ids):
+        selected = {
+            recipe.recipe_id: self._existing_recipe_quantity(recipe)
+            for recipe in week.recipes
+            if recipe.is_selected
+        }
+        requested = {recipe_id: _qty(recipe_id) for recipe_id in deduplicated_recipe_ids}
+        if selected and selected == requested:
             _LOGGER.info("HelloFresh meal selection for week %s is already up to date", week_id)
             return
 
@@ -448,6 +476,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             subscription=subscription,
             week=week,
             recipe_ids=deduplicated_recipe_ids,
+            quantities=requested,
         )
         if cart_update is not None:
             await self._async_api_request(
@@ -479,6 +508,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             path_templates, week, payload_variants, category="select"
         )
 
+    @staticmethod
+    def _existing_recipe_quantity(recipe: HelloFreshRecipe) -> int:
+        """Servings currently selected for a recipe (defaults to 1 when selected but unknown)."""
+        if recipe.selected_quantity and recipe.selected_quantity > 0:
+            return recipe.selected_quantity
+        return 1
+
     async def _async_get_subscription_for_week(
         self,
         week: HelloFreshWeek,
@@ -503,13 +539,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         subscription: HelloFreshSubscription,
         week: HelloFreshWeek,
         recipe_ids: Sequence[str],
+        quantities: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
         """Build the cart update request that HelloFresh currently uses for meal selection."""
         menu_payload = week.raw.get("_menu_payload")
         if not isinstance(menu_payload, dict):
             return None
 
-        selected_meals = self._build_cart_selected_meals(menu_payload, recipe_ids)
+        selected_meals = self._build_cart_selected_meals(menu_payload, recipe_ids, quantities)
         if selected_meals is None:
             return None
 
@@ -555,8 +592,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self,
         menu_payload: dict[str, Any],
         recipe_ids: Sequence[str],
+        quantities: dict[str, int] | None = None,
     ) -> list[dict[str, int]] | None:
-        """Translate normalized recipe ids into the cart meal-index payload."""
+        """Translate normalized recipe ids into the cart meal-index payload.
+
+        When ``quantities`` provides a per-recipe serving count it wins; otherwise the count
+        falls back to the meal's existing selection quantity (or 1), preserving prior behavior.
+        """
+        quantities = quantities or {}
         meals_by_recipe_id: dict[str, dict[str, Any]] = {}
         for raw_meal in self._extract_menu_week_recipe_candidates(menu_payload):
             if not isinstance(raw_meal, dict):
@@ -574,7 +617,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             if index is None:
                 return None
 
-            quantity = (
+            quantity = quantities.get(recipe_id) or (
                 coerce_int(
                     (raw_meal.get("selection") or {}).get("quantity") or raw_meal.get("quantity")
                 )

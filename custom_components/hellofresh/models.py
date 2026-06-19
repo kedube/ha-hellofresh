@@ -30,6 +30,9 @@ class HelloFreshRecipe:
     name: str
     preference: str | None = None
     is_selected: bool = False
+    # How many servings of this meal are currently selected (HelloFresh's per-recipe quantity).
+    # 0/None when not selected; typically 1, or 2+ for a doubled portion.
+    selected_quantity: int | None = None
     # Course index within the week's menu (the cart's ``recipeIndexes`` unit). HelloFresh
     # identifies a selection by this index, not the recipe id, and the same dish can appear
     # under several ids/indexes (portion variants), so the index is the robust key for
@@ -66,6 +69,7 @@ class HelloFreshRecipe:
             "name": self.name,
             "preference": self.preference,
             "is_selected": self.is_selected,
+            "selected_quantity": self.selected_quantity,
             "course_index": self.course_index,
             "image_url": self.image_url,
             "description": self.description,

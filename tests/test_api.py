@@ -1040,6 +1040,11 @@ def test_normalize_menu_weeks_infers_selected_meals_from_selection_quantity() ->
                         "recipe": {"id": "recipe-2", "name": "Tacos"},
                     },
                     {
+                        "index": 19,
+                        "selection": {"quantity": 2, "limit": 2},
+                        "recipe": {"id": "recipe-4", "name": "Double Tacos"},
+                    },
+                    {
                         "index": 20,
                         "selection": {"quantity": 0, "limit": 2},
                         "recipe": {"id": "recipe-3", "name": "Burger"},
@@ -1051,8 +1056,9 @@ def test_normalize_menu_weeks_infers_selected_meals_from_selection_quantity() ->
     )
 
     assert len(weeks) == 1
-    assert weeks[0].meals_selected == 2
-    assert [recipe.is_selected for recipe in weeks[0].recipes] == [True, True, False]
+    assert [recipe.is_selected for recipe in weeks[0].recipes] == [True, True, True, False]
+    # selected_quantity captures the serving count; a doubled portion reads as 2, unselected None.
+    assert [recipe.selected_quantity for recipe in weeks[0].recipes] == [1, 1, 2, None]
 
 
 def test_normalize_menu_weeks_reads_menus_service_courses_container() -> None:
@@ -2765,6 +2771,67 @@ def test_async_select_meals_rejects_fewer_than_required() -> None:
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshError, match="at least 3"):
         loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"]))
+
+
+def test_async_select_meals_sends_per_recipe_quantities() -> None:
+    """A quantities map should set the per-meal serving count in the cart payload."""
+    client, requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_meals(
+            "2026-W26",
+            ["recipe-11", "recipe-18"],
+            quantities={"recipe-11": 2},
+        )
+    )
+    assert len(requests) == 1
+    meals = requests[0]["json_payload"]["meals"]
+    # recipe-11 gets quantity 2; recipe-18 defaults to 1.
+    assert {m["index"]: m["quantity"] for m in meals} == {11: 2, 18: 1}
+
+
+def test_async_select_meals_counts_servings_toward_required() -> None:
+    """Total servings (sum of quantities), not distinct meals, must meet the required minimum."""
+    client, requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Two distinct meals, but recipe-11 at quantity 2 -> 3 servings == required 3: accepted.
+    loop.run_until_complete(
+        client.async_select_meals(
+            "2026-W26",
+            ["recipe-11", "recipe-18"],
+            quantities={"recipe-11": 2},
+        )
+    )
+    assert len(requests) == 1
+
+
+def test_async_select_meals_rejects_when_servings_below_required() -> None:
+    """Two meals at quantity 1 = 2 servings is below required 3 and is rejected."""
+    client, _requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="at least 3 servings"):
+        loop.run_until_complete(
+            client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"])
+        )
+
+
+def test_async_select_meals_rejects_invalid_quantity() -> None:
+    """A non-positive quantity is rejected before any request is made."""
+    client, requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="must be a positive integer"):
+        loop.run_until_complete(
+            client.async_select_meals(
+                "2026-W26",
+                ["recipe-11", "recipe-18", "recipe-20"],
+                quantities={"recipe-11": 0},
+            )
+        )
+    assert requests == []
 
 
 def test_scm_tracking_prefers_external_status_label() -> None:
