@@ -41,10 +41,24 @@ _IMPERSONATE_TARGET = "chrome"
 # Resolved once at import: is curl_cffi importable in this environment?
 _HAS_CURL_CFFI = util.find_spec("curl_cffi") is not None
 
+# curl_cffi's ``AsyncSession`` class, imported eagerly at module load when available. This module
+# is imported off the event loop (Home Assistant loads integration modules via its import
+# executor), so doing the curl_cffi import HERE keeps its importlib.metadata disk I/O
+# (listdir/read_text/open) off the loop. Previously the import happened lazily on the first
+# request, which ran inside the loop and tripped HA's blocking-call detector. ``None`` when
+# curl_cffi is unavailable or failed to import, signalling callers to use the aiohttp fallback.
+_ASYNC_SESSION_CLS: type | None = None
+if _HAS_CURL_CFFI:
+    try:
+        from curl_cffi.requests import AsyncSession as _ASYNC_SESSION_CLS  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - a broken optional dep degrades to the aiohttp fallback
+        _LOGGER.debug("curl_cffi present but failed to import; using aiohttp fallback")
+        _ASYNC_SESSION_CLS = None
+
 
 def tls_impersonation_available() -> bool:
     """Return True when curl_cffi is installed and the TLS-impersonation path is usable."""
-    return _HAS_CURL_CFFI
+    return _HAS_CURL_CFFI and _ASYNC_SESSION_CLS is not None
 
 
 class AuthResponse:
@@ -156,12 +170,16 @@ async def _curl_cffi_request(
     params: dict[str, str] | None,
     json_payload: dict[str, Any] | None,
     headers: dict[str, str] | None,
-) -> AuthResponse:
-    """Perform the request through curl_cffi with Chrome impersonation."""
-    # Imported lazily so the module loads even when curl_cffi isn't installed.
-    from curl_cffi.requests import AsyncSession  # noqa: PLC0415
+) -> AuthResponse | None:
+    """Perform the request through curl_cffi with Chrome impersonation.
 
-    async with AsyncSession() as curl_session:
+    Returns ``None`` when the curl_cffi AsyncSession class is unavailable, so the caller falls
+    back to aiohttp. The class is imported once at module load (off the event loop).
+    """
+    if _ASYNC_SESSION_CLS is None:
+        return None
+
+    async with _ASYNC_SESSION_CLS() as curl_session:
         response = await curl_session.request(
             method,
             url,
