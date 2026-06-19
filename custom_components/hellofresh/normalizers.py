@@ -10,7 +10,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .models import HelloFreshOrder, HelloFreshRecipe, HelloFreshSubscription, HelloFreshWeek
+from .models import (
+    HelloFreshMarketItem,
+    HelloFreshOrder,
+    HelloFreshRecipe,
+    HelloFreshSubscription,
+    HelloFreshWeek,
+)
 from .parsers import (
     MAX_SEARCH_DEPTH,
     coerce_float,
@@ -379,6 +385,96 @@ class HelloFreshPayloadNormalizer:
                     continue
                 if recipe.course_index is not None:
                     recipe.variation_title = titles.get(recipe.course_index)
+
+    def _market_item_from_raw(
+        self, raw_item: dict[str, Any], group_type: str | None
+    ) -> HelloFreshMarketItem | None:
+        """Build a market item (Market add-on) from one ``addOns.groups[].addOns[]`` entry."""
+        recipe_data = (
+            raw_item.get("recipe") if isinstance(raw_item.get("recipe"), dict) else raw_item
+        )
+        name = recipe_data.get("name") or recipe_data.get("title")
+        index = coerce_int(raw_item.get("index"))
+        if not name or index is None:
+            return None
+
+        nutrition = self._extract_nutrition(recipe_data)
+        calories = coerce_float(nutrition.get("calories") or recipe_data.get("calories"))
+
+        price_catalog = (
+            raw_item.get("priceCatalog") if isinstance(raw_item.get("priceCatalog"), dict) else {}
+        )
+        price_cents = coerce_int(price_catalog.get("basePrice"))
+        price = round(price_cents / 100, 2) if price_cents is not None else None
+
+        # Selected quantity lives on the item's selection block when the cart has it chosen.
+        selection = (
+            raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
+        )
+        selected_quantity = coerce_int(selection.get("quantity") or raw_item.get("quantity"))
+        is_selected = bool(selected_quantity and selected_quantity > 0)
+
+        return HelloFreshMarketItem(
+            item_id=str(recipe_data.get("id") or raw_item.get("sku") or index),
+            name=name,
+            index=index,
+            sku=raw_item.get("sku"),
+            group_type=group_type,
+            image_url=recipe_data.get("image")
+            or recipe_data.get("imagePath")
+            or recipe_data.get("imageUrl"),
+            description=recipe_data.get("headline") or recipe_data.get("description"),
+            category=recipe_data.get("category"),
+            tags=extract_name_list(recipe_data.get("tags")),
+            nutrition=nutrition,
+            calories_kcal=calories,
+            price_cents=price_cents,
+            price=price,
+            max_quantity=coerce_int(raw_item.get("maxQuantity")),
+            is_selected=is_selected,
+            selected_quantity=selected_quantity if is_selected else None,
+            is_locked=bool(raw_item.get("isLocked")),
+        )
+
+    def _build_market_items(self, raw_week: dict[str, Any]) -> list[HelloFreshMarketItem]:
+        """Parse the week's Market add-on catalog from its ``addOns.groups`` block.
+
+        Looks on the week payload directly or under ``_menu_payload`` (set when the authenticated
+        menu catalog was merged into an account/deliveries week), mirroring the variation-title
+        lookup so market items resolve regardless of which endpoint produced the week.
+        """
+        addons = raw_week.get("addOns")
+        if not isinstance(addons, dict):
+            nested = raw_week.get("_menu_payload")
+            if isinstance(nested, dict):
+                addons = nested.get("addOns")
+        if not isinstance(addons, dict):
+            return []
+
+        items: list[HelloFreshMarketItem] = []
+        seen_indexes: set[int] = set()
+        for group in addons.get("groups") or []:
+            if not isinstance(group, dict):
+                continue
+            group_type = group.get("groupType")
+            for raw_item in group.get("addOns") or []:
+                if not isinstance(raw_item, dict):
+                    continue
+                item = self._market_item_from_raw(raw_item, group_type)
+                if item is None or item.index in seen_indexes:
+                    continue
+                seen_indexes.add(item.index)
+                items.append(item)
+        return items
+
+    def _apply_market_items(self, weeks: Sequence[HelloFreshWeek]) -> None:
+        """Attach each week's Market add-on catalog, parsed from its menu payload."""
+        for week in weeks:
+            if week.market_items or not isinstance(week.raw, dict):
+                continue
+            items = self._build_market_items(week.raw)
+            if items:
+                week.market_items = items
 
     def _extract_available_one_off_options(
         self,

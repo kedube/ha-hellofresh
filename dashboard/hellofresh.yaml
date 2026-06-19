@@ -1,7 +1,7 @@
 # HelloFresh — example Lovelace dashboard
 #
-# A ready-to-use dashboard built from the entities this integration exposes, in six views:
-# Meal planner, Shipment Tracking, Meal Selection, Planning, Account, and Diagnostics.
+# A ready-to-use dashboard built from the entities this integration exposes, in five views:
+# My Menu, Market, Meal Schedule, Account, and Diagnostics.
 #
 # ── How to use ────────────────────────────────────────────────────────────────
 # 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new dashboard in YAML
@@ -15,9 +15,9 @@
 #    when relevant, so they stay hidden in the normal case.
 #
 # ── Add-ons ─────────────────────────────────────────────────────────────────────
-# The only custom card is the integration's own `custom:hellofresh-meal-planner-card`
-# (on the Meal planner view), which the integration auto-registers — no HACS frontend
-# add-on is required. Every other view is 100% built-in Lovelace.
+# Two custom cards ship with the integration and are auto-registered (no HACS frontend
+# add-on required): `custom:hellofresh-meal-planner-card` (My Menu view) and
+# `custom:hellofresh-market-card` (Market view). Every other view is 100% built-in Lovelace.
 
 title: HelloFresh
 views:
@@ -29,6 +29,14 @@ views:
       - type: custom:hellofresh-meal-planner-card
         title: My Menu
         logo: true
+    type: panel
+  - title: Market
+    path: market
+    icon: mdi:storefront
+    panel: true
+    cards:
+      - type: custom:hellofresh-market-card
+        title: HelloFresh Market
     type: panel
   - title: Meal Schedule
     path: planning

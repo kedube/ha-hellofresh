@@ -1,0 +1,554 @@
+/*
+ * HelloFresh Market Card
+ * ----------------------
+ * A custom Lovelace card for browsing HelloFresh Market add-ons (appetizers, sides, desserts,
+ * proteins, ...) for each delivery week and changing their selection/quantity.
+ *
+ * Like the meal-planner card, per-week market items are NOT exposed as entity attributes (they
+ * would exceed Home Assistant's 16 KB recorder cap), so the data is read on demand from the
+ * response-returning `hellofresh.get_weeks` service and rendered live. Selections are written
+ * back via the `hellofresh.select_market_items` service.
+ *
+ * Config:
+ *   type: custom:hellofresh-market-card
+ *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
+ *   title: HelloFresh Market      # optional card header
+ *   image_width: 400              # optional Cloudinary resize width for item images
+ *
+ * No build step: hand-written ES2020 served from the integration's www/ directory.
+ */
+
+const MARKET_CARD_VERSION = "0.1.0";
+
+function resizedImage(url, width) {
+  if (!url || !width) return url;
+  return url.replace("/q_auto/", `/q_auto,w_${width}/`);
+}
+
+// Pretty labels for HelloFresh's internal group slugs.
+const GROUP_LABELS = {
+  appetizer: "Appetizers",
+  breakfast: "Breakfast",
+  dessert: "Desserts",
+  lunch: "Lunch",
+  protein: "Proteins",
+  sides: "Sides",
+  goodchop: "GoodChop",
+  petstable: "The Pets Table",
+  donation: "Donations",
+  lowprices: "Low Prices",
+};
+
+class HelloFreshMarketCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._weeks = null;
+    this._cursor = 0;
+    this._loading = false;
+    this._error = null;
+    this._busy = false;
+    this._fetched = false;
+    this._hass = null;
+    // Pending (unsaved) edit per week: week_id -> Map(item_id -> quantity). Absent = show saved.
+    this._pending = {};
+    // Persisted "show selected only" view preference (shared across weeks, survives reloads).
+    this._showSelectedOnly = this._loadShowSelectedOnly();
+  }
+
+  setConfig(config) {
+    this._config = { title: "HelloFresh Market", image_width: 400, ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (hass && !this._fetched && !this._loading) {
+      this._fetched = true;
+      this._fetchWeeks();
+    }
+  }
+
+  getCardSize() {
+    return 8;
+  }
+
+  static getStubConfig() {
+    return { type: "custom:hellofresh-market-card" };
+  }
+
+  static get MAX_QUANTITY() {
+    return 12;
+  }
+
+  static get FILTER_STORAGE_KEY() {
+    return "hellofresh-market:show-selected-only";
+  }
+
+  _loadShowSelectedOnly() {
+    try {
+      return window.localStorage.getItem(HelloFreshMarketCard.FILTER_STORAGE_KEY) === "1";
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  _toggleShowSelectedOnly() {
+    this._showSelectedOnly = !this._showSelectedOnly;
+    try {
+      window.localStorage.setItem(
+        HelloFreshMarketCard.FILTER_STORAGE_KEY,
+        this._showSelectedOnly ? "1" : "0"
+      );
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  async _fetchWeeks() {
+    if (!this._hass) return;
+    this._loading = true;
+    this._error = null;
+    this._render();
+    try {
+      const data = {};
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      const result = await this._hass.callService("hellofresh", "get_weeks", data, undefined, false, true);
+      const response = (result && result.response) || {};
+      // Only weeks that actually carry a market catalog are browsable here.
+      this._weeks = (response.weeks || []).filter((w) => (w.market_items || []).length > 0);
+      this._pending = {};
+      this._cursor = 0;
+    } catch (err) {
+      this._error = (err && err.message) || String(err);
+    } finally {
+      this._loading = false;
+      this._render();
+    }
+  }
+
+  _step(delta) {
+    if (!this._weeks || this._weeks.length === 0) return;
+    const count = this._weeks.length;
+    this._cursor = (this._cursor + delta + count) % count;
+    this._render();
+  }
+
+  _isEditable(week) {
+    if (!week) return false;
+    if (week.is_skipped) return false;
+    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
+    if (deadline && deadline < Date.now()) return false;
+    return true;
+  }
+
+  // ---- selection state -----------------------------------------------------
+
+  _itemQuantity(item) {
+    const q = Number(item.selected_quantity);
+    if (Number.isFinite(q) && q > 0) return q;
+    return item.is_selected === true ? 1 : 0;
+  }
+
+  // Saved selection as Map(item_id -> quantity) for chosen items.
+  _savedSelection(week) {
+    const map = new Map();
+    for (const item of week.market_items || []) {
+      const q = this._itemQuantity(item);
+      if (q > 0) map.set(item.item_id, q);
+    }
+    return map;
+  }
+
+  _displaySelection(week) {
+    return this._pending[week.week_id] || this._savedSelection(week);
+  }
+
+  _ensurePending(week) {
+    let pending = this._pending[week.week_id];
+    if (!pending) {
+      pending = new Map(this._savedSelection(week));
+      this._pending[week.week_id] = pending;
+    }
+    return pending;
+  }
+
+  _isDirty(week) {
+    const pending = this._pending[week.week_id];
+    if (!pending) return false;
+    const saved = this._savedSelection(week);
+    if (pending.size !== saved.size) return true;
+    for (const [id, qty] of pending) if (saved.get(id) !== qty) return true;
+    return false;
+  }
+
+  _cartTotalCents(week) {
+    const display = this._displaySelection(week);
+    let cents = 0;
+    for (const item of week.market_items || []) {
+      const qty = display.get(item.item_id) || 0;
+      if (qty > 0 && item.price_cents != null) cents += item.price_cents * qty;
+    }
+    return cents;
+  }
+
+  // +/- stepper: change an item's quantity, clamped to [0, min(maxQuantity, MAX_QUANTITY)].
+  _changeQuantity(week, item, delta) {
+    if (this._busy || !this._isEditable(week)) return;
+    const pending = this._ensurePending(week);
+    const cap = Math.min(
+      item.max_quantity != null ? item.max_quantity : HelloFreshMarketCard.MAX_QUANTITY,
+      HelloFreshMarketCard.MAX_QUANTITY
+    );
+    const current = pending.get(item.item_id) || 0;
+    const next = Math.max(0, Math.min(cap, current + delta));
+    if (next === current) return;
+    if (next === 0) pending.delete(item.item_id);
+    else pending.set(item.item_id, next);
+    this._render();
+  }
+
+  _cancelEdit(week) {
+    delete this._pending[week.week_id];
+    this._render();
+  }
+
+  async _saveSelection(week) {
+    const pending = this._pending[week.week_id];
+    if (!pending) return;
+    // Send the full desired state (item_id -> quantity); omitted/zero items are removed.
+    const quantities = {};
+    for (const [id, qty] of pending) if (qty > 0) quantities[id] = qty;
+
+    this._busy = true;
+    this._render();
+    try {
+      const data = { week_id: week.week_id, quantities };
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      await this._hass.callService("hellofresh", "select_market_items", data);
+      delete this._pending[week.week_id];
+      this._flash("Market selection updated.");
+    } catch (err) {
+      this._flash(`Selection failed: ${(err && err.message) || err}`, true);
+    } finally {
+      this._busy = false;
+      await this._fetchWeeks();
+    }
+  }
+
+  _flash(message, isError = false) {
+    this._toast = { message, isError };
+    this._render();
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      this._toast = null;
+      this._render();
+    }, 4000);
+  }
+
+  // ---- render --------------------------------------------------------------
+
+  _render() {
+    if (!this.shadowRoot) return;
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    this.shadowRoot.innerHTML = `
+      <style>${this._styles()}</style>
+      <ha-card>
+        <div class="head">
+          <span class="title-text">${this._esc(this._config.title)}</span>
+        </div>
+        ${this._renderBody(week)}
+        ${this._toast ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>` : ""}
+      </ha-card>
+    `;
+    this._bind();
+  }
+
+  _renderBody(week) {
+    if (this._loading) return `<div class="state">Loading market…</div>`;
+    if (this._error) {
+      return `<div class="state error">Could not load market: ${this._esc(this._error)}</div>
+        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+    }
+    if (!this._weeks || this._weeks.length === 0) {
+      return `<div class="state">No market items available for any week yet.</div>
+        <div class="actions"><button data-action="refresh">Refresh</button></div>`;
+    }
+    return `${this._renderHeader(week)}${this._renderGroups(week)}`;
+  }
+
+  _renderHeader(week) {
+    const editable = this._isEditable(week);
+    const dirty = this._isDirty(week);
+    const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
+    const totalCents = this._cartTotalCents(week);
+    const currency = (week.market_items.find((i) => i.currency) || {}).currency;
+    return `
+      <div class="header">
+        <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
+        <div class="weekinfo">
+          <div class="weektitle">${this._esc(week.display_name || week.week_id)}</div>
+          <div class="weeksub">
+            ${week.delivery_date ? this._esc(this._fmtDate(week.delivery_date)) : ""}
+            ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
+          </div>
+        </div>
+        <button class="nav" data-action="next" aria-label="Next week">›</button>
+      </div>
+      <div class="statusrow">
+        <span class="chip ${totalCents > 0 ? "ok" : ""}">
+          Market total ${this._fmtPrice(totalCents / 100, currency)}${dirty ? " · unsaved" : ""}
+        </span>
+        <button
+          class="chip filterchip ${this._showSelectedOnly ? "on" : ""}"
+          data-action="toggle-filter"
+          aria-pressed="${this._showSelectedOnly ? "true" : "false"}"
+          title="Toggle showing only selected market items"
+        >${this._showSelectedOnly ? "Selected only" : "All items"}</button>
+        ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
+        <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
+        ${dirty
+          ? `<button class="savebtn" data-action="save" ${this._busy ? "disabled" : ""}>Save selection</button>
+             <button class="ghostbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
+          : ""}
+        <button class="ghostbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
+      </div>
+    `;
+  }
+
+  _renderGroups(week) {
+    const editable = this._isEditable(week);
+    const display = this._displaySelection(week);
+    const qtyOf = (item) => display.get(item.item_id) || 0;
+
+    let items = week.market_items || [];
+    if (this._showSelectedOnly) items = items.filter((i) => qtyOf(i) > 0);
+    if (items.length === 0) {
+      return `<div class="state">${this._showSelectedOnly ? "No market items selected for this week yet." : "No market items for this week."}</div>`;
+    }
+
+    // Group by group_type, preserving the catalog order of first appearance.
+    const order = [];
+    const byGroup = new Map();
+    for (const item of items) {
+      const key = item.group_type || "other";
+      if (!byGroup.has(key)) {
+        byGroup.set(key, []);
+        order.push(key);
+      }
+      byGroup.get(key).push(item);
+    }
+
+    return order
+      .map((key) => {
+        const label = GROUP_LABELS[key] || this._titleCase(key);
+        const tiles = byGroup
+          .get(key)
+          .map((item) => this._renderTile(week, item, editable, qtyOf(item)))
+          .join("");
+        return `<div class="group">
+          <div class="grouptitle">${this._esc(label)}</div>
+          <div class="grid ${this._busy ? "busy" : ""}">${tiles}</div>
+        </div>`;
+      })
+      .join("");
+  }
+
+  _renderTile(week, item, editable, qty) {
+    const idAttr = this._esc(item.item_id);
+    const cap = Math.min(
+      item.max_quantity != null ? item.max_quantity : HelloFreshMarketCard.MAX_QUANTITY,
+      HelloFreshMarketCard.MAX_QUANTITY
+    );
+    const stats = [];
+    if (item.calories_kcal != null) stats.push(`${Math.round(item.calories_kcal)} kcal`);
+    return `
+      <div class="item ${qty > 0 ? "selected" : ""}" data-id="${idAttr}">
+        <div class="imgwrap">
+          ${item.image_url
+            ? `<img loading="lazy" src="${this._esc(resizedImage(item.image_url, this._config.image_width))}" alt="${this._esc(item.name)}">`
+            : `<div class="noimg"></div>`}
+          ${qty > 0 ? `<div class="qtybadge">${qty}×</div>` : ""}
+          ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency))}</div>` : ""}
+        </div>
+        <div class="meta">
+          <div class="name">${this._esc(item.name)}</div>
+          ${item.description ? `<div class="desc">${this._esc(item.description)}</div>` : ""}
+          ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
+          ${editable
+            ? `<div class="stepper">
+                 <button class="qbtn" data-qty="dec" data-id="${idAttr}" title="Fewer">−</button>
+                 <span class="qval">${qty}</span>
+                 <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap ? "disabled" : ""} title="More">+</button>
+               </div>`
+            : qty > 0 ? `<div class="cals">${qty} selected</div>` : ""}
+        </div>
+      </div>`;
+  }
+
+  _bind() {
+    const root = this.shadowRoot;
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    root.querySelectorAll("[data-action]").forEach((el) => {
+      const action = el.getAttribute("data-action");
+      el.addEventListener("click", () => {
+        if (action === "prev") this._step(-1);
+        else if (action === "next") this._step(1);
+        else if (action === "refresh") this._fetchWeeks();
+        else if (action === "save" && week) this._saveSelection(week);
+        else if (action === "cancel" && week) this._cancelEdit(week);
+        else if (action === "toggle-filter") this._toggleShowSelectedOnly();
+      });
+    });
+    if (week && this._isEditable(week)) {
+      const findItem = (id) => (week.market_items || []).find((i) => i.item_id === id);
+      root.querySelectorAll(".qbtn").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const item = findItem(el.getAttribute("data-id"));
+          if (item) this._changeQuantity(week, item, el.getAttribute("data-qty") === "inc" ? 1 : -1);
+        });
+      });
+    }
+  }
+
+  // ---- helpers -------------------------------------------------------------
+
+  _fmtPrice(amount, currency) {
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return String(amount);
+    try {
+      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
+    } catch (_e) {
+      return num.toFixed(2);
+    }
+  }
+
+  _titleCase(value) {
+    return String(value)
+      .replace(/[_-]+/g, " ")
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  _fmtDate(iso) {
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    } catch (_e) {
+      return iso;
+    }
+  }
+
+  _fmtDateTime(d) {
+    try {
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    } catch (_e) {
+      return String(d);
+    }
+  }
+
+  _esc(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  _styles() {
+    return `
+      ha-card { padding: 12px 16px 16px; }
+      .head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .title-text { font-size: 1.3em; font-weight: 700; }
+      .state { text-align: center; padding: 28px 8px; color: var(--secondary-text-color); }
+      .state.error { color: var(--error-color, #db4437); }
+      .header { display: flex; align-items: center; gap: 8px; }
+      .header .weekinfo { flex: 1; text-align: center; }
+      .weektitle { font-size: 1.05em; font-weight: 700; }
+      .weeksub { font-size: 0.82em; color: var(--secondary-text-color); }
+      .skipped { color: var(--warning-color, #ff9800); font-weight: 700; }
+      .nav {
+        width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--divider-color);
+        background: var(--card-background-color); font-size: 1.3em; cursor: pointer; flex: none;
+      }
+      .statusrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+      .chip {
+        font-size: 0.8em; padding: 4px 10px; border-radius: 14px;
+        background: var(--secondary-background-color); color: var(--primary-text-color);
+      }
+      .chip.ok { background: var(--success-color, #4caf50); color: #fff; }
+      .chip.locked { opacity: 0.7; }
+      .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .filterchip { border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em; }
+      .filterchip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+      .savebtn {
+        margin-left: auto; font-size: 0.85em; padding: 6px 14px; border-radius: 14px;
+        border: none; background: var(--primary-color); color: var(--text-primary-color, #fff); cursor: pointer;
+      }
+      .savebtn[disabled] { opacity: 0.5; cursor: default; }
+      .ghostbtn {
+        font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
+        border: 1px solid var(--divider-color); background: var(--card-background-color); cursor: pointer;
+      }
+      .group { margin-top: 14px; }
+      .grouptitle { font-size: 0.95em; font-weight: 700; margin: 6px 0; }
+      .grid {
+        display: grid; gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      }
+      .grid.busy { opacity: 0.6; pointer-events: none; }
+      .item {
+        border: 2px solid transparent; border-radius: 10px; overflow: hidden;
+        background: var(--secondary-background-color);
+      }
+      .item.selected { border-color: var(--primary-color); }
+      .imgwrap { position: relative; aspect-ratio: 1 / 1; background: var(--divider-color); }
+      .imgwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .noimg { width: 100%; height: 100%; }
+      .qtybadge {
+        position: absolute; top: 6px; right: 6px; min-width: 26px; height: 22px; padding: 0 6px;
+        box-sizing: border-box; background: var(--primary-color); color: var(--text-primary-color, #fff);
+        border-radius: 11px; display: flex; align-items: center; justify-content: center;
+        font-size: 0.78em; font-weight: 700;
+      }
+      .price {
+        position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 10px;
+        background: rgba(0,0,0,0.72); color: #fff; font-size: 0.74em; font-weight: 700;
+      }
+      .meta { padding: 8px; }
+      .name { font-size: 0.9em; font-weight: 600; }
+      .desc { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
+      .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
+      .stepper { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+      .qbtn {
+        width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--divider-color);
+        background: var(--card-background-color); color: var(--primary-text-color);
+        font-size: 1.1em; font-weight: 700; line-height: 1; cursor: pointer; flex: none;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .qbtn:hover:not([disabled]) { border-color: var(--primary-color); color: var(--primary-color); }
+      .qbtn[disabled] { opacity: 0.4; cursor: default; }
+      .qval { font-weight: 700; min-width: 12px; text-align: center; }
+      .toast {
+        margin: 8px 0 0; padding: 8px 12px; border-radius: 8px;
+        background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
+      }
+      .toast.error { background: var(--error-color, #db4437); color: #fff; }
+      .actions { text-align: center; margin-top: 8px; }
+      .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
+    `;
+  }
+}
+
+customElements.define("hellofresh-market-card", HelloFreshMarketCard);
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "hellofresh-market-card",
+  name: "HelloFresh Market Card",
+  description: "Browse and select HelloFresh Market add-ons per delivery week.",
+});
+
+console.info(`%c HELLOFRESH-MARKET-CARD %c v${MARKET_CARD_VERSION} `, "color:#fff;background:#91c11e;font-weight:700", "color:#91c11e;background:#fff");

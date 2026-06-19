@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.12.0";
+const CARD_VERSION = "0.13.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -47,6 +47,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._weeks = null; // cached get_weeks response
     this._account = null; // account-level fields from get_weeks (e.g. plan total price fallback)
     this._cursor = 0; // index into this._weeks
+    // "Show selected only" filter. Persisted in localStorage so it survives reloads/reboots and
+    // is shared across weeks (a view preference, not per-week state).
+    this._showSelectedOnly = this._loadShowSelectedOnly();
     this._loading = false;
     this._error = null;
     this._busy = false; // a write (select/skip) is in flight
@@ -152,6 +155,33 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // Max servings the +/- stepper allows for one meal (HelloFresh's typical per-recipe cap).
   static get MAX_QUANTITY() {
     return 4;
+  }
+
+  // localStorage key for the "show selected only" view preference.
+  static get FILTER_STORAGE_KEY() {
+    return "hellofresh-meal-planner:show-selected-only";
+  }
+
+  _loadShowSelectedOnly() {
+    try {
+      return window.localStorage.getItem(HelloFreshMealPlannerCard.FILTER_STORAGE_KEY) === "1";
+    } catch (_e) {
+      return false; // private mode / storage disabled: default to showing all meals
+    }
+  }
+
+  // Flip the filter, persist it, and re-render.
+  _toggleShowSelectedOnly() {
+    this._showSelectedOnly = !this._showSelectedOnly;
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.FILTER_STORAGE_KEY,
+        this._showSelectedOnly ? "1" : "0"
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+    this._render();
   }
 
   // The course_index -> quantity map currently shown for a week: the user's pending edit if one
@@ -501,6 +531,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
           ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
         </span>
+        <button
+          class="chip filterchip ${this._showSelectedOnly ? "on" : ""}"
+          data-action="toggle-filter"
+          aria-pressed="${this._showSelectedOnly ? "true" : "false"}"
+          title="Toggle showing only selected meals"
+        >${this._showSelectedOnly ? "Selected only" : "All meals"}</button>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
         ${editable ? `<span class="hint">Tap meals to choose, then Save.</span>` : ""}
@@ -574,7 +610,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
     });
 
-    const ordered = recipes.slice().sort((a, b) => (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0));
+    // When "show selected only" is on, hide unselected tiles. Uses the display selection, so a
+    // meal stays visible while the user is toggling it off mid-edit (it disappears on the next
+    // render only if still deselected). Variant aliases are respected via sel().
+    const visible = this._showSelectedOnly ? recipes.filter((r) => sel(r)) : recipes;
+    if (this._showSelectedOnly && visible.length === 0) {
+      return `<div class="state">No meals selected for this week yet.</div>`;
+    }
+
+    const ordered = visible.slice().sort((a, b) => (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0));
     const cards = ordered
       .map((r) => {
         const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
@@ -647,6 +691,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         else if (action === "save" && week) this._saveSelection(week);
         else if (action === "cancel" && week) this._cancelEdit(week);
         else if (action === "goto-needs") this._gotoNeedsChoice();
+        else if (action === "toggle-filter") this._toggleShowSelectedOnly();
       });
     });
     if (week && this._isEditable(week)) {
@@ -779,6 +824,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .chip.warn { background: var(--warning-color, #ff9800); color: #fff; }
       .chip.locked { opacity: 0.7; }
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .filterchip {
+        border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em;
+      }
+      .filterchip.on {
+        background: var(--primary-color); color: var(--text-primary-color, #fff);
+        border-color: var(--primary-color);
+      }
       .orderbar {
         display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px;
         padding: 10px 12px; border-radius: 10px;

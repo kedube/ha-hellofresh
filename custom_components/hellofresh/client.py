@@ -19,6 +19,7 @@ from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
     HelloFreshError,
+    HelloFreshMarketItem,
     HelloFreshNotImplementedError,
     HelloFreshOrder,
     HelloFreshRecipe,
@@ -296,6 +297,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # week's modularity block, regardless of which path built the recipes. Done here, after
         # the merge, so every assembled week is covered (not just the menu-API path).
         self._apply_variation_titles(all_weeks)
+        # Likewise attach each week's Market add-on catalog (appetizers, sides, desserts, ...).
+        self._apply_market_items(all_weeks)
 
         data.weeks = all_weeks
         data.orders = all_orders
@@ -508,6 +511,64 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             path_templates, week, payload_variants, category="select"
         )
 
+    async def async_select_market_items(
+        self,
+        week_id: str,
+        quantities: dict[str, int],
+    ) -> None:
+        """Set the week's HelloFresh Market add-on (extras) selection.
+
+        ``quantities`` maps a market item's id/sku/index (as returned by get_weeks) to the
+        desired quantity; a quantity of 0 (or omitting an item) removes it. The week's meal
+        selection is preserved. Writes the cart's ``extras`` array via PUT /gw/v1/carts/{week}.
+        """
+        week = self._get_known_week_or_raise(week_id)
+        if not week.market_items:
+            raise HelloFreshError(f"Week {week_id} has no market catalog to select from")
+        if week.subscription_id is None:
+            raise HelloFreshNotImplementedError(
+                f"Week {week_id} does not expose a subscription id, so market selection cannot be submitted safely."
+            )
+
+        # Resolve requested quantities against the catalog by id/sku/index, clamped to maxQuantity.
+        by_key: dict[str, HelloFreshMarketItem] = {}
+        for item in week.market_items:
+            for key in (item.item_id, item.sku, str(item.index)):
+                if key:
+                    by_key.setdefault(str(key), item)
+
+        extras: list[dict[str, int]] = []
+        for raw_key, raw_qty in quantities.items():
+            quantity = coerce_int(raw_qty) or 0
+            if quantity <= 0:
+                continue
+            item = by_key.get(str(raw_key))
+            if item is None or item.index is None:
+                raise HelloFreshError(
+                    f"Market item {raw_key!r} is not in week {week_id}'s catalog"
+                )
+            if item.max_quantity is not None and quantity > item.max_quantity:
+                raise HelloFreshError(
+                    f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
+                )
+            extras.append({"index": item.index, "quantity": quantity})
+
+        subscription = await self._async_get_subscription_for_week(week)
+        meals = self._build_cart_existing_meals(week)  # preserve the meal selection
+        cart_update = await self._async_build_cart_update(week, subscription, meals, extras)
+        if cart_update is None:
+            raise HelloFreshNotImplementedError(
+                f"Week {week_id} is missing the cart metadata needed to submit market selections."
+            )
+        await self._async_api_request(
+            "PUT",
+            cart_update["path"],
+            params=cart_update["params"],
+            json_payload=cart_update["json_payload"],
+            extra_headers={"x-requested-by": "shopping-experience-web"},
+        )
+        _LOGGER.info("HelloFresh market selection succeeded using %s", cart_update["path"])
+
     @staticmethod
     def _existing_recipe_quantity(recipe: HelloFreshRecipe) -> int:
         """Servings currently selected for a recipe (defaults to 1 when selected but unknown)."""
@@ -550,6 +611,18 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if selected_meals is None:
             return None
 
+        # Preserve any currently-selected market items so a meal write doesn't clear extras.
+        extras = self._build_cart_existing_extras(week)
+        return await self._async_build_cart_update(week, subscription, selected_meals, extras)
+
+    async def _async_build_cart_update(
+        self,
+        week: HelloFreshWeek,
+        subscription: HelloFreshSubscription,
+        meals: list[dict[str, int]],
+        extras: list[dict[str, int]],
+    ) -> dict[str, Any] | None:
+        """Assemble the shared ``PUT /gw/v1/carts/{week}`` request for meals + extras."""
         customer_id = coerce_int(subscription.account_id)
         cutoff_time = self._format_cart_cutoff_time(
             week.selection_deadline
@@ -583,10 +656,35 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 "week": week.week_id,
             },
             "json_payload": {
-                "extras": [],
-                "meals": selected_meals,
+                "extras": extras,
+                "meals": meals,
             },
         }
+
+    @staticmethod
+    def _build_cart_existing_extras(week: HelloFreshWeek) -> list[dict[str, int]]:
+        """Cart ``extras`` entries for the week's currently-selected market items."""
+        extras: list[dict[str, int]] = []
+        for item in week.market_items:
+            if item.is_selected and item.index is not None:
+                extras.append(
+                    {"index": item.index, "quantity": item.selected_quantity or 1}
+                )
+        return extras
+
+    @staticmethod
+    def _build_cart_existing_meals(week: HelloFreshWeek) -> list[dict[str, int]]:
+        """Cart ``meals`` entries for the week's currently-selected recipes."""
+        meals: list[dict[str, int]] = []
+        for recipe in week.recipes:
+            if recipe.is_selected and recipe.course_index is not None:
+                meals.append(
+                    {
+                        "index": recipe.course_index,
+                        "quantity": HelloFreshClient._existing_recipe_quantity(recipe),
+                    }
+                )
+        return meals
 
     def _build_cart_selected_meals(
         self,
