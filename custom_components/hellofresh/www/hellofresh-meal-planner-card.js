@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.6.0";
+const CARD_VERSION = "0.7.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -395,7 +395,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
     // Detect same-name variants (the catalog lists e.g. standard vs double-protein vs premium
     // copies of one dish). Recipes whose name recurs are marked as variants so the tile can
-    // call out exactly what differs (surcharge, protein, tags) rather than looking identical.
+    // call out exactly what differs — the human-readable modifier ("2x Bacon", "Ground Turkey"),
+    // surcharge, protein, tags — rather than looking identical.
     const nameCounts = {};
     recipes.forEach((r) => {
       nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
@@ -407,6 +408,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
         const isSelected = sel(r);
         const isVariant = nameCounts[r.name] > 1;
+        // The modifier that actually names the difference ("2x Bacon", "Ground Turkey", ...).
+        // Falls back to the badge/tag-driven flag when the menu didn't provide a modifier title.
+        const variantTitle = r.variation_title || null;
         // Numbers line: protein + calories together makes double-protein variants obvious.
         const stats = [];
         if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
@@ -423,10 +427,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
                 : `<div class="noimg"></div>`}
               ${isSelected ? `<div class="check">✓</div>` : ""}
               ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
-              ${isVariant ? `<div class="variant-flag">Variant</div>` : ""}
+              ${variantTitle
+                ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
+                : isVariant ? `<div class="variant-flag">Variant</div>` : ""}
             </div>
             <div class="meta">
               <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
+              ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
               ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
               ${r.badge || tags.length
                 ? `<div class="chips">
@@ -602,13 +609,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         background: rgba(0,0,0,0.72); color: #fff; font-size: 0.72em; font-weight: 700;
       }
       .variant-flag {
-        position: absolute; top: 6px; left: 6px; padding: 2px 7px; border-radius: 10px;
+        position: absolute; top: 6px; left: 6px; max-width: calc(100% - 12px);
+        padding: 2px 7px; border-radius: 10px;
         background: var(--warning-color, #ff9800); color: #fff; font-size: 0.68em; font-weight: 700;
-        text-transform: uppercase; letter-spacing: 0.03em;
+        letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       .meta { padding: 8px; }
       .name { font-size: 0.9em; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+      .variation {
+        font-size: 0.8em; font-weight: 700; color: var(--warning-color, #ff9800); margin-top: 2px;
+      }
       .desc { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
       .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
       .rchip {

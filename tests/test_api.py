@@ -2033,6 +2033,45 @@ def test_recipe_parses_variant_distinguishing_fields() -> None:
     assert recipe.as_dict()["surcharge_label"] == "+12.98/serving"
 
 
+def test_recipe_parses_variation_title_from_modularity() -> None:
+    """Same-named variants get a human-readable modifier from the menu `modularity` block.
+
+    HelloFresh lists portion/ingredient variants as separate meals sharing one name; the
+    `modularity` array names how each differs ("2x Bacon", "Ground Turkey") via an `index`
+    that equals the meal's own `index`. The base meal has no modifier.
+    """
+    client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
+    titles = client._build_variation_titles(
+        {
+            "modularity": [
+                {
+                    "defaultCourseIndex": 350,
+                    "variations": [
+                        {"index": 351, "title": "2x Chicken Cutlets"},
+                        {"index": 352, "title": "2x Bacon"},
+                    ],
+                    "addOns": [{"index": 16528, "title": "Pitas"}],
+                }
+            ]
+        }
+    )
+    assert titles == {351: "2x Chicken Cutlets", 352: "2x Bacon", 16528: "Pitas"}
+
+    base = client._recipe_from_raw_meal(
+        {"index": 350, "recipe": {"id": "r0", "name": "Bourguignon"}},
+        default_selected=False,
+        variation_titles=titles,
+    )
+    variant = client._recipe_from_raw_meal(
+        {"index": 352, "recipe": {"id": "r2", "name": "Bourguignon"}},
+        default_selected=False,
+        variation_titles=titles,
+    )
+    assert base.variation_title is None
+    assert variant.variation_title == "2x Bacon"
+    assert variant.as_dict()["variation_title"] == "2x Bacon"
+
+
 def test_account_data_collects_debug_trace_for_menu_and_delivery_attempts() -> None:
     """Debug trace should expose endpoint attempts for diagnostics."""
     client = HelloFreshClient(

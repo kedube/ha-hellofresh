@@ -218,6 +218,7 @@ class HelloFreshPayloadNormalizer:
         raw_meal: dict[str, Any],
         *,
         default_selected: bool = True,
+        variation_titles: dict[int, str] | None = None,
     ) -> HelloFreshRecipe:
         """Create a recipe from a recipe-like payload."""
         recipe_data = (
@@ -272,6 +273,14 @@ class HelloFreshPayloadNormalizer:
         label = recipe_data.get("label") if isinstance(recipe_data.get("label"), dict) else {}
         badge = label.get("text") or None
 
+        # Variant modifier title ("2x Bacon", "Ground Turkey", ...) resolved from the week's
+        # `modularity` block by this meal's `index`. This is what actually distinguishes
+        # same-named variants whose price/nutrition can otherwise look identical.
+        course_index = coerce_int(raw_meal.get("index"))
+        variation_title = None
+        if variation_titles and course_index is not None:
+            variation_title = variation_titles.get(course_index)
+
         return HelloFreshRecipe(
             recipe_id=str(
                 recipe_data.get("id")
@@ -283,7 +292,7 @@ class HelloFreshPayloadNormalizer:
             name=name,
             preference=recipe_data.get("preference") or recipe_data.get("category"),
             is_selected=is_selected,
-            course_index=coerce_int(raw_meal.get("index")),
+            course_index=course_index,
             image_url=recipe_data.get("imagePath")
             or recipe_data.get("image")
             or recipe_data.get("imageUrl"),
@@ -301,7 +310,36 @@ class HelloFreshPayloadNormalizer:
             surcharge_label=surcharge_label,
             surcharge_cents=surcharge_cents,
             badge=badge,
+            variation_title=variation_title,
         )
+
+    @staticmethod
+    def _build_variation_titles(raw_week: dict[str, Any]) -> dict[int, str]:
+        """Map a meal `index` to its variant modifier title from the `modularity` block.
+
+        HelloFresh lists portion/ingredient variants of a dish as separate meals sharing the
+        same name; the `modularity` array names how each variant differs ("2x Bacon",
+        "Ground Turkey", ...) via the variation/addOn `index`, which equals the meal's `index`.
+        """
+        titles: dict[int, str] = {}
+        modularity = raw_week.get("modularity")
+        if not isinstance(modularity, list):
+            return titles
+        for group in modularity:
+            if not isinstance(group, dict):
+                continue
+            for key in ("variations", "addOns"):
+                items = group.get(key)
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    idx = coerce_int(item.get("index"))
+                    title = item.get("title")
+                    if idx is not None and isinstance(title, str) and title.strip():
+                        titles.setdefault(idx, title.strip())
+        return titles
 
     def _extract_available_one_off_options(
         self,
@@ -891,8 +929,13 @@ class HelloFreshPayloadNormalizer:
         weeks: list[HelloFreshWeek] = []
         for index, raw_week in enumerate(raw_weeks):
             raw_recipes = self._extract_menu_week_recipe_candidates(raw_week)
+            variation_titles = self._build_variation_titles(raw_week)
             recipes = [
-                self._recipe_from_raw_meal(raw_recipe, default_selected=False)
+                self._recipe_from_raw_meal(
+                    raw_recipe,
+                    default_selected=False,
+                    variation_titles=variation_titles,
+                )
                 for raw_recipe in raw_recipes
             ]
             if not recipes:
