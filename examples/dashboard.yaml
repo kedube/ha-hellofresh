@@ -51,26 +51,11 @@ views:
   # ── Overview ────────────────────────────────────────────────────────────────
   - title: Shipment Tracking
     path: hellofresh
-    icon: mdi:local_shipping
+    icon: mdi:package-variant-closed
     cards:
       # ── Attention banners — only render when there's something to act on ──────
-
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_needs_meal_selection
-            state: "on"
-        card:
-          type: markdown
-          content: >
-            ### 🍽️ Meals need choosing
-
-            {{ states('sensor.hellofresh_us_weeks_needing_selection') }} week(s)
-            still need a selection. Next deadline:
-            **{{ as_timestamp(states('sensor.hellofresh_us_next_selection_deadline'), 0)
-            | timestamp_custom('%a %b %-d, %-I:%M %p', true) }}**
-            ({{ relative_time(states('sensor.hellofresh_us_next_selection_deadline')
-            | as_datetime) if states('sensor.hellofresh_us_next_selection_deadline')
-            not in ['unknown','unavailable'] else 'no deadline' }} away).
+      # Note: the "Meals need choosing" prompt now lives on the Meal planner view's card
+      # (it shows a tappable banner that jumps to the week needing a selection).
 
       - type: conditional
         conditions:
@@ -87,24 +72,6 @@ views:
 
             New date:
             **{{ states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
-
-      # Only render when the refresh token is actually close to expiring (≤ 7 days).
-      # The gating MUST live in `conditions` — a markdown card whose template renders
-      # empty still draws an empty card box, so an always-true condition with an inner
-      # {% if %} produced a blank card on healthy installs.
-      - type: conditional
-        conditions:
-          - condition: numeric_state
-            entity: sensor.hellofresh_us_refresh_token_days_remaining
-            below: 8
-        card:
-          type: markdown
-          content: >
-            ### 🔑 Reauthentication needed soon
-
-            HelloFresh login expires in
-            **{{ states('sensor.hellofresh_us_refresh_token_days_remaining') }} day(s)**.
-            Reconnect the integration before it lapses to avoid losing data.
 
       # Integration is returning data that no longer matches the expected shape —
       # values may be stale or wrong. PROBLEM binary sensor; disabled by default,
@@ -167,33 +134,6 @@ views:
           - type: entity
             entity: sensor.hellofresh_us_next_box_coupon
             icon: mdi:ticket-percent-outline
-
-      # Per-week breakdown, read from the `weeks` attribute on the deadline sensor
-      # (a list of {display_name, delivery_date, selection_deadline,
-      # meals_selected, meals_required} dicts — these are NOT separate entities,
-      # so a templated markdown card is the right tool, not auto-entities).
-      # Only renders while at least one week needs a selection.
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_needs_meal_selection
-            state: "on"
-        card:
-          type: markdown
-          title: Weeks needing selection
-          content: >
-            {% set weeks = state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks') or [] %}
-            {% if weeks | count == 0 %}
-            All caught up — nothing to choose.
-            {% else %}
-            | Week | Chosen | Deadline |
-            | --- | :---: | --- |
-            {% for w in weeks -%}
-            {% set sel = w.meals_selected if w.meals_selected is not none else 0 -%}
-            {% set req = w.meals_required if w.meals_required is not none else '?' -%}
-            {% set dl = w.selection_deadline -%}
-            | {{ w.display_name or w.delivery_date or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) | timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
-            {% endfor %}
-            {% endif %}
 
       # ── Shipment tracking ─────────────────────────────────────────────────────
       # Whole card is conditional: with no in-flight shipment these rows are all
@@ -292,6 +232,33 @@ views:
           - type: divider
           - entity: switch.hellofresh_us_skip_next_modifiable_week
             name: Skip next selectable delivery week
+
+      # Per-week breakdown, read from the `weeks` attribute on the deadline sensor
+      # (a list of {display_name, delivery_date, selection_deadline,
+      # meals_selected, meals_required} dicts — these are NOT separate entities,
+      # so a templated markdown card is the right tool, not auto-entities).
+      # Only renders while at least one week needs a selection.
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_needs_meal_selection
+            state: "on"
+        card:
+          type: markdown
+          title: Weeks needing selection
+          content: >
+            {% set weeks = state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks') or [] %}
+            {% if weeks | count == 0 %}
+            All caught up — nothing to choose.
+            {% else %}
+            | Week | Chosen | Deadline |
+            | --- | :---: | --- |
+            {% for w in weeks -%}
+            {% set sel = w.meals_selected if w.meals_selected is not none else 0 -%}
+            {% set req = w.meals_required if w.meals_required is not none else '?' -%}
+            {% set dl = w.selection_deadline -%}
+            | {{ w.display_name or w.delivery_date or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) | timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
+            {% endfor %}
+            {% endif %}
 
   # ── Planning & history ──────────────────────────────────────────────────────
   - title: Planning
