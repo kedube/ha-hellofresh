@@ -49,9 +49,9 @@ views:
         # config_entry_id: <id>     # only needed with multiple HelloFresh accounts
 
   # ── Overview ────────────────────────────────────────────────────────────────
-  - title: HelloFresh
+  - title: Shipment Tracking
     path: hellofresh
-    icon: mdi:food-takeout-box
+    icon: mdi:local_shipping
     cards:
       # ── Attention banners — only render when there's something to act on ──────
 
@@ -168,43 +168,6 @@ views:
             entity: sensor.hellofresh_us_next_box_coupon
             icon: mdi:ticket-percent-outline
 
-      # ── Meal selection ────────────────────────────────────────────────────────
-      # Progress at a glance: meals chosen for the next delivery week.
-      # Severity bands give the dial color/meaning so it doesn't read as an empty
-      # circle with a bare number. `max` is a static cap (most plans need 2–6 meals);
-      # the gauge can't read `required_meal_count` dynamically, so the Meal selection
-      # card below shows the exact chosen/required pair for the week.
-      - type: gauge
-        name: Meals chosen (next delivery)
-        entity: sensor.hellofresh_us_selected_meal_count
-        min: 0
-        max: 6
-        needle: true
-        severity:
-          green: 3
-          yellow: 1
-          red: 0
-
-      - type: entities
-        title: Meal selection
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: sensor.hellofresh_us_selected_meal_count
-            name: Next delivery meals chosen
-          - entity: sensor.hellofresh_us_required_meal_count
-            name: Meals required
-          - entity: sensor.hellofresh_us_next_selection_deadline
-            name: Next delivery selection deadline
-          - type: divider
-          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
-            name: Next selectable delivery meals chosen
-          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
-            name: Next selectable delivery deadline
-          - type: divider
-          - entity: switch.hellofresh_us_skip_next_modifiable_week
-            name: Skip next selectable delivery week
-
       # Per-week breakdown, read from the `weeks` attribute on the deadline sensor
       # (a list of {display_name, delivery_date, selection_deadline,
       # meals_selected, meals_required} dicts — these are NOT separate entities,
@@ -240,48 +203,25 @@ views:
           - entity: binary_sensor.hellofresh_us_tracked_shipment_available
             state: "on"
         card:
-          # Stack so a clickable "Track shipment" button can sit under the details.
-          type: vertical-stack
-          cards:
-            - type: entities
-              title: Shipment tracking
-              show_header_toggle: false
-              state_color: true
-              entities:
-                - entity: sensor.hellofresh_us_shipment_tracking_status
-                  name: Status
-                - entity: sensor.hellofresh_us_tracked_shipment_carrier
-                  name: Carrier
-                - entity: sensor.hellofresh_us_shipment_tracking_number
-                  name: Tracking number
-            # Clickable carrier link, built from the `tracking_url` attribute on the
-            # status sensor. Only shown when a URL is present; tapping opens it in a
-            # new tab. (Built-in fallback: an `attribute` row shows the URL as text
-            # but isn't clickable — see the commented row below.)
-            - type: conditional
-              conditions:
-                - entity: sensor.hellofresh_us_next_delivery_tracking_url
-                  state_not: "unknown"
-                - entity: sensor.hellofresh_us_next_delivery_tracking_url
-                  state_not: "unavailable"
-              card:
-                type: custom:mushroom-template-card
-                primary: Track shipment
-                secondary: >
-                  {{ states('sensor.hellofresh_us_tracked_shipment_carrier') }} ·
-                  {{ states('sensor.hellofresh_us_shipment_tracking_number') }}
-                icon: mdi:open-in-new
-                icon_color: blue
-                tap_action:
-                  action: url
-                  url_path: >
-                    {{ state_attr('sensor.hellofresh_us_shipment_tracking_status', 'tracking_url') }}
-                # Built-in fallback (no Mushroom): replace the card above with —
-                # row:
-                #   type: attribute
-                #   entity: sensor.hellofresh_us_shipment_tracking_status
-                #   attribute: tracking_url
-                #   name: Tracking link
+          # Keep all shipment details in one entities card, including the delivery
+          # window/date and the tracking URL itself.
+          type: entities
+          title: Shipment tracking
+          show_header_toggle: false
+          state_color: true
+          entities:
+            - entity: sensor.hellofresh_us_shipment_tracking_status
+              name: Status
+            - entity: sensor.hellofresh_us_tracked_shipment_carrier
+              name: Carrier
+            - entity: sensor.hellofresh_us_shipment_tracking_number
+              name: Tracking number
+            - entity: sensor.hellofresh_us_next_delivery_date
+              name: Delivery date
+            - entity: sensor.hellofresh_us_next_delivery_slot
+              name: Delivery slot
+            - entity: sensor.hellofresh_us_next_delivery_tracking_url
+              name: Tracking link
 
       # ── Built-in fallback for the hero (no HACS) ────────────────────────────────
       # If you don't want Mushroom, delete the two custom:mushroom-* cards above and
@@ -304,6 +244,54 @@ views:
       #       name: Servings
       #     - entity: sensor.hellofresh_us_selected_plan
       #       name: Plan
+
+  # ── Meal selection ────────────────────────────────────────────────────────
+  - title: Meal Selection
+    path: meal-selection
+    icon: mdi:silverware-fork-knife
+    cards:
+      # Progress at a glance: meals chosen for the next delivery week.
+      # Severity bands give the dial color/meaning so it doesn't read as an empty
+      # circle with a bare number. `max` is a static cap (most plans need 2–6 meals);
+      # the gauge can't read `required_meal_count` dynamically, so the Meal selection
+      # card below shows the exact chosen/required pair for the week.
+      - type: gauge
+        name: Meals chosen (next delivery)
+        entity: sensor.hellofresh_us_selected_meal_count
+        min: 0
+        max: 6
+        needle: true
+        severity:
+          green: 3
+          yellow: 1
+          red: 0
+
+      - type: entities
+        title: Meal selection
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: sensor.hellofresh_us_number_of_people
+            name: Number of people
+          - entity: sensor.hellofresh_us_selected_plan
+            name: Selected plan
+          - entity: sensor.hellofresh_us_next_box_total_price
+            name: Selected plan total price
+          - type: divider
+          - entity: sensor.hellofresh_us_selected_meal_count
+            name: Next delivery meals chosen
+          - entity: sensor.hellofresh_us_required_meal_count
+            name: Meals required
+          - entity: sensor.hellofresh_us_next_selection_deadline
+            name: Next delivery selection deadline
+          - type: divider
+          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
+            name: Next selectable delivery meals chosen
+          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
+            name: Next selectable delivery deadline
+          - type: divider
+          - entity: switch.hellofresh_us_skip_next_modifiable_week
+            name: Skip next selectable delivery week
 
   # ── Planning & history ──────────────────────────────────────────────────────
   - title: Planning
@@ -402,8 +390,6 @@ views:
         entities:
           - entity: button.hellofresh_us_refresh_data
             name: Refresh now
-          - entity: switch.hellofresh_us_skip_next_modifiable_week
-            name: Skip next selectable delivery week
 
   # ── Diagnostics ─────────────────────────────────────────────────────────────
   # Health/credential entities — useful for troubleshooting, not daily use. All enabled
