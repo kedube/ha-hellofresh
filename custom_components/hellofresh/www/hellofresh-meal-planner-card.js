@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.9.0";
+const CARD_VERSION = "0.10.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -410,7 +410,41 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No delivery weeks found.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderHeader(week)}${this._renderGrid(week)}`;
+    return `${this._renderHeader(week)}${this._renderOrder(week)}${this._renderGrid(week)}`;
+  }
+
+  // Per-week order/shipment summary shown above the recipe grid: order id, delivery status,
+  // carrier, tracking number (linked when a tracking URL is present) and box total price. Only
+  // renders fields the order actually has, and the whole strip is hidden when there's no order.
+  _renderOrder(week) {
+    const order = week.order;
+    if (!order) return "";
+    const items = [];
+    const status = order.tracking_status || order.status;
+    if (status) items.push(this._orderItem("Status", this._titleCase(status)));
+    if (order.carrier) items.push(this._orderItem("Carrier", order.carrier));
+    if (order.tracking_number) {
+      const num = this._esc(order.tracking_number);
+      const value = order.tracking_url
+        ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
+        : num;
+      items.push(this._orderItem("Tracking", value, true));
+    }
+    if (order.total_price != null) {
+      items.push(this._orderItem("Total", this._fmtPrice(order.total_price, order.currency)));
+    }
+    if (order.order_id) items.push(this._orderItem("Order ID", order.order_id));
+    if (items.length === 0) return "";
+    return `<div class="orderbar">${items.join("")}</div>`;
+  }
+
+  // One label/value cell of the order bar. `isHtml` lets a pre-escaped value (e.g. a link)
+  // pass through without double-escaping.
+  _orderItem(label, value, isHtml = false) {
+    return `<div class="oitem">
+      <span class="olabel">${this._esc(label)}</span>
+      <span class="oval">${isHtml ? value : this._esc(value)}</span>
+    </div>`;
   }
 
   _renderHeader(week) {
@@ -651,6 +685,25 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
   }
 
+  // Format a numeric price with its currency (falls back to a bare number for unknown codes).
+  _fmtPrice(amount, currency) {
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return String(amount);
+    try {
+      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
+    } catch (_e) {
+      return num.toFixed(2);
+    }
+  }
+
+  // Normalize an API status like "ON_THE_WAY" / "on_the_way" to "On The Way".
+  _titleCase(value) {
+    return String(value)
+      .replace(/[_-]+/g, " ")
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
   _esc(value) {
     if (value === null || value === undefined) return "";
     return String(value)
@@ -700,6 +753,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .chip.warn { background: var(--warning-color, #ff9800); color: #fff; }
       .chip.locked { opacity: 0.7; }
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .orderbar {
+        display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px;
+        padding: 10px 12px; border-radius: 10px;
+        background: var(--secondary-background-color);
+      }
+      .oitem { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+      .olabel {
+        font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--secondary-text-color);
+      }
+      .oval { font-size: 0.9em; font-weight: 600; word-break: break-word; }
+      .oval a { color: var(--primary-color); text-decoration: none; }
+      .oval a:hover { text-decoration: underline; }
       .skipbtn {
         margin-left: auto; font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
         border: 1px solid var(--divider-color); background: var(--card-background-color);
