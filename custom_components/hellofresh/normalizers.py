@@ -259,6 +259,19 @@ class HelloFreshPayloadNormalizer:
                 raw_meal.get("selected", recipe_data.get("selected", default_selected))
             )
 
+        protein_g = coerce_float(nutrition.get("protein") or recipe_data.get("protein"))
+
+        # Per-serving surcharge for premium/variant meals lives on the menu item's `charge`
+        # object (`{label, unitAmount, ...}`); it's the clearest signal distinguishing
+        # same-named portion/premium variants the catalog lists separately.
+        charge = raw_meal.get("charge") if isinstance(raw_meal.get("charge"), dict) else {}
+        surcharge_label = charge.get("label") or None
+        surcharge_cents = coerce_int(charge.get("unitAmount"))
+
+        # Menu badge (e.g. "Premium Picks") from the recipe's `label` object.
+        label = recipe_data.get("label") if isinstance(recipe_data.get("label"), dict) else {}
+        badge = label.get("text") or None
+
         return HelloFreshRecipe(
             recipe_id=str(
                 recipe_data.get("id")
@@ -283,7 +296,11 @@ class HelloFreshPayloadNormalizer:
             prep_time_minutes=prep_time,
             total_time_minutes=total_time,
             calories_kcal=calories_kcal,
+            protein_g=protein_g,
             difficulty=recipe_data.get("difficulty") or recipe_data.get("skillLevel"),
+            surcharge_label=surcharge_label,
+            surcharge_cents=surcharge_cents,
+            badge=badge,
         )
 
     def _extract_available_one_off_options(

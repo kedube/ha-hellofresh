@@ -2002,6 +2002,37 @@ def test_merge_preserves_menu_selection_when_account_week_has_no_recipes() -> No
     assert [recipe.course_index for recipe in merged[0].recipes] == [11, 12, 20]
 
 
+def test_recipe_parses_variant_distinguishing_fields() -> None:
+    """A menu meal's surcharge, badge, and protein should be parsed so variants are distinct.
+
+    Same-named portion/premium variants are differentiated by the `charge` object, the
+    recipe `label` badge, and nutrition (protein/calories) — all surfaced for the card.
+    """
+    client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
+    raw_meal = {
+        "index": 126,
+        "charge": {"label": "+12.98/serving", "unitAmount": 1298, "reason": "premium"},
+        "recipe": {
+            "id": "r-126",
+            "name": "Cantina Sirloin Steak Fajitas",
+            "label": {"text": "Premium Picks"},
+            "category": "Beef",
+            "tags": [{"name": "double-protein"}, {"name": "Pork-free"}],
+            "nutrition": {"calories": 1630, "protein": 80},
+        },
+    }
+    recipe = client._recipe_from_raw_meal(raw_meal, default_selected=False)
+    assert recipe.course_index == 126
+    assert recipe.surcharge_label == "+12.98/serving"
+    assert recipe.surcharge_cents == 1298
+    assert recipe.badge == "Premium Picks"
+    assert recipe.protein_g == 80
+    assert recipe.calories_kcal == 1630
+    assert "double-protein" in recipe.tags
+    # The fields round-trip through serialization (the get_weeks / card data path).
+    assert recipe.as_dict()["surcharge_label"] == "+12.98/serving"
+
+
 def test_account_data_collects_debug_trace_for_menu_and_delivery_attempts() -> None:
     """Debug trace should expose endpoint attempts for diagnostics."""
     client = HelloFreshClient(
