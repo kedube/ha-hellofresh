@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.2.0";
+const MARKET_CARD_VERSION = "0.4.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -256,6 +256,7 @@ class HelloFreshMarketCard extends HTMLElement {
       <style>${this._styles()}</style>
       <ha-card>
         <div class="head">
+          ${this._renderLogo()}
           <span class="title-text">${this._esc(this._config.title)}</span>
         </div>
         ${this._renderBody(week)}
@@ -263,6 +264,15 @@ class HelloFreshMarketCard extends HTMLElement {
       </ha-card>
     `;
     this._bind();
+  }
+
+  // Optional header logo. `logo: true` uses the bundled HelloFresh logo served by the
+  // integration; `logo: <url>` uses a custom image. Matches the meal-planner card convention.
+  _renderLogo() {
+    const logo = this._config.logo;
+    if (!logo) return "";
+    const logoUrl = logo === true ? "/hellofresh/hellofresh-logo.png" : logo;
+    return `<img class="logo" src="${this._esc(logoUrl)}" alt="HelloFresh">`;
   }
 
   _renderBody(week) {
@@ -310,9 +320,9 @@ class HelloFreshMarketCard extends HTMLElement {
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
         ${dirty
           ? `<button class="savebtn" data-action="save" ${this._busy ? "disabled" : ""}>Save selection</button>
-             <button class="ghostbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
+             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
           : ""}
-        <button class="ghostbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
+        <button class="skipbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
       </div>
     `;
   }
@@ -463,7 +473,8 @@ class HelloFreshMarketCard extends HTMLElement {
   _styles() {
     return `
       ha-card { padding: 12px 16px 16px; }
-      .head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+      .head .logo { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none; }
       .title-text { font-size: 1.3em; font-weight: 700; }
       .state { text-align: center; padding: 28px 8px; color: var(--secondary-text-color); }
       .state.error { color: var(--error-color, #db4437); }
@@ -473,9 +484,10 @@ class HelloFreshMarketCard extends HTMLElement {
       .weeksub { font-size: 0.82em; color: var(--secondary-text-color); }
       .skipped { color: var(--warning-color, #ff9800); font-weight: 700; }
       .nav {
-        width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--divider-color);
-        background: var(--card-background-color); font-size: 1.3em; cursor: pointer; flex: none;
+        font-size: 1.6em; line-height: 1; border: none; background: none; cursor: pointer;
+        color: var(--primary-text-color); padding: 4px 12px; border-radius: 50%;
       }
+      .nav:hover { background: var(--secondary-background-color); }
       .statusrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
       .chip {
         font-size: 0.8em; padding: 4px 10px; border-radius: 14px;
@@ -486,15 +498,20 @@ class HelloFreshMarketCard extends HTMLElement {
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
       .filterchip { border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em; }
       .filterchip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+      .skipbtn {
+        margin-left: auto; font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color); cursor: pointer;
+      }
+      .skipbtn + .skipbtn { margin-left: 4px; }
+      .skipbtn:disabled { opacity: 0.5; cursor: default; }
       .savebtn {
-        margin-left: auto; font-size: 0.85em; padding: 6px 14px; border-radius: 14px;
-        border: none; background: var(--primary-color); color: var(--text-primary-color, #fff); cursor: pointer;
+        margin-left: auto; font-size: 0.85em; padding: 5px 14px; border-radius: 14px;
+        border: none; background: var(--primary-color); color: var(--text-primary-color, #fff);
+        cursor: pointer; font-weight: 600;
       }
-      .savebtn[disabled] { opacity: 0.5; cursor: default; }
-      .ghostbtn {
-        font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
-        border: 1px solid var(--divider-color); background: var(--card-background-color); cursor: pointer;
-      }
+      .savebtn + .skipbtn { margin-left: 4px; }
+      .savebtn:disabled { opacity: 0.5; cursor: default; }
       .group { margin-top: 14px; }
       .grouptitle { font-size: 0.95em; font-weight: 700; margin: 6px 0; }
       .grid {

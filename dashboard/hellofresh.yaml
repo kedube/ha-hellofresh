@@ -36,7 +36,8 @@ views:
     panel: true
     cards:
       - type: custom:hellofresh-market-card
-        title: HelloFresh Market
+        title: Market
+        logo: true
     type: panel
   - title: Meal Schedule
     path: planning
