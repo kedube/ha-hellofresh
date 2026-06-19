@@ -78,6 +78,41 @@ _CREDENTIAL_KEYS = (
 )
 
 
+def _variation_join_debug(week: object) -> dict[str, object]:
+    """Diagnostic: expose why a recipe's variant modifier did (not) resolve for a week.
+
+    Returns the modularity ``index`` -> title map the week carries (from its own payload or the
+    merged ``_menu_payload``), plus each recipe's ``course_index`` and resolved ``variation_title``.
+    A duplicate dish that shows only "Variant" with no modifier means its ``course_index`` is not
+    a key in ``modularity_titles`` for that week — this surfaces exactly that mismatch.
+    """
+    raw = getattr(week, "raw", {}) or {}
+    has_modularity = isinstance(raw.get("modularity"), list)
+    menu_payload = raw.get("_menu_payload") if isinstance(raw.get("_menu_payload"), dict) else {}
+    has_menu_modularity = isinstance(menu_payload.get("modularity"), list)
+    # Reuse the normalizer's own parser so this reflects the real join logic.
+    from .normalizers import HelloFreshPayloadNormalizer
+
+    titles = HelloFreshPayloadNormalizer._build_variation_titles(raw)
+    return {
+        "week_id": getattr(week, "week_id", None),
+        "source": getattr(week, "source", None),
+        "has_modularity_on_week": has_modularity,
+        "has_modularity_in_menu_payload": has_menu_modularity,
+        "modularity_index_count": len(titles),
+        "modularity_titles": titles,
+        "recipes": [
+            {
+                "name": r.name,
+                "course_index": r.course_index,
+                "variation_title": r.variation_title,
+                "matches_modularity": r.course_index in titles if r.course_index is not None else False,
+            }
+            for r in getattr(week, "recipes", [])
+        ],
+    }
+
+
 def _heal_credential_storage(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Consolidate credentials into entry.data and strip them from entry.options.
 
@@ -312,6 +347,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             weeks = [week] if week is not None else []
         else:
             weeks = list(data.weeks)
+        if service_call.data.get("include_debug"):
+            return {
+                "weeks": [week.as_dict() for week in weeks],
+                "variation_debug": [
+                    _variation_join_debug(week) for week in weeks
+                ],
+            }
         return {"weeks": [week.as_dict() for week in weeks]}
 
     async def async_select_meals(service_call: ServiceCall) -> None:
@@ -397,6 +439,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             {
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
                 vol.Optional(ATTR_WEEK_ID): str,
+                vol.Optional("include_debug"): bool,
             }
         ),
         supports_response=SupportsResponse.ONLY,
