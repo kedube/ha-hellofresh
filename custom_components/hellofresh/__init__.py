@@ -357,14 +357,22 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             payload["order"] = order.as_dict() if order is not None else None
             return payload
 
+        # Account-level fallback fields the card can use when a week has no billed order yet —
+        # e.g. the recurring plan total (matches the selected_plan_total_price sensor).
+        account = {
+            "selected_plan_total_price": data.selected_plan_total_price,
+            "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
+        }
+
         if service_call.data.get("include_debug"):
             return {
                 "weeks": [_week_dict(week) for week in weeks],
+                "account": account,
                 "variation_debug": [
                     _variation_join_debug(week) for week in weeks
                 ],
             }
-        return {"weeks": [_week_dict(week) for week in weeks]}
+        return {"weeks": [_week_dict(week) for week in weeks], "account": account}
 
     async def async_select_meals(service_call: ServiceCall) -> None:
         """Submit meal selections."""

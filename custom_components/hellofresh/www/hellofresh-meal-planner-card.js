@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.10.0";
+const CARD_VERSION = "0.12.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -45,6 +45,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._weeks = null; // cached get_weeks response
+    this._account = null; // account-level fields from get_weeks (e.g. plan total price fallback)
     this._cursor = 0; // index into this._weeks
     this._loading = false;
     this._error = null;
@@ -100,7 +101,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         data.config_entry_id = this._config.config_entry_id;
       }
       const result = await this._hass.callService("hellofresh", "get_weeks", data, undefined, false, true);
-      const weeks = (result && result.response && result.response.weeks) || [];
+      const response = (result && result.response) || {};
+      const weeks = response.weeks || [];
+      this._account = response.account || null; // account-level fallbacks (e.g. plan price)
       this._weeks = weeks;
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._cursor = this._defaultCursor(weeks);
@@ -414,26 +417,49 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // Per-week order/shipment summary shown above the recipe grid: order id, delivery status,
-  // carrier, tracking number (linked when a tracking URL is present) and box total price. Only
-  // renders fields the order actually has, and the whole strip is hidden when there's no order.
+  // carrier, tracking number (linked when a tracking URL is present) and box total price.
+  // Only renders fields that exist. When a week has no order, the Total still shows the
+  // account's recurring plan price (matching the selected_plan_total_price sensor) so the
+  // strip remains informative for weeks that aren't billed yet.
   _renderOrder(week) {
     const order = week.order;
-    if (!order) return "";
     const items = [];
-    const status = order.tracking_status || order.status;
-    if (status) items.push(this._orderItem("Status", this._titleCase(status)));
-    if (order.carrier) items.push(this._orderItem("Carrier", order.carrier));
-    if (order.tracking_number) {
-      const num = this._esc(order.tracking_number);
-      const value = order.tracking_url
-        ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
-        : num;
-      items.push(this._orderItem("Tracking", value, true));
+    if (order) {
+      const status = order.tracking_status || order.status;
+      if (status) items.push(this._orderItem("Status", this._titleCase(status)));
+      if (order.carrier) items.push(this._orderItem("Carrier", order.carrier));
+      if (order.tracking_number) {
+        const num = this._esc(order.tracking_number);
+        const value = order.tracking_url
+          ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
+          : num;
+        items.push(this._orderItem("Tracking", value, true));
+      }
     }
-    if (order.total_price != null) {
-      items.push(this._orderItem("Total", this._fmtPrice(order.total_price, order.currency)));
+
+    // Total resolution, in priority order:
+    //  1. The order's authoritative summed billing total (matches next_box_total_price sensor).
+    //  2. The order's per-week cart/estimate price (billing not computed yet).
+    //  3. The account's recurring plan price (no order id for this week) — the requested
+    //     fallback, matching the selected_plan_total_price sensor.
+    let total = null;
+    let totalCurrency = null;
+    let totalLabel = "Total";
+    if (order && order.billed_total_price != null) {
+      total = order.billed_total_price;
+      totalCurrency = order.billed_total_currency || order.currency;
+    } else if (order && order.total_price != null) {
+      total = order.total_price;
+      totalCurrency = order.currency;
+    } else if (this._account && this._account.selected_plan_total_price != null) {
+      total = this._account.selected_plan_total_price;
+      totalCurrency = this._account.selected_plan_total_price_currency;
+      totalLabel = "Plan total"; // distinguish the estimate from a real billed box total
     }
-    if (order.order_id) items.push(this._orderItem("Order ID", order.order_id));
+    if (total != null) {
+      items.push(this._orderItem(totalLabel, this._fmtPrice(total, totalCurrency)));
+    }
+    if (order && order.order_id) items.push(this._orderItem("Order ID", order.order_id));
     if (items.length === 0) return "";
     return `<div class="orderbar">${items.join("")}</div>`;
   }

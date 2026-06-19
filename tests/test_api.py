@@ -4389,6 +4389,30 @@ def test_accumulate_order_prices_sums_multiple_charges_same_date() -> None:
     assert currency == "USD"
 
 
+def test_apply_prices_to_orders_sets_billed_total_and_survives_cart_overwrite() -> None:
+    """The summed billing total is written to billed_total_price and is not clobbered by a later
+    cart/estimate write to total_price (so the card can show the sensor-matching figure)."""
+    client = _make_client()
+    order = HelloFreshOrder(
+        order_id="ord-1",
+        week_id="2026-W25",
+        status="open",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 6, 15),
+    )
+    price_by_key = {("sub-1", date(2026, 6, 15)): (97.50, "USD")}
+
+    client._apply_prices_to_orders([order], price_by_key)
+    assert order.total_price == 97.50
+    assert order.billed_total_price == 97.50
+    assert order.billed_total_currency == "USD"
+
+    # A later cart/calculate estimate overwrites total_price but must leave billed_total_price.
+    order.total_price = 89.99
+    assert order.billed_total_price == 97.50
+    assert order.as_dict()["billed_total_price"] == 97.50
+
+
 def test_accumulate_order_prices_separates_different_dates() -> None:
     """Charges for different delivery dates accumulate independently."""
     client = _make_client()
