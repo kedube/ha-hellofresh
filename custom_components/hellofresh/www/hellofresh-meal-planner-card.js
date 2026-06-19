@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.7.0";
+const CARD_VERSION = "0.8.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -188,9 +188,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._pending[week.week_id] = pending;
     }
 
+    // For a collapsed-duplicate tile, any of its indexes may be the one currently selected.
     const idx = recipe.course_index;
-    if (pending.has(idx)) {
-      pending.delete(idx);
+    const allIdx = recipe._aliasIndexes || [idx];
+    const chosen = allIdx.find((i) => pending.has(i));
+    if (chosen !== undefined) {
+      pending.delete(chosen);
     } else {
       // meals_required is the box's included count, not a hard cap — extra meals are allowed
       // (HelloFresh treats them as add-ons, usually surcharged). So adding past `required` is
@@ -384,19 +387,59 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     `;
   }
 
+  // A signature of the fields that would visibly distinguish two same-named tiles. Two recipes
+  // with the same signature are TRUE duplicates (HelloFresh lists one dish under multiple menu
+  // categories), not variants — there is nothing to tell them apart, so they're collapsed.
+  _recipeSignature(r) {
+    return JSON.stringify([
+      r.name || "",
+      r.description || "",
+      r.variation_title || "",
+      r.surcharge_label || "",
+      r.calories_kcal ?? "",
+      r.protein_g ?? "",
+      (r.tags || []).slice().sort(),
+    ]);
+  }
+
+  // Collapse true-duplicate recipes (identical signature) into one representative, keeping every
+  // collapsed copy's course_index under `aliasIndexes` so a saved selection on any copy still
+  // shows as chosen and selection round-trips. Genuinely different variants are left untouched.
+  _dedupeRecipes(recipes) {
+    const bySig = new Map();
+    for (const r of recipes) {
+      const sig = this._recipeSignature(r);
+      const existing = bySig.get(sig);
+      if (existing) {
+        existing.aliasIndexes.push(r.course_index);
+      } else {
+        bySig.set(sig, { recipe: r, aliasIndexes: [r.course_index] });
+      }
+    }
+    return [...bySig.values()].map(({ recipe, aliasIndexes }) =>
+      aliasIndexes.length > 1 ? { ...recipe, _aliasIndexes: aliasIndexes } : recipe
+    );
+  }
+
   _renderGrid(week) {
-    const recipes = week.recipes || [];
-    if (recipes.length === 0) {
+    const rawRecipes = week.recipes || [];
+    if (rawRecipes.length === 0) {
       return `<div class="state">No menu available for this week yet.</div>`;
     }
+    const recipes = this._dedupeRecipes(rawRecipes);
+    // Cache the deduped tiles (which carry `_aliasIndexes`) so click binding toggles the same
+    // objects the grid rendered, not the raw recipe list.
+    this._renderedRecipes = recipes;
     const editable = this._isEditable(week);
     const display = this._displaySelection(week);
-    const sel = (r) => display.has(r.course_index);
+    // A tile counts as selected if its own index OR any collapsed-duplicate index is chosen.
+    const sel = (r) =>
+      display.has(r.course_index) ||
+      (r._aliasIndexes || []).some((i) => display.has(i));
 
-    // Detect same-name variants (the catalog lists e.g. standard vs double-protein vs premium
-    // copies of one dish). Recipes whose name recurs are marked as variants so the tile can
-    // call out exactly what differs — the human-readable modifier ("2x Bacon", "Ground Turkey"),
-    // surcharge, protein, tags — rather than looking identical.
+    // After dedup, a name only recurs when the copies genuinely DIFFER (variation modifier,
+    // surcharge, or nutrition). Those are real variants worth flagging; identical copies were
+    // already merged above and won't trip this.
     const nameCounts = {};
     recipes.forEach((r) => {
       nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
@@ -468,7 +511,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       root.querySelectorAll(".recipe.editable").forEach((el) => {
         const index = el.getAttribute("data-index");
         el.addEventListener("click", () => {
-          const recipe = (week.recipes || []).find((r) => String(r.course_index) === index);
+          const source = this._renderedRecipes || week.recipes || [];
+          const recipe = source.find((r) => String(r.course_index) === index);
           if (recipe) this._toggleRecipe(week, recipe);
         });
       });
