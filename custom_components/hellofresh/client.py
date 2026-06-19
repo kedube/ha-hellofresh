@@ -292,6 +292,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             orders=all_orders,
         )
 
+        # Universal pass: resolve each recipe's variant modifier ("2x Bacon", ...) from its
+        # week's modularity block, regardless of which path built the recipes. Done here, after
+        # the merge, so every assembled week is covered (not just the menu-API path).
+        self._apply_variation_titles(all_weeks)
+
         data.weeks = all_weeks
         data.orders = all_orders
 

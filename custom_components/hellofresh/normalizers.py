@@ -320,9 +320,18 @@ class HelloFreshPayloadNormalizer:
         HelloFresh lists portion/ingredient variants of a dish as separate meals sharing the
         same name; the `modularity` array names how each variant differs ("2x Bacon",
         "Ground Turkey", ...) via the variation/addOn `index`, which equals the meal's `index`.
+
+        The block can sit on the week payload directly or, for weeks assembled by merging the
+        authenticated menu catalog into an account/deliveries week, under ``_menu_payload``.
+        Both locations are checked so the modifier is resolved regardless of which endpoint
+        produced the week.
         """
         titles: dict[int, str] = {}
         modularity = raw_week.get("modularity")
+        if not isinstance(modularity, list):
+            nested = raw_week.get("_menu_payload")
+            if isinstance(nested, dict):
+                modularity = nested.get("modularity")
         if not isinstance(modularity, list):
             return titles
         for group in modularity:
@@ -340,6 +349,27 @@ class HelloFreshPayloadNormalizer:
                     if idx is not None and isinstance(title, str) and title.strip():
                         titles.setdefault(idx, title.strip())
         return titles
+
+    def _apply_variation_titles(self, weeks: Sequence[HelloFreshWeek]) -> None:
+        """Fill in each recipe's ``variation_title`` from its week's ``modularity`` block.
+
+        Recipes are built by several normalization paths (delivery weeks, menu weeks, past
+        deliveries) and only some pass the modularity map through at build time. This pass runs
+        once over the fully-assembled week list so the variant modifier ("2x Bacon", ...) is
+        present no matter which path produced a given week — resolved by ``course_index``, the
+        same index the modularity block keys on. Existing values are left untouched.
+        """
+        for week in weeks:
+            if not week.recipes or not isinstance(week.raw, dict):
+                continue
+            titles = self._build_variation_titles(week.raw)
+            if not titles:
+                continue
+            for recipe in week.recipes:
+                if recipe.variation_title:
+                    continue
+                if recipe.course_index is not None:
+                    recipe.variation_title = titles.get(recipe.course_index)
 
     def _extract_available_one_off_options(
         self,
