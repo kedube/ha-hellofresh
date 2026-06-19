@@ -328,7 +328,7 @@ Recognized top-level arrays:
 - `items`
 - `deliveries`
 
-When all authenticated menu endpoints fail, the integration can still recover structured recipe data, meal counts, and selection state from authenticated delivery payloads.
+The ranged deliveries payload carries per-week **counts, dates, deadlines, `allowedActions`, and tracking** but **no recipe list** — the chosen recipes are not in this response. Recipe data and the per-recipe selection state come from the authenticated menu endpoint instead (see [Selection-state resolution](#selection-state-resolution)). When a delivery payload *does* list recipes (some account shapes), they are still parsed as a fallback.
 
 ### Order history and payment dates
 
@@ -761,6 +761,15 @@ When available, cart-pricing responses can override those derived totals with ex
 
 When `/gw/my-deliveries/menu` succeeds, its recipe catalog is merged back into the corresponding normalized delivery week so the account week keeps its delivery date, deadline, and selected-meal counts while gaining the full set of available recipes.
 
+#### Selection-state resolution
+
+Which recipes you have *chosen* for a week (`is_selected`) is resolved as follows, and getting it right was a subtle bug worth recording:
+
+- The **deliveries** endpoint returns no recipe list, so the account week starts with no recipes and no selection.
+- The authenticated **menu** (`/gw/my-deliveries/menu`) returns the full catalog; each chosen meal arrives with `selection.quantity > 0` (unchosen meals carry only `selection.limit`). `_recipe_from_raw_meal` turns `quantity > 0` into `is_selected = True`, so the menu week's recipes are the authoritative selection source.
+- `_merge_menu_weeks_into_account_weeks` then combines them: **if the account week independently lists selected recipes**, that set is projected onto the catalog by `recipe_id`; **otherwise (the common case, account week has no recipes) the menu week's own `is_selected` flags are preserved as-is.** The merge must *not* recompute selection from an empty account week, or every recipe collapses to unselected even though the menu said which were chosen — that was the original bug (fixed; regression test `test_merge_preserves_menu_selection_when_account_week_has_no_recipes`).
+- The result: `is_selected` reflects your real picks, and each recipe also carries its `course_index` for round-tripping a new selection back through `select_meals`.
+
 Delivered-history payloads use a smaller subset of the week model:
 
 - `week_id` typically comes from `week` or `id`
@@ -801,7 +810,8 @@ Backfill notes:
 | `recipe_id` | `id`, `slug`, slugified name |
 | `name` | `name`, `title`, `slug` |
 | `preference` | `preference`, `category` |
-| `is_selected` | `selection.selected` (bool), `selection.quantity > 0`, or `selected` field; default `true` for delivery payloads |
+| `is_selected` | `selection.selected` (bool), `selection.quantity > 0`, or `selected` field. In the authenticated menu (`/gw/my-deliveries/menu`), chosen meals carry `selection.quantity > 0` and unchosen ones a bare `selection.limit` — this is how the integration learns the current selection (see [Selection-state resolution](#selection-state-resolution)). For directly-listed delivery/account recipes the default is `true` (their presence is the selection). |
+| `course_index` | `index` — the meal's course index within the week's menu. This, not `recipe_id`, is the cart's selection unit (`recipeIndexes` / `quantityPerCourse`); the same dish can recur under several ids/indexes (portion variants), so the index is the robust key for `select_meals` writes and for a dashboard card to round-trip selections. |
 | `image_url` | `imagePath`, `image`, `imageUrl` |
 | `description` | `description`, `headline` |
 | `ingredients` | `ingredients`, `ingredientLines`, `ingredientNames` |
@@ -898,7 +908,7 @@ The integration does not mirror every reverse-engineered endpoint as a separate 
 
 **Attribute size policy.** Home Assistant's recorder drops any state attribute payload over 16 KB. A single week's recipe catalog (from the authenticated menu API) can exceed that on its own, so sensor attributes never embed it: single-week context objects use `HelloFreshWeek.as_summary_dict()` (scalar metadata only — dates, deadline, counts, slot), and the per-week `weeks` list on `next_selection_deadline` / `weeks_needing_selection` uses `summarized_weeks_needing_selection`. The full recipe-bearing `as_dict()` is reserved for the diagnostics export and the live week objects that the write actions read. No consumer reads recipes out of a sensor attribute.
 
-**On-demand recipe access (`hellofresh.get_weeks`).** Because recipes are deliberately kept out of attributes, the integration exposes a read-only, response-returning service (`SupportsResponse.ONLY`) so a dashboard or automation can fetch per-week recipes when needed. It returns `{"weeks": [HelloFreshWeek.as_dict(), …]}` (full recipe list with `is_selected`), optionally filtered to one `week_id`, resolved against a single coordinator (requires `config_entry_id` when multiple accounts are configured). This is the recorder-safe data path behind the example "Meal planner" dashboard view (scroll between weeks, see selected meals); a future custom Lovelace card would consume the same service.
+**On-demand recipe access (`hellofresh.get_weeks`).** Because recipes are deliberately kept out of attributes, the integration exposes a read-only, response-returning service (`SupportsResponse.ONLY`) so a dashboard or automation can fetch per-week recipes when needed. It returns `{"weeks": [HelloFreshWeek.as_dict(), …]}` (full recipe list with `is_selected` and `course_index`), optionally filtered to one `week_id`, resolved against a single coordinator (requires `config_entry_id` when multiple accounts are configured). This is the recorder-safe data path behind the packaged **Meal planner Lovelace card** (`custom:hellofresh-meal-planner-card`), which calls this service via `hass.callService(..., return_response=true)` to browse weeks, show selected meals, and edit the selection. The card is bundled in the integration's `www/` directory and auto-registered as a Lovelace resource (see [Frontend assets](#frontend-assets)).
 
 Sensors backed by authenticated profile and history endpoints:
 
@@ -954,6 +964,17 @@ Entity behavior notes:
 - `sensor.next_payment_date` is the delivery date of the soonest upcoming order, not the order creation date; it falls back to `next_cutoff_date + 1s` if no upcoming order is found
 - `sensor.selected_plan` is sourced from normalized subscription plan/display fields
 - when `using_public_menu_fallback` is `True` the coordinator raises a Repairs issue, which is the primary user-facing signal for menu fallback state
+
+### Frontend assets
+
+The integration ships a custom Lovelace card (`www/hellofresh-meal-planner-card.js`) and registers it at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
+
+- the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so the card is reachable at `/hellofresh/hellofresh-meal-planner-card.js` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
+- in storage-mode dashboards the card URL is added to the Lovelace resource list automatically (versioned with a `?v=` query so a card update cache-busts); YAML-mode dashboards get a log line with the URL to add manually
+- registration is best-effort and never blocks integration setup — the sensors/calendar/services work without the card
+- because this uses `hass.http`, `http` is declared in `manifest.json`'s `dependencies`
+
+The card is a pure read+write client of existing services: it calls `get_weeks` to render and `select_meals` / `skip_week` / `unskip_week` to act. It defines no new entities or endpoints.
 
 ## Public Menu Scraping
 
@@ -1050,7 +1071,7 @@ Validation rules before sending:
 - `week_id` must exist in previously loaded account data
 - at least one `recipe_id` is required
 - duplicate recipe ids are removed
-- if `meals_required` is known, the submitted count must match it exactly
+- if `meals_required` is known, the submitted count must be **at least** that many — fewer is rejected (an under-filled box), but **more is allowed**: HelloFresh treats the extras as add-on meals (typically surcharged), and the cart endpoint is the authority on whether a given over-selection is accepted
 - if the selected recipe set already matches the current state (order-independent), no request is sent
 
 ### Skip / unskip week
@@ -1210,6 +1231,8 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 | [normalizers.py](custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
 | [coordinator.py](custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
 | [config_flow.py](custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
+| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the meal-planner Lovelace card |
+| [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals` |
 | [const.py](custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds |
 | [api.py](custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
 | [services.yaml](custom_components/hellofresh/services.yaml) | Service definitions |
