@@ -2895,6 +2895,53 @@ def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, obje
     return client, requests
 
 
+def test_market_item_parses_oneoff_selection_quantity() -> None:
+    """A selected Market add-on uses selection.oneOffQuantity/preselectedQuantity, not quantity."""
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    norm = HelloFreshPayloadNormalizer.__new__(HelloFreshPayloadNormalizer)
+    raw_week = {
+        "addOns": {
+            "groups": [
+                {
+                    "groupType": "appetizer",
+                    "addOns": [
+                        {
+                            "index": 11002,
+                            "sku": "US-APP-0-0-0",
+                            "isSoldOut": False,
+                            "selection": {
+                                "skipped": False,
+                                "oneOffQuantity": 1,
+                                "preselectedQuantity": 0,
+                            },
+                            "priceCatalog": {"basePrice": 699},
+                            "maxQuantity": 6,
+                            "recipe": {"id": "gyoza", "name": "Pork & Shiitake Gyoza"},
+                        },
+                        {
+                            "index": 11003,
+                            "sku": "US-APP-1-0-0",
+                            "selection": None,  # unselected items carry null selection
+                            "priceCatalog": {"basePrice": 599},
+                            "recipe": {"id": "potatoes", "name": "Truffle Potatoes"},
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+    items = norm._build_market_items(raw_week)
+    by_name = {i.name: i for i in items}
+    gyoza = by_name["Pork & Shiitake Gyoza"]
+    assert gyoza.is_selected is True
+    assert gyoza.selected_quantity == 1
+    assert gyoza.price == 6.99
+    potatoes = by_name["Truffle Potatoes"]
+    assert potatoes.is_selected is False
+    assert potatoes.selected_quantity is None
+
+
 def test_select_market_items_writes_extras_and_preserves_meals() -> None:
     """Market selection writes extras[] and keeps the existing meal selection in the cart."""
     client, requests = _build_market_select_client()
@@ -2904,7 +2951,21 @@ def test_select_market_items_writes_extras_and_preserves_meals() -> None:
 
     assert len(requests) == 1
     payload = requests[0]["json_payload"]
-    assert payload["extras"] == [{"index": 70185, "quantity": 2}]
+    # HAR-confirmed shape: grouped by groupType+sku with a oneOff/preselected selection list.
+    assert payload["extras"] == [
+        {
+            "groupType": "appetizer",
+            "sku": "US-AAB-0-0-0",
+            "selection": [
+                {
+                    "index": 70185,
+                    "oneOffQuantity": 2,
+                    "preselectedQuantity": 0,
+                    "courses": [],
+                }
+            ],
+        }
+    ]
     # The selected meal is preserved so a market write doesn't clear the box's meals.
     assert payload["meals"] == [{"index": 11, "quantity": 1}]
 
@@ -2928,7 +2989,99 @@ def test_select_market_items_resolves_by_sku_and_index() -> None:
         client.async_select_market_items("2026-W26", {"US-AAB-0-0-0": 1, "70200": 0})
     )
     payload = requests[0]["json_payload"]
-    assert payload["extras"] == [{"index": 70185, "quantity": 1}]
+    assert payload["extras"] == [
+        {
+            "groupType": "appetizer",
+            "sku": "US-AAB-0-0-0",
+            "selection": [
+                {
+                    "index": 70185,
+                    "oneOffQuantity": 1,
+                    "preselectedQuantity": 0,
+                    "courses": [],
+                }
+            ],
+        }
+    ]
+
+
+def test_select_market_items_multiple_groups_produce_separate_extras() -> None:
+    """Two items in different groups/skus become two separate extras[] entries (HAR-confirmed)."""
+    client, requests = _build_market_select_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_market_items("2026-W26", {"m-app": 1, "m-des": 1})
+    )
+    extras = requests[0]["json_payload"]["extras"]
+    by_sku = {g["sku"]: g for g in extras}
+    assert set(by_sku) == {"US-AAB-0-0-0", "US-DES-0-0-0"}
+    assert by_sku["US-AAB-0-0-0"] == {
+        "groupType": "appetizer",
+        "sku": "US-AAB-0-0-0",
+        "selection": [
+            {"index": 70185, "oneOffQuantity": 1, "preselectedQuantity": 0, "courses": []}
+        ],
+    }
+    assert by_sku["US-DES-0-0-0"]["groupType"] == "dessert"
+    assert by_sku["US-DES-0-0-0"]["selection"][0]["index"] == 70200
+
+
+def test_select_market_items_preserves_recurring_quantity() -> None:
+    """A recurring (preselected) portion is kept; the rest of the total is applied as one-off."""
+    client, requests = _build_market_select_client()
+    # Mark m-app as having 1 recurring serving already.
+    week = client._last_account_data.get_week("2026-W26")
+    app_item = next(i for i in week.market_items if i.item_id == "m-app")
+    app_item.preselected_quantity = 1
+    app_item.is_selected = True
+    app_item.selected_quantity = 1
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Request total 3: keep 1 recurring, add 2 one-off.
+    loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-app": 3}))
+    selection = requests[0]["json_payload"]["extras"][0]["selection"][0]
+    assert selection == {
+        "index": 70185,
+        "oneOffQuantity": 2,
+        "preselectedQuantity": 1,
+        "courses": [],
+    }
+
+
+def test_market_item_parses_preselected_quantity() -> None:
+    """preselected_quantity is captured separately from the total selected_quantity."""
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    norm = HelloFreshPayloadNormalizer.__new__(HelloFreshPayloadNormalizer)
+    items = norm._build_market_items(
+        {
+            "addOns": {
+                "groups": [
+                    {
+                        "groupType": "protein",
+                        "addOns": [
+                            {
+                                "index": 10089,
+                                "sku": "US-APR-0-0-0",
+                                "selection": {
+                                    "skipped": False,
+                                    "oneOffQuantity": 1,
+                                    "preselectedQuantity": 2,
+                                },
+                                "priceCatalog": {"basePrice": 899},
+                                "recipe": {"id": "trout", "name": "Steelhead Trout"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    item = items[0]
+    assert item.selected_quantity == 3  # 1 one-off + 2 recurring
+    assert item.preselected_quantity == 2
 
 
 def test_scm_tracking_prefers_external_status_label() -> None:

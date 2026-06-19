@@ -112,6 +112,45 @@ def _variation_join_debug(week: object) -> dict[str, object]:
             }
             for r in getattr(week, "recipes", [])
         ],
+        "market": _market_selection_debug(raw, menu_payload),
+    }
+
+
+def _market_selection_debug(raw: dict, menu_payload: dict) -> dict[str, object]:
+    """Diagnostic: surface how selected Market add-ons appear in the raw payload.
+
+    We don't know which raw field marks a chosen add-on (the captured catalog had none selected),
+    so this dumps every addon entry that carries ANY selection-like key, plus the full set of keys
+    seen on addon entries, so the real "selected quantity" field can be identified from live data.
+    """
+    addons = raw.get("addOns")
+    if not isinstance(addons, dict):
+        addons = menu_payload.get("addOns") if isinstance(menu_payload, dict) else None
+    if not isinstance(addons, dict):
+        return {"has_addons": False}
+
+    selection_keys = ("selection", "quantity", "selectedQuantity", "isSelected", "selected")
+    all_item_keys: set[str] = set()
+    selected_samples: list[dict] = []
+    total = 0
+    for group in addons.get("groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for item in group.get("addOns") or []:
+            if not isinstance(item, dict):
+                continue
+            total += 1
+            all_item_keys.update(item.keys())
+            if any(item.get(k) for k in selection_keys):
+                selected_samples.append(
+                    {"group": group.get("groupType"), **{k: item.get(k) for k in item}}
+                )
+    return {
+        "has_addons": True,
+        "addon_item_count": total,
+        "addon_item_keys_seen": sorted(all_item_keys),
+        "selection_keys_probed": list(selection_keys),
+        "items_with_selection_like_field": selected_samples[:10],
     }
 
 

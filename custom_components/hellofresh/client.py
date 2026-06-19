@@ -537,7 +537,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 if key:
                     by_key.setdefault(str(key), item)
 
-        extras: list[dict[str, int]] = []
+        # Each requested quantity is the desired TOTAL servings. HelloFresh splits a selection
+        # into a recurring (preselected) part and a this-week (one-off) part; we keep any existing
+        # recurring portion and apply the rest as one-off, matching how the web app writes changes.
+        resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
         for raw_key, raw_qty in quantities.items():
             quantity = coerce_int(raw_qty) or 0
             if quantity <= 0:
@@ -551,8 +554,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 raise HelloFreshError(
                     f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
                 )
-            extras.append({"index": item.index, "quantity": quantity})
+            preselected = min(item.preselected_quantity or 0, quantity)
+            one_off = quantity - preselected
+            resolved.append((item, one_off, preselected))
 
+        extras = self._build_cart_extras(resolved)
         subscription = await self._async_get_subscription_for_week(week)
         meals = self._build_cart_existing_meals(week)  # preserve the meal selection
         cart_update = await self._async_build_cart_update(week, subscription, meals, extras)
@@ -662,15 +668,50 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         }
 
     @staticmethod
-    def _build_cart_existing_extras(week: HelloFreshWeek) -> list[dict[str, int]]:
-        """Cart ``extras`` entries for the week's currently-selected market items."""
-        extras: list[dict[str, int]] = []
+    def _build_cart_extras(
+        resolved: Sequence[tuple[HelloFreshMarketItem, int, int]],
+    ) -> list[dict[str, Any]]:
+        """Build the cart ``extras`` payload from (item, one_off_qty, preselected_qty) tuples.
+
+        HAR-confirmed shape: extras are grouped by ``groupType``+``sku``, each group carrying a
+        ``selection`` list of ``{index, oneOffQuantity, preselectedQuantity, courses}``::
+
+            [{"groupType": "protein", "sku": "US-APR-0-0-0",
+              "selection": [{"index": 10089, "oneOffQuantity": 2,
+                             "preselectedQuantity": 0, "courses": []}]}]
+        """
+        groups: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+        for item, one_off, preselected in resolved:
+            if item.index is None or (one_off <= 0 and preselected <= 0):
+                continue
+            key = (item.group_type, item.sku)
+            group = groups.get(key)
+            if group is None:
+                group = {"groupType": item.group_type, "sku": item.sku, "selection": []}
+                groups[key] = group
+            group["selection"].append(
+                {
+                    "index": item.index,
+                    "oneOffQuantity": one_off,
+                    "preselectedQuantity": preselected,
+                    "courses": [],
+                }
+            )
+        return list(groups.values())
+
+    @staticmethod
+    def _build_cart_existing_extras(week: HelloFreshWeek) -> list[dict[str, Any]]:
+        """Cart ``extras`` payload for the week's currently-selected market items (unchanged).
+
+        Used when writing a MEAL change so the existing market selection is preserved.
+        """
+        resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
         for item in week.market_items:
             if item.is_selected and item.index is not None:
-                extras.append(
-                    {"index": item.index, "quantity": item.selected_quantity or 1}
-                )
-        return extras
+                total = item.selected_quantity or 1
+                preselected = min(item.preselected_quantity or 0, total)
+                resolved.append((item, total - preselected, preselected))
+        return HelloFreshClient._build_cart_extras(resolved)
 
     @staticmethod
     def _build_cart_existing_meals(week: HelloFreshWeek) -> list[dict[str, int]]:
