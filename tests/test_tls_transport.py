@@ -92,6 +92,9 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
     monkeypatch.setitem(sys.modules, "curl_cffi", curl_module)
     monkeypatch.setitem(sys.modules, "curl_cffi.requests", requests_module)
     monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", True)
+    # AsyncSession is imported once at module load; the transport uses that cached class. Point
+    # it at the injected fake for the duration of the test (monkeypatch restores it afterwards).
+    monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _FakeAsyncSession)
 
 
 def test_falls_back_to_aiohttp_when_curl_cffi_absent(monkeypatch) -> None:
