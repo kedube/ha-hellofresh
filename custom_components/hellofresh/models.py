@@ -45,7 +45,15 @@ class HelloFreshRecipe:
     prep_time_minutes: int | None = None
     total_time_minutes: int | None = None
     calories_kcal: float | None = None
+    protein_g: float | None = None
     difficulty: str | None = None
+    # Per-serving surcharge for premium/variant meals (e.g. "+$7.99/serving"), from the menu
+    # item's `charge` object, plus the raw cents amount for comparisons. These distinguish
+    # otherwise same-named portion/premium variants that the catalog lists separately.
+    surcharge_label: str | None = None
+    surcharge_cents: int | None = None
+    # Menu badge text (e.g. "Premium Picks"), from `recipe.label.text`.
+    badge: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize recipe data for Home Assistant state attributes."""
@@ -65,7 +73,11 @@ class HelloFreshRecipe:
             "prep_time_minutes": self.prep_time_minutes,
             "total_time_minutes": self.total_time_minutes,
             "calories_kcal": self.calories_kcal,
+            "protein_g": self.protein_g,
             "difficulty": self.difficulty,
+            "surcharge_label": self.surcharge_label,
+            "surcharge_cents": self.surcharge_cents,
+            "badge": self.badge,
         }
 
 

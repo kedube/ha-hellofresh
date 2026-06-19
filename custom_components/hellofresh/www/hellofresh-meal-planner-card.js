@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.5.0";
+const CARD_VERSION = "0.6.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -390,30 +390,51 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No menu available for this week yet.</div>`;
     }
     const editable = this._isEditable(week);
-    // Drive selection display off the current (possibly pending) selection set, by
-    // course_index. Selected meals sort first; otherwise the menu order is preserved
-    // (Array.prototype.sort is stable in modern engines).
     const display = this._displaySelection(week);
     const sel = (r) => display.has(r.course_index);
+
+    // Detect same-name variants (the catalog lists e.g. standard vs double-protein vs premium
+    // copies of one dish). Recipes whose name recurs are marked as variants so the tile can
+    // call out exactly what differs (surcharge, protein, tags) rather than looking identical.
+    const nameCounts = {};
+    recipes.forEach((r) => {
+      nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
+    });
+
     const ordered = recipes.slice().sort((a, b) => (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0));
     const cards = ordered
       .map((r) => {
         const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
-        const cals = r.calories_kcal ? `${Math.round(r.calories_kcal)} kcal` : "";
         const isSelected = sel(r);
+        const isVariant = nameCounts[r.name] > 1;
+        // Numbers line: protein + calories together makes double-protein variants obvious.
+        const stats = [];
+        if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
+        if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
+        // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs).
+        const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious", "Veggie", "Vegan"];
+        const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
         return `
-          <div class="recipe ${isSelected ? "selected" : ""} ${editable ? "editable" : ""}"
+          <div class="recipe ${isSelected ? "selected" : ""} ${editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
                data-index="${this._esc(String(r.course_index))}">
             <div class="imgwrap">
               ${r.image_url
                 ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
                 : `<div class="noimg"></div>`}
               ${isSelected ? `<div class="check">✓</div>` : ""}
+              ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
+              ${isVariant ? `<div class="variant-flag">Variant</div>` : ""}
             </div>
             <div class="meta">
               <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
               ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
-              ${cals ? `<div class="cals">${this._esc(cals)}</div>` : ""}
+              ${r.badge || tags.length
+                ? `<div class="chips">
+                     ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
+                     ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
+                   </div>`
+                : ""}
+              ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
             </div>
           </div>`;
       })
@@ -448,6 +469,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // ---- small helpers -------------------------------------------------------
+
+  // Normalize HelloFresh's surcharge label ("+7.99/serving") to a compact "+$7.99". Leaves
+  // unrecognized formats unchanged.
+  _fmtSurcharge(label) {
+    const m = String(label).match(/\+?\s*([\d.]+)/);
+    return m ? `+$${m[1]}` : String(label);
+  }
 
   _relativeWeek(week) {
     if (!week.delivery_date) return "";
@@ -558,6 +586,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .recipe.editable { cursor: pointer; }
       .recipe.editable:hover { transform: translateY(-2px); }
       .recipe.selected { border-color: var(--primary-color); }
+      .recipe.variant { border-style: dashed; }
+      .recipe.variant.selected { border-style: solid; }
       .imgwrap { position: relative; aspect-ratio: 1 / 1; background: var(--divider-color); }
       .imgwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .noimg { width: 100%; height: 100%; }
@@ -567,11 +597,26 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         border-radius: 50%; display: flex; align-items: center; justify-content: center;
         font-weight: 700;
       }
+      .surcharge {
+        position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 10px;
+        background: rgba(0,0,0,0.72); color: #fff; font-size: 0.72em; font-weight: 700;
+      }
+      .variant-flag {
+        position: absolute; top: 6px; left: 6px; padding: 2px 7px; border-radius: 10px;
+        background: var(--warning-color, #ff9800); color: #fff; font-size: 0.68em; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.03em;
+      }
       .meta { padding: 8px; }
       .name { font-size: 0.9em; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
       .desc { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
-      .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .rchip {
+        font-size: 0.68em; padding: 1px 7px; border-radius: 10px;
+        background: var(--secondary-background-color); color: var(--primary-text-color);
+      }
+      .rchip.badge { background: #333332; color: #fff; }
+      .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
       .toast {
         margin: 4px 16px 12px; padding: 8px 12px; border-radius: 8px;
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;

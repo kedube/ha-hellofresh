@@ -21,7 +21,7 @@
 
 title: HelloFresh
 views:
-  - title: Meal planner
+  - title: My Menu
     path: meal-planner
     icon: mdi:silverware-variant
     panel: true
@@ -29,6 +29,7 @@ views:
       - type: custom:hellofresh-meal-planner-card
         title: My Menu
         logo: true
+    type: panel
   - title: Meal Schedule
     path: planning
     icon: mdi:calendar-month
@@ -178,12 +179,12 @@ views:
         title: Billing
         show_header_toggle: false
         entities:
-          - entity: sensor.hellofresh_us_next_box_total_price
-            name: Next delivery total price
-          - entity: sensor.hellofresh_us_selected_plan_total_price
-            name: Selected plan total price
           - entity: sensor.hellofresh_us_account_credit
             name: Account credit
+          - entity: sensor.hellofresh_us_selected_plan_total_price
+            name: Selected plan total price
+          - entity: sensor.hellofresh_us_next_box_total_price
+            name: Next delivery total price
           - entity: sensor.hellofresh_us_next_payment_date
             name: Next delivery payment date
           - entity: sensor.hellofresh_us_recent_payment_date
@@ -196,16 +197,16 @@ views:
         title: Subscription
         show_header_toggle: false
         entities:
-          - entity: sensor.hellofresh_us_selected_plan
-            name: Plan
-          - entity: sensor.hellofresh_us_number_of_people
-            name: Servings
+          - entity: sensor.hellofresh_us_account_id
+            name: Account ID
           - entity: sensor.hellofresh_us_subscription_count
             name: Account subscription count
           - entity: sensor.hellofresh_us_delivery_address
             name: Delivery address
-          - entity: sensor.hellofresh_us_account_id
-            name: Account ID
+          - entity: sensor.hellofresh_us_selected_plan
+            name: Plan
+          - entity: sensor.hellofresh_us_number_of_people
+            name: Servings
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
