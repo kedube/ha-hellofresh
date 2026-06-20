@@ -1956,6 +1956,100 @@ def test_merge_past_delivery_recipes_fills_recipe_free_account_weeks() -> None:
     assert [r.name for r in by_id["2026-W30"].recipes] == ["Live Menu Dish"]
 
 
+def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
+    """A past week's catalog keeps its meals but selection is corrected to the delivered ones.
+
+    The menu endpoint serves a past week's full meal grid (for browsing) but its per-meal
+    selection flags reflect the default/preselected meals, not what was actually delivered.
+    The delivered meals (past-deliveries) are authoritative, so is_selected must be re-derived
+    from them by recipe id while the full catalog is preserved.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    # Past week with a full browsable catalog; the menu endpoint marked the WRONG meals
+    # (cat-1/cat-2, the chef-default picks) as selected.
+    past_account_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        delivery_date=date(2026, 2, 13),
+        meals_required=3,
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="cat-1", name="Catalog A", is_selected=True),
+            HelloFreshRecipe(recipe_id="cat-2", name="Catalog B", is_selected=True),
+            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C", is_selected=False),
+            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D", is_selected=True),
+            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E", is_selected=False),
+        ],
+    )
+    # What was actually delivered that week: cat-3, cat-4, cat-5.
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C"),
+            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D"),
+            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[past_account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    # Full catalog preserved (browsing still works).
+    assert [r.recipe_id for r in week.recipes] == [
+        "cat-1",
+        "cat-2",
+        "cat-3",
+        "cat-4",
+        "cat-5",
+    ]
+    # Selection corrected to the actually-delivered meals.
+    selected = {r.recipe_id for r in week.recipes if r.is_selected}
+    assert selected == {"cat-3", "cat-4", "cat-5"}
+    assert week.meals_selected == 3
+
+
+def test_merge_past_delivery_keeps_catalog_flags_when_no_id_overlap() -> None:
+    """If no delivered id is found in the catalog, leave selection flags untouched.
+
+    Safety net: rather than blanking every meal when the id schemes don't line up, the
+    existing catalog flags are preserved.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    past_account_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        delivery_date=date(2026, 2, 13),
+        recipes=[
+            HelloFreshRecipe(recipe_id="cat-1", name="Catalog A", is_selected=True),
+            HelloFreshRecipe(recipe_id="cat-2", name="Catalog B", is_selected=False),
+        ],
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="other-1", name="Mismatch")],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[past_account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    selected = {r.recipe_id for r in merged[0].recipes if r.is_selected}
+    assert selected == {"cat-1"}
+
+
 def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:
     """Missing product-options data should not block the authenticated menu request."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]

@@ -1096,13 +1096,21 @@ class HelloFreshPayloadNormalizer:
             past_by_week_id[past_week.week_id] = past_week
 
         for account_week in account_weeks:
-            if account_week.recipes:
-                continue
             past_week = past_by_key.get(
                 (account_week.subscription_id, account_week.week_id)
             ) or past_by_week_id.get(account_week.week_id)
             if past_week is None:
                 continue
+
+            # The week already carries a browsable catalog (the menu endpoint served this past
+            # week's full meal grid). Keep that catalog so browsing still works, but correct the
+            # SELECTION: the menu endpoint's per-meal flags for a past week reflect the default
+            # /preselected meals, not what was actually delivered. The delivered meals
+            # (past-deliveries) are the source of truth, so re-derive is_selected from them.
+            if account_week.recipes:
+                self._apply_delivered_selection(account_week, past_week)
+                continue
+
             account_week.recipes = past_week.recipes
             account_week.menu_title = account_week.menu_title or past_week.menu_title
             if account_week.meals_selected in (None, 0):
@@ -1111,6 +1119,31 @@ class HelloFreshPayloadNormalizer:
                 account_week.meals_required = past_week.meals_required
 
         return list(account_weeks)
+
+    @staticmethod
+    def _apply_delivered_selection(
+        account_week: HelloFreshWeek,
+        past_week: HelloFreshWeek,
+    ) -> None:
+        """Mark only the actually-delivered meals as selected on a past week's catalog.
+
+        ``account_week`` holds the full menu catalog (for browsing); ``past_week`` holds the
+        meals that were really delivered. Match delivered meals onto the catalog by recipe id
+        (the stable identifier shared by both payloads) and set ``is_selected`` accordingly,
+        overriding the menu endpoint's default/preselected flags. If none of the delivered ids
+        are found in the catalog, leave the existing flags untouched rather than blanking the
+        week (a safety net against an id-scheme mismatch).
+        """
+        delivered_ids = {
+            recipe.recipe_id for recipe in past_week.recipes if recipe.recipe_id
+        }
+        if not delivered_ids:
+            return
+        if not any(recipe.recipe_id in delivered_ids for recipe in account_week.recipes):
+            return
+        for recipe in account_week.recipes:
+            recipe.is_selected = recipe.recipe_id in delivered_ids
+        account_week.meals_selected = past_week.meals_selected or len(delivered_ids)
 
     def _normalize_menu_weeks(
         self,
