@@ -1742,6 +1742,28 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     assert "2026-W21" in cursors
 
 
+def test_history_range_covers_a_full_year_past_the_boundary() -> None:
+    """The history range must include the week from ~12 months ago, not stop one short.
+
+    Regression: a 52-week lookback lands 364 days back, so the ~370-days-ago week fell outside
+    the range and get_weeks returned [] for it. The range must reach at least 53 weeks back so
+    a full calendar year of past boxes is browsable.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    range_ = HelloFreshPayloadNormalizer._build_delivery_history_range()
+    today = datetime.now(UTC).date()
+    # The week from 53 weeks ago (comfortably "a year back") must be at/after range_start.
+    boundary = today - timedelta(weeks=53)
+    boundary_iso = boundary.isocalendar()
+    boundary_week = f"{boundary_iso.year}-W{boundary_iso.week:02d}"
+
+    key = HelloFreshClient._iso_week_sort_key
+    assert key(range_["range_start"]) <= key(boundary_week)
+
+
 def test_iso_week_sort_key_orders_across_year_boundary() -> None:
     """ISO week ordering must be chronological, not lexical, across a year change."""
     key = HelloFreshClient._iso_week_sort_key

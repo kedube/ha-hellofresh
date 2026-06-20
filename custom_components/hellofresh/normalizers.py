@@ -730,17 +730,26 @@ class HelloFreshPayloadNormalizer:
             return currency.strip().upper()
         return _COUNTRY_CURRENCIES.get(self._country)
 
+    # Weeks of past history to request. A bit more than a calendar year (52w) on purpose:
+    # ``today - 52 weeks`` lands 364 days ago, so the week from ~12 months back sits right on
+    # the boundary and ISO-week rounding drops it (observed: the 370-days-ago week returned an
+    # empty get_weeks result). The extra weeks guarantee a FULL year of past boxes is visible,
+    # and this matches the past-deliveries pagination floor so display and fetch stay aligned.
+    _HISTORY_LOOKBACK_WEEKS = 56
+
     @staticmethod
     def _build_delivery_history_range() -> dict[str, str]:
         """Return the range for account delivery lookups.
 
-        Spans 52 weeks (one year) of history so the meal-planner card and history sensors can
-        browse a full year of past boxes — the API supports far wider ranges, but a year is the
-        practical cap that keeps the per-poll deliveries payload bounded. Extends 6 weeks ahead
-        so the upcoming-delivery sensors see subsequent scheduled weeks, not just the next one.
+        Spans ``_HISTORY_LOOKBACK_WEEKS`` of history so the meal-planner card and history
+        sensors can browse a full year of past boxes — the API supports far wider ranges, but
+        ~a year is the practical cap that keeps the per-poll deliveries payload bounded. Extends
+        6 weeks ahead so the upcoming-delivery sensors see subsequent scheduled weeks too.
         """
         today = datetime.now(UTC).date()
-        start = today - timedelta(weeks=52)
+        start = today - timedelta(
+            weeks=HelloFreshPayloadNormalizer._HISTORY_LOOKBACK_WEEKS
+        )
         end = today + timedelta(weeks=6)
         start_iso = start.isocalendar()
         end_iso = end.isocalendar()
@@ -1462,9 +1471,13 @@ class HelloFreshPayloadNormalizer:
                     subscription_id=subscription_id,
                     delivery_date=delivery_date,
                     status=raw_week.get("status") or "delivered",
+                    # For a HISTORICAL week, the number of meals actually delivered (len(recipes))
+                    # is the truth for that week — prefer it over the CURRENT subscription's plan,
+                    # which can differ (e.g. a 4-meal box that week vs a 3-meal plan today) and
+                    # would otherwise cap a past week at the wrong count.
                     meals_required=coerce_int(raw_week.get("recipe_count"))
-                    or (subscription.meals_required if subscription is not None else None)
                     or len(recipes)
+                    or (subscription.meals_required if subscription is not None else None)
                     or None,
                     meals_selected=len(recipes) or None,
                     recipes=recipes,
