@@ -450,13 +450,24 @@ The integration now also probes authenticated history endpoints that carry deliv
 | --- | --- | --- | --- |
 | 1 | `GET` | `/gw/customer-complaints/users/me/deliveries` | none |
 | 2 | `GET` | `/gw/api/customers/me/deliveries` | `country=<CC>`, `locale=<locale>`, `rangeStart=<YYYY-Www>`, `rangeEnd=<YYYY-Www>` |
-| 3 | `GET` | `/gw/my-deliveries/past-deliveries` | `subscription=<id>` |
+| 3 | `GET` | `/gw/my-deliveries/past-deliveries` | `country=<CC>`, `locale=<locale>`, `rating-scale=5`, `subscription=<id>`, `from=<YYYY-Www>` (pagination cursor) |
+
+These endpoints are **not interchangeable**, and this matters for getting past-week meal selection right:
+
+- `/gw/customer-complaints/users/me/deliveries` only knows the most recent couple of weeks.
+- `/gw/api/customers/me/deliveries` (ranged) returns ~a year of weeks but as **metadata-only shells with no recipe list**.
+- `/gw/my-deliveries/past-deliveries` is the comprehensive source that carries the **actually-delivered recipes per week** (`weeks[].meals[]` with stable recipe ids). It is **paginated**: each page returns ~4 delivered weeks plus a `nextWeek` cursor, and only weeks that actually shipped appear (paused/skipped weeks are absent, so the cursor jumps over them).
+
+Rather than returning the first endpoint that answers, the integration **accumulates recipe-bearing weeks from every candidate keyed by week id, with `past-deliveries` winning per week**, and follows the `nextWeek` cursor back to the history floor. A previous version returned whichever endpoint answered first; because the recipe-less candidates often win, an old week never received its delivered meals and the dashboard showed a fabricated selection (regression test `test_past_delivery_history_prefers_recipe_bearing_endpoint`).
+
+**History window.** Both the ranged display range and the `past-deliveries` pagination floor are driven by `_HISTORY_LOOKBACK_WEEKS` (56 weeks). This is deliberately a bit more than a calendar year: `today − 52 weeks` lands 364 days back, so the box from ~12 months ago sits exactly on the boundary and ISO-week rounding dropped it (`get_weeks` returned `[]` for the ~370-days-ago week). The pagination floor is set two weeks past that so the oldest *visible* week always has its delivered recipes fetched, and the cursor floor is compared by `(year, week)` (not raw string) so a year boundary like `2026-W01` vs `2025-W52` is ordered chronologically.
 
 Recognized top-level arrays include:
 
 - `data`
 - `items`
 - `deliveries`
+- `weeks` (the `past-deliveries` shape: `{ "weeks": [...], "nextWeek": "YYYY-Www" }`)
 
 Recent US HAR captures showed `/gw/api/customers/me/deliveries` returning both delivered and future weeks in a single ranged response. Useful fields on those records include:
 
@@ -808,12 +819,28 @@ When `/gw/my-deliveries/menu` succeeds, its recipe catalog is merged back into t
 
 #### Selection-state resolution
 
-Which recipes you have *chosen* for a week (`is_selected`) is resolved as follows, and getting it right was a subtle bug worth recording:
+Which recipes you have *chosen* for a week (`is_selected`) is resolved differently for **upcoming/current** weeks and **past** weeks. Getting this right took several iterations, all worth recording.
+
+**Upcoming / current weeks** (selection still editable):
 
 - The **deliveries** endpoint returns no recipe list, so the account week starts with no recipes and no selection.
 - The authenticated **menu** (`/gw/my-deliveries/menu`) returns the full catalog; each chosen meal arrives with `selection.quantity > 0` (unchosen meals carry only `selection.limit`). `_recipe_from_raw_meal` turns `quantity > 0` into `is_selected = True`, so the menu week's recipes are the authoritative selection source.
-- `_merge_menu_weeks_into_account_weeks` then combines them: **if the account week independently lists selected recipes**, that set is projected onto the catalog by `recipe_id`; **otherwise (the common case, account week has no recipes) the menu week's own `is_selected` flags are preserved as-is.** The merge must *not* recompute selection from an empty account week, or every recipe collapses to unselected even though the menu said which were chosen — that was the original bug (fixed; regression test `test_merge_preserves_menu_selection_when_account_week_has_no_recipes`).
-- The result: `is_selected` reflects your real picks, and each recipe also carries its `course_index` for round-tripping a new selection back through `select_meals`.
+- `_merge_menu_weeks_into_account_weeks` combines them: **if the account week independently lists selected recipes**, that set is projected onto the catalog by `recipe_id`; **otherwise the menu week's own `is_selected` flags are preserved as-is.** The merge must *not* recompute selection from an empty account week, or every recipe collapses to unselected even though the menu said which were chosen (regression test `test_merge_preserves_menu_selection_when_account_week_has_no_recipes`).
+- It must also **not fabricate** a selection. An earlier "if nothing is flagged, treat every account recipe as selected" fallback marked a whole catalog selected on past weeks. The fallback now only applies when the account week is a genuine *selection-sized* list (fewer recipes than the menu catalog), never when it holds a full catalog (`test_merge_does_not_fabricate_selection_on_catalog_sized_account_week`).
+- The result: `is_selected` reflects your real picks, and each recipe carries its `course_index` for round-tripping a new selection back through `select_meals`.
+
+**Past weeks** (selection no longer editable):
+
+The planning menu's per-meal flags for a past week reflect the system's *default/auto-fill* picks, not what you actually received — so for past weeks the **delivered meals from `past-deliveries` are authoritative**. `_merge_past_delivery_recipes_into_account_weeks` + `_apply_delivered_selection` overlay that selection onto the week's browsable catalog:
+
+- Each delivered meal is matched to the catalog **by `recipe_id` first, then by name** (HelloFresh re-ids portion/variant copies of the same dish across weeks, so id-only matching dropped meals the website still shows as chosen — `test_merge_past_delivery_matches_by_name_when_id_drifts`).
+- A delivered **meal** that matches nothing in the catalog is **appended** so every delivered meal stays visible, like the website (`test_merge_past_delivery_appends_meal_missing_from_catalog`).
+- A delivered **market add-on** (appetizer/side/dessert) must *not* leak into the meal list. Delivered items that are known market items for the week (matched against the week's `addOns` catalog) are recognised and skipped (`test_merge_past_delivery_does_not_leak_market_items_into_meals`). Market selection is tracked separately on `market_items`.
+- A past week's `meals_required` prefers the **delivered count** (`len(recipes)`) over the *current* subscription plan — otherwise a 4-meal box delivered under today's 3-meal plan would be capped at 3.
+
+**Paused weeks** (`status`/`state` = `PAUSED`): a paused box never shipped, so any "selected" meals are pure auto-fill placeholders. A universal post-merge pass (`_clear_paused_week_selection`) clears `is_selected` and `selected_quantity` on every recipe and sets `meals_selected = 0`, while leaving the catalog visible for browsing and market items untouched (`test_paused_week_has_no_selected_meals`).
+
+**Menu catalog keying.** `/gw/menus-service/menus` items carry both an internal Mongo `id` and the ISO `week` (and return ~16 product/preset variants per week). Menu weeks are keyed by the **ISO `week`** (not the `id`, which never matched account weeks and mis-attached a week's catalog), and when several variants share a week the **richest (most recipes)** one wins so the week gets its full browsable catalog (`test_menu_week_id_prefers_iso_week_over_object_id`, `test_merge_keeps_richest_menu_variant_per_week`).
 
 Delivered-history payloads use a smaller subset of the week model:
 
@@ -1331,6 +1358,7 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 
 - The read surface is more trustworthy than the write surface.
 - Menu and delivery payloads may differ by region or account type.
+- **Past-week selection comes from `past-deliveries`, not the menu.** A past week's menu still carries auto-fill picks; only the `past-deliveries` `meals[]` reflect what actually shipped. Paused weeks shipped nothing and must show no selection. See [Selection-state resolution](#selection-state-resolution).
 - Public menu scraping does not expose personal selections, dates, or shipment data.
 - Because the API is reverse-engineered, adding new regions or supporting future payload drift will likely require updating the key fallback lists in [client.py](custom_components/hellofresh/client.py) / [normalizers.py](custom_components/hellofresh/normalizers.py) and the region map in [const.py](custom_components/hellofresh/const.py).
 

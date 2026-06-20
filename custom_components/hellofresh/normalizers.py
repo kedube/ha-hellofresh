@@ -484,6 +484,23 @@ class HelloFreshPayloadNormalizer:
             if items:
                 week.market_items = items
 
+    @staticmethod
+    def _clear_paused_week_selection(weeks: Sequence[HelloFreshWeek]) -> None:
+        """Unmark every recipe on a PAUSED week — nothing was ever delivered for it.
+
+        A paused week's menu still carries the system's auto-fill picks (``selection.quantity``),
+        which the merges turn into ``is_selected``. But a paused box never shipped, so those are
+        phantom selections. Clear them (keeping the catalog visible for browsing) and zero the
+        selected count. Market items are left alone — pausing meals is independent of add-ons.
+        """
+        for week in weeks:
+            if (week.status or "").strip().upper() != "PAUSED":
+                continue
+            for recipe in week.recipes:
+                recipe.is_selected = False
+                recipe.selected_quantity = None
+            week.meals_selected = 0
+
     def _extract_available_one_off_options(
         self,
         raw_week: dict[str, Any],

@@ -1742,6 +1742,47 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     assert "2026-W21" in cursors
 
 
+def test_paused_week_has_no_selected_meals() -> None:
+    """A PAUSED week's auto-fill picks are phantom — no meal may show as selected.
+
+    The week's menu still carries selection.quantity auto-fills, but a paused box never shipped.
+    The catalog stays visible for browsing; is_selected and meals_selected are cleared.
+    """
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    paused = HelloFreshWeek(
+        week_id="2024-W24",
+        display_name="Paused Week",
+        subscription_id="6959884",
+        status="PAUSED",
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="a", name="Auto A", is_selected=True, selected_quantity=1),
+            HelloFreshRecipe(recipe_id="b", name="Auto B", is_selected=True, selected_quantity=1),
+            HelloFreshRecipe(recipe_id="c", name="Browse C", is_selected=False),
+        ],
+    )
+    active = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Active Week",
+        subscription_id="6959884",
+        status="RUNNING",
+        meals_selected=1,
+        recipes=[HelloFreshRecipe(recipe_id="x", name="Chosen", is_selected=True)],
+    )
+
+    HelloFreshPayloadNormalizer._clear_paused_week_selection([paused, active])
+
+    # Paused: catalog intact, nothing selected.
+    assert [r.name for r in paused.recipes] == ["Auto A", "Auto B", "Browse C"]
+    assert not any(r.is_selected for r in paused.recipes)
+    assert all(r.selected_quantity is None for r in paused.recipes)
+    assert paused.meals_selected == 0
+    # Active week untouched.
+    assert active.recipes[0].is_selected is True
+    assert active.meals_selected == 1
+
+
 def test_history_range_covers_a_full_year_past_the_boundary() -> None:
     """The history range must include the week from ~12 months ago, not stop one short.
 

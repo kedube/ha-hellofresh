@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.14.0";
+const CARD_VERSION = "0.15.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -531,6 +531,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
           ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
         </span>
+        ${week.meals_preselected
+          ? `<span class="chip preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
+          : ""}
         <button
           class="chip filterchip ${this._showSelectedOnly ? "on" : ""}"
           data-action="toggle-filter"
@@ -822,6 +825,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .chip.ok { background: var(--success-color, #4caf50); color: #fff; }
       .chip.warn { background: var(--warning-color, #ff9800); color: #fff; }
+      .chip.preselected { background: var(--warning-color, #ff9800); color: #fff; font-weight: 700; }
       .chip.locked { opacity: 0.7; }
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
       .filterchip {

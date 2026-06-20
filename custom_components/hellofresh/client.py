@@ -309,6 +309,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self._apply_variation_titles(all_weeks)
         # Likewise attach each week's Market add-on catalog (appetizers, sides, desserts, ...).
         self._apply_market_items(all_weeks)
+        # Universal pass: a PAUSED week never shipped. Any "selected" meals on it are just the
+        # system's auto-fill placeholders, so clear the selection (the catalog still shows for
+        # browsing). Done last so it overrides whatever any merge path marked.
+        self._clear_paused_week_selection(all_weeks)
 
         data.weeks = all_weeks
         data.orders = all_orders
