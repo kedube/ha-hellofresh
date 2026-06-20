@@ -1495,7 +1495,12 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         candidate_calls.extend(
             (
                 "/gw/my-deliveries/past-deliveries",
-                {"subscription": subscription.subscription_id},
+                {
+                    "country": api_country_code(self._country),
+                    "locale": self._locale_for_country(),
+                    "rating-scale": "5",
+                    "subscription": subscription.subscription_id,
+                },
             )
             for subscription in subscriptions
         )
@@ -1529,9 +1534,87 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             )
             if weeks:
                 self._remember_preferred_endpoint("history", None, (path, params))
+                # The past-deliveries endpoint pages ~4 weeks at a time and hands back a
+                # ``nextWeek`` cursor; without following it, history stops after the first
+                # page (~131 days) and older weeks show no — or stale — recipe data. Walk
+                # the cursor back to the configured history floor for that endpoint only.
+                if path == "/gw/my-deliveries/past-deliveries":
+                    weeks = await self._async_paginate_past_deliveries(
+                        path=path,
+                        params=params,
+                        payload=payload,
+                        first_page_weeks=weeks,
+                        subscriptions=subscriptions,
+                    )
                 return weeks
 
         return []
+
+    async def _async_paginate_past_deliveries(
+        self,
+        path: str,
+        params: dict[str, Any],
+        payload: Any,
+        first_page_weeks: list[HelloFreshWeek],
+        subscriptions: Sequence[HelloFreshSubscription],
+    ) -> list[HelloFreshWeek]:
+        """Follow the past-deliveries ``nextWeek`` cursor back to the history floor.
+
+        Each page returns ``{"weeks": [...], "nextWeek": "YYYY-Www"}``. Feed ``nextWeek`` back
+        in as the ``from`` cursor until the API stops returning one, until a page yields no new
+        weeks, or until the cursor passes the configured history floor. Bounded by a hard page
+        cap so a misbehaving cursor can never loop forever.
+        """
+        floor_week = self._build_delivery_history_range()["range_start"]
+        weeks_by_id: dict[str, HelloFreshWeek] = {
+            week.week_id: week for week in first_page_weeks
+        }
+        next_cursor = self._extract_next_week_cursor(payload)
+        # ~13 four-week pages cover the 52-week floor; the cap is generous slack against drift.
+        max_pages = 20
+
+        for _ in range(max_pages):
+            if not next_cursor or next_cursor < floor_week:
+                break
+            page_params = {**params, "from": next_cursor}
+            try:
+                response = await self._async_api_get(path, params=page_params)
+                page_payload = await self._async_response_json(response)
+            except HelloFreshError as err:
+                self._record_debug_attempt(
+                    "history_attempts",
+                    {"path": path, "params": page_params, "error": str(err)},
+                )
+                break
+
+            page_weeks = self._normalize_past_delivery_payload(page_payload, subscriptions)
+            new_weeks = [week for week in page_weeks if week.week_id not in weeks_by_id]
+            self._record_debug_attempt(
+                "history_attempts",
+                {
+                    "path": path,
+                    "params": page_params,
+                    "status": self._response_status(response),
+                    "recognized_week_count": len(page_weeks),
+                    "new_week_count": len(new_weeks),
+                    "cursor": next_cursor,
+                },
+            )
+            for week in new_weeks:
+                weeks_by_id[week.week_id] = week
+            if not new_weeks:
+                break
+            next_cursor = self._extract_next_week_cursor(page_payload)
+
+        return list(weeks_by_id.values())
+
+    @staticmethod
+    def _extract_next_week_cursor(payload: Any) -> str | None:
+        """Return the ``nextWeek`` pagination cursor from a past-deliveries payload."""
+        if not isinstance(payload, dict):
+            return None
+        cursor = payload.get("nextWeek") or payload.get("next_week")
+        return cursor if isinstance(cursor, str) and cursor else None
 
     async def _async_get_upcoming_deliveries(
         self,
