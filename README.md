@@ -273,7 +273,7 @@ type: custom:hellofresh-meal-planner-card
 What it does:
 
 - **Week cursor** (‹ ›) across past, current, and upcoming weeks, opening on the next still-editable week.
-- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **servings** count is shown against the box's required minimum.
+- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **servings** count is shown against the box's required minimum. For **past** weeks the ✓ reflects the meals that were *actually delivered* (sourced from delivery history, not the menu's auto-fill), and **paused** weeks correctly show no selection since nothing shipped. A full calendar year of past boxes is browsable.
 - **Variant differentiation** — when HelloFresh lists the same dish in several forms, the tile calls out exactly what differs: the modifier (e.g. "2x Bacon", "Gluten-Free Linguine"), any per-serving surcharge, and protein/calorie deltas. Genuinely identical duplicate listings are collapsed into a single tile.
 - **Edit, quantity & save** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): tap recipes to build a pending selection, use the **− N +** stepper to set per-meal servings (a doubled portion fills two box slots), then **Save selection** submits it via `hellofresh.select_meals` and re-reads to confirm (**Cancel** discards the edit). Selecting more than the box's included count is allowed — HelloFresh treats the extras as add-on meals (typically surcharged). Locked/past weeks render read-only.
 - **Order strip** at the top of each week showing that week's order detail (status, carrier, tracking number/link, billed total, order ID), falling back to the standing plan price for weeks not yet billed.
@@ -327,9 +327,9 @@ What works:
 - account delivery and order parsing from verified or likely `/gw/...` delivery endpoints
 - aggregation across multiple subscriptions on the same HelloFresh account
 - account profile metrics such as delivered box counts when exposed by authenticated profile endpoints
-- delivered-week history summaries from authenticated past-delivery endpoints
+- delivered-week history summaries from authenticated past-delivery endpoints, covering a full calendar year of past boxes
 - richer recipe parsing including nutrition, image, tag, and per-recipe selection metadata from the authenticated menu, with `course_index` for round-tripping selections
-- per-week meal-selection state (which recipes you've chosen) resolved from the authenticated menu's cart quantities, so `is_selected` reflects your actual picks
+- per-week meal-selection state (which recipes you've chosen) that reflects your actual picks: for current/upcoming weeks from the authenticated menu's cart quantities, and for **past** weeks from the meals that were actually delivered (so old weeks aren't shown with the system's auto-fill placeholders, and paused weeks correctly show no selection)
 - authenticated menu API attempts before falling back to public HTML scraping
 - shipment tracking extraction and SCM enrichment when the payload includes carrier, parcel, or HelloFresh tracking-page details
 - public menu scraping from the regional `/menus` page
@@ -368,6 +368,9 @@ HelloFresh's website fronts its login with Cloudflare bot protection that someti
 
 **Recipe details are missing or a "menu fallback" Repairs issue appears.**
 The integration couldn't load structured menu data from the authenticated API and fell back to scraping the public menu page. Delivery tracking still works; recipe details may be less complete until the API payload is recognized again.
+
+**A past week shows the wrong meals selected (or a paused week shows meals).**
+For weeks that already shipped, the selection is taken from your **delivery history**, not the editable menu, because the menu reports the system's auto-fill picks for old weeks. A paused week shipped nothing, so it shows no selection. The integration browses a full calendar year of history; weeks older than that aren't available. If a recent past week still looks wrong, attach a [diagnostics export](#diagnostics) to a GitHub issue.
 
 **A "payload shape changed" Repairs issue appears.**
 HelloFresh returned account data the integration couldn't fully parse — usually a sign the website changed. Attaching a [diagnostics export](#diagnostics) to a GitHub issue is the most helpful thing you can do here.
