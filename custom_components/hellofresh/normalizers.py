@@ -747,26 +747,30 @@ class HelloFreshPayloadNormalizer:
             return currency.strip().upper()
         return _COUNTRY_CURRENCIES.get(self._country)
 
-    # Weeks of past history to request. A bit more than a calendar year (52w) on purpose:
-    # ``today - 52 weeks`` lands 364 days ago, so the week from ~12 months back sits right on
-    # the boundary and ISO-week rounding drops it (observed: the 370-days-ago week returned an
-    # empty get_weeks result). The extra weeks guarantee a FULL year of past boxes is visible,
-    # and this matches the past-deliveries pagination floor so display and fetch stay aligned.
-    _HISTORY_LOOKBACK_WEEKS = 56
+    # Default weeks of past history to request when the client doesn't supply one (~6 months).
+    # The instance value ``self._history_lookback_weeks`` (set from the user option,
+    # DEFAULT_HISTORY_WEEKS in const.py) overrides this; callers that don't set it fall back to
+    # this default. Used for BOTH the ranged display window and the past-deliveries pagination
+    # floor so display and fetch stay aligned. Note: a value near a full year (52w) lands ~364
+    # days back, so the box from ~12 months ago sits on the ISO-week boundary — raising the
+    # option a few weeks past 52 keeps that boundary week visible.
+    _HISTORY_LOOKBACK_WEEKS = 26
 
-    @staticmethod
-    def _build_delivery_history_range() -> dict[str, str]:
+    @property
+    def _history_weeks(self) -> int:
+        """Configured history lookback in weeks (falls back to the class default)."""
+        return getattr(self, "_history_lookback_weeks", None) or self._HISTORY_LOOKBACK_WEEKS
+
+    def _build_delivery_history_range(self) -> dict[str, str]:
         """Return the range for account delivery lookups.
 
-        Spans ``_HISTORY_LOOKBACK_WEEKS`` of history so the meal-planner card and history
-        sensors can browse a full year of past boxes — the API supports far wider ranges, but
-        ~a year is the practical cap that keeps the per-poll deliveries payload bounded. Extends
-        6 weeks ahead so the upcoming-delivery sensors see subsequent scheduled weeks too.
+        Spans ``self._history_weeks`` of history so the meal-planner card and history sensors can
+        browse the configured window of past boxes — the API supports far wider ranges, but the
+        cap keeps the per-poll deliveries payload bounded. Extends 6 weeks ahead so the
+        upcoming-delivery sensors see subsequent scheduled weeks too.
         """
         today = datetime.now(UTC).date()
-        start = today - timedelta(
-            weeks=HelloFreshPayloadNormalizer._HISTORY_LOOKBACK_WEEKS
-        )
+        start = today - timedelta(weeks=self._history_weeks)
         end = today + timedelta(weeks=6)
         start_iso = start.isocalendar()
         end_iso = end.isocalendar()

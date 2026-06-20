@@ -1784,17 +1784,16 @@ def test_paused_week_has_no_selected_meals() -> None:
 
 
 def test_history_range_covers_a_full_year_past_the_boundary() -> None:
-    """The history range must include the week from ~12 months ago, not stop one short.
+    """A ~year lookback must include the week from ~12 months ago, not stop one short.
 
-    Regression: a 52-week lookback lands 364 days back, so the ~370-days-ago week fell outside
-    the range and get_weeks returned [] for it. The range must reach at least 53 weeks back so
-    a full calendar year of past boxes is browsable.
+    Regression: a plain 52-week lookback lands 364 days back, so the ~370-days-ago week fell
+    outside the range and get_weeks returned [] for it. A user who wants a full year sets ~56
+    weeks; that must reach at least 53 weeks back so the boundary box stays browsable.
     """
     from datetime import UTC, datetime, timedelta
 
-    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
-
-    range_ = HelloFreshPayloadNormalizer._build_delivery_history_range()
+    client = HelloFreshClient(session=None, history_weeks=56)  # type: ignore[arg-type]
+    range_ = client._build_delivery_history_range()
     today = datetime.now(UTC).date()
     # The week from 53 weeks ago (comfortably "a year back") must be at/after range_start.
     boundary = today - timedelta(weeks=53)
@@ -1803,6 +1802,26 @@ def test_history_range_covers_a_full_year_past_the_boundary() -> None:
 
     key = HelloFreshClient._iso_week_sort_key
     assert key(range_["range_start"]) <= key(boundary_week)
+
+
+def test_history_range_honors_configured_lookback() -> None:
+    """A custom history_weeks shrinks the fetch window; default falls back to the class default."""
+    from datetime import UTC, datetime, timedelta
+
+    short = HelloFreshClient(session=None, history_weeks=8)  # type: ignore[arg-type]
+    default = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    key = HelloFreshClient._iso_week_sort_key
+    today = datetime.now(UTC).date()
+
+    short_start = short._build_delivery_history_range()["range_start"]
+    default_start = default._build_delivery_history_range()["range_start"]
+
+    # 8-week window starts later (more recent) than the ~56-week default.
+    assert key(short_start) > key(default_start)
+    # And it lands right around 8 weeks back.
+    expected = today - timedelta(weeks=8)
+    expected_iso = expected.isocalendar()
+    assert short_start == f"{expected_iso.year}-W{expected_iso.week:02d}"
 
 
 def test_iso_week_sort_key_orders_across_year_boundary() -> None:

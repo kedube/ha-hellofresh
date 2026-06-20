@@ -33,6 +33,16 @@ DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK = True
 MIN_SCAN_INTERVAL_MINUTES = 5
 MAX_SCAN_INTERVAL_MINUTES = 1440
 
+# How many weeks of past delivery history to fetch and make browsable. Default is ~6 months,
+# which keeps the per-poll deliveries/past-deliveries payload modest; users who want a full year
+# or more can raise it (up to ~2 years). Lowering it shrinks the payload further; the minimum
+# still keeps the current + a couple of recent weeks. Used for BOTH the ranged display window and
+# the past-deliveries pagination floor.
+CONF_HISTORY_WEEKS = "history_weeks"
+DEFAULT_HISTORY_WEEKS = 26
+MIN_HISTORY_WEEKS = 1
+MAX_HISTORY_WEEKS = 104
+
 PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,

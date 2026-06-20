@@ -29,6 +29,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
+    CONF_HISTORY_WEEKS,
     CONF_ISSUED_AT,
     CONF_PASSWORD,
     CONF_REFRESH_EXPIRES_IN,
@@ -38,6 +39,7 @@ from .const import (
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+    DEFAULT_HISTORY_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
     PLATFORMS,
@@ -272,6 +274,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_ENABLE_PUBLIC_MENU_FALLBACK,
             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
         ),
+        history_weeks=entry.options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
         token_refresh_callback=_persist_refreshed_token,
     )
     coordinator = HelloFreshDataUpdateCoordinator(
