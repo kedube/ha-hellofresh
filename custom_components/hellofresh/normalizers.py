@@ -1144,25 +1144,59 @@ class HelloFreshPayloadNormalizer:
         account_week: HelloFreshWeek,
         past_week: HelloFreshWeek,
     ) -> None:
-        """Mark only the actually-delivered meals as selected on a past week's catalog.
+        """Mark exactly the actually-delivered meals as selected on a past week's catalog.
 
         ``account_week`` holds the full menu catalog (for browsing); ``past_week`` holds the
-        meals that were really delivered. Match delivered meals onto the catalog by recipe id
-        (the stable identifier shared by both payloads) and set ``is_selected`` accordingly,
-        overriding the menu endpoint's default/preselected flags. If none of the delivered ids
-        are found in the catalog, leave the existing flags untouched rather than blanking the
-        week (a safety net against an id-scheme mismatch).
+        meals that were really delivered. Each delivered meal is matched onto the catalog by
+        recipe id first, then by name as a fallback — the catalog can list the same dish under
+        a different id than the delivered record (HelloFresh re-ids portion/variant copies), so
+        id-only matching dropped a delivered meal that the website still shows as chosen. Any
+        delivered meal that matches NOTHING in the catalog is appended so all selections remain
+        visible (the past week must show every meal that was delivered, like the website).
+
+        If not a single delivered meal could be placed (id-scheme drift), leave the existing
+        flags untouched rather than blanking the week.
         """
-        delivered_ids = {
-            recipe.recipe_id for recipe in past_week.recipes if recipe.recipe_id
+        if not past_week.recipes:
+            return
+
+        catalog_by_id = {
+            recipe.recipe_id: recipe for recipe in account_week.recipes if recipe.recipe_id
         }
-        if not delivered_ids:
+        catalog_by_name = {
+            recipe.name.strip().casefold(): recipe
+            for recipe in account_week.recipes
+            if recipe.name
+        }
+
+        matched: list[HelloFreshRecipe] = []
+        unmatched: list[HelloFreshRecipe] = []
+        for delivered in past_week.recipes:
+            target = catalog_by_id.get(delivered.recipe_id)
+            if target is None and delivered.name:
+                target = catalog_by_name.get(delivered.name.strip().casefold())
+            if target is None:
+                unmatched.append(delivered)
+            else:
+                matched.append(target)
+
+        if not matched and not unmatched:
             return
-        if not any(recipe.recipe_id in delivered_ids for recipe in account_week.recipes):
+        # Safety net: if the catalog and delivered records share no id AND no name, don't risk
+        # blanking a populated catalog — bail and keep whatever flags are already there.
+        if not matched and len(unmatched) == len(past_week.recipes) and account_week.recipes:
             return
+
+        matched_ids = {id(recipe) for recipe in matched}
         for recipe in account_week.recipes:
-            recipe.is_selected = recipe.recipe_id in delivered_ids
-        account_week.meals_selected = past_week.meals_selected or len(delivered_ids)
+            recipe.is_selected = id(recipe) in matched_ids
+        for delivered in unmatched:
+            delivered.is_selected = True
+            account_week.recipes.append(delivered)
+
+        account_week.meals_selected = (
+            past_week.meals_selected or len(matched) + len(unmatched)
+        )
 
     def _normalize_menu_weeks(
         self,
