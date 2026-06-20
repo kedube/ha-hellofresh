@@ -175,14 +175,14 @@ views:
         show_header_toggle: false
         state_color: true
         entities:
-          - entity: binary_sensor.hellofresh_us_write_actions_available
-            name: Write actions available
-          - entity: binary_sensor.hellofresh_us_payload_shape_changed
-            name: Payload shape changed
-          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
-            name: Tracked shipment
+          - entity: sensor.hellofresh_us_next_delivery_subscription
+            name: Delivery subscription ID
           - entity: sensor.hellofresh_us_api_base_url
             name: API base URL
+          - entity: binary_sensor.hellofresh_us_payload_shape_changed
+            name: Payload shape changed
+          - entity: binary_sensor.hellofresh_us_write_actions_available
+            name: Write actions available
       - type: entities
         title: Actions
         show_header_toggle: false

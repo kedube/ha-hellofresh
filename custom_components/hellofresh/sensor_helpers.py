@@ -91,6 +91,14 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "next_selectable_delivery_meal_count": lambda data: (
         (data.next_modifiable_week.meals_selected or 0) if data.next_modifiable_week else 0
     ),
+    # HelloFresh Market add-ons (extras) selected for the next configurable / modifiable week,
+    # mirroring the meal-count sensors but counting distinct selected market items.
+    "selected_market_count": lambda data: (
+        data.next_configurable_week.market_items_selected if data.next_configurable_week else 0
+    ),
+    "next_selectable_delivery_market_count": lambda data: (
+        data.next_modifiable_week.market_items_selected if data.next_modifiable_week else 0
+    ),
     "required_meal_count": lambda data: (
         data.next_configurable_week.meals_required
         if data.next_configurable_week and data.next_configurable_week.meals_required is not None
@@ -163,6 +171,7 @@ WEEK_ATTRIBUTE_KEYS = frozenset(
         "next_delivery_week",
         "next_selection_deadline",
         "selected_meal_count",
+        "selected_market_count",
         "required_meal_count",
     }
 )
