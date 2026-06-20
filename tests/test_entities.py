@@ -697,37 +697,48 @@ def test_market_count_sensors_zero_without_resolved_week() -> None:
 
 
 def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
-    """The sensor reports the count of weeks HelloFresh auto-picked (menu mealsPreselected)."""
+    """The sensor counts auto-picked (menu mealsPreselected) weeks from next delivery onward."""
+    today = date.today()
     data = HelloFreshAccountData(
         weeks=[
-            # Auto-picked by HelloFresh (counts).
+            # Auto-picked by HelloFresh, upcoming (counts).
             HelloFreshWeek(
-                week_id="2026-W30",
-                display_name="Week 30",
+                week_id="next",
+                display_name="Next week",
                 subscription_id="sub-1",
-                delivery_date=date(2026, 7, 21),
+                delivery_date=today + timedelta(days=7),
                 meals_required=3,
                 meals_selected=3,
                 meals_preselected=True,
             ),
-            # Customer-picked (does not count).
+            # Customer-picked, upcoming (does not count).
             HelloFreshWeek(
-                week_id="2026-W31",
-                display_name="Week 31",
+                week_id="next-plus",
+                display_name="Week after",
                 subscription_id="sub-1",
-                delivery_date=date(2026, 7, 28),
+                delivery_date=today + timedelta(days=14),
                 meals_required=3,
                 meals_selected=3,
                 meals_preselected=False,
             ),
             # Auto-picked but skipped (excluded — no box ships).
             HelloFreshWeek(
-                week_id="2026-W32",
-                display_name="Week 32",
+                week_id="skipped",
+                display_name="Skipped week",
                 subscription_id="sub-1",
-                delivery_date=date(2026, 8, 4),
+                delivery_date=today + timedelta(days=21),
                 meals_preselected=True,
                 is_skipped=True,
+            ),
+            # Auto-picked but in the past (excluded — box already shipped).
+            HelloFreshWeek(
+                week_id="past",
+                display_name="Past week",
+                subscription_id="sub-1",
+                delivery_date=today - timedelta(days=7),
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=True,
             ),
         ],
         subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
@@ -739,9 +750,9 @@ def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
     )
     description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "weeks_needing_selection")
     sensor = HelloFreshSensor(coordinator, description)
-    assert sensor.native_value == 1  # only W30
+    assert sensor.native_value == 1  # only the upcoming auto-picked week
     weeks = sensor.extra_state_attributes["weeks"]
-    assert [w["week_id"] for w in weeks] == ["2026-W30"]
+    assert [w["week_id"] for w in weeks] == ["next"]
     assert weeks[0]["auto_picked"] is True
 
 

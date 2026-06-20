@@ -199,9 +199,12 @@ class HelloFreshWeek:
         """Return True when HelloFresh auto-picked this week's meals (vs. the customer choosing).
 
         Driven by the menu's week-level ``mealsPreselected`` flag. A skipped week (no box ships)
-        is never counted.
+        and a past week (delivery date before today) are never counted — only the next delivery
+        week and later are considered, since a customer can no longer change an already-shipped box.
         """
-        return self.meals_preselected and not self.is_skipped
+        if self.is_skipped or not self.meals_preselected:
+            return False
+        return not (self.delivery_date is not None and self.delivery_date < date.today())
 
     @property
     def selection_progress(self) -> str | None:

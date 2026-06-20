@@ -69,6 +69,8 @@ views:
             name: Next skipped
           - entity: sensor.hellofresh_us_subscription_count
             name: Subscription count
+          - entity: sensor.hellofresh_us_weeks_needing_selection
+            name: Weeks need selecting
           - entity: sensor.hellofresh_us_delivery_address
             name: Delivery address
         columns: 3
@@ -89,18 +91,22 @@ views:
             name: Delivery slot
           - entity: sensor.hellofresh_us_next_delivery_blocked
             name: Delivery blocked
+          - entity: sensor.hellofresh_us_recent_order_id
+            name: Order ID
           - entity: sensor.hellofresh_us_delivery_count_this_week
             name: Delivery count
           - entity: sensor.hellofresh_us_selected_meal_count
             name: Meal count
-          - entity: sensor.hellofresh_us_recent_order_id
-            name: Order ID
+          - entity: sensor.hellofresh_us_selected_market_count
+            name: Market count
           - entity: sensor.hellofresh_us_next_payment_date
             name: Payment date
           - entity: sensor.hellofresh_us_next_box_total_price
             name: Box total price
           - entity: sensor.hellofresh_us_next_box_coupon
             name: Coupon
+          - entity: sensor.hellofresh_us_next_delivery_preselected
+            name: Meals preselected
       - show_name: true
         show_icon: true
         show_state: true
@@ -112,10 +118,14 @@ views:
             name: Delivery week
           - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
             name: Meal count
+          - entity: sensor.hellofresh_us_next_selectable_delivery_market_count
+            name: Market count
           - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
             name: Selection deadline
           - entity: sensor.hellofresh_us_selected_plan_total_price
             name: Plan total price
+          - entity: sensor.hellofresh_us_next_selectable_delivery_preselected
+            name: Meals preselected
         columns: 2
         title: Next selectable box
       - type: calendar
@@ -138,25 +148,6 @@ views:
 
             New date: **{{
             states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_needs_meal_selection
-            state: "on"
-        card:
-          type: markdown
-          title: Weeks needing selection
-          content: >
-            {% set weeks =
-            state_attr('sensor.hellofresh_us_next_selection_deadline', 'weeks')
-            or [] %} {% if weeks | count == 0 %} All caught up — nothing to
-            choose. {% else %} | Week | Chosen | Deadline | | --- | :---: | ---
-            | {% for w in weeks -%} {% set sel = w.meals_selected if
-            w.meals_selected is not none else 0 -%} {% set req =
-            w.meals_required if w.meals_required is not none else '?' -%} {% set
-            dl = w.selection_deadline -%} | {{ w.display_name or w.delivery_date
-            or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) |
-            timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
-            {% endfor %} {% endif %}
     type: masonry
   - title: Diagnostics
     path: diagnostics
