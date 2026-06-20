@@ -1742,6 +1742,14 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     assert "2026-W21" in cursors
 
 
+def test_iso_week_sort_key_orders_across_year_boundary() -> None:
+    """ISO week ordering must be chronological, not lexical, across a year change."""
+    key = HelloFreshClient._iso_week_sort_key
+    assert key("2026-W01") > key("2025-W52")  # later in time despite smaller string
+    assert key("2025-W24") < key("2025-W25")
+    assert key("not-a-week") == (9999, 99)  # unparseable sorts last (never trips floor)
+
+
 def test_past_delivery_history_prefers_recipe_bearing_endpoint() -> None:
     """A metadata-only history endpoint must not win over one carrying delivered recipes.
 
@@ -2190,6 +2198,79 @@ def test_merge_past_delivery_appends_meal_missing_from_catalog() -> None:
     # The missing meal was appended to the catalog so it renders.
     assert any(r.recipe_id == "ghost" for r in merged[0].recipes)
     assert merged[0].meals_selected == 3
+
+
+def test_merge_past_delivery_does_not_leak_market_items_into_meals() -> None:
+    """A delivered market add-on must not be appended to the meal list.
+
+    Regression for market items showing up in the My Menu meal list: the delivered record
+    includes ordered add-ons (appetizers/sides), but those belong to the Market view only. A
+    delivered item that is a known market item for the week (from the week's addOns catalog) is
+    recognised and skipped, never appended to recipes.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    account_week = HelloFreshWeek(
+        week_id="2026-W24",
+        display_name="Jun 8 - Jun 14",
+        subscription_id="6959884",
+        delivery_date=date(2026, 6, 10),
+        recipes=[
+            HelloFreshRecipe(recipe_id="meal-1", name="Meal One"),
+            HelloFreshRecipe(recipe_id="meal-2", name="Meal Two"),
+            HelloFreshRecipe(recipe_id="meal-3", name="Meal Three"),
+        ],
+        # The week's market catalog lives in raw.addOns (parsed by _build_market_items).
+        raw={
+            "addOns": {
+                "groups": [
+                    {
+                        "type": "appetizer",
+                        "addOns": [
+                            {
+                                "index": 17597,
+                                "recipe": {
+                                    "id": "market-1",
+                                    "name": "Brie & Charcuterie Board",
+                                },
+                            },
+                            {
+                                "index": 10817,
+                                "recipe": {
+                                    "id": "market-2",
+                                    "name": "Caramelized Onion & Feta Pastry Bites",
+                                },
+                            },
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W24",
+        display_name="Jun 8 - Jun 14",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[
+            HelloFreshRecipe(recipe_id="meal-1", name="Meal One"),
+            HelloFreshRecipe(recipe_id="meal-2", name="Meal Two"),
+            HelloFreshRecipe(recipe_id="meal-3", name="Meal Three"),
+            # Two market add-ons that were ALSO delivered.
+            HelloFreshRecipe(recipe_id="market-1", name="Brie & Charcuterie Board"),
+            HelloFreshRecipe(recipe_id="market-2", name="Caramelized Onion & Feta Pastry Bites"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    names = [r.name for r in merged[0].recipes]
+    assert "Brie & Charcuterie Board" not in names
+    assert "Caramelized Onion & Feta Pastry Bites" not in names
+    selected = {r.name for r in merged[0].recipes if r.is_selected}
+    assert selected == {"Meal One", "Meal Two", "Meal Three"}
 
 
 def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:

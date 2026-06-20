@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
@@ -1602,16 +1603,27 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         weeks, or until the cursor passes the configured history floor. Bounded by a hard page
         cap so a misbehaving cursor can never loop forever.
         """
-        floor_week = self._build_delivery_history_range()["range_start"]
+        # Page a few weeks PAST the display range floor. The displayed history and this fetch
+        # share a 52-week range, so a week sitting right at the boundary (and ISO-week rounding
+        # / year-boundary string ordering around it) could be shown without ever fetching its
+        # delivered meals — making the oldest visible week's selection wrong. The extra margin
+        # guarantees the boundary week's delivered recipes are always retrieved.
+        floor_date = datetime.now(UTC).date() - timedelta(weeks=56)
+        floor_iso = floor_date.isocalendar()
+        floor_week = f"{floor_iso.year}-W{floor_iso.week:02d}"
         weeks_by_id: dict[str, HelloFreshWeek] = {
             week.week_id: week for week in first_page_weeks
         }
         next_cursor = self._extract_next_week_cursor(payload)
-        # ~13 four-week pages cover the 52-week floor; the cap is generous slack against drift.
+        # ~14 four-week pages cover the floor; the cap is generous slack against drift.
         max_pages = 20
 
         for _ in range(max_pages):
-            if not next_cursor or next_cursor < floor_week:
+            # Compare by absolute week order, not raw string: "2026-W01" < "2025-W52" is True
+            # as strings but later in time, which would stop pagination early near a year change.
+            if not next_cursor or self._iso_week_sort_key(next_cursor) < self._iso_week_sort_key(
+                floor_week
+            ):
                 break
             page_params = {**params, "from": next_cursor}
             try:
@@ -1652,6 +1664,19 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             return None
         cursor = payload.get("nextWeek") or payload.get("next_week")
         return cursor if isinstance(cursor, str) and cursor else None
+
+    @staticmethod
+    def _iso_week_sort_key(week_id: str) -> tuple[int, int]:
+        """Order an ISO ``YYYY-Www`` week chronologically.
+
+        Raw string comparison breaks across year boundaries ("2026-W01" < "2025-W52" as
+        strings, but it is later in time), so compare on (year, week) instead. An unparseable
+        value sorts last (treated as "most recent") so it never trips the history floor.
+        """
+        match = re.fullmatch(r"(\d{4})-W(\d{1,2})", week_id.strip()) if week_id else None
+        if match is None:
+            return (9999, 99)
+        return (int(match.group(1)), int(match.group(2)))
 
     async def _async_get_upcoming_deliveries(
         self,
