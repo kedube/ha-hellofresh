@@ -2311,6 +2311,105 @@ def test_account_data_merges_authenticated_menu_catalog_into_delivery_week() -> 
     assert result.weeks[0].recipes[1].is_selected is False
 
 
+def test_menu_week_id_prefers_iso_week_over_object_id() -> None:
+    """menus-service items carry both an internal ``id`` and the ISO ``week``; use the week.
+
+    Keying a menu week by its Mongo ``id`` made it never match the account week (keyed by ISO
+    week) in the merge, so a week's catalog was mis-attached. The ISO ``week`` must win.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", meals_required=3)
+    raw_weeks = [
+        {
+            "id": "69fd3eb97be32aa3369601a0",
+            "week": "2026-W26",
+            "courses": [
+                {"index": 1, "recipe": {"id": "r-1", "name": "Dish One"}},
+                {"index": 2, "recipe": {"id": "r-2", "name": "Dish Two"}},
+            ],
+        }
+    ]
+
+    weeks = client._normalize_menu_weeks(raw_weeks, subscription=subscription)
+
+    assert len(weeks) == 1
+    assert weeks[0].week_id == "2026-W26"
+
+
+def test_merge_does_not_fabricate_selection_on_catalog_sized_account_week() -> None:
+    """A catalog-sized account week must not have its whole catalog marked selected.
+
+    When the account week holds a full browsable catalog (not just the chosen meals) and none
+    are flagged selected, the merge must NOT fall back to "every recipe is selected" — that
+    fabricated the wrong selection on past weeks. A genuine selection-sized list still projects.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    # Catalog-sized account week (same size as the menu week), nothing genuinely selected.
+    catalog_account_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="c-1", name="A", is_selected=False),
+            HelloFreshRecipe(recipe_id="c-2", name="B", is_selected=False),
+            HelloFreshRecipe(recipe_id="c-3", name="C", is_selected=False),
+        ],
+    )
+    menu_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="c-1", name="A", is_selected=False),
+            HelloFreshRecipe(recipe_id="c-2", name="B", is_selected=False),
+            HelloFreshRecipe(recipe_id="c-3", name="C", is_selected=False),
+        ],
+        source="account_menu_api",
+    )
+
+    merged = client._merge_menu_weeks_into_account_weeks(
+        account_weeks=[catalog_account_week],
+        menu_weeks=[menu_week],
+    )
+
+    assert not any(r.is_selected for r in merged[0].recipes)
+
+
+def test_merge_keeps_richest_menu_variant_per_week() -> None:
+    """When a week arrives as several menu variants, the richest (most recipes) wins."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    account_week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="sub-1",
+    )
+    small_variant = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="sub-1",
+        recipes=[HelloFreshRecipe(recipe_id="only-1", name="Solo")],
+        source="account_menu_api",
+    )
+    full_catalog = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id=f"r-{i}", name=f"Dish {i}") for i in range(20)
+        ],
+        source="account_menu_api",
+    )
+
+    # Small variant listed AFTER the full catalog — last-wins would have picked the small one.
+    merged = client._merge_menu_weeks_into_account_weeks(
+        account_weeks=[account_week],
+        menu_weeks=[full_catalog, small_variant],
+    )
+
+    assert len(merged[0].recipes) == 20
+
+
 def test_merge_preserves_menu_selection_when_account_week_has_no_recipes() -> None:
     """When the deliveries payload lists no recipes, the menu week's own selection wins.
 
