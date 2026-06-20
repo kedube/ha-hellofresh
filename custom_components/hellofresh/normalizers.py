@@ -1021,9 +1021,17 @@ class HelloFreshPayloadNormalizer:
         menu_weeks: Sequence[HelloFreshWeek],
     ) -> list[HelloFreshWeek]:
         """Merge menu recipe catalogs into account weeks while preserving selection state."""
-        menu_by_key = {
-            (menu_week.subscription_id, menu_week.week_id): menu_week for menu_week in menu_weeks
-        }
+        # A single week can arrive as several menu variants under the same id (the
+        # ``/gw/menus-service/menus`` fallback returns ~16 product/preset variants per week,
+        # one of which is the full catalog and the rest small subsets). Keep the richest
+        # (most recipes) per (subscription, week) so the week gets its full browsable catalog
+        # instead of whichever variant happened to be last.
+        menu_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
+        for menu_week in menu_weeks:
+            key = (menu_week.subscription_id, menu_week.week_id)
+            existing = menu_by_key.get(key)
+            if existing is None or len(menu_week.recipes) > len(existing.recipes):
+                menu_by_key[key] = menu_week
         merged_weeks: list[HelloFreshWeek] = []
 
         for account_week in account_weeks:
@@ -1044,10 +1052,21 @@ class HelloFreshPayloadNormalizer:
             #    has already turned into is_selected. In that case we must PRESERVE the menu
             #    week's own flags; recomputing from the (empty) account week would blank every
             #    recipe even though the menu payload said which were chosen.
-            if account_week.recipes:
+            # Project the account week's selection onto the full menu catalog.
+            account_selected_ids = {
+                recipe.recipe_id for recipe in account_week.recipes if recipe.is_selected
+            }
+            # When nothing is explicitly flagged, fall back to "presence == selection" ONLY if
+            # the account week is a selection-sized list (the deliveries endpoint lists just the
+            # chosen recipes). If it instead holds a full browsable catalog — i.e. about as many
+            # recipes as the menu week — that fallback would mark the whole catalog selected,
+            # which is what fabricated the wrong selection on past weeks. In that case derive
+            # nothing here and let the menu week's own flags / past-deliveries decide.
+            if not account_selected_ids and len(account_week.recipes) < len(menu_week.recipes):
                 account_selected_ids = {
-                    recipe.recipe_id for recipe in account_week.recipes if recipe.is_selected
-                } or {recipe.recipe_id for recipe in account_week.recipes}
+                    recipe.recipe_id for recipe in account_week.recipes
+                }
+            if account_selected_ids:
                 for recipe in menu_week.recipes:
                     recipe.is_selected = recipe.recipe_id in account_selected_ids
 
@@ -1166,10 +1185,16 @@ class HelloFreshPayloadNormalizer:
             if not recipes:
                 continue
 
+            # Prefer the ISO calendar week (``week``: "2026-W26") over ``id``. The
+            # ``/gw/menus-service/menus`` items carry BOTH an internal Mongo ``id`` and the
+            # ISO ``week``; keying by ``id`` produced ObjectId week ids that never match the
+            # account weeks in the merge, so a week's catalog got mis-attached (and the
+            # menus-service "first item" absorbed ~all courses → 1000+ recipes on one week).
+            # Account weeks and past-deliveries are keyed by the ISO week, so use it here too.
             week_id = str(
-                raw_week.get("id")
-                or raw_week.get("week")
+                raw_week.get("week")
                 or raw_week.get("calendarWeek")
+                or raw_week.get("id")
                 or f"menu-week-{index}"
             )
             display_name = (

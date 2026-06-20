@@ -1506,6 +1506,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         )
         ordered_calls = self._order_candidates_by_preference("history", None, candidate_calls)
 
+        # Accumulate recipe-bearing weeks from EVERY candidate, keyed by week id, instead of
+        # returning the first endpoint that answers. The history endpoints are NOT
+        # interchangeable: ``/gw/customer-complaints/...`` only knows the last couple of weeks,
+        # while ``/gw/my-deliveries/past-deliveries`` is the comprehensive, paginated source the
+        # website itself uses. Letting whichever answers first win meant an old week (e.g. the
+        # one delivered ~4 months ago) never got its real delivered meals, so the card showed a
+        # fabricated selection. Always consult past-deliveries; prefer its recipes per week.
+        delivered_by_week: dict[str, HelloFreshWeek] = {}
+        preferred_endpoint: tuple[str, dict[str, Any] | None] | None = None
         fallback_weeks: tuple[str, dict[str, Any] | None, list[HelloFreshWeek]] | None = None
         for path, params in ordered_calls:
             try:
@@ -1536,23 +1545,16 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             if not weeks:
                 continue
 
-            # Prefer a history source that actually carries the delivered recipes. The ranged
-            # ``/gw/api/customers/me/deliveries`` endpoint returns ~a year of past weeks but as
-            # metadata-only shells (no recipe list); if it "wins" this loop, every past week is
-            # left without its delivered meals and the dashboard shows the wrong selection for
-            # old weeks. ``/gw/my-deliveries/past-deliveries`` is the only history source with
-            # the actually-delivered recipes. So when this candidate yielded no recipes, hold it
-            # as a metadata-only fallback and keep trying for a recipe-bearing endpoint.
+            # A metadata-only candidate (the ranged deliveries endpoint returns past weeks as
+            # shells with no recipe list) can't supply selection; keep it only as a last resort.
             if not any(week.recipes for week in weeks):
                 if fallback_weeks is None:
                     fallback_weeks = (path, params, weeks)
                 continue
 
-            self._remember_preferred_endpoint("history", None, (path, params))
-            # The past-deliveries endpoint pages ~4 weeks at a time and hands back a
-            # ``nextWeek`` cursor; without following it, history stops after the first
-            # page (~131 days) and older weeks show no — or stale — recipe data. Walk
-            # the cursor back to the configured history floor for that endpoint only.
+            # The past-deliveries endpoint pages ~4 weeks at a time and hands back a ``nextWeek``
+            # cursor; without following it, history stops after the first page (~131 days) and
+            # older weeks show no recipe data. Walk the cursor back for that endpoint only.
             if path == "/gw/my-deliveries/past-deliveries":
                 weeks = await self._async_paginate_past_deliveries(
                     path=path,
@@ -1561,7 +1563,23 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                     first_page_weeks=weeks,
                     subscriptions=subscriptions,
                 )
-            return weeks
+
+            for week in weeks:
+                if not week.recipes:
+                    continue
+                # past-deliveries is authoritative; once a week is filled from it, don't let a
+                # narrower endpoint overwrite it. Other endpoints fill only gaps.
+                existing = delivered_by_week.get(week.week_id)
+                if existing is not None and existing.source == "past_deliveries":
+                    continue
+                delivered_by_week[week.week_id] = week
+            if preferred_endpoint is None:
+                preferred_endpoint = (path, params)
+
+        if delivered_by_week:
+            if preferred_endpoint is not None:
+                self._remember_preferred_endpoint("history", None, preferred_endpoint)
+            return list(delivered_by_week.values())
 
         if fallback_weeks is not None:
             path, params, weeks = fallback_weeks
