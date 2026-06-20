@@ -1147,6 +1147,12 @@ class HelloFreshPayloadNormalizer:
             if past_week is None:
                 continue
 
+            # This week actually shipped (it has delivered-history data), so whatever was sent IS
+            # the real selection — not HelloFresh's auto-pick. The menu's ``mealsPreselected``
+            # flag for a long-past week is stale/default and must not stick, or the card would
+            # wrongly badge a week you personally chose as "Preselected".
+            account_week.meals_preselected = False
+
             # The week already carries a browsable catalog (the menu endpoint served this past
             # week's full meal grid). Keep that catalog so browsing still works, but correct the
             # SELECTION: the menu endpoint's per-meal flags for a past week reflect the default
