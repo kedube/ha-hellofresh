@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.15.0";
+const CARD_VERSION = "0.16.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -132,6 +132,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
     if (deadline && deadline < Date.now()) return false;
     return Boolean(actions.mealSwap);
+  }
+
+  // A paused week never shipped, so its preselected/auto-fill picks are not a real selection.
+  _isPaused(week) {
+    return Boolean(week) && String(week.status || "").toUpperCase() === "PAUSED";
   }
 
   _step(delta) {
@@ -531,7 +536,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
           ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
         </span>
-        ${week.meals_preselected
+        ${week.meals_preselected && !this._isPaused(week)
           ? `<span class="chip preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
           : ""}
         <button
