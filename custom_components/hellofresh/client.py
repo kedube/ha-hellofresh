@@ -288,6 +288,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         elif self._enable_public_menu_fallback:
             public_menu_loaded = await self._async_load_public_menu_fallback(data)
 
+        # Past delivery weeks carry the meals that were ACTUALLY delivered (from the
+        # past-deliveries endpoint, keyed by week). The planning-menu endpoint above does not
+        # serve real history — for a past week it returns nothing usable or a substitute menu
+        # we reject — so the delivered recipes are the authoritative source for those weeks.
+        all_weeks = self._merge_past_delivery_recipes_into_account_weeks(
+            account_weeks=all_weeks,
+            past_delivery_weeks=data.past_delivery_weeks,
+        )
+
         await self._async_enrich_order_tracking(
             subscriptions=subscriptions,
             orders=all_orders,
@@ -1834,6 +1843,32 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                     "params": params,
                     "week_id": account_week.week_id,
                     "error": str(err),
+                },
+            )
+            return []
+
+        # Guard against the endpoint serving a SUBSTITUTE menu for the requested week. For an
+        # upcoming week the payload's top-level ``week`` matches the request; for a past week
+        # the planning-menu endpoint (which the web app never calls for history) can return a
+        # nearest/current menu instead. Stamping those recipes onto the requested week would
+        # show the wrong meals (e.g. the current menu under a past week), so reject a mismatch
+        # and let the recipes embedded in the deliveries payload stand for that week.
+        payload_week = payload.get("week") if isinstance(payload, dict) else None
+        if (
+            isinstance(payload_week, str)
+            and payload_week
+            and payload_week != account_week.week_id
+        ):
+            self._record_debug_attempt(
+                "menu_attempts",
+                {
+                    "subscription_id": subscription.subscription_id,
+                    "path": "/gw/my-deliveries/menu",
+                    "params": params,
+                    "week_id": account_week.week_id,
+                    "status": self._response_status(response),
+                    "rejected": "week_mismatch",
+                    "payload_week": payload_week,
                 },
             )
             return []

@@ -1069,6 +1069,49 @@ class HelloFreshPayloadNormalizer:
 
         return merged_weeks
 
+    def _merge_past_delivery_recipes_into_account_weeks(
+        self,
+        account_weeks: Sequence[HelloFreshWeek],
+        past_delivery_weeks: Sequence[HelloFreshWeek],
+    ) -> list[HelloFreshWeek]:
+        """Fill account weeks that lack recipes with the meals actually delivered that week.
+
+        The ranged deliveries endpoint returns past weeks as metadata-only shells (no recipe
+        list), and the planning-menu endpoint does not serve real history. The past-deliveries
+        payload is the authoritative source of what was delivered, keyed by ``week``. Match on
+        ``week_id`` (subscription id when present on both) and copy the delivered recipes onto
+        any account week that does not already have its own — never overwriting a week that
+        already carries recipes (an upcoming week filled from the live menu).
+        """
+        if not past_delivery_weeks:
+            return list(account_weeks)
+
+        past_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
+        past_by_week_id: dict[str, HelloFreshWeek] = {}
+        for past_week in past_delivery_weeks:
+            if not past_week.recipes:
+                continue
+            past_by_key[(past_week.subscription_id, past_week.week_id)] = past_week
+            # Last write wins is fine: a given week id maps to one delivered menu.
+            past_by_week_id[past_week.week_id] = past_week
+
+        for account_week in account_weeks:
+            if account_week.recipes:
+                continue
+            past_week = past_by_key.get(
+                (account_week.subscription_id, account_week.week_id)
+            ) or past_by_week_id.get(account_week.week_id)
+            if past_week is None:
+                continue
+            account_week.recipes = past_week.recipes
+            account_week.menu_title = account_week.menu_title or past_week.menu_title
+            if account_week.meals_selected in (None, 0):
+                account_week.meals_selected = past_week.meals_selected
+            if account_week.meals_required is None:
+                account_week.meals_required = past_week.meals_required
+
+        return list(account_weeks)
+
     def _normalize_menu_weeks(
         self,
         raw_weeks: list[dict[str, Any]],
