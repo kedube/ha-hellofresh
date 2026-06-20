@@ -696,6 +696,113 @@ def test_market_count_sensors_zero_without_resolved_week() -> None:
         assert HelloFreshSensor(coordinator, description).native_value == 0
 
 
+def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
+    """The sensor reports the count of weeks HelloFresh auto-picked (menu mealsPreselected)."""
+    data = HelloFreshAccountData(
+        weeks=[
+            # Auto-picked by HelloFresh (counts).
+            HelloFreshWeek(
+                week_id="2026-W30",
+                display_name="Week 30",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 7, 21),
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=True,
+            ),
+            # Customer-picked (does not count).
+            HelloFreshWeek(
+                week_id="2026-W31",
+                display_name="Week 31",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 7, 28),
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=False,
+            ),
+            # Auto-picked but skipped (excluded — no box ships).
+            HelloFreshWeek(
+                week_id="2026-W32",
+                display_name="Week 32",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 8, 4),
+                meals_preselected=True,
+                is_skipped=True,
+            ),
+        ],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "weeks_needing_selection")
+    sensor = HelloFreshSensor(coordinator, description)
+    assert sensor.native_value == 1  # only W30
+    weeks = sensor.extra_state_attributes["weeks"]
+    assert [w["week_id"] for w in weeks] == ["2026-W30"]
+    assert weeks[0]["auto_picked"] is True
+
+
+def test_delivery_preselected_sensors_read_their_weeks() -> None:
+    """The preselected sensors report each week's meals_preselected flag (True/False/None)."""
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W30",
+                display_name="Week 30",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 7, 21),
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=True,  # next delivery week, auto-picked
+            ),
+            HelloFreshWeek(
+                week_id="2026-W31",
+                display_name="Week 31",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 7, 28),
+                meals_preselected=False,  # next modifiable week, customer-picked
+            ),
+        ],
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                next_delivery_week="2026-W30",
+                next_modifiable_delivery_week="2026-W31",
+            ),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+
+    def _value(key: str) -> object:
+        description = next(d for d in SENSOR_DESCRIPTIONS if d.key == key)
+        return HelloFreshSensor(coordinator, description).native_value
+
+    assert _value("next_delivery_preselected") is True
+    assert _value("next_selectable_delivery_preselected") is False
+
+
+def test_delivery_preselected_sensors_none_without_week() -> None:
+    """With no resolved week the preselected sensors are unknown (None), not False."""
+    data = HelloFreshAccountData(
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    for key in ("next_delivery_preselected", "next_selectable_delivery_preselected"):
+        description = next(d for d in SENSOR_DESCRIPTIONS if d.key == key)
+        assert HelloFreshSensor(coordinator, description).native_value is None
+
+
 def test_configurable_week_falls_back_to_fully_selected_upcoming_week() -> None:
     """A fully selected upcoming week is still the configurable week (none needs selection)."""
     data = HelloFreshAccountData(

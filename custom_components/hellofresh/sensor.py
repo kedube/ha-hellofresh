@@ -81,6 +81,16 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:storefront-outline",
     ),
     SensorEntityDescription(
+        key="next_delivery_preselected",
+        translation_key="next_delivery_preselected",
+        icon="mdi:robot-outline",
+    ),
+    SensorEntityDescription(
+        key="next_selectable_delivery_preselected",
+        translation_key="next_selectable_delivery_preselected",
+        icon="mdi:robot-outline",
+    ),
+    SensorEntityDescription(
         key="required_meal_count",
         translation_key="required_meal_count",
         icon="mdi:numeric",

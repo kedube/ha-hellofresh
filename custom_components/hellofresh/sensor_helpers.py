@@ -68,7 +68,10 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "shipment_tracking_status": _tracked_order_value("tracking_status"),
     "shipment_tracking_number": _tracked_order_value("tracking_number"),
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
-    "weeks_needing_selection": lambda data: len(data.weeks_needing_selection),
+    # Count of weeks where HelloFresh AUTO-PICKED the meals from the food profile (menu
+    # `mealsPreselected`) rather than the customer choosing them — the UI's "We picked N meals
+    # we thought you'd like" state. (The key name is retained for entity-ID stability.)
+    "weeks_needing_selection": lambda data: len(data.weeks_auto_picked),
     # Cutoff (cutoffDate) for the NEXT DELIVERY week (nextDeliveryWeek). Falls back to the
     # subscription's nextCutoffDate when that week object isn't resolved but the field is set.
     "next_selection_deadline": lambda data: (
@@ -98,6 +101,14 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     ),
     "next_selectable_delivery_market_count": lambda data: (
         data.next_modifiable_week.market_items_selected if data.next_modifiable_week else 0
+    ),
+    # Whether HelloFresh auto-picked (preselected) the meals for the next configurable / next
+    # modifiable delivery week — the menu's week-level mealsPreselected flag.
+    "next_delivery_preselected": lambda data: (
+        data.next_configurable_week.meals_preselected if data.next_configurable_week else None
+    ),
+    "next_selectable_delivery_preselected": lambda data: (
+        data.next_modifiable_week.meals_preselected if data.next_modifiable_week else None
     ),
     "required_meal_count": lambda data: (
         data.next_configurable_week.meals_required
@@ -284,7 +295,9 @@ def sensor_extra_state_attributes(
         }
 
     if key == "weeks_needing_selection":
-        return {"weeks": data.summarized_weeks_needing_selection}
+        # This sensor now reports the auto-picked weeks (see VALUE_GETTERS); its `weeks`
+        # attribute lists those same weeks.
+        return {"weeks": data.summarized_weeks_auto_picked}
 
     if key in WEEK_ATTRIBUTE_KEYS:
         next_configurable_week = data.next_configurable_week

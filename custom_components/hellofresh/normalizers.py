@@ -1051,6 +1051,10 @@ class HelloFreshPayloadNormalizer:
 
             account_week.recipes = menu_week.recipes
             account_week.menu_title = menu_week.menu_title or account_week.menu_title
+            # The auto-pick flag (mealsPreselected) is only on the menu payload; carry it over.
+            account_week.meals_preselected = (
+                account_week.meals_preselected or menu_week.meals_preselected
+            )
             if account_week.meals_required is None:
                 account_week.meals_required = menu_week.meals_required
             if account_week.meals_selected in (None, 0) and menu_week.meals_selected is not None:
@@ -1122,6 +1126,7 @@ class HelloFreshPayloadNormalizer:
                     status=raw_week.get("status") or "menu",
                     meals_required=subscription.meals_required,
                     meals_selected=meals_selected,
+                    meals_preselected=bool(raw_week.get("mealsPreselected")),
                     recipes=recipes,
                     source="account_menu_api",
                     menu_title=raw_week.get("title") or raw_week.get("displayName"),
