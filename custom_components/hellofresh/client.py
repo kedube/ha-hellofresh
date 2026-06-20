@@ -1739,6 +1739,22 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             seen_week_ids: set[str] = set()
 
             for account_week in weeks_by_subscription.get(subscription_id, []):
+                # The planning-menu endpoint (/gw/my-deliveries/menu) only serves the current
+                # and upcoming weeks — the web app never requests it for history. For a past
+                # week it returns a nearest/substitute menu that would overwrite the real
+                # delivered meals (from past-deliveries) with the wrong recipes. Skip past
+                # weeks here so their delivered recipes stand. See _week_is_menu_fetchable.
+                if not self._week_is_menu_fetchable(account_week):
+                    self._record_debug_attempt(
+                        "menu_attempts",
+                        {
+                            "subscription_id": subscription_id,
+                            "path": "/gw/my-deliveries/menu",
+                            "week_id": account_week.week_id,
+                            "skipped": "past_week",
+                        },
+                    )
+                    continue
                 delivery_menu_weeks = await self._async_get_delivery_menu_week_data(
                     subscription=subscription,
                     account_week=account_week,
@@ -1974,6 +1990,26 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             },
         )
         return enriched_weeks
+
+    @staticmethod
+    def _week_is_menu_fetchable(account_week: HelloFreshWeek) -> bool:
+        """Return whether the planning-menu endpoint should be queried for this week.
+
+        Only the current and upcoming weeks have a real planning menu; for a past week the
+        endpoint serves a substitute that would clobber the actually-delivered recipes. Prefer
+        the week's ``delivery_date`` (a past delivery date means a past week); when that's
+        missing fall back to comparing the ``YYYY-Www`` ``week_id`` against the current ISO
+        week (both lexicographically sortable and equal-width). A week we can't place is treated
+        as fetchable so an unparseable id never silently drops the live menu for it.
+        """
+        today = datetime.now(UTC).date()
+        if account_week.delivery_date is not None:
+            return account_week.delivery_date >= today
+        current_iso = f"{today.year}-W{today.isocalendar().week:02d}"
+        week_id = account_week.week_id or ""
+        if len(week_id) == len(current_iso) and week_id[:4].isdigit() and "-W" in week_id:
+            return week_id >= current_iso
+        return True
 
     def _build_delivery_menu_params(
         self,
