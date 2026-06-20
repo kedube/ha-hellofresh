@@ -26,9 +26,9 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
 # Bump when the card file changes so HA/browsers cache-bust the resource URL.
-CARD_VERSION = "0.16.0"
+CARD_VERSION = "0.17.0"
 MARKET_CARD_FILENAME = "hellofresh-market-card.js"
-MARKET_CARD_VERSION = "0.4.0"
+MARKET_CARD_VERSION = "0.5.0"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"

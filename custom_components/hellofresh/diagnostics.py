@@ -14,6 +14,8 @@ from .const import (
     DOMAIN,
 )
 
+# async_redact_data scrubs these keys at ANY nesting depth, so listing a key name covers it
+# wherever it appears (entry data, serialized models, AND the debug_trace request-param blobs).
 TO_REDACT = {
     CONF_ACCESS_TOKEN,
     # Long-lived credential (~60 days): refreshes access tokens, so it must never leak
@@ -27,6 +29,19 @@ TO_REDACT = {
     "delivery_address",
     "tracking_number",
     "tracking_url",
+    # PII / stable account identifiers that leak through debug_trace request params
+    # (menu_attempts / history_attempts record the full query params). These are not in the
+    # serialized models but ride along in the captured params, so redact them by key name.
+    "postcode",  # the user's ZIP/postal code — location PII
+    "postalCode",  # camelCase variant seen in some payloads
+    "subscription",  # the param-name form of subscription_id
+    "customerPlanId",  # stable per-account plan UUID
+    "customerId",
+    "customer_id",
+    # Defensive: street/region fields if a raw address ever rides along in a param or payload.
+    "region",
+    "address1",
+    "address2",
 }
 
 
