@@ -102,11 +102,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         username: str | None = None,
         password: str | None = None,
         enable_public_menu_fallback: bool = True,
+        history_weeks: int | None = None,
         token_refresh_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Initialize the client."""
         self._session = session
         self._country = country
+        # How many weeks of past history to fetch/browse. None -> the normalizer default.
+        self._history_lookback_weeks = history_weeks
         self._base_url = COUNTRY_BASE_URLS.get(country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY])
         # All access/refresh token state and the /gw login/refresh calls live in the
         # TokenManager (composition, not inheritance). The client reads the current token /
@@ -1612,7 +1615,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # delivered meals fetched, not just shown as an empty shell. Keyed off the same lookback
         # the display range uses (+2 weeks margin) so the two stay aligned as the constant moves.
         floor_date = datetime.now(UTC).date() - timedelta(
-            weeks=self._HISTORY_LOOKBACK_WEEKS + 2
+            weeks=self._history_weeks + 2
         )
         floor_iso = floor_date.isocalendar()
         floor_week = f"{floor_iso.year}-W{floor_iso.week:02d}"

@@ -13,6 +13,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+    CONF_HISTORY_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_MINUTES,
@@ -21,9 +22,12 @@ from .const import (
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+    DEFAULT_HISTORY_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
+    MAX_HISTORY_WEEKS,
     MAX_SCAN_INTERVAL_MINUTES,
+    MIN_HISTORY_WEEKS,
     MIN_SCAN_INTERVAL_MINUTES,
 )
 from .parsers import token_payload_to_entry_data
@@ -347,6 +351,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
+                    CONF_HISTORY_WEEKS: user_input[CONF_HISTORY_WEEKS],
                 },
             )
 
@@ -374,6 +379,16 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
                         ),
                     ): cv.boolean,
+                    vol.Required(
+                        CONF_HISTORY_WEEKS,
+                        default=self.config_entry.options.get(
+                            CONF_HISTORY_WEEKS,
+                            DEFAULT_HISTORY_WEEKS,
+                        ),
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_HISTORY_WEEKS, max=MAX_HISTORY_WEEKS),
+                    ),
                 }
             ),
         )

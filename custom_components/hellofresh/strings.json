@@ -58,7 +58,11 @@
         "title": "HelloFresh options",
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
-          "enable_public_menu_fallback": "Use public menu fallback"
+          "enable_public_menu_fallback": "Use public menu fallback",
+          "history_weeks": "Weeks of past history to load"
+        },
+        "data_description": {
+          "history_weeks": "How many weeks of past delivery history to fetch and make browsable in the cards. Lower this to reduce how much data is pulled each refresh; raise it to browse further back. Default 26 (about 6 months); use ~56 for a full year."
         }
       }
     }
