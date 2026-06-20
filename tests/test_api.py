@@ -2085,6 +2085,59 @@ def test_merge_past_delivery_recipes_fills_recipe_free_account_weeks() -> None:
     assert [r.name for r in by_id["2026-W30"].recipes] == ["Live Menu Dish"]
 
 
+def test_merge_past_delivery_clears_preselected_flag() -> None:
+    """A delivered week is your real selection, so its meals_preselected flag is cleared.
+
+    The menu's mealsPreselected flag for a long-past week is stale/default; once the week has
+    delivery history, what shipped IS the user's selection, so the "Preselected" badge must not
+    show. Applies whether or not the week already carries a browsable catalog.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    # Catalog already present (menu served the grid) and wrongly flagged preselected.
+    week_with_catalog = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        delivery_date=date(2026, 2, 13),
+        meals_preselected=True,
+        recipes=[
+            HelloFreshRecipe(recipe_id="d-1", name="Delivered One"),
+            HelloFreshRecipe(recipe_id="other", name="Catalog Filler"),
+        ],
+    )
+    # No catalog yet; recipes come straight from delivered history.
+    week_without_catalog = HelloFreshWeek(
+        week_id="2025-W40",
+        display_name="Sep 28 - Oct 4",
+        subscription_id="6959884",
+        delivery_date=date(2025, 10, 1),
+        meals_preselected=True,
+    )
+    delivered_a = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="d-1", name="Delivered One")],
+    )
+    delivered_b = HelloFreshWeek(
+        week_id="2025-W40",
+        display_name="Sep 28 - Oct 4",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="d-2", name="Delivered Two")],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[week_with_catalog, week_without_catalog],
+        past_delivery_weeks=[delivered_a, delivered_b],
+    )
+
+    by_id = {week.week_id: week for week in merged}
+    assert by_id["2026-W07"].meals_preselected is False
+    assert by_id["2025-W40"].meals_preselected is False
+
+
 def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
     """A past week's catalog keeps its meals but selection is corrected to the delivered ones.
 
