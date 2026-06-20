@@ -734,11 +734,13 @@ class HelloFreshPayloadNormalizer:
     def _build_delivery_history_range() -> dict[str, str]:
         """Return the range for account delivery lookups.
 
-        Spans 12 weeks of history for delivered-box context and 6 weeks ahead so the
-        upcoming-delivery sensors see subsequent scheduled weeks, not just the next one.
+        Spans 52 weeks (one year) of history so the meal-planner card and history sensors can
+        browse a full year of past boxes — the API supports far wider ranges, but a year is the
+        practical cap that keeps the per-poll deliveries payload bounded. Extends 6 weeks ahead
+        so the upcoming-delivery sensors see subsequent scheduled weeks, not just the next one.
         """
         today = datetime.now(UTC).date()
-        start = today - timedelta(weeks=12)
+        start = today - timedelta(weeks=52)
         end = today + timedelta(weeks=6)
         start_iso = start.isocalendar()
         end_iso = end.isocalendar()
