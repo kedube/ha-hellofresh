@@ -1692,21 +1692,21 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     pages: dict[str | None, dict[str, object]] = {
         None: {
             "weeks": [
-                {"week": "2026-W25", "subscriptionId": "sub-1", "meals": [{"name": "A25"}]},
-                {"week": "2026-W24", "subscriptionId": "sub-1", "meals": [{"name": "A24"}]},
+                {"week": "2026-W25", "subscriptionId": "sub-1", "meals": [{"id": "r25", "name": "A25"}]},
+                {"week": "2026-W24", "subscriptionId": "sub-1", "meals": [{"id": "r24", "name": "A24"}]},
             ],
             "nextWeek": "2026-W23",
         },
         "2026-W23": {
             "weeks": [
-                {"week": "2026-W23", "subscriptionId": "sub-1", "meals": [{"name": "A23"}]},
-                {"week": "2026-W22", "subscriptionId": "sub-1", "meals": [{"name": "A22"}]},
+                {"week": "2026-W23", "subscriptionId": "sub-1", "meals": [{"id": "r23", "name": "A23"}]},
+                {"week": "2026-W22", "subscriptionId": "sub-1", "meals": [{"id": "r22", "name": "A22"}]},
             ],
             "nextWeek": "2026-W21",
         },
         "2026-W21": {
             "weeks": [
-                {"week": "2026-W21", "subscriptionId": "sub-1", "meals": [{"name": "A21"}]},
+                {"week": "2026-W21", "subscriptionId": "sub-1", "meals": [{"id": "r21", "name": "A21"}]},
             ],
             "nextWeek": None,  # end of history
         },
@@ -1740,6 +1740,64 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     ]
     assert "2026-W23" in cursors
     assert "2026-W21" in cursors
+
+
+def test_past_delivery_history_prefers_recipe_bearing_endpoint() -> None:
+    """A metadata-only history endpoint must not win over one carrying delivered recipes.
+
+    The ranged ``/gw/api/customers/me/deliveries`` endpoint returns past weeks as shells with
+    no recipe list. If it wins, every past week is left without its delivered meals and the
+    dashboard shows the wrong selection for old weeks. ``/gw/my-deliveries/past-deliveries``
+    carries the real delivered recipes and must be preferred even when the ranged endpoint
+    answers first.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+
+    class DummyResponse:
+        status = 200
+
+    requests: list[str] = []
+
+    async def fake_api_get(path: str, params=None, extra_headers=None):
+        requests.append(path)
+        if path == "/gw/customer-complaints/users/me/deliveries":
+            raise HelloFreshError("unavailable")
+        return DummyResponse()
+
+    async def fake_response_json(_response):
+        path = requests[-1]
+        if path == "/gw/api/customers/me/deliveries":
+            # Ranged endpoint: real weeks, but metadata-only (no recipes).
+            return {
+                "items": [
+                    {"id": "2026-W07", "deliveryDate": "2026-02-09T12:00:00-0800"},
+                    {"id": "2026-W06", "deliveryDate": "2026-02-02T12:00:00-0800"},
+                ]
+            }
+        # past-deliveries: the same weeks WITH delivered recipes.
+        return {
+            "weeks": [
+                {
+                    "week": "2026-W07",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "delivered-7", "name": "Real Delivered Meal"}],
+                },
+            ],
+            "nextWeek": None,
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+
+    # The recipe-bearing past-deliveries result wins despite the ranged endpoint answering.
+    assert any(week.recipes for week in weeks)
+    assert {r.name for w in weeks for r in w.recipes} == {"Real Delivered Meal"}
+    assert "/gw/my-deliveries/past-deliveries" in requests
 
 
 def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:

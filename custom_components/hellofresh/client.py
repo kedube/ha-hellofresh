@@ -1506,6 +1506,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         )
         ordered_calls = self._order_candidates_by_preference("history", None, candidate_calls)
 
+        fallback_weeks: tuple[str, dict[str, Any] | None, list[HelloFreshWeek]] | None = None
         for path, params in ordered_calls:
             try:
                 response = await self._async_api_get(path, params=params)
@@ -1532,22 +1533,40 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                     "recognized_week_count": len(weeks),
                 },
             )
-            if weeks:
-                self._remember_preferred_endpoint("history", None, (path, params))
-                # The past-deliveries endpoint pages ~4 weeks at a time and hands back a
-                # ``nextWeek`` cursor; without following it, history stops after the first
-                # page (~131 days) and older weeks show no — or stale — recipe data. Walk
-                # the cursor back to the configured history floor for that endpoint only.
-                if path == "/gw/my-deliveries/past-deliveries":
-                    weeks = await self._async_paginate_past_deliveries(
-                        path=path,
-                        params=params,
-                        payload=payload,
-                        first_page_weeks=weeks,
-                        subscriptions=subscriptions,
-                    )
-                return weeks
+            if not weeks:
+                continue
 
+            # Prefer a history source that actually carries the delivered recipes. The ranged
+            # ``/gw/api/customers/me/deliveries`` endpoint returns ~a year of past weeks but as
+            # metadata-only shells (no recipe list); if it "wins" this loop, every past week is
+            # left without its delivered meals and the dashboard shows the wrong selection for
+            # old weeks. ``/gw/my-deliveries/past-deliveries`` is the only history source with
+            # the actually-delivered recipes. So when this candidate yielded no recipes, hold it
+            # as a metadata-only fallback and keep trying for a recipe-bearing endpoint.
+            if not any(week.recipes for week in weeks):
+                if fallback_weeks is None:
+                    fallback_weeks = (path, params, weeks)
+                continue
+
+            self._remember_preferred_endpoint("history", None, (path, params))
+            # The past-deliveries endpoint pages ~4 weeks at a time and hands back a
+            # ``nextWeek`` cursor; without following it, history stops after the first
+            # page (~131 days) and older weeks show no — or stale — recipe data. Walk
+            # the cursor back to the configured history floor for that endpoint only.
+            if path == "/gw/my-deliveries/past-deliveries":
+                weeks = await self._async_paginate_past_deliveries(
+                    path=path,
+                    params=params,
+                    payload=payload,
+                    first_page_weeks=weeks,
+                    subscriptions=subscriptions,
+                )
+            return weeks
+
+        if fallback_weeks is not None:
+            path, params, weeks = fallback_weeks
+            self._remember_preferred_endpoint("history", None, (path, params))
+            return weeks
         return []
 
     async def _async_paginate_past_deliveries(
