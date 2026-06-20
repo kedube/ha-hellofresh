@@ -187,6 +187,10 @@ async def _curl_cffi_request(
             json=json_payload,
             headers=headers,
             impersonate=_IMPERSONATE_TARGET,
+            # Verify the server's TLS certificate. curl_cffi defaults to True, but this carries
+            # credentials/tokens (the /gw auth POSTs), so the security-critical setting is made
+            # explicit rather than relying on a library default that a future version could change.
+            verify=True,
         )
     return AuthResponse(
         status=response.status_code,

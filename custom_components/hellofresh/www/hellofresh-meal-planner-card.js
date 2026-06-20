@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.16.0";
+const CARD_VERSION = "0.17.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -44,6 +44,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    // Parse the stylesheet ONCE and share it across all instances via adoptedStyleSheets,
+    // instead of re-injecting <style> (and re-parsing ~150 lines of CSS) on every render.
+    this.shadowRoot.adoptedStyleSheets = [HelloFreshMealPlannerCard._sheet()];
     this._weeks = null; // cached get_weeks response
     this._account = null; // account-level fields from get_weeks (e.g. plan total price fallback)
     this._cursor = 0; // index into this._weeks
@@ -109,6 +112,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._account = response.account || null; // account-level fallbacks (e.g. plan price)
       this._weeks = weeks;
       this._pending = {}; // server is now the source of truth; drop any stale edits
+      this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
+      this._savedSelCache = null;
       this._cursor = this._defaultCursor(weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -198,11 +203,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // Saved selection as a Map of course_index -> serving quantity (>=1 for chosen meals).
+  // Cached per week_id (depends only on server data, invalidated on fetch) since it's consulted
+  // repeatedly per render (display, dirty check, needs-choice, tile selected state).
   _savedSelection(week) {
+    if (!this._savedSelCache) this._savedSelCache = new Map();
+    const cached = this._savedSelCache.get(week.week_id);
+    if (cached) return cached;
     const map = new Map();
     for (const r of week.recipes || []) {
       if (this._isSelected(r)) map.set(r.course_index, this._recipeQuantity(r));
     }
+    this._savedSelCache.set(week.week_id, map);
     return map;
   }
 
@@ -270,7 +281,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._nudgeIfOver(week, pending, 1);
       pending.set(idx, 1);
     }
-    this._render();
+    this._renderSelectionChange(week, recipe);
   }
 
   // +/- stepper: change a meal's serving count by delta, clamped to [0, MAX_QUANTITY].
@@ -288,7 +299,39 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       if (delta > 0) this._nudgeIfOver(week, pending, next - current);
       pending.set(idx, next);
     }
-    this._render();
+    this._renderSelectionChange(week, recipe);
+  }
+
+  // Selection edits are the hot path. When the "selected only" filter is OFF, a tap/stepper
+  // can't change which tiles are visible, so update just the affected tile and the header
+  // chips in place — no grid rebuild, no image teardown. With the filter ON, visibility can
+  // change, so fall back to a full render.
+  _renderSelectionChange(week, recipe) {
+    if (this._showSelectedOnly || !this._shell) {
+      this._render();
+      return;
+    }
+    this._updateTile(week, recipe);
+    // Header carries the live servings count / dirty + Save/Cancel state.
+    this._shell.content.querySelector(".statusrow")?.replaceWith(
+      this._fragment(this._renderStatusRow(week))
+    );
+  }
+
+  // Re-render a single recipe tile in place (selected state, qty badge, stepper).
+  _updateTile(week, recipe) {
+    const idxAttr = String(recipe.course_index);
+    const tile = this._shell.content.querySelector(`.recipe[data-index="${CSS.escape(idxAttr)}"]`);
+    if (!tile) return;
+    const replacement = this._fragment(this._renderRecipeTile(week, recipe, this._tileContext(week)));
+    if (replacement.firstElementChild) tile.replaceWith(replacement.firstElementChild);
+  }
+
+  // Parse an HTML string into a detached fragment (for in-place node replacement).
+  _fragment(html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    return tpl.content;
   }
 
   // meals_required is the box's included serving count, not a hard cap — extras are allowed
@@ -421,21 +464,37 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       </div>`;
   }
 
+  // Build the stable shell once (ha-card + delegated listeners), then on every render only
+  // replace the inner regions' HTML. The shadow root and its single set of event listeners are
+  // never torn down, so interactions don't re-parse CSS or re-attach handlers.
+  _ensureShell() {
+    if (this._shell) return;
+    const card = document.createElement("ha-card");
+    card.innerHTML = `
+      <div class="js-card-header"></div>
+      <div class="js-banner"></div>
+      <div class="content"></div>
+      <div class="js-toast"></div>`;
+    this.shadowRoot.appendChild(card);
+    this._shell = {
+      header: card.querySelector(".js-card-header"),
+      banner: card.querySelector(".js-banner"),
+      content: card.querySelector(".content"),
+      toast: card.querySelector(".js-toast"),
+    };
+    this._bindDelegated(card);
+  }
+
   _render() {
     if (!this.shadowRoot) return;
+    this._ensureShell();
     const week = this._weeks ? this._weeks[this._cursor] : null;
-    this.shadowRoot.innerHTML = `
-      <style>${this._styles()}</style>
-      <ha-card>
-        ${this._renderCardHeader()}
-        ${this._renderNeedsChoosingBanner()}
-        <div class="content">
-          ${this._renderBody(week)}
-        </div>
-        ${this._toast ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>` : ""}
-      </ha-card>
-    `;
-    this._bind();
+    this._shell.header.innerHTML = this._renderCardHeader();
+    this._shell.banner.innerHTML = this._renderNeedsChoosingBanner();
+    this._shell.content.innerHTML = this._renderBody(week);
+    this._shell.toast.innerHTML = this._toast
+      ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
+      : "";
   }
 
   _renderBody(week) {
@@ -509,16 +568,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   _renderHeader(week) {
-    const editable = this._isEditable(week);
-    const required = week.meals_required;
-    const display = this._displaySelection(week);
-    // Count total servings (a 2× meal fills two slots), matching HelloFresh's box math.
-    const selected = this._servingsTotal(display);
-    const dirty = this._isDirty(week);
-    const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const rel = this._relativeWeek(week);
-    const canSave = !this._busy && (!required || selected >= required);
-    const extra = required && selected > required ? selected - required : 0;
     return `
       <div class="header">
         <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
@@ -532,6 +582,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         </div>
         <button class="nav" data-action="next" aria-label="Next week">›</button>
       </div>
+      ${this._renderStatusRow(week)}
+    `;
+  }
+
+  // The status row reflects live selection state, so it's re-rendered on its own during an
+  // in-place selection edit (see _renderSelectionChange) without rebuilding the whole header.
+  _renderStatusRow(week) {
+    const editable = this._isEditable(week);
+    const required = week.meals_required;
+    const display = this._displaySelection(week);
+    // Count total servings (a 2× meal fills two slots), matching HelloFresh's box math.
+    const selected = this._servingsTotal(display);
+    const dirty = this._isDirty(week);
+    const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
+    const canSave = !this._busy && (!required || selected >= required);
+    const extra = required && selected > required ? selected - required : 0;
+    return `
       <div class="statusrow">
         <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
           ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
@@ -578,151 +645,170 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // Collapse true-duplicate recipes (identical signature) into one representative, keeping every
   // collapsed copy's course_index under `aliasIndexes` so a saved selection on any copy still
   // shows as chosen and selection round-trips. Genuinely different variants are left untouched.
-  _dedupeRecipes(recipes) {
+  //
+  // Result (deduped list + name counts) is cached per week_id; it depends only on the week's
+  // recipe data, not on selection/filter state, so it's computed once per fetch rather than on
+  // every render (each entry previously cost a JSON.stringify per recipe across the catalog).
+  _dedupedFor(week) {
+    if (!this._dedupeCache) this._dedupeCache = new Map();
+    const cached = this._dedupeCache.get(week.week_id);
+    if (cached) return cached;
+
     const bySig = new Map();
-    for (const r of recipes) {
+    for (const r of week.recipes || []) {
       const sig = this._recipeSignature(r);
       const existing = bySig.get(sig);
-      if (existing) {
-        existing.aliasIndexes.push(r.course_index);
-      } else {
-        bySig.set(sig, { recipe: r, aliasIndexes: [r.course_index] });
-      }
+      if (existing) existing.aliasIndexes.push(r.course_index);
+      else bySig.set(sig, { recipe: r, aliasIndexes: [r.course_index] });
     }
-    return [...bySig.values()].map(({ recipe, aliasIndexes }) =>
+    const recipes = [...bySig.values()].map(({ recipe, aliasIndexes }) =>
       aliasIndexes.length > 1 ? { ...recipe, _aliasIndexes: aliasIndexes } : recipe
     );
+    // After dedup, a name only recurs when copies genuinely DIFFER (variant/surcharge/nutrition).
+    const nameCounts = {};
+    for (const r of recipes) nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
+
+    const entry = { recipes, nameCounts };
+    this._dedupeCache.set(week.week_id, entry);
+    return entry;
+  }
+
+  // Per-render constants shared by every tile of a week (avoids recomputing per tile).
+  _tileContext(week) {
+    const { nameCounts } = this._dedupedFor(week);
+    const display = this._displaySelection(week);
+    return {
+      editable: this._isEditable(week),
+      display,
+      nameCounts,
+      // A tile is selected if its own index OR any collapsed-duplicate index is chosen.
+      sel: (r) =>
+        display.has(r.course_index) || (r._aliasIndexes || []).some((i) => display.has(i)),
+    };
   }
 
   _renderGrid(week) {
-    const rawRecipes = week.recipes || [];
-    if (rawRecipes.length === 0) {
+    const { recipes } = this._dedupedFor(week);
+    if (recipes.length === 0) {
       return `<div class="state">No menu available for this week yet.</div>`;
     }
-    const recipes = this._dedupeRecipes(rawRecipes);
-    // Cache the deduped tiles (which carry `_aliasIndexes`) so click binding toggles the same
+    // Cache the deduped tiles (which carry `_aliasIndexes`) so click handling resolves the same
     // objects the grid rendered, not the raw recipe list.
     this._renderedRecipes = recipes;
-    const editable = this._isEditable(week);
-    const display = this._displaySelection(week);
-    // A tile counts as selected if its own index OR any collapsed-duplicate index is chosen.
-    const sel = (r) =>
-      display.has(r.course_index) ||
-      (r._aliasIndexes || []).some((i) => display.has(i));
-
-    // After dedup, a name only recurs when the copies genuinely DIFFER (variation modifier,
-    // surcharge, or nutrition). Those are real variants worth flagging; identical copies were
-    // already merged above and won't trip this.
-    const nameCounts = {};
-    recipes.forEach((r) => {
-      nameCounts[r.name] = (nameCounts[r.name] || 0) + 1;
-    });
+    const ctx = this._tileContext(week);
 
     // When "show selected only" is on, hide unselected tiles. Uses the display selection, so a
     // meal stays visible while the user is toggling it off mid-edit (it disappears on the next
-    // render only if still deselected). Variant aliases are respected via sel().
-    const visible = this._showSelectedOnly ? recipes.filter((r) => sel(r)) : recipes;
+    // full render only if still deselected). Variant aliases are respected via sel().
+    const visible = this._showSelectedOnly ? recipes.filter((r) => ctx.sel(r)) : recipes;
     if (this._showSelectedOnly && visible.length === 0) {
       return `<div class="state">No meals selected for this week yet.</div>`;
     }
 
-    const ordered = visible.slice().sort((a, b) => (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0));
-    const cards = ordered
-      .map((r) => {
-        const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
-        const isSelected = sel(r);
-        const isVariant = nameCounts[r.name] > 1;
-        // The modifier that actually names the difference ("2x Bacon", "Ground Turkey", ...).
-        // Falls back to the badge/tag-driven flag when the menu didn't provide a modifier title.
-        const variantTitle = r.variation_title || null;
-        // Numbers line: protein + calories together makes double-protein variants obvious.
-        const stats = [];
-        if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
-        if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
-        // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs).
-        const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious", "Veggie", "Vegan"];
-        const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
-        // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
-        const qty = isSelected ? this._displayedQuantity(week, r) : 0;
-        const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
-        const idxAttr = this._esc(String(r.course_index));
-        return `
-          <div class="recipe ${isSelected ? "selected" : ""} ${editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
-               data-index="${idxAttr}">
-            <div class="imgwrap">
-              ${r.image_url
-                ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
-                : `<div class="noimg"></div>`}
-              ${isSelected ? `<div class="check">✓</div>` : ""}
-              ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
-              ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
-              ${variantTitle
-                ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
-                : isVariant ? `<div class="variant-flag">Variant</div>` : ""}
-            </div>
-            <div class="meta">
-              <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
-              ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
-              ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
-              ${r.badge || tags.length
-                ? `<div class="chips">
-                     ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
-                     ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
-                   </div>`
-                : ""}
-              ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
-              ${editable && isSelected
-                ? `<div class="stepper" data-stepper="${idxAttr}">
-                     <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="Fewer servings">−</button>
-                     <span class="qval">${qty}</span>
-                     <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
-                     <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
-                   </div>`
-                : ""}
-            </div>
-          </div>`;
-      })
-      .join("");
+    const ordered = visible.slice().sort((a, b) => (ctx.sel(b) ? 1 : 0) - (ctx.sel(a) ? 1 : 0));
+    const cards = ordered.map((r) => this._renderRecipeTile(week, r, ctx)).join("");
     return `<div class="grid ${this._busy ? "busy" : ""}">${cards}</div>`;
   }
 
-  _bind() {
-    const root = this.shadowRoot;
-    const week = this._weeks ? this._weeks[this._cursor] : null;
-    root.querySelectorAll("[data-action]").forEach((el) => {
-      const action = el.getAttribute("data-action");
-      el.addEventListener("click", () => {
-        if (action === "prev") this._step(-1);
-        else if (action === "next") this._step(1);
-        else if (action === "refresh") this._fetchWeeks();
-        else if (action === "skip" && week) this._toggleSkip(week);
-        else if (action === "save" && week) this._saveSelection(week);
-        else if (action === "cancel" && week) this._cancelEdit(week);
-        else if (action === "goto-needs") this._gotoNeedsChoice();
-        else if (action === "toggle-filter") this._toggleShowSelectedOnly();
-      });
+  // Render one recipe tile. `ctx` carries the per-week shared values from _tileContext.
+  _renderRecipeTile(week, r, ctx) {
+    const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
+    const isSelected = ctx.sel(r);
+    const isVariant = ctx.nameCounts[r.name] > 1;
+    // The modifier that actually names the difference ("2x Bacon", "Ground Turkey", ...).
+    const variantTitle = r.variation_title || null;
+    // Numbers line: protein + calories together makes double-protein variants obvious.
+    const stats = [];
+    if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
+    if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
+    // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs).
+    const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious", "Veggie", "Vegan"];
+    const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
+    // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
+    const qty = isSelected ? this._displayedQuantity(week, r) : 0;
+    const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
+    const idxAttr = this._esc(String(r.course_index));
+    return `
+      <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
+           data-index="${idxAttr}">
+        <div class="imgwrap">
+          ${r.image_url
+            ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
+            : `<div class="noimg"></div>`}
+          ${isSelected ? `<div class="check">✓</div>` : ""}
+          ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
+          ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
+          ${variantTitle
+            ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
+            : isVariant ? `<div class="variant-flag">Variant</div>` : ""}
+        </div>
+        <div class="meta">
+          <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
+          ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
+          ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
+          ${r.badge || tags.length
+            ? `<div class="chips">
+                 ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
+                 ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
+               </div>`
+            : ""}
+          ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
+          ${ctx.editable && isSelected
+            ? `<div class="stepper" data-stepper="${idxAttr}">
+                 <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="Fewer servings">−</button>
+                 <span class="qval">${qty}</span>
+                 <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
+                 <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
+               </div>`
+            : ""}
+        </div>
+      </div>`;
+  }
+
+  // A SINGLE delegated click listener on the card, attached once. It reads data attributes off
+  // the clicked element's ancestry, so re-rendering inner HTML never re-attaches handlers.
+  _bindDelegated(card) {
+    card.addEventListener("click", (ev) => {
+      const week = this._weeks ? this._weeks[this._cursor] : null;
+
+      // Quantity steppers take priority — a +/- tap must not also toggle the tile.
+      const qbtn = ev.target.closest(".qbtn");
+      if (qbtn && !qbtn.disabled) {
+        ev.stopPropagation();
+        const recipe = this._findRenderedRecipe(qbtn.getAttribute("data-index"));
+        if (week && recipe) {
+          this._changeQuantity(week, recipe, qbtn.getAttribute("data-qty") === "inc" ? 1 : -1);
+        }
+        return;
+      }
+
+      // Recipe tile tap (only meaningful on editable weeks).
+      const tile = ev.target.closest(".recipe.editable");
+      if (tile) {
+        const recipe = this._findRenderedRecipe(tile.getAttribute("data-index"));
+        if (week && recipe) this._toggleRecipe(week, recipe);
+        return;
+      }
+
+      // Everything else routes through data-action.
+      const actionEl = ev.target.closest("[data-action]");
+      if (!actionEl) return;
+      const action = actionEl.getAttribute("data-action");
+      if (action === "prev") this._step(-1);
+      else if (action === "next") this._step(1);
+      else if (action === "refresh") this._fetchWeeks();
+      else if (action === "skip" && week) this._toggleSkip(week);
+      else if (action === "save" && week) this._saveSelection(week);
+      else if (action === "cancel" && week) this._cancelEdit(week);
+      else if (action === "goto-needs") this._gotoNeedsChoice();
+      else if (action === "toggle-filter") this._toggleShowSelectedOnly();
     });
-    if (week && this._isEditable(week)) {
-      const findRecipe = (index) =>
-        (this._renderedRecipes || week.recipes || []).find(
-          (r) => String(r.course_index) === index
-        );
-      // Quantity steppers first; stop propagation so the +/- taps don't also toggle the tile.
-      root.querySelectorAll(".qbtn").forEach((el) => {
-        el.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const recipe = findRecipe(el.getAttribute("data-index"));
-          if (recipe) this._changeQuantity(week, recipe, el.getAttribute("data-qty") === "inc" ? 1 : -1);
-        });
-      });
-      root.querySelectorAll(".recipe.editable").forEach((el) => {
-        const index = el.getAttribute("data-index");
-        el.addEventListener("click", () => {
-          const recipe = findRecipe(index);
-          if (recipe) this._toggleRecipe(week, recipe);
-        });
-      });
-    }
+  }
+
+  _findRenderedRecipe(index) {
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    const list = this._renderedRecipes || (week && week.recipes) || [];
+    return list.find((r) => String(r.course_index) === index);
   }
 
   // ---- small helpers -------------------------------------------------------
@@ -792,7 +878,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .replace(/"/g, "&quot;");
   }
 
-  _styles() {
+  // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).
+  static _sheet() {
+    if (!this.__sheet) {
+      this.__sheet = new CSSStyleSheet();
+      this.__sheet.replaceSync(this._styles());
+    }
+    return this.__sheet;
+  }
+
+  static _styles() {
     return `
       ha-card { overflow: hidden; }
       .card-header {

@@ -74,7 +74,8 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
             return False
 
         async def request(
-            self, method, url, params=None, json=None, headers=None, impersonate=None
+            self, method, url, params=None, json=None, headers=None, impersonate=None,
+            verify=None,
         ):
             return await post(
                 method=method,
@@ -83,6 +84,7 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
                 json=json,
                 headers=headers,
                 impersonate=impersonate,
+                verify=verify,
             )
 
     requests_module = ModuleType("curl_cffi.requests")
@@ -122,7 +124,7 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     """When curl_cffi is present, the request goes through it with a Chrome impersonate target."""
     seen: dict = {}
 
-    async def fake_post(*, method, url, params, json, headers, impersonate):
+    async def fake_post(*, method, url, params, json, headers, impersonate, verify=None):
         seen.update(
             {
                 "method": method,
@@ -131,6 +133,7 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
                 "json": json,
                 "headers": headers,
                 "impersonate": impersonate,
+                "verify": verify,
             }
         )
         return SimpleNamespace(
@@ -157,6 +160,8 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     assert seen["method"] == "POST"
     assert seen["url"].endswith("/gw/login")
     assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
+    # TLS cert verification is explicitly enabled on the credential-carrying auth POST.
+    assert seen["verify"] is True
     assert seen["json"] == {"username": "a", "password": "b"}
     assert isinstance(response, AuthResponse)
     assert response.status == 200
@@ -197,8 +202,8 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
     """async_request routes data XHRs (any verb) through curl_cffi with the right method."""
     seen: dict = {}
 
-    async def fake_request(*, method, url, params, json, headers, impersonate):
-        seen.update({"method": method, "url": url, "impersonate": impersonate})
+    async def fake_request(*, method, url, params, json, headers, impersonate, verify=None):
+        seen.update({"method": method, "url": url, "impersonate": impersonate, "verify": verify})
         return SimpleNamespace(
             status_code=200,
             headers={"Content-Type": "application/json"},

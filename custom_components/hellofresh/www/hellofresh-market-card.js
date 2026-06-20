@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.4.0";
+const MARKET_CARD_VERSION = "0.5.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -43,6 +43,9 @@ class HelloFreshMarketCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    // Parse the stylesheet ONCE and share across instances instead of re-injecting <style> on
+    // every render.
+    this.shadowRoot.adoptedStyleSheets = [HelloFreshMarketCard._sheet()];
     this._weeks = null;
     this._cursor = 0;
     this._loading = false;
@@ -206,7 +209,34 @@ class HelloFreshMarketCard extends HTMLElement {
     if (next === current) return;
     if (next === 0) pending.delete(item.item_id);
     else pending.set(item.item_id, next);
-    this._render();
+    this._renderQuantityChange(week, item);
+  }
+
+  // Quantity edits are the hot path. With the "selected only" filter OFF, a step can't change
+  // which tiles are visible, so update just the affected tile and the status row in place. With
+  // the filter ON, visibility can change, so fall back to a full render.
+  _renderQuantityChange(week, item) {
+    if (this._showSelectedOnly || !this._shell) {
+      this._render();
+      return;
+    }
+    const idAttr = item.item_id;
+    const tile = this._shell.body.querySelector(`.item[data-id="${CSS.escape(idAttr)}"]`);
+    if (tile) {
+      const editable = this._isEditable(week);
+      const qty = this._displaySelection(week).get(item.item_id) || 0;
+      const frag = this._fragment(this._renderTile(week, item, editable, qty));
+      if (frag.firstElementChild) tile.replaceWith(frag.firstElementChild);
+    }
+    this._shell.body.querySelector(".statusrow")?.replaceWith(
+      this._fragment(this._renderStatusRow(week))
+    );
+  }
+
+  _fragment(html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    return tpl.content;
   }
 
   _cancelEdit(week) {
@@ -249,21 +279,35 @@ class HelloFreshMarketCard extends HTMLElement {
 
   // ---- render --------------------------------------------------------------
 
+  // Build the stable shell once (ha-card + a single delegated listener), then on each render
+  // only replace the inner regions' HTML — no CSS re-parse, no listener re-attach.
+  _ensureShell() {
+    if (this._shell) return;
+    const card = document.createElement("ha-card");
+    card.innerHTML = `
+      <div class="head"></div>
+      <div class="js-body"></div>
+      <div class="js-toast"></div>`;
+    this.shadowRoot.appendChild(card);
+    this._shell = {
+      head: card.querySelector(".head"),
+      body: card.querySelector(".js-body"),
+      toast: card.querySelector(".js-toast"),
+    };
+    this._bindDelegated(card);
+  }
+
   _render() {
     if (!this.shadowRoot) return;
+    this._ensureShell();
     const week = this._weeks ? this._weeks[this._cursor] : null;
-    this.shadowRoot.innerHTML = `
-      <style>${this._styles()}</style>
-      <ha-card>
-        <div class="head">
-          ${this._renderLogo()}
-          <span class="title-text">${this._esc(this._config.title)}</span>
-        </div>
-        ${this._renderBody(week)}
-        ${this._toast ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>` : ""}
-      </ha-card>
-    `;
-    this._bind();
+    this._shell.head.innerHTML = `
+      ${this._renderLogo()}
+      <span class="title-text">${this._esc(this._config.title)}</span>`;
+    this._shell.body.innerHTML = this._renderBody(week);
+    this._shell.toast.innerHTML = this._toast
+      ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
+      : "";
   }
 
   // Optional header logo. `logo: true` uses the bundled HelloFresh logo served by the
@@ -289,11 +333,6 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _renderHeader(week) {
-    const editable = this._isEditable(week);
-    const dirty = this._isDirty(week);
-    const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
-    const totalCents = this._cartTotalCents(week);
-    const currency = (week.market_items.find((i) => i.currency) || {}).currency;
     return `
       <div class="header">
         <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
@@ -306,6 +345,19 @@ class HelloFreshMarketCard extends HTMLElement {
         </div>
         <button class="nav" data-action="next" aria-label="Next week">›</button>
       </div>
+      ${this._renderStatusRow(week)}
+    `;
+  }
+
+  // Reflects live cart total / dirty state, so it's re-rendered on its own during an in-place
+  // quantity edit (see _renderQuantityChange) without rebuilding the whole header.
+  _renderStatusRow(week) {
+    const editable = this._isEditable(week);
+    const dirty = this._isDirty(week);
+    const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
+    const totalCents = this._cartTotalCents(week);
+    const currency = (week.market_items.find((i) => i.currency) || {}).currency;
+    return `
       <div class="statusrow">
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
           Market total ${this._fmtPrice(totalCents / 100, currency)}${dirty ? " · unsaved" : ""}
@@ -400,30 +452,31 @@ class HelloFreshMarketCard extends HTMLElement {
       </div>`;
   }
 
-  _bind() {
-    const root = this.shadowRoot;
-    const week = this._weeks ? this._weeks[this._cursor] : null;
-    root.querySelectorAll("[data-action]").forEach((el) => {
-      const action = el.getAttribute("data-action");
-      el.addEventListener("click", () => {
-        if (action === "prev") this._step(-1);
-        else if (action === "next") this._step(1);
-        else if (action === "refresh") this._fetchWeeks();
-        else if (action === "save" && week) this._saveSelection(week);
-        else if (action === "cancel" && week) this._cancelEdit(week);
-        else if (action === "toggle-filter") this._toggleShowSelectedOnly();
-      });
+  // A SINGLE delegated click listener on the card, attached once.
+  _bindDelegated(card) {
+    card.addEventListener("click", (ev) => {
+      const week = this._weeks ? this._weeks[this._cursor] : null;
+
+      const qbtn = ev.target.closest(".qbtn");
+      if (qbtn && !qbtn.disabled) {
+        ev.stopPropagation();
+        const item = week && (week.market_items || []).find(
+          (i) => i.item_id === qbtn.getAttribute("data-id")
+        );
+        if (item) this._changeQuantity(week, item, qbtn.getAttribute("data-qty") === "inc" ? 1 : -1);
+        return;
+      }
+
+      const actionEl = ev.target.closest("[data-action]");
+      if (!actionEl) return;
+      const action = actionEl.getAttribute("data-action");
+      if (action === "prev") this._step(-1);
+      else if (action === "next") this._step(1);
+      else if (action === "refresh") this._fetchWeeks();
+      else if (action === "save" && week) this._saveSelection(week);
+      else if (action === "cancel" && week) this._cancelEdit(week);
+      else if (action === "toggle-filter") this._toggleShowSelectedOnly();
     });
-    if (week && this._isEditable(week)) {
-      const findItem = (id) => (week.market_items || []).find((i) => i.item_id === id);
-      root.querySelectorAll(".qbtn").forEach((el) => {
-        el.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const item = findItem(el.getAttribute("data-id"));
-          if (item) this._changeQuantity(week, item, el.getAttribute("data-qty") === "inc" ? 1 : -1);
-        });
-      });
-    }
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -470,7 +523,16 @@ class HelloFreshMarketCard extends HTMLElement {
       .replace(/"/g, "&quot;");
   }
 
-  _styles() {
+  // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).
+  static _sheet() {
+    if (!this.__sheet) {
+      this.__sheet = new CSSStyleSheet();
+      this.__sheet.replaceSync(this._styles());
+    }
+    return this.__sheet;
+  }
+
+  static _styles() {
     return `
       ha-card { padding: 12px 16px 16px; }
       .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
