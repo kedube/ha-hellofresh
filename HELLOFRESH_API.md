@@ -24,10 +24,11 @@ It is derived from the integration source and its normalization tests:
   - `HelloFreshSubscription`
   - `HelloFreshWeek`
   - `HelloFreshRecipe`
+  - `HelloFreshMarketItem`
   - `HelloFreshOrder`
   - `HelloFreshAccountData`
 - Home Assistant entities are derived from normalized account data rather than directly exposing raw API payloads.
-- Write actions for meal selection (`PUT /gw/v1/carts/{week}`) and skip/unskip (`PATCH …/delivery_dates/{week}`) are HAR-verified; each keeps a set of older guessed endpoints as a fallback only.
+- Write actions for meal selection and HelloFresh Market add-ons (both `PUT /gw/v1/carts/{week}`) and skip/unskip (`PATCH …/delivery_dates/{week}`) are HAR-verified; each keeps a set of older guessed endpoints as a fallback only.
 
 ## Regional Base URLs
 
@@ -661,6 +662,50 @@ The observed `/gw/my-deliveries/menu` response is a single week-like object rath
 
 Each `meals[]` entry may wrap the actual recipe in a nested `recipe` object and may also include menu-only metadata such as `index`, `selection`, and `charge`.
 
+#### `meals[]` selection and variants
+
+- `meals[].selection.quantity` — when present and `> 0`, the meal is **currently chosen** (this is how `is_selected` is resolved for recipes). `meals[].selection.selected` (a bool) is honored when present.
+- `meals[].charge` — `{label, unitAmount, totalAmount, reason, strategy}` for premium/variant meals; `label` (e.g. `+7.99/serving`) and `unitAmount` (cents) drive a tile's surcharge display.
+- `meals[].recipe.label.text` — a badge such as `Premium Picks`.
+- **`modularity[]`** — the variant system. Each group has a `defaultCourseIndex` (the base meal) plus `variations[]` / `addOns[]` whose `{index, title}` name how each variant differs (e.g. `"2x Bacon"`, `"Ground Turkey"`). The `index` equals a meal's own `index`, so the integration joins them to attach a human-readable `variation_title` to each recipe. This is what distinguishes same-named meals whose price/nutrition can otherwise look identical.
+
+#### `addOns` — HelloFresh Market catalog
+
+The week's Market add-ons (extras: appetizers, breakfast, desserts, proteins, sides, …) live under `addOns`:
+
+```jsonc
+"addOns": {
+  "selectionLimit": 100,
+  "groups": [
+    {
+      "groupType": "protein",            // appetizer | breakfast | dessert | lunch | protein | sides | goodchop | petstable | donation | lowprices
+      "sku": "US-APR-0-0-0",
+      "selectionLimit": 8,
+      "addOns": [
+        {
+          "index": 10089,                 // cart selection unit for this extra
+          "sku": "US-APR-0-0-0",
+          "isLocked": false,
+          "isSoldOut": false,
+          "maxQuantity": 6,
+          "recipe": { "id": "…", "name": "Steelhead Trout", "image": "…", "nutrition": { … } },
+          "priceCatalog": { "basePrice": 899, "pricePerQuantity": [ … ] },   // cents
+          "quantityOptions": [ { "quantity": 1, "totalAmount": 899 }, … ],
+          // present ONLY when this add-on is currently selected:
+          "selection": { "skipped": false, "oneOffQuantity": 1, "preselectedQuantity": 0 }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Key points (HAR-verified):
+
+- An add-on is **selected** when it has a `selection` object; unselected add-ons have `selection: null`. The chosen quantity is `oneOffQuantity + preselectedQuantity` — **not** `quantity` (which is the meals field). `preselectedQuantity` is the recurring portion (carried week to week); `oneOffQuantity` is the this-week addition.
+- `priceCatalog.basePrice` is the single-unit price in **cents**.
+- The `modularity` pseudo-group inside `addOns.groups` carries no orderable add-on entries (it backs the meal-variation system above) and is ignored when building the market catalog.
+
 ### Structured menu catalog (`/gw/menus-service/menus`)
 
 Before scraping HTML, the integration tries the structured-JSON menu catalog the live web app uses (HAR-confirmed):
@@ -821,9 +866,14 @@ Backfill notes:
 | `prep_time_minutes` | `prepTime`, `prepTimeMinutes` |
 | `total_time_minutes` | `totalTime`, `totalTimeMinutes`, or `cook + prep` |
 | `calories_kcal` | `caloriesKcal`, `calories`, `nutrition.calories`, `nutrition.kcal` |
+| `protein_g` | `nutrition.protein`, `protein` |
 | `difficulty` | `difficulty`, `skillLevel` |
+| `selected_quantity` | `selection.quantity` (servings of this meal; `1` when selected without an explicit count) |
+| `surcharge_label`, `surcharge_cents` | `charge.label` (e.g. `+7.99/serving`), `charge.unitAmount` (cents) |
+| `badge` | `recipe.label.text` (e.g. `Premium Picks`) |
+| `variation_title` | resolved from the week's `modularity` block by `course_index` (e.g. `2x Bacon`) — names how a same-named variant differs |
 
-Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields.
+Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields. `surcharge_*`, `badge`, `protein_g`, `selected_quantity`, and `variation_title` exist to differentiate same-named meal variants on a dashboard (the meal-planner card collapses truly-identical duplicate listings and calls out the rest).
 
 Nutrition handling:
 
@@ -840,8 +890,9 @@ Nutrition handling:
 | `week_id` | normalized week id |
 | `status` | normalized week status |
 | `delivery_date` | normalized week delivery date |
-| `total_price` | `price`, `totalPrice`, `amount` |
-| `currency` | `currency`, `currencyCode` |
+| `total_price` | `price`, `totalPrice`, `amount`; later overlaid with an exact per-week cart/calculate estimate |
+| `billed_total_price` | the **authoritative** sum of all billing charges for the delivery (per `(subscription, delivery_date)` from `/gw/api/customers/me/orders`), the same figure `next_box_total_price` reports. Kept separate from `total_price` so a later cart estimate can't clobber it. |
+| `currency`, `billed_total_currency` | `currency`, `currencyCode` |
 | `slot_label` | normalized week slot label |
 
 Tracking is searched across several nested objects:
@@ -861,6 +912,25 @@ Recognized tracking keys:
 | `tracking_number` | `trackingNumber`, `trackingCode`, `parcelNumber`, `waybill`, `consignmentNumber` |
 | `tracking_status` | `trackingStatus`, `shipmentStatus`, `parcelStatus`, `carrierStatus` |
 | `carrier` | `carrier`, `carrierName`, `deliveryPartner`, `provider`, `shippingProvider` |
+
+### Market item
+
+`HelloFreshMarketItem` is parsed from each `addOns.groups[].addOns[]` entry (see [`addOns`](#addons--hellofresh-market-catalog)):
+
+| Field | Source keys |
+| --- | --- |
+| `item_id` | `recipe.id`, `sku`, `index` |
+| `name` | `recipe.name`, `recipe.title` |
+| `index` | `index` — the cart selection unit for this extra |
+| `sku`, `group_type` | `sku`, the parent group's `groupType` |
+| `image_url`, `description`, `category`, `tags`, `nutrition`, `calories_kcal` | from `recipe` |
+| `price_cents`, `price` | `priceCatalog.basePrice` (cents) → major units |
+| `max_quantity` | `maxQuantity` |
+| `is_selected`, `selected_quantity` | true when `selection` is present; quantity = `selection.oneOffQuantity + selection.preselectedQuantity` |
+| `preselected_quantity` | `selection.preselectedQuantity` (recurring portion, preserved on writes) |
+| `is_locked`, `is_sold_out` | `isLocked`, `isSoldOut` |
+
+Market items are attached to each week (`HelloFreshWeek.market_items`) by a normalization pass that reads `addOns` from the week's payload or its merged `_menu_payload`, mirroring how `variation_title` is resolved.
 
 The US authenticated deliveries HAR also exposed snake_case tracking fields on delivered weeks:
 
@@ -908,7 +978,13 @@ The integration does not mirror every reverse-engineered endpoint as a separate 
 
 **Attribute size policy.** Home Assistant's recorder drops any state attribute payload over 16 KB. A single week's recipe catalog (from the authenticated menu API) can exceed that on its own, so sensor attributes never embed it: single-week context objects use `HelloFreshWeek.as_summary_dict()` (scalar metadata only — dates, deadline, counts, slot), and the per-week `weeks` list on `next_selection_deadline` / `weeks_needing_selection` uses `summarized_weeks_needing_selection`. The full recipe-bearing `as_dict()` is reserved for the diagnostics export and the live week objects that the write actions read. No consumer reads recipes out of a sensor attribute.
 
-**On-demand recipe access (`hellofresh.get_weeks`).** Because recipes are deliberately kept out of attributes, the integration exposes a read-only, response-returning service (`SupportsResponse.ONLY`) so a dashboard or automation can fetch per-week recipes when needed. It returns `{"weeks": [HelloFreshWeek.as_dict(), …]}` (full recipe list with `is_selected` and `course_index`), optionally filtered to one `week_id`, resolved against a single coordinator (requires `config_entry_id` when multiple accounts are configured). This is the recorder-safe data path behind the packaged **Meal planner Lovelace card** (`custom:hellofresh-meal-planner-card`), which calls this service via `hass.callService(..., return_response=true)` to browse weeks, show selected meals, and edit the selection. The card is bundled in the integration's `www/` directory and auto-registered as a Lovelace resource (see [Frontend assets](#frontend-assets)).
+**On-demand recipe access (`hellofresh.get_weeks`).** Because recipes (and market items) are deliberately kept out of attributes, the integration exposes a read-only, response-returning service (`SupportsResponse.ONLY`) so a dashboard or automation can fetch per-week detail when needed. It returns `{"weeks": [...], "account": {...}}`, optionally filtered to one `week_id`, resolved against a single coordinator (requires `config_entry_id` when multiple accounts are configured). Each week dict adds, beyond `HelloFreshWeek.as_dict()`:
+
+- `recipes[]` — full recipe list with `is_selected`, `selected_quantity`, `course_index`, surcharge, `variation_title`, etc.
+- `market_items[]` — the week's HelloFresh Market add-on catalog with selection state and prices
+- `order` — the week's matching order (tracking, status, carrier, `billed_total_price`), or `null`
+
+The top-level `account` object carries fallbacks like `selected_plan_total_price` (used by the meal card's order strip when a week isn't billed yet). Passing `include_debug: true` adds diagnostic sections (`variation_debug` per week, including market-selection field probing). This is the recorder-safe data path behind both packaged Lovelace cards — `custom:hellofresh-meal-planner-card` and `custom:hellofresh-market-card` — which call the service via `hass.callService(..., return_response=true)`. The cards are bundled in the integration's `www/` directory and auto-registered as Lovelace resources (see [Frontend assets](#frontend-assets)).
 
 Sensors backed by authenticated profile and history endpoints:
 
@@ -967,14 +1043,14 @@ Entity behavior notes:
 
 ### Frontend assets
 
-The integration ships a custom Lovelace card (`www/hellofresh-meal-planner-card.js`) and registers it at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
+The integration ships two custom Lovelace cards (`www/hellofresh-meal-planner-card.js` and `www/hellofresh-market-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
 
-- the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so the card is reachable at `/hellofresh/hellofresh-meal-planner-card.js` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
-- in storage-mode dashboards the card URL is added to the Lovelace resource list automatically (versioned with a `?v=` query so a card update cache-busts); YAML-mode dashboards get a log line with the URL to add manually
-- registration is best-effort and never blocks integration setup — the sensors/calendar/services work without the card
+- the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so each card is reachable at `/hellofresh/<filename>` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
+- in storage-mode dashboards each card URL is added to the Lovelace resource list automatically (versioned with a `?v=` query so a card update cache-busts); YAML-mode dashboards get a log line with the URLs to add manually
+- registration is best-effort and never blocks integration setup — the sensors/calendar/services work without the cards
 - because this uses `hass.http`, `http` is declared in `manifest.json`'s `dependencies`
 
-The card is a pure read+write client of existing services: it calls `get_weeks` to render and `select_meals` / `skip_week` / `unskip_week` to act. It defines no new entities or endpoints.
+The cards are pure read+write clients of existing services: they call `get_weeks` to render and `select_meals` / `select_market_items` / `skip_week` / `unskip_week` to act. They define no new entities or endpoints.
 
 ## Public Menu Scraping
 
@@ -1038,7 +1114,7 @@ Observed query params include:
 - `update_quantity=true`
 - `week`
 
-Observed request body shape:
+Observed request body shape (`meals[].quantity` is the per-meal serving count — `2` for a doubled portion; `extras` carries Market add-ons, see [Select market items](#select-market-items)):
 
 ```json
 {
@@ -1063,7 +1139,7 @@ Current implementation notes:
 
 - meal indexes are preserved from the authenticated `/gw/my-deliveries/menu` payload
 - the request uses the observed browser query params such as `customer`, `cutoff_time`, `preference`, `product-sku`, `subscription`, and `week`
-- the request body is normalized to `{"extras": [], "meals": [{"index": <n>, "quantity": 1}, ...]}`
+- the request body is `{"meals": [{"index": <n>, "quantity": <q>}, ...], "extras": [...]}` — `quantity` defaults to 1 but honors a caller-supplied per-recipe count, and any currently-selected Market add-ons are carried in `extras` so a meal write doesn't clear them
 - if the cart-style request cannot be built, older candidate selection endpoints are still available as conservative fallbacks
 
 Validation rules before sending:
@@ -1071,8 +1147,46 @@ Validation rules before sending:
 - `week_id` must exist in previously loaded account data
 - at least one `recipe_id` is required
 - duplicate recipe ids are removed
-- if `meals_required` is known, the submitted count must be **at least** that many — fewer is rejected (an under-filled box), but **more is allowed**: HelloFresh treats the extras as add-on meals (typically surcharged), and the cart endpoint is the authority on whether a given over-selection is accepted
-- if the selected recipe set already matches the current state (order-independent), no request is sent
+- if `meals_required` is known, the submitted **total servings** (sum of quantities) must be **at least** that many — fewer is rejected (an under-filled box), but **more is allowed**: HelloFresh treats the extras as add-on meals (typically surcharged), and the cart endpoint is the authority on whether a given over-selection is accepted
+- if the selected recipe set (with quantities) already matches the current state, no request is sent
+
+### Select market items
+
+**HAR-verified** (single- and multi-item writes captured). Market add-ons (extras) are written through the **same** `PUT /gw/v1/carts/{week}` cart endpoint and query params as meals, but populate the `extras` array. The integration preserves the week's existing `meals` selection in the same request.
+
+The `extras` array is **grouped by `groupType` + `sku`**, each group carrying a `selection` list of `{index, oneOffQuantity, preselectedQuantity, courses}`. Two selected items in different groups produce two separate entries:
+
+```json
+{
+  "extras": [
+    {
+      "groupType": "appetizer",
+      "sku": "US-AAB-0-0-0",
+      "selection": [
+        {"index": 10773, "oneOffQuantity": 1, "preselectedQuantity": 0, "courses": []}
+      ]
+    },
+    {
+      "groupType": "protein",
+      "sku": "US-APR-0-0-0",
+      "selection": [
+        {"index": 10089, "oneOffQuantity": 2, "preselectedQuantity": 0, "courses": []}
+      ]
+    }
+  ],
+  "meals": [
+    {"index": 63, "quantity": 1},
+    {"index": 44, "quantity": 1},
+    {"index": 77, "quantity": 1}
+  ]
+}
+```
+
+Implementation notes:
+
+- the caller passes a map of market item id/sku/index → desired **total** quantity; the integration resolves each against the week's market catalog, keeps any existing recurring (`preselectedQuantity`) portion, and applies the remainder as `oneOffQuantity`
+- quantity is clamped to the item's `maxQuantity`; quantity `0` (or omitting an item) removes it
+- success response mirrors the meal write (`{"hasSeamlessDowngraded": false}`)
 
 ### Skip / unskip week
 
