@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
     HelloFreshCapabilities,
+    HelloFreshMarketItem,
     HelloFreshOrder,
     HelloFreshSubscription,
     HelloFreshWeek,
@@ -611,6 +612,88 @@ def test_next_selectable_delivery_meal_count_zero_without_modifiable_week() -> N
     )
 
     assert HelloFreshSensor(coordinator, description).native_value == 0
+
+
+def test_selected_market_count_counts_distinct_selected_items() -> None:
+    """selected_market_count reports the number of distinct selected market items for the week."""
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W26",
+                display_name="Week 26",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 23),
+                meals_required=3,
+                meals_selected=3,  # selection complete so this becomes the configurable week
+                market_items=[
+                    HelloFreshMarketItem(
+                        item_id="a", name="Gyoza", is_selected=True, selected_quantity=2
+                    ),
+                    HelloFreshMarketItem(
+                        item_id="b", name="Trout", is_selected=True, selected_quantity=1
+                    ),
+                    HelloFreshMarketItem(item_id="c", name="Cake", is_selected=False),
+                ],
+            )
+        ],
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1", next_delivery_week="2026-W26"),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "selected_market_count")
+    # 2 distinct items selected (quantity does not inflate the count).
+    assert HelloFreshSensor(coordinator, description).native_value == 2
+
+
+def test_next_selectable_delivery_market_count_reads_modifiable_week() -> None:
+    """next_selectable_delivery_market_count reports selected market items on the modifiable week."""
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W26",
+                display_name="Week 26",
+                subscription_id="sub-1",
+                delivery_date=date(2026, 6, 23),
+                market_items=[
+                    HelloFreshMarketItem(item_id="a", name="Gyoza", is_selected=True),
+                ],
+            )
+        ],
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1", next_modifiable_delivery_week="2026-W26"
+            ),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    description = next(
+        d for d in SENSOR_DESCRIPTIONS if d.key == "next_selectable_delivery_market_count"
+    )
+    assert HelloFreshSensor(coordinator, description).native_value == 1
+
+
+def test_market_count_sensors_zero_without_resolved_week() -> None:
+    """Both market-count sensors return 0 when no relevant week resolves."""
+    data = HelloFreshAccountData(
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    for key in ("selected_market_count", "next_selectable_delivery_market_count"):
+        description = next(d for d in SENSOR_DESCRIPTIONS if d.key == key)
+        assert HelloFreshSensor(coordinator, description).native_value == 0
 
 
 def test_configurable_week_falls_back_to_fully_selected_upcoming_week() -> None:

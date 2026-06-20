@@ -89,6 +89,12 @@
       "next_selectable_delivery_meal_count": {
         "name": "Next selectable delivery meal count"
       },
+      "selected_market_count": {
+        "name": "Next delivery market count"
+      },
+      "next_selectable_delivery_market_count": {
+        "name": "Next selectable delivery market count"
+      },
       "required_meal_count": {
         "name": "Number of meals"
       },

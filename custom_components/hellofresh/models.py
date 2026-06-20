@@ -197,6 +197,11 @@ class HelloFreshWeek:
             return None
         return f"{self.meals_selected}/{self.meals_required}"
 
+    @property
+    def market_items_selected(self) -> int:
+        """Return the number of distinct HelloFresh Market add-ons selected for this week."""
+        return sum(1 for item in self.market_items if item.is_selected)
+
     def as_summary_dict(self) -> dict[str, Any]:
         """Serialize week metadata WITHOUT the heavy per-recipe / action lists.
 
