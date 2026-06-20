@@ -1061,6 +1061,29 @@ def test_normalize_menu_weeks_infers_selected_meals_from_selection_quantity() ->
     assert [recipe.selected_quantity for recipe in weeks[0].recipes] == [1, 1, 2, None]
 
 
+def test_normalize_menu_weeks_reads_meals_preselected_flag() -> None:
+    """Week-level mealsPreselected marks a week as auto-picked by HelloFresh."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", meals_required=3)
+    raw_meals = [
+        {"index": i, "selection": {"quantity": 1}, "recipe": {"id": f"r-{i}", "name": f"M{i}"}}
+        for i in (1, 2, 3)
+    ]
+
+    auto = client._normalize_menu_weeks(
+        [{"week": "2026-W30", "mealsPreselected": True, "meals": raw_meals}],
+        subscription=subscription,
+    )
+    customer = client._normalize_menu_weeks(
+        [{"week": "2026-W31", "meals": raw_meals}],
+        subscription=subscription,
+    )
+    assert auto[0].meals_preselected is True
+    assert auto[0].auto_picked is True
+    assert customer[0].meals_preselected is False
+    assert customer[0].auto_picked is False
+
+
 def test_normalize_menu_weeks_reads_menus_service_courses_container() -> None:
     """menus-service items wrap recipes in a ``courses`` list (each with a nested recipe)."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]

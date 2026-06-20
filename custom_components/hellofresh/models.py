@@ -162,6 +162,10 @@ class HelloFreshWeek:
     meals_required: int | None = None
     meals_selected: int | None = None
     is_skipped: bool = False
+    # True when HelloFresh auto-selected this week's meals from the food profile (the menu's
+    # week-level ``mealsPreselected`` flag) instead of the customer choosing them — the UI's
+    # "We picked N meals we thought you'd like" state.
+    meals_preselected: bool = False
     recipes: list[HelloFreshRecipe] = field(default_factory=list)
     market_items: list[HelloFreshMarketItem] = field(default_factory=list)
     source: str = "account"
@@ -189,6 +193,15 @@ class HelloFreshWeek:
         if self.meals_required is None or self.meals_selected is None:
             return False
         return self.meals_selected < self.meals_required
+
+    @property
+    def auto_picked(self) -> bool:
+        """Return True when HelloFresh auto-picked this week's meals (vs. the customer choosing).
+
+        Driven by the menu's week-level ``mealsPreselected`` flag. A skipped week (no box ships)
+        is never counted.
+        """
+        return self.meals_preselected and not self.is_skipped
 
     @property
     def selection_progress(self) -> str | None:
@@ -226,6 +239,8 @@ class HelloFreshWeek:
             "selection_progress": self.selection_progress,
             "is_skipped": self.is_skipped,
             "needs_selection": self.needs_selection,
+            "meals_preselected": self.meals_preselected,
+            "auto_picked": self.auto_picked,
             "source": self.source,
             "menu_title": self.menu_title,
             "slot_label": self.slot_label,
@@ -477,6 +492,7 @@ class HelloFreshAccountData:
     _upcoming_orders: list[HelloFreshOrder] = field(default_factory=list)
     _tracked_order: HelloFreshOrder | None = None
     _weeks_needing_selection: list[HelloFreshWeek] = field(default_factory=list)
+    _weeks_auto_picked: list[HelloFreshWeek] = field(default_factory=list)
     _skipped_weeks: list[HelloFreshWeek] = field(default_factory=list)
     _next_selection_week: HelloFreshWeek | None = None
     _next_configurable_week: HelloFreshWeek | None = None
@@ -505,6 +521,16 @@ class HelloFreshAccountData:
     def weeks_needing_selection(self) -> list[HelloFreshWeek]:
         """Return weeks that still need meal selection."""
         return self._weeks_needing_selection
+
+    @property
+    def weeks_auto_picked(self) -> list[HelloFreshWeek]:
+        """Return weeks where HelloFresh auto-picked the meals (menu ``mealsPreselected``)."""
+        return self._weeks_auto_picked
+
+    @property
+    def summarized_weeks_auto_picked(self) -> list[dict[str, Any]]:
+        """Recipe-free summaries of the auto-picked weeks (recorder-safe attribute payload)."""
+        return [week.as_summary_dict() for week in self._weeks_auto_picked]
 
     @property
     def skipped_weeks(self) -> list[HelloFreshWeek]:
@@ -703,6 +729,7 @@ class HelloFreshAccountData:
             key=_tracked_order_sort_key,
         )
         self._weeks_needing_selection = [week for week in self.weeks if week.needs_selection]
+        self._weeks_auto_picked = [week for week in self.weeks if week.auto_picked]
         self._skipped_weeks = [week for week in self.weeks if week.is_skipped]
         self._next_selection_week = min(
             self._weeks_needing_selection,

@@ -78,7 +78,7 @@
         "name": "Tracked shipment number"
       },
       "weeks_needing_selection": {
-        "name": "Weeks needing meal selection"
+        "name": "Weeks auto-picked by HelloFresh"
       },
       "next_selection_deadline": {
         "name": "Next delivery selection deadline"
@@ -94,6 +94,12 @@
       },
       "next_selectable_delivery_market_count": {
         "name": "Next selectable delivery market count"
+      },
+      "next_delivery_preselected": {
+        "name": "Next delivery preselected"
+      },
+      "next_selectable_delivery_preselected": {
+        "name": "Next selectable delivery preselected"
       },
       "required_meal_count": {
         "name": "Number of meals"
