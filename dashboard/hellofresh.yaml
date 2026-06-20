@@ -1,7 +1,7 @@
 # HelloFresh — example Lovelace dashboard
 #
-# A ready-to-use dashboard built from the entities this integration exposes, in five views:
-# My Menu, Market, Meal Schedule, Account, and Diagnostics.
+# A ready-to-use dashboard built from the entities this integration exposes, in four views:
+# My Menu, Market, Meal Schedule, and Diagnostics.
 #
 # ── How to use ────────────────────────────────────────────────────────────────
 # 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new dashboard in YAML
@@ -39,10 +39,39 @@ views:
         title: Market
         logo: true
     type: panel
-  - title: Meal Schedule
+  - title: Schedule
     path: planning
     icon: mdi:calendar-month
     cards:
+      - show_name: true
+        show_icon: true
+        show_state: true
+        type: glance
+        title: Subscription
+        entities:
+          - entity: sensor.hellofresh_us_account_id
+            name: Account ID
+          - entity: sensor.hellofresh_us_account_credit
+            name: Account credit
+          - entity: sensor.hellofresh_us_selected_plan
+            name: Plan
+          - entity: sensor.hellofresh_us_boxes_received
+            name: Boxes received
+          - entity: sensor.hellofresh_us_number_of_people
+            name: Servings
+          - entity: sensor.hellofresh_us_required_meal_count
+            name: Meals Required
+          - entity: sensor.hellofresh_us_upcoming_delivery_count
+            name: Upcoming
+          - entity: sensor.hellofresh_us_skipped_week_count
+            name: Skipped
+          - entity: sensor.hellofresh_us_next_skipped_week
+            name: Next skipped
+          - entity: sensor.hellofresh_us_subscription_count
+            name: Subscription count
+          - entity: sensor.hellofresh_us_delivery_address
+            name: Delivery address
+        columns: 3
       - type: glance
         title: Next box
         columns: 2
@@ -50,12 +79,50 @@ views:
         entities:
           - entity: sensor.hellofresh_us_next_delivery_date
             name: Delivery date
+          - entity: sensor.hellofresh_us_next_delivery_week
+            name: Delivery week
+          - entity: sensor.hellofresh_us_next_selection_deadline
+            name: Selection deadline
           - entity: sensor.hellofresh_us_next_order_status
             name: Status
           - entity: sensor.hellofresh_us_next_delivery_slot
             name: Delivery slot
+          - entity: sensor.hellofresh_us_next_delivery_blocked
+            name: Delivery blocked
+          - entity: sensor.hellofresh_us_delivery_count_this_week
+            name: Delivery count
+          - entity: sensor.hellofresh_us_selected_meal_count
+            name: Meal count
+          - entity: sensor.hellofresh_us_recent_order_id
+            name: Order ID
+          - entity: sensor.hellofresh_us_next_payment_date
+            name: Payment date
           - entity: sensor.hellofresh_us_next_box_total_price
-            name: Box total
+            name: Box total price
+          - entity: sensor.hellofresh_us_next_box_coupon
+            name: Coupon
+      - show_name: true
+        show_icon: true
+        show_state: true
+        type: glance
+        entities:
+          - entity: sensor.hellofresh_us_next_selectable_delivery_date
+            name: Delivery date
+          - entity: sensor.hellofresh_us_next_selectable_delivery_week
+            name: Delivery week
+          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
+            name: Meal count
+          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
+            name: Selection deadline
+          - entity: sensor.hellofresh_us_selected_plan_total_price
+            name: Plan total price
+        columns: 2
+        title: Next selectable box
+      - type: calendar
+        title: Delivery schedule
+        initial_view: dayGridMonth
+        entities:
+          - calendar.hellofresh_us_delivery_schedule
       - type: conditional
         conditions:
           - entity: sensor.hellofresh_us_next_holiday_message
@@ -71,64 +138,6 @@ views:
 
             New date: **{{
             states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
-      - type: calendar
-        title: Delivery schedule
-        initial_view: dayGridMonth
-        entities:
-          - calendar.hellofresh_us_delivery_schedule
-      - type: glance
-        title: At a glance
-        columns: 3
-        entities:
-          - entity: sensor.hellofresh_us_upcoming_delivery_count
-            name: Upcoming
-          - entity: sensor.hellofresh_us_delivery_count_this_week
-            name: Next delivery count
-          - entity: sensor.hellofresh_us_skipped_week_count
-            name: Skipped
-          - entity: sensor.hellofresh_us_next_skipped_week
-            name: Next skipped
-          - entity: sensor.hellofresh_us_boxes_received
-            name: Boxes received
-          - entity: sensor.hellofresh_us_public_menu_recipe_count
-            name: Menu recipes
-      - type: entities
-        title: Dates
-        show_header_toggle: false
-        entities:
-          - entity: sensor.hellofresh_us_next_delivery_date
-            name: Next delivery date
-          - entity: sensor.hellofresh_us_next_delivery_week
-            name: Next delivery week
-          - entity: sensor.hellofresh_us_next_selectable_delivery_date
-            name: Next selectable delivery date
-          - entity: sensor.hellofresh_us_next_selectable_delivery_week
-            name: Next selectable delivery week
-          - entity: sensor.hellofresh_us_last_delivery_date
-            name: Last delivery
-          - entity: sensor.hellofresh_us_next_delivery_blocked
-            name: Next delivery blocked
-          - entity: sensor.hellofresh_us_next_holiday_delivery_date
-            name: Holiday delivery date
-  - title: Account
-    path: account
-    icon: mdi:account-cog
-    cards:
-      - type: entities
-        title: Meal selection
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: sensor.hellofresh_us_selected_meal_count
-            name: Next delivery meals chosen
-          - entity: sensor.hellofresh_us_required_meal_count
-            name: Meals required
-          - entity: sensor.hellofresh_us_next_selection_deadline
-            name: Next delivery selection deadline
-          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
-            name: Next selectable delivery meals chosen
-          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
-            name: Next selectable delivery deadline
       - type: conditional
         conditions:
           - entity: binary_sensor.hellofresh_us_needs_meal_selection
@@ -148,38 +157,7 @@ views:
             or w.week_id }} | {{ sel }}/{{ req }} | {{ as_timestamp(dl, 0) |
             timestamp_custom('%a %b %-d, %-I:%M %p', true) if dl else '—' }} |
             {% endfor %} {% endif %}
-      - type: entities
-        title: Billing
-        show_header_toggle: false
-        entities:
-          - entity: sensor.hellofresh_us_account_credit
-            name: Account credit
-          - entity: sensor.hellofresh_us_selected_plan_total_price
-            name: Selected plan total price
-          - entity: sensor.hellofresh_us_next_box_total_price
-            name: Next delivery total price
-          - entity: sensor.hellofresh_us_next_payment_date
-            name: Next delivery payment date
-          - entity: sensor.hellofresh_us_recent_payment_date
-            name: Most recent payment
-          - entity: sensor.hellofresh_us_next_box_coupon
-            name: Next delivery coupon
-          - entity: sensor.hellofresh_us_recent_order_id
-            name: Next delivery order ID
-      - type: entities
-        title: Subscription
-        show_header_toggle: false
-        entities:
-          - entity: sensor.hellofresh_us_account_id
-            name: Account ID
-          - entity: sensor.hellofresh_us_subscription_count
-            name: Account subscription count
-          - entity: sensor.hellofresh_us_delivery_address
-            name: Delivery address
-          - entity: sensor.hellofresh_us_selected_plan
-            name: Plan
-          - entity: sensor.hellofresh_us_number_of_people
-            name: Servings
+    type: masonry
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
@@ -211,3 +189,4 @@ views:
         entities:
           - entity: button.hellofresh_us_refresh_data
             name: Refresh now
+    type: masonry
