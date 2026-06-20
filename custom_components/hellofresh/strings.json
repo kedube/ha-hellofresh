@@ -78,7 +78,7 @@
         "name": "Tracked shipment number"
       },
       "weeks_needing_selection": {
-        "name": "Weeks auto-picked by HelloFresh"
+        "name": "Weeks preselected by HelloFresh"
       },
       "next_selection_deadline": {
         "name": "Next delivery selection deadline"
