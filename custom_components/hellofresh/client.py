@@ -1603,12 +1603,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         weeks, or until the cursor passes the configured history floor. Bounded by a hard page
         cap so a misbehaving cursor can never loop forever.
         """
-        # Page a few weeks PAST the display range floor. The displayed history and this fetch
-        # share a 52-week range, so a week sitting right at the boundary (and ISO-week rounding
-        # / year-boundary string ordering around it) could be shown without ever fetching its
-        # delivered meals — making the oldest visible week's selection wrong. The extra margin
-        # guarantees the boundary week's delivered recipes are always retrieved.
-        floor_date = datetime.now(UTC).date() - timedelta(weeks=56)
+        # Page a couple of weeks PAST the display range floor so a week sitting right at the
+        # boundary (and ISO-week rounding / year-boundary ordering around it) always has its
+        # delivered meals fetched, not just shown as an empty shell. Keyed off the same lookback
+        # the display range uses (+2 weeks margin) so the two stay aligned as the constant moves.
+        floor_date = datetime.now(UTC).date() - timedelta(
+            weeks=self._HISTORY_LOOKBACK_WEEKS + 2
+        )
         floor_iso = floor_date.isocalendar()
         floor_week = f"{floor_iso.year}-W{floor_iso.week:02d}"
         weeks_by_id: dict[str, HelloFreshWeek] = {
