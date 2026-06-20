@@ -1779,6 +1779,115 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     assert weeks[0].recipes[0].is_selected is False
 
 
+def test_delivery_menu_rejects_substitute_menu_for_mismatched_week() -> None:
+    """A menu payload for a different week than requested must not be stamped onto the week.
+
+    The planning-menu endpoint does not serve real history; for a past week it can return a
+    nearest/current menu. Labeling those recipes with the requested past week shows the wrong
+    meals, so a ``week`` mismatch is rejected and no recipes are attached.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "preset": "quick",
+            "shippingAddress": {"postcode": "01930"},
+            "product": {"sku": "US-CBU-3-2-0"},
+            "productType": {"specs": {"size": 2}},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+        },
+    )
+    account_week = HelloFreshWeek(
+        week_id="2026-W07",  # a past week
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        meals_required=3,
+        raw={
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+            "product": {"handle": "US-CBU-3-2-0"},
+        },
+    )
+
+    class DummyResponse:
+        status = 200
+
+    async def fake_api_get(path: str, params=None):
+        if path == "/gw/api/subscriptions/6959884/product_options":
+            raise HelloFreshError("not available")  # fall back to the subscription preset
+        return DummyResponse()
+
+    async def fake_response_json(_response):
+        # The endpoint returns the CURRENT week's menu instead of the requested past week.
+        return {
+            "id": "menu-id",
+            "week": "2026-W30",
+            "meals": [
+                {"index": 1, "recipe": {"id": "r-current", "name": "Current Week Dish"}},
+            ],
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    weeks = loop.run_until_complete(
+        client._async_get_delivery_menu_week_data(subscription, account_week)
+    )
+
+    assert weeks == []
+
+
+def test_merge_past_delivery_recipes_fills_recipe_free_account_weeks() -> None:
+    """Delivered meals (past-deliveries) fill account weeks that lack their own recipes."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    # Past week: deliveries endpoint gave only metadata (no recipes).
+    past_account_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        delivery_date=date(2026, 2, 13),
+    )
+    # Upcoming week already carries recipes from the live menu — must not be overwritten.
+    upcoming_account_week = HelloFreshWeek(
+        week_id="2026-W30",
+        display_name="Jul 20 - Jul 26",
+        subscription_id="6959884",
+        recipes=[HelloFreshRecipe(recipe_id="live-1", name="Live Menu Dish")],
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W07",
+        display_name="Feb 9 - Feb 15",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="d-1", name="Delivered Pot Pie"),
+            HelloFreshRecipe(recipe_id="d-2", name="Delivered Tacos"),
+            HelloFreshRecipe(recipe_id="d-3", name="Delivered Pasta"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[past_account_week, upcoming_account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    by_id = {week.week_id: week for week in merged}
+    assert [r.name for r in by_id["2026-W07"].recipes] == [
+        "Delivered Pot Pie",
+        "Delivered Tacos",
+        "Delivered Pasta",
+    ]
+    assert by_id["2026-W07"].meals_selected == 3
+    # The upcoming week's live-menu recipes are preserved untouched.
+    assert [r.name for r in by_id["2026-W30"].recipes] == ["Live Menu Dish"]
+
+
 def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:
     """Missing product-options data should not block the authenticated menu request."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
