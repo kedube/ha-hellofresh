@@ -1139,8 +1139,8 @@ class HelloFreshPayloadNormalizer:
 
         return list(account_weeks)
 
-    @staticmethod
     def _apply_delivered_selection(
+        self,
         account_week: HelloFreshWeek,
         past_week: HelloFreshWeek,
     ) -> None:
@@ -1151,8 +1151,13 @@ class HelloFreshPayloadNormalizer:
         recipe id first, then by name as a fallback — the catalog can list the same dish under
         a different id than the delivered record (HelloFresh re-ids portion/variant copies), so
         id-only matching dropped a delivered meal that the website still shows as chosen. Any
-        delivered meal that matches NOTHING in the catalog is appended so all selections remain
+        delivered MEAL that matches nothing in the catalog is appended so all selections remain
         visible (the past week must show every meal that was delivered, like the website).
+
+        Market add-ons (appetizers/sides/desserts) also appear in the delivered record, but they
+        belong to the Market view, not the meal list — so a delivered item that is a known market
+        item for the week is never appended to ``recipes``. The market merge marks those selected
+        separately.
 
         If not a single delivered meal could be placed (id-scheme drift), leave the existing
         flags untouched rather than blanking the week.
@@ -1169,16 +1174,31 @@ class HelloFreshPayloadNormalizer:
             if recipe.name
         }
 
+        # Market add-ons that were delivered must not leak into the meal list. Build the week's
+        # market id/name set from its raw addOns catalog so we can recognise and skip them.
+        market_ids: set[str] = set()
+        market_names: set[str] = set()
+        if isinstance(account_week.raw, dict):
+            for item in self._build_market_items(account_week.raw):
+                if item.item_id:
+                    market_ids.add(item.item_id)
+                if item.name:
+                    market_names.add(item.name.strip().casefold())
+
         matched: list[HelloFreshRecipe] = []
         unmatched: list[HelloFreshRecipe] = []
         for delivered in past_week.recipes:
             target = catalog_by_id.get(delivered.recipe_id)
             if target is None and delivered.name:
                 target = catalog_by_name.get(delivered.name.strip().casefold())
-            if target is None:
-                unmatched.append(delivered)
-            else:
+            if target is not None:
                 matched.append(target)
+                continue
+            # Unmatched: only append if it's a real meal, not a market add-on.
+            delivered_name = delivered.name.strip().casefold() if delivered.name else ""
+            if delivered.recipe_id in market_ids or delivered_name in market_names:
+                continue
+            unmatched.append(delivered)
 
         if not matched and not unmatched:
             return
