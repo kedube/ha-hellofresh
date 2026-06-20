@@ -1674,6 +1674,74 @@ def test_past_delivery_history_tries_ranged_customer_deliveries_endpoint() -> No
     assert "rangeEnd" in params
 
 
+def test_past_delivery_history_follows_next_week_cursor() -> None:
+    """The past-deliveries endpoint is paginated via its ``nextWeek`` cursor.
+
+    A single page covers only ~4 recent weeks (~131 days of the most recent few pages); without
+    following ``nextWeek`` older weeks have no recipe data and the card shows the wrong meals.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+
+    class DummyResponse:
+        status = 200
+
+    requests: list[dict[str, object | None]] = []
+
+    # Pages keyed by the `from` cursor; the first request has no `from`.
+    pages: dict[str | None, dict[str, object]] = {
+        None: {
+            "weeks": [
+                {"week": "2026-W25", "subscriptionId": "sub-1", "meals": [{"name": "A25"}]},
+                {"week": "2026-W24", "subscriptionId": "sub-1", "meals": [{"name": "A24"}]},
+            ],
+            "nextWeek": "2026-W23",
+        },
+        "2026-W23": {
+            "weeks": [
+                {"week": "2026-W23", "subscriptionId": "sub-1", "meals": [{"name": "A23"}]},
+                {"week": "2026-W22", "subscriptionId": "sub-1", "meals": [{"name": "A22"}]},
+            ],
+            "nextWeek": "2026-W21",
+        },
+        "2026-W21": {
+            "weeks": [
+                {"week": "2026-W21", "subscriptionId": "sub-1", "meals": [{"name": "A21"}]},
+            ],
+            "nextWeek": None,  # end of history
+        },
+    }
+
+    async def fake_api_get(path: str, params=None, extra_headers=None):
+        requests.append({"path": path, "params": params})
+        # Force the other history endpoints to lose so past-deliveries wins.
+        if path != "/gw/my-deliveries/past-deliveries":
+            raise HelloFreshError("unavailable")
+        return DummyResponse()
+
+    async def fake_response_json(_response):
+        cursor = requests[-1]["params"].get("from")  # type: ignore[union-attr]
+        return pages[cursor]
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+
+    week_ids = sorted(week.week_id for week in weeks)
+    assert week_ids == ["2026-W21", "2026-W22", "2026-W23", "2026-W24", "2026-W25"]
+    # The cursor was followed: requests with from=2026-W23 and from=2026-W21 were issued.
+    cursors = [
+        r["params"].get("from")  # type: ignore[union-attr]
+        for r in requests
+        if r["path"] == "/gw/my-deliveries/past-deliveries"
+    ]
+    assert "2026-W23" in cursors
+    assert "2026-W21" in cursors
+
+
 def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     """The live delivery menu endpoint should be used when week metadata is available."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
