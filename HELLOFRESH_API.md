@@ -287,14 +287,16 @@ This endpoint is the integration's primary token validation target:
 | --- | --- | --- |
 | Validate token and load subscriptions | `GET` | `/gw/api/customers/me/subscriptions` |
 
-Expected top-level shape:
+Expected top-level shape (`{count, total, take, skip, items[]}`, simplified):
 
 ```json
 {
   "items": [
     {
       "id": "sub-123",
-      "status": "active",
+      "isActive": true,
+      "pausedAt": null,
+      "canceledAt": null,
       "customer": {
         "id": "acct-123",
         "locale": "en-US"
@@ -308,6 +310,8 @@ Expected top-level shape:
   ]
 }
 ```
+
+> **Status is derived, not a field.** The live payload carries **no** `status` / `subscriptionStatus` / `state` key (confirmed from US HARs). Plan-level status is reconstructed by `_derive_subscription_status`: `canceledAt` → `cancelled`, else `pausedAt` → `paused`, else `isActive` → `active`/`inactive`. An explicit `status`/`state` field, if a region ever provides one, still wins. `endlessPausedAt` is deliberately ignored — it carries a stale historical date even on active accounts. This backs the `subscription_status` sensor.
 
 ### Upcoming deliveries
 

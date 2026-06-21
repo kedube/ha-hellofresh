@@ -818,14 +818,7 @@ class HelloFreshPayloadNormalizer:
             subscription_id=str(raw_subscription.get("id")),
             account_id=customer.get("id"),
             locale=customer.get("locale"),
-            status=(
-                raw_subscription.get("status")
-                or raw_subscription.get("subscriptionStatus")
-                or raw_subscription.get("state")
-                or self._find_first_nested_value(
-                    raw_subscription, ("status", "subscriptionStatus", "state")
-                )
-            ),
+            status=self._derive_subscription_status(raw_subscription),
             display_name=display_name,
             plan_name=plan.get("name") or plan.get("displayName"),
             meals_required=meals_required,
@@ -880,6 +873,38 @@ class HelloFreshPayloadNormalizer:
             ),
             raw=raw_subscription,
         )
+
+    def _derive_subscription_status(self, raw_subscription: dict[str, Any]) -> str | None:
+        """Derive the plan-level status from the subscriptions payload.
+
+        The live ``/gw/api/customers/me/subscriptions`` response carries **no** ``status`` /
+        ``subscriptionStatus`` / ``state`` field (confirmed from US HAR captures). The real
+        signal is split across ``canceledAt`` / ``pausedAt`` timestamps and the ``isActive``
+        boolean, so status is derived from those. An explicit ``status`` / ``state`` field, if
+        a region or future payload ever provides one, still wins. (``endlessPausedAt`` is NOT
+        used: it carries a stale historical date even on active accounts.)
+        """
+        explicit = (
+            raw_subscription.get("status")
+            or raw_subscription.get("subscriptionStatus")
+            or raw_subscription.get("state")
+            or self._find_first_nested_value(
+                raw_subscription, ("status", "subscriptionStatus", "state")
+            )
+        )
+        if explicit:
+            return str(explicit)
+
+        if raw_subscription.get("canceledAt"):
+            return "cancelled"
+        if raw_subscription.get("pausedAt"):
+            return "paused"
+        is_active = raw_subscription.get("isActive")
+        if is_active is True:
+            return "active"
+        if is_active is False:
+            return "inactive"
+        return None
 
     @staticmethod
     def _format_subscription_address(raw_address: Any) -> str | None:
