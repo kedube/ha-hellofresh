@@ -59,10 +59,10 @@
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
           "enable_public_menu_fallback": "Use public menu fallback",
-          "history_weeks": "Weeks of past history to load"
+          "history_weeks": "Past meal history (weeks)"
         },
         "data_description": {
-          "history_weeks": "How many weeks of past delivery history to fetch and make browsable in the cards. Lower this to reduce how much data is pulled each refresh; raise it to browse further back. Default 26 (about 6 months); use ~56 for a full year."
+          "history_weeks": "Number of weeks of delivery history to fetch and display. Lower values reduce refresh data usage; higher values allow browsing further back. Range: 1–104 weeks. Default: 26 weeks (6 months)."
         }
       }
     }
