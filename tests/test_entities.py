@@ -159,8 +159,11 @@ def test_new_sensor_entities_reflect_account_data() -> None:
     assert _sensor_for("selected_meal_count").native_value == 1
     assert _sensor_for("required_meal_count").native_value == 3
     assert _sensor_for("selected_plan").native_value == "Classic Box"
-    # API status arrives uppercase; the sensor lowercases it to a clean state value.
-    assert _sensor_for("subscription_status").native_value == "active"
+    # Status sensors are presented sentence-cased with separators turned to spaces,
+    # regardless of the raw API casing/underscores (see humanize_status).
+    assert _sensor_for("subscription_status").native_value == "Active"  # raw "ACTIVE"
+    assert _sensor_for("next_order_status").native_value == "Scheduled"  # raw "scheduled"
+    assert _sensor_for("shipment_tracking_status").native_value == "In transit"  # raw "in_transit"
     assert _sensor_for("next_delivery_slot").native_value == "Mon 8:00 AM - 8:00 PM"
     assert _sensor_for("tracked_shipment_carrier").native_value == "UPS"
     assert _sensor_for("number_of_people").native_value == 2
@@ -955,3 +958,23 @@ def test_switch_descriptions_have_translation_names() -> None:
     translated_keys = set(strings["entity"].get("switch", {}))
 
     assert {description.key for description in SWITCHES} <= translated_keys
+
+
+def test_humanize_status_normalizes_casing_and_separators() -> None:
+    """Status values are sentence-cased with underscores/hyphens turned to spaces."""
+    from custom_components.hellofresh.sensor_helpers import humanize_status
+
+    # The exact cases the user called out.
+    assert humanize_status("pre_transit") == "Pre transit"
+    assert humanize_status("active") == "Active"
+    assert humanize_status("PREPARING") == "Preparing"
+    # Multi-word + hyphen separators.
+    assert humanize_status("out_for_delivery") == "Out for delivery"
+    assert humanize_status("on-the-way") == "On the way"
+    # Mixed case collapses to sentence case.
+    assert humanize_status("In_Transit") == "In transit"
+    # Non-strings and empties pass through untouched (numbers, bools, None, blank).
+    assert humanize_status(None) is None
+    assert humanize_status(3) == 3
+    assert humanize_status(True) is True
+    assert humanize_status("") == ""
