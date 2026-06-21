@@ -150,6 +150,13 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
         len(data.current_public_menu.recipes) if data.current_public_menu else 0
     ),
     "subscription_count": lambda data: data.subscription_count,
+    # Plan-level status of the primary subscription (e.g. "active" / "paused"), distinct from
+    # per-week skip state. The API returns it uppercase; lowercase it for a clean state value.
+    "subscription_status": lambda data: (
+        data.primary_subscription.status.lower()
+        if data.primary_subscription and data.primary_subscription.status
+        else None
+    ),
     "skipped_week_count": lambda data: len(data.skipped_weeks),
     "next_skipped_week": lambda data: (
         data.next_skipped_week.display_name if data.next_skipped_week else None
@@ -192,6 +199,7 @@ SUBSCRIPTION_CONTEXT_KEYS = frozenset(
         "selected_plan",
         "selected_plan_total_price",
         "subscription_count",
+        "subscription_status",
         "number_of_people",
         "delivery_address",
         "recent_payment_date",
