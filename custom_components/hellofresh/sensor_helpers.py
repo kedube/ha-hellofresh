@@ -34,6 +34,37 @@ def token_days_remaining(expires_at: datetime | None) -> int | None:
     return seconds // 86400
 
 
+def humanize_status(value: Any) -> Any:
+    """Normalize a status string to sentence case with spaces for separators.
+
+    Underscores and hyphens become spaces, then the result is sentence-cased: first
+    letter upper, the rest lower. Examples: ``pre_transit`` -> ``Pre transit``,
+    ``PREPARING`` -> ``Preparing``, ``active`` -> ``Active``, ``out_for_delivery`` ->
+    ``Out for delivery``. Non-string values (None, numbers, bools) pass through unchanged
+    so only free-text status sensors are affected.
+    """
+    if not isinstance(value, str):
+        return value
+    cleaned = value.replace("_", " ").replace("-", " ").strip()
+    cleaned = " ".join(cleaned.split())  # collapse runs of whitespace
+    if not cleaned:
+        return value
+    return cleaned[0].upper() + cleaned[1:].lower()
+
+
+# Sensors whose state is a free-text status/label and should be presented in sentence case
+# (see humanize_status). Identifier/opaque sensors -- account/order IDs, ISO week labels,
+# URLs, coupon codes, plan names, addresses -- are deliberately excluded so their values are
+# never mangled.
+HUMANIZED_STATUS_KEYS = frozenset(
+    {
+        "next_order_status",
+        "shipment_tracking_status",
+        "subscription_status",
+    }
+)
+
+
 def _next_order_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
     return lambda data: getattr(data.next_order, attr) if data.next_order else None
 
@@ -151,9 +182,9 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     ),
     "subscription_count": lambda data: data.subscription_count,
     # Plan-level status of the primary subscription (e.g. "active" / "paused"), distinct from
-    # per-week skip state. The API returns it uppercase; lowercase it for a clean state value.
+    # per-week skip state. Presentation casing is handled centrally (humanize_status).
     "subscription_status": lambda data: (
-        data.primary_subscription.status.lower()
+        data.primary_subscription.status
         if data.primary_subscription and data.primary_subscription.status
         else None
     ),
@@ -223,7 +254,10 @@ def sensor_native_value(
     if key == "api_base_url":
         return api_base_url
     handler = VALUE_GETTERS.get(key)
-    return handler(data) if handler is not None else None
+    value = handler(data) if handler is not None else None
+    if key in HUMANIZED_STATUS_KEYS:
+        return humanize_status(value)
+    return value
 
 
 def sensor_icon(key: str, data: HelloFreshAccountData, default_icon: str | None) -> str | None:
