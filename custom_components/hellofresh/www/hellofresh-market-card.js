@@ -138,6 +138,39 @@ class HelloFreshMarketCard extends HTMLElement {
     this._render();
   }
 
+  // Index of the "current" week by date: the week whose delivery_date is nearest to today,
+  // breaking ties toward the upcoming delivery rather than a past one. Returns -1 if no week
+  // carries a delivery_date.
+  _currentWeekIndex() {
+    if (!this._weeks || this._weeks.length === 0) return -1;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let best = -1;
+    let bestDays = Infinity;
+    this._weeks.forEach((w, i) => {
+      if (!w.delivery_date) return;
+      const d = new Date(w.delivery_date);
+      d.setHours(0, 0, 0, 0);
+      const days = Math.round((d - today) / 86400000);
+      const dist = Math.abs(days);
+      // Closer week wins; on a tie, prefer the one in the future (days >= 0).
+      if (dist < bestDays || (dist === bestDays && days >= 0)) {
+        best = i;
+        bestDays = dist;
+      }
+    });
+    return best;
+  }
+
+  // Jump the cursor to the current week by date (the "Current Week" button).
+  _gotoCurrentWeek() {
+    const target = this._currentWeekIndex();
+    if (target >= 0 && target !== this._cursor) {
+      this._cursor = target;
+      this._render();
+    }
+  }
+
   _isEditable(week) {
     if (!week) return false;
     if (week.is_skipped) return false;
@@ -345,8 +378,20 @@ class HelloFreshMarketCard extends HTMLElement {
         </div>
         <button class="nav" data-action="next" aria-label="Next week">›</button>
       </div>
+      ${this._renderCurrentWeekRow()}
       ${this._renderStatusRow(week)}
     `;
+  }
+
+  // A "Current Week" button that jumps the cursor to the week matching today's date. Hidden
+  // when the cursor is already on the current week or when no week carries a delivery_date.
+  _renderCurrentWeekRow() {
+    const target = this._currentWeekIndex();
+    if (target < 0 || target === this._cursor) return "";
+    return `
+      <div class="currentweekrow">
+        <button class="currentweekbtn" data-action="goto-current">Current Week</button>
+      </div>`;
   }
 
   // Reflects live cart total / dirty state, so it's re-rendered on its own during an in-place
@@ -472,6 +517,7 @@ class HelloFreshMarketCard extends HTMLElement {
       const action = actionEl.getAttribute("data-action");
       if (action === "prev") this._step(-1);
       else if (action === "next") this._step(1);
+      else if (action === "goto-current") this._gotoCurrentWeek();
       else if (action === "refresh") this._fetchWeeks();
       else if (action === "save" && week) this._saveSelection(week);
       else if (action === "cancel" && week) this._cancelEdit(week);
@@ -537,7 +583,7 @@ class HelloFreshMarketCard extends HTMLElement {
       ha-card { padding: 12px 16px 16px; }
       .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
       .head .logo { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none; }
-      .title-text { font-size: 1.3em; font-weight: 700; }
+      .title-text { font-size: 1.5em; font-weight: 500; }
       .state { text-align: center; padding: 28px 8px; color: var(--secondary-text-color); }
       .state.error { color: var(--error-color, #db4437); }
       .header { display: flex; align-items: center; gap: 8px; }
@@ -550,6 +596,13 @@ class HelloFreshMarketCard extends HTMLElement {
         color: var(--primary-text-color); padding: 4px 12px; border-radius: 50%;
       }
       .nav:hover { background: var(--secondary-background-color); }
+      .currentweekrow { display: flex; justify-content: center; margin: 8px 0 0; }
+      .currentweekbtn {
+        font: inherit; font-size: 0.8em; font-weight: 600; cursor: pointer;
+        padding: 5px 14px; border-radius: 14px; border: 1px solid var(--divider-color);
+        background: var(--secondary-background-color); color: var(--primary-text-color);
+      }
+      .currentweekbtn:hover { filter: brightness(0.95); }
       .statusrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
       .chip {
         font-size: 0.8em; padding: 4px 10px; border-radius: 14px;
