@@ -56,12 +56,15 @@
     "step": {
       "init": {
         "title": "HelloFresh options",
+        "description": "Adjust how HelloFresh data is polled and how far back the cards can browse. These settings take effect without re-entering your credentials.",
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
           "enable_public_menu_fallback": "Use public menu fallback",
           "history_weeks": "Past delivery history (weeks)"
         },
         "data_description": {
+          "scan_interval_minutes": "How often account data is polled. Range: 5–1440 minutes. Default: 180. (The login token is refreshed on its own schedule regardless of this value.)",
+          "enable_public_menu_fallback": "When authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.",
           "history_weeks": "Number of weeks of delivery history to fetch and display. Lower values reduce refresh data usage; higher values allow browsing further back. Range: 1–104 weeks. Default: 26 weeks (6 months)."
         }
       }
