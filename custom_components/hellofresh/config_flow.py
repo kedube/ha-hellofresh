@@ -346,9 +346,9 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, str] | None = None):
         """Manage options.
 
-        Options store ONLY user preferences (scan interval, fallback toggle). Credentials
-        and the live token cache live in entry.data and are owned by the runtime
-        login/refresh flow.
+        Options store ONLY user preferences (refresh interval, past-history window, public
+        menu fallback toggle). Credentials and the live token cache live in entry.data and
+        are owned by the runtime login/refresh flow.
         """
         if user_input is not None:
             return self.async_create_entry(
@@ -379,13 +379,6 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                     vol.Required(
-                        CONF_ENABLE_PUBLIC_MENU_FALLBACK,
-                        default=self.config_entry.options.get(
-                            CONF_ENABLE_PUBLIC_MENU_FALLBACK,
-                            DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
-                        ),
-                    ): cv.boolean,
-                    vol.Required(
                         CONF_HISTORY_WEEKS,
                         default=self.config_entry.options.get(
                             CONF_HISTORY_WEEKS,
@@ -402,6 +395,13 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                             unit_of_measurement="weeks",
                         )
                     ),
+                    vol.Required(
+                        CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+                        default=self.config_entry.options.get(
+                            CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+                            DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+                        ),
+                    ): cv.boolean,
                 }
             ),
         )

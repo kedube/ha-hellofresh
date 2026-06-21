@@ -56,16 +56,16 @@
     "step": {
       "init": {
         "title": "HelloFresh options",
-        "description": "Adjust how HelloFresh data is polled and how far back the cards can browse. These settings take effect without re-entering your credentials.",
+        "description": "Adjust how often HelloFresh data is polled and how far back the cards can browse. These settings take effect right away — your credentials are not affected.",
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
-          "enable_public_menu_fallback": "Use public menu fallback",
-          "history_weeks": "Past delivery history (weeks)"
+          "history_weeks": "Past delivery history (weeks)",
+          "enable_public_menu_fallback": "Use public menu fallback"
         },
         "data_description": {
-          "scan_interval_minutes": "How often account data is polled. Range: 5–1440 minutes. Default: 180. (The login token is refreshed on its own schedule regardless of this value.)",
-          "enable_public_menu_fallback": "When authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.",
-          "history_weeks": "Number of weeks of delivery history to fetch and display. Lower values reduce refresh data usage; higher values allow browsing further back. Range: 1–104 weeks. Default: 26 weeks (6 months)."
+          "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
+          "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
+          "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data."
         }
       }
     }
