@@ -1,23 +1,35 @@
+################################################################################
 # HelloFresh — example Lovelace dashboard
 #
-# A ready-to-use dashboard built from the entities this integration exposes, in four views:
-# My Menu, Market, Meal Schedule, and Diagnostics.
+# A ready-to-use dashboard built entirely from entities and cards this integration
+# provides. No HACS frontend add-ons required.
 #
-# ── How to use ────────────────────────────────────────────────────────────────
-# 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new dashboard in YAML
-#    mode) and paste the contents of this file.
-# 2. Fix the entity-ID prefix. With `has_entity_name`, entity IDs are derived
-#    from your config-entry title, e.g. a "HelloFresh (US)" account produces
-#    `sensor.hellofresh_us_next_delivery_date`. This file uses that `hellofresh_us_`
-#    prefix throughout — find/replace it to match your account (check
-#    Settings → Devices & Services → HelloFresh → entities for the real IDs).
-# 3. Some cards are conditional (holiday banner, shipment tracking) and only render
-#    when relevant, so they stay hidden in the normal case.
+# Four views:
+#   • My Menu    — browse & edit each week's meal selection (meal-planner card)
+#   • Market     — browse & order HelloFresh Market add-ons (market card)
+#   • Schedule   — delivery calendar, subscription summary, selection deadlines
+#   • Diagnostics — token expiry & integration-health entities, manual refresh
 #
-# ── Add-ons ─────────────────────────────────────────────────────────────────────
-# Two custom cards ship with the integration and are auto-registered (no HACS frontend
-# add-on required): `custom:hellofresh-meal-planner-card` (My Menu view) and
-# `custom:hellofresh-market-card` (Market view). Every other view is 100% built-in Lovelace.
+# ── Setup ─────────────────────────────────────────────────────────────────────
+# 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new YAML-mode dashboard),
+#    then paste the contents of this file.
+#
+# 2. Fix the entity-ID prefix — THIS IS REQUIRED. With `has_entity_name`, entity IDs
+#    derive from your config-entry title: a "HelloFresh (US)" account produces
+#    `sensor.hellofresh_us_next_delivery_date`, etc. This file uses `hellofresh_us_`
+#    throughout, so find/replace it with your account's prefix. (Check the real IDs at
+#    Settings → Devices & Services → HelloFresh → entities.) Leaving the wrong prefix
+#    makes the built-in cards show "Entity not available".
+#
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# • The two custom cards — `custom:hellofresh-meal-planner-card` and
+#   `custom:hellofresh-market-card` — are served and registered automatically when the
+#   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
+#   dashboards, add `/hellofresh/<card>.js` once under Settings → Dashboards → Resources
+#   as a JavaScript module. Every other view is 100% built-in Lovelace.
+# • Some cards are conditional (holiday banner, shipment tracking) and render only when
+#   relevant, so they stay hidden in the normal case.
+################################################################################
 
 title: HelloFresh
 views:
@@ -51,10 +63,12 @@ views:
         entities:
           - entity: sensor.hellofresh_us_account_id
             name: Account ID
-          - entity: sensor.hellofresh_us_account_credit
-            name: Account credit
+          - entity: sensor.hellofresh_us_subscription_status
+            name: Subscription status
           - entity: sensor.hellofresh_us_selected_plan
             name: Plan
+          - entity: sensor.hellofresh_us_account_credit
+            name: Account credit
           - entity: sensor.hellofresh_us_boxes_received
             name: Boxes received
           - entity: sensor.hellofresh_us_number_of_people
@@ -65,14 +79,12 @@ views:
             name: Upcoming
           - entity: sensor.hellofresh_us_skipped_week_count
             name: Skipped
-          - entity: sensor.hellofresh_us_next_skipped_week
-            name: Next skipped
           - entity: sensor.hellofresh_us_subscription_count
             name: Subscription count
           - entity: sensor.hellofresh_us_weeks_needing_selection
             name: Weeks need selecting
-          - entity: sensor.hellofresh_us_delivery_address
-            name: Delivery address
+          - entity: sensor.hellofresh_us_next_skipped_week
+            name: Next skipped
         columns: 3
       - type: glance
         title: Next box
@@ -133,6 +145,11 @@ views:
         initial_view: dayGridMonth
         entities:
           - calendar.hellofresh_us_delivery_schedule
+      - type: tile
+        entity: sensor.hellofresh_us_delivery_address
+        name: Delivery address
+        vertical: false
+        features_position: bottom
       - type: conditional
         conditions:
           - entity: sensor.hellofresh_us_next_holiday_message
@@ -162,6 +179,12 @@ views:
           - entity: sensor.hellofresh_us_refresh_token_days_remaining
             name: Refresh token expires in
       - type: entities
+        title: Actions
+        show_header_toggle: false
+        entities:
+          - entity: button.hellofresh_us_refresh_data
+            name: Refresh now
+      - type: entities
         title: Integration health
         show_header_toggle: false
         state_color: true
@@ -174,10 +197,4 @@ views:
             name: Payload shape changed
           - entity: binary_sensor.hellofresh_us_write_actions_available
             name: Write actions available
-      - type: entities
-        title: Actions
-        show_header_toggle: false
-        entities:
-          - entity: button.hellofresh_us_refresh_data
-            name: Refresh now
     type: masonry
