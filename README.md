@@ -130,6 +130,13 @@ Choose the matching country during setup:
 
 Sensors are grouped below by purpose. The **Name** column is the friendly label shown in Home Assistant; the **Entity** column is the entity ID suffix. Most expose extra detail (full order, week, subscription, and tracking objects) as entity attributes.
 
+A few conventions used in the tables:
+
+- **Entity ID prefix.** Because entities use `has_entity_name`, the real IDs are prefixed from your config-entry title — a "HelloFresh (US)" account produces `sensor.hellofresh_us_next_delivery_date`, etc. The tables show the suffix only; substitute your own prefix.
+- **Device class.** Where noted (`Date`, `Timestamp`, monetary), Home Assistant formats and graphs the value accordingly. Sensors without a noted device class are plain strings or numbers.
+- **`None` / unavailable.** Many sensors report `None` (shown as *Unknown* in the UI) when the underlying field isn't set for your account or region — e.g. no holiday shift, no coupon, no tracked shipment. This is normal, not an error.
+- **Attributes vs. state.** The state is the single headline value; richer context (the full week, order, subscription, or tracking object) is exposed as entity **attributes**. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit) and are read on demand via `hellofresh.get_weeks` — see [Recorder attribute sizes](#recorder-attribute-sizes).
+
 **Deliveries & orders**
 
 | Name | Entity | Description |
@@ -149,11 +156,15 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Weeks needing meal selection | `sensor.weeks_needing_selection` | Count of upcoming weeks that still require meal selection. Attributes list every pending week. |
+| Weeks preselected by HelloFresh | `sensor.weeks_needing_selection` | Count of upcoming weeks whose meals HelloFresh **auto-picked** (preselected) for you rather than you choosing them — the weeks worth reviewing before the cutoff. Attributes (`weeks`) list each one. (The entity ID keeps the older `weeks_needing_selection` suffix for backward compatibility.) |
 | Next delivery selection deadline | `sensor.next_selection_deadline` | Cutoff timestamp for the **next delivery** week (that week's `cutoffDate`, falling back to the subscription's `nextCutoffDate`) — the "Edit delivery by …" deadline. `Timestamp` device class. |
 | Next selectable delivery selection deadline | `sensor.next_selectable_delivery_selection_deadline` | Cutoff timestamp for the **next modifiable** delivery week (`nextModifiableDeliveryWeek`'s `cutoffDate`) — the soonest box the customer can still change. `Timestamp` device class. |
 | Next delivery meal count | `sensor.selected_meal_count` | Meals already chosen for the next pending/configurable week; `0` when none is pending. Excludes add-on and market items. |
 | Next selectable delivery meal count | `sensor.next_selectable_delivery_meal_count` | Meals already chosen for the next modifiable delivery week (`nextModifiableDeliveryWeek`); `0` when no modifiable week is resolved. |
+| Next delivery market count | `sensor.selected_market_count` | Number of distinct HelloFresh Market add-ons (extras) selected for the next configurable week; `0` when none. Counts market items only — meals are counted by *Next delivery meal count*. |
+| Next selectable delivery market count | `sensor.next_selectable_delivery_market_count` | Number of distinct HelloFresh Market add-ons selected for the next modifiable delivery week; `0` when none or no modifiable week is resolved. |
+| Next delivery preselected | `sensor.next_delivery_preselected` | `True`/`False` for whether HelloFresh **auto-picked** the meals for the next configurable week (the week's `mealsPreselected` flag) rather than you choosing them; `None` when no configurable week is resolved. A `True` here is the per-week signal behind *Weeks preselected by HelloFresh*. |
+| Next selectable delivery preselected | `sensor.next_selectable_delivery_preselected` | `True`/`False` for whether HelloFresh auto-picked the meals for the next modifiable delivery week; `None` when no modifiable week is resolved. |
 | Number of meals | `sensor.required_meal_count` | Meals that must be selected for the next pending week; falls back to the subscription's plan count when the week doesn't specify one. |
 
 **Billing & payments**
@@ -226,7 +237,7 @@ Sensors are grouped below by purpose. The **Name** column is the friendly label 
 
 Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes, and authenticated history endpoints feed recent delivered-week context into the delivery-history sensors' attributes. Full per-week recipe lists are intentionally **not** included in attributes (to stay under the recorder's size limit — see [Recorder attribute sizes](#recorder-attribute-sizes)); they remain available in the diagnostics export.
 
-Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Next delivery status**, `sensor.shipment_tracking_status` as **Tracked shipment status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
+Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.weeks_needing_selection` as **Weeks preselected by HelloFresh** (the ID kept its original suffix when the sensor was repurposed), `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.selected_market_count` as **Next delivery market count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Next delivery status**, `sensor.shipment_tracking_status` as **Tracked shipment status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
 
 ### Voice and Assist
 
