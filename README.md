@@ -186,6 +186,7 @@ A few conventions used in the tables:
 | Selected plan | `sensor.selected_plan` | Plan name from the primary subscription (e.g. `Meat & Veggies`); shows the display name when a specific plan name isn't returned. |
 | Number of people | `sensor.number_of_people` | Servings-per-box setting from the primary subscription (e.g. `2`). |
 | Account subscription count | `sensor.subscription_count` | Number of subscriptions on the account. Most sensors report on the primary (first) subscription only, so a value above 1 means additional subscriptions aren't individually surfaced. |
+| Subscription status | `sensor.subscription_status` | Plan-level status of the primary subscription (e.g. `active`, `paused`), lowercased from the API. This is the whole-plan state, distinct from per-week skip state; `None` when the account doesn't report it. |
 | Delivery address | `sensor.delivery_address` | Single-line delivery address from the primary subscription; redacted in diagnostics exports. |
 | Account ID | `sensor.account_id` | HelloFresh customer account ID. |
 | Boxes received | `sensor.boxes_received` | Lifetime count of boxes delivered to the account, from the authenticated profile endpoint. |

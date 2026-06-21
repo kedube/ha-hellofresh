@@ -96,6 +96,7 @@ def _build_coordinator() -> SimpleNamespace:
                 subscription_id="sub-1",
                 display_name="Classic Plan",
                 plan_name="Classic Box",
+                status="ACTIVE",
                 servings=2,
                 delivery_address="62 Leonard St, Gloucester, MA, 01930",
                 recent_payment_date=date(2026, 6, 4),
@@ -158,6 +159,8 @@ def test_new_sensor_entities_reflect_account_data() -> None:
     assert _sensor_for("selected_meal_count").native_value == 1
     assert _sensor_for("required_meal_count").native_value == 3
     assert _sensor_for("selected_plan").native_value == "Classic Box"
+    # API status arrives uppercase; the sensor lowercases it to a clean state value.
+    assert _sensor_for("subscription_status").native_value == "active"
     assert _sensor_for("next_delivery_slot").native_value == "Mon 8:00 AM - 8:00 PM"
     assert _sensor_for("tracked_shipment_carrier").native_value == "UPS"
     assert _sensor_for("number_of_people").native_value == 2

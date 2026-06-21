@@ -132,6 +132,9 @@
       "subscription_count": {
         "name": "Account subscription count"
       },
+      "subscription_status": {
+        "name": "Subscription status"
+      },
       "number_of_people": {
         "name": "Number of people"
       },

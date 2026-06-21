@@ -134,6 +134,11 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:account-multiple-outline",
     ),
     SensorEntityDescription(
+        key="subscription_status",
+        translation_key="subscription_status",
+        icon="mdi:account-check-outline",
+    ),
+    SensorEntityDescription(
         key="number_of_people",
         translation_key="number_of_people",
         icon="mdi:account-group-outline",
