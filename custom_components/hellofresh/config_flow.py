@@ -6,6 +6,11 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 import voluptuous as vol
 
 from .api import HelloFreshAuthError, HelloFreshClient, HelloFreshError
@@ -351,7 +356,8 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
-                    CONF_HISTORY_WEEKS: user_input[CONF_HISTORY_WEEKS],
+                    # NumberSelector yields a float; store a clean int (whole weeks).
+                    CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
                 },
             )
 
@@ -385,9 +391,16 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                             CONF_HISTORY_WEEKS,
                             DEFAULT_HISTORY_WEEKS,
                         ),
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=MIN_HISTORY_WEEKS, max=MAX_HISTORY_WEEKS),
+                    ): NumberSelector(
+                        # mode=BOX renders an editable number field (like Refresh interval),
+                        # not a slider. step=1 keeps it to whole weeks; min/max still validate.
+                        NumberSelectorConfig(
+                            min=MIN_HISTORY_WEEKS,
+                            max=MAX_HISTORY_WEEKS,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="weeks",
+                        )
                     ),
                 }
             ),
