@@ -5693,3 +5693,49 @@ def test_auth_query_sends_api_country_code_for_uk() -> None:
     )
     query = client._tokens._auth_query()
     assert query == {"country": "GB", "locale": "en-GB"}
+
+
+def _status_for(raw_subscription: dict) -> str | None:
+    """Normalize a raw subscriptions-payload item and return its derived status."""
+    client = HelloFreshClient(
+        session=object(),  # type: ignore[arg-type]
+        access_token="token",
+    )
+    return client._subscription_from_raw_subscription(raw_subscription).status
+
+
+def test_subscription_status_derived_from_real_payload_fields() -> None:
+    """The live subscriptions payload has no `status` field; status is derived from
+    `canceledAt` / `pausedAt` / `isActive` (regression: sensor showed Unknown because the
+    normalizer looked only for a non-existent `status`/`state` key)."""
+    # Active account: only isActive=True, the paused/cancelled timestamps null.
+    assert _status_for({"id": "s", "isActive": True, "pausedAt": None, "canceledAt": None}) == (
+        "active"
+    )
+    # Paused account.
+    assert _status_for({"id": "s", "isActive": False, "pausedAt": "2026-06-01T00:00:00-0700"}) == (
+        "paused"
+    )
+    # Cancelled wins over paused.
+    assert (
+        _status_for(
+            {
+                "id": "s",
+                "isActive": False,
+                "pausedAt": "2026-06-01T00:00:00-0700",
+                "canceledAt": "2026-06-02T00:00:00-0700",
+            }
+        )
+        == "cancelled"
+    )
+    # endlessPausedAt carries a stale historical date even on active accounts -> must be ignored.
+    assert (
+        _status_for(
+            {"id": "s", "isActive": True, "endlessPausedAt": "2020-12-12T00:00:00-0800"}
+        )
+        == "active"
+    )
+    # An explicit status field (other regions / future drift) still wins.
+    assert _status_for({"id": "s", "status": "ACTIVE", "isActive": False}) == "ACTIVE"
+    # Nothing usable -> None (sensor shows Unknown, as before).
+    assert _status_for({"id": "s"}) is None
