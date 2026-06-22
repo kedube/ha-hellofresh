@@ -260,10 +260,12 @@ These handlers are intended for Home Assistant conversation workflows and future
 - `hellofresh.unskip_week` — restore a previously skipped week
 - `hellofresh.reschedule_week` — move a single week's delivery to a different delivery option (one-off)
 - `hellofresh.change_delivery_weekday` — change the recurring delivery option/interval for a plan (affects all future deliveries)
+- `hellofresh.get_food_profile` — **returns a response**: the customer's food profile (the preferences HelloFresh uses to auto-preselect meals) plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](#food-profile-card).
+- `hellofresh.set_food_profile` — update the food profile; provide any of `taste`, `household`, or `goals` (only the supplied sections change). Weighted taste fields accept either a list of liked slugs or a `{slug: +100/-100}` map. Returns the saved profile.
 
 When multiple HelloFresh accounts are configured, service calls can target a specific entry with `config_entry_id`.
 
-For an interactive alternative to calling these services by hand, the [Meal planner card](#meal-planner-card) drives `select_meals`, `skip_week`, and `unskip_week`, and the [Market card](#market-card) drives `select_market_items`, all from the dashboard. The `switch.skip_next_modifiable_week` entity (**Skip next selectable delivery week**) also skips/restores the next modifiable week with a single toggle.
+For an interactive alternative to calling these services by hand, the [Meal planner card](#meal-planner-card) drives `select_meals`, `skip_week`, and `unskip_week`, the [Market card](#market-card) drives `select_market_items`, and the [Food Profile card](#food-profile-card) drives `get_food_profile`/`set_food_profile`, all from the dashboard. The `switch.skip_next_modifiable_week` entity (**Skip next selectable delivery week**) also skips/restores the next modifiable week with a single toggle.
 
 How write actions behave (skip/unskip and meal selection) is described under [Current Scope](#current-scope): the integration uses the website's verified write endpoints first and stops with a clear error — raising a Repairs issue — rather than guessing endlessly.
 
@@ -276,6 +278,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
+- **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
 - **Schedule** — the delivery calendar, an always-visible "next box" and "next selectable box" summary, subscription details, a holiday-delivery banner (conditional), and a per-week "weeks needing selection" breakdown table (conditional).
 - **Diagnostics** — token-expiry and integration-health entities plus a refresh action, tucked out of the way.
 
@@ -331,6 +334,27 @@ What it does:
 - **Quantity steppers** — set how many of each item to order with a **− N +** control (clamped to the item's max), with a live **Market total** of the selection. **Save selection** writes it via `hellofresh.select_market_items` (which preserves your meal selection); **Cancel** discards the edit. A **show selected only** filter (remembered across weeks and reloads) hides the rest.
 
 > Market reading and writing are HAR-verified against the live US cart API (selection state, single- and multi-item writes, and meal preservation). The cart's `extras` payload is grouped by item SKU and split into recurring vs. this-week (one-off) quantities, matching the website.
+
+### Food Profile card
+
+The integration also ships **`custom:hellofresh-food-profile-card`**, for viewing and editing your **food profile** — the preferences HelloFresh uses to automatically pre-select meals for upcoming weeks. It reads the profile and the full catalog of options live from `hellofresh.get_food_profile` (the profile isn't part of the regular sensor poll) and saves via `hellofresh.set_food_profile`. It is auto-registered the same way; in YAML-mode dashboards add `/hellofresh/hellofresh-food-profile-card.js` as a *JavaScript module* resource.
+
+```yaml
+type: custom:hellofresh-food-profile-card
+# title: Food Profile        # optional header
+# logo: true                 # optional bundled HelloFresh logo in the header
+# config_entry_id: <id>      # required only with multiple HelloFresh accounts
+```
+
+What it does, driven entirely by the options catalog so new HelloFresh options appear automatically:
+
+- **Dietary preference** — single-select (flexitarian, mostly-meat, vegetarian, pescatarian).
+- **Multi-select chips** — taste exclusions (with a "None" choice where HelloFresh allows it), nutrition goals, meal types, and goals.
+- **Like / Dislike** — a tri-state 👍/👎 toggle per item for cuisines, flavors, dish types, and proteins (👍 = +100, 👎 = −100, neither = neutral), exactly matching how HelloFresh weights them.
+- **Household** — adults / children selectors.
+- **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes.
+
+> The profile read/write shapes (the `taste` / `household` / `goals` sections, the weighted +100/−100 maps, and the PATCH payload) are HAR-verified against the live US profile-service API.
 
 ### Recorder attribute sizes
 

@@ -21,9 +21,12 @@ from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_DELIVERY_INTERVAL,
     ATTR_DELIVERY_OPTION,
+    ATTR_GOALS,
+    ATTR_HOUSEHOLD,
     ATTR_QUANTITIES,
     ATTR_RECIPE_IDS,
     ATTR_SUBSCRIPTION_ID,
+    ATTR_TASTE,
     ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
@@ -44,11 +47,13 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
+    SERVICE_GET_FOOD_PROFILE,
     SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
     SERVICE_RESCHEDULE_WEEK,
     SERVICE_SELECT_MARKET_ITEMS,
     SERVICE_SELECT_MEALS,
+    SERVICE_SET_FOOD_PROFILE,
     SERVICE_SKIP_WEEK,
     SERVICE_UNSKIP_WEEK,
 )
@@ -417,6 +422,46 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             }
         return {"weeks": [_week_dict(week) for week in weeks], "account": account}
 
+    async def async_get_food_profile(service_call: ServiceCall) -> ServiceResponse:
+        """Return the customer's food profile plus the full catalog of selectable options.
+
+        Read-only. Fetched live from HelloFresh's profile-service (it is not part of the
+        regular sensor poll), so the Food Profile card can read current picks and every
+        possible option in one call.
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        client = coordinators[0].client
+        profile = await client.async_get_food_profile()
+        options = await client.async_get_food_profile_options()
+        return {"profile": profile.as_dict(), "options": options.as_dict()}
+
+    async def async_set_food_profile(service_call: ServiceCall) -> ServiceResponse:
+        """Update the customer's food profile (auto-preselection preferences).
+
+        Accepts partial ``taste`` / ``household`` / ``goals`` sections; only what is provided
+        is changed. Returns the saved profile so the card can re-render from the server's truth.
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        changes: dict[str, object] = {}
+        if ATTR_TASTE in service_call.data:
+            changes["taste"] = service_call.data[ATTR_TASTE]
+        if ATTR_HOUSEHOLD in service_call.data:
+            changes["household"] = service_call.data[ATTR_HOUSEHOLD]
+        if ATTR_GOALS in service_call.data:
+            changes["goals"] = service_call.data[ATTR_GOALS]
+        if not changes:
+            raise HomeAssistantError("Provide at least one of: taste, household, goals.")
+        saved = await coordinators[0].client.async_update_food_profile(changes)
+        return {"profile": saved.as_dict()}
+
     async def async_select_meals(service_call: ServiceCall) -> None:
         """Submit meal selections."""
         week_id = service_call.data[ATTR_WEEK_ID]
@@ -517,6 +562,29 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             }
         ),
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_FOOD_PROFILE,
+        async_get_food_profile,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_FOOD_PROFILE,
+        async_set_food_profile,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                # Each section is a free-form mapping mirroring the API's profile shape; the
+                # client normalizes weighted taste fields to +/-100 before PATCHing.
+                vol.Optional(ATTR_TASTE): dict,
+                vol.Optional(ATTR_HOUSEHOLD): dict,
+                vol.Optional(ATTR_GOALS): dict,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,

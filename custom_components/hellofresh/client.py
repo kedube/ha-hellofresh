@@ -20,6 +20,8 @@ from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
     HelloFreshError,
+    HelloFreshFoodProfile,
+    HelloFreshFoodProfileOptions,
     HelloFreshMarketItem,
     HelloFreshNotImplementedError,
     HelloFreshOrder,
@@ -591,6 +593,82 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             extra_headers={"x-requested-by": "shopping-experience-web"},
         )
         _LOGGER.info("HelloFresh market selection succeeded using %s", cart_update["path"])
+
+    # ---- Food profile (auto-preselection preferences) ------------------------
+    #
+    # HelloFresh drives its automatic meal pre-selection from a per-customer "food profile"
+    # (taste exclusions, dietary preference, liked/disliked cuisines/proteins/etc., household
+    # size, goals). The web app reads it from
+    #   GET  /gw/profile-service/v2/customers/me/profile
+    # the full catalog of choices from
+    #   GET  /gw/profile-service/v2/profile/options
+    # and saves changes with
+    #   PATCH /gw/profile-service/v2/customers/me/profile   (HAR-verified, US).
+    # All three take the brand/exclusion/regionCode query params the web app sends.
+
+    _PROFILE_OPTIONS_PATH = "/gw/profile-service/v2/profile/options"
+    _PROFILE_PATH = "/gw/profile-service/v2/customers/me/profile"
+
+    def _profile_params(self, *, source: str | None = None) -> dict[str, str]:
+        params = {
+            "brand": "BRAND_HELLOFRESH",
+            "exclusion": "v2",
+            "regionCode": api_country_code(self._country),
+        }
+        if source:
+            params["source"] = source
+        return params
+
+    async def async_get_food_profile_options(self) -> HelloFreshFoodProfileOptions:
+        """Return the full catalog of selectable food-profile options."""
+        response = await self._async_api_get(
+            self._PROFILE_OPTIONS_PATH, params=self._profile_params()
+        )
+        if response.status >= 400:
+            raise HelloFreshError(
+                f"HelloFresh food-profile options request failed (HTTP {response.status})"
+            )
+        payload = await self._async_response_json(response)
+        return HelloFreshFoodProfileOptions.from_api(payload)
+
+    async def async_get_food_profile(self) -> HelloFreshFoodProfile:
+        """Return the customer's current food profile (auto-preselection preferences)."""
+        response = await self._async_api_get(
+            self._PROFILE_PATH, params=self._profile_params()
+        )
+        if response.status >= 400:
+            raise HelloFreshError(
+                f"HelloFresh food-profile request failed (HTTP {response.status})"
+            )
+        payload = await self._async_response_json(response)
+        return HelloFreshFoodProfile.from_api(payload)
+
+    async def async_update_food_profile(
+        self, changes: dict[str, Any]
+    ) -> HelloFreshFoodProfile:
+        """Update the customer's food profile and return the saved result.
+
+        ``changes`` is a partial ``{taste, household, goals}`` mapping (only the sections you
+        want to change). Weighted taste fields may be given as a list of liked slugs or a
+        ``{slug: weight}`` map; both are normalized to the canonical +/-100 form.
+        """
+        patch = HelloFreshFoodProfile.build_patch(changes)
+        if not patch:
+            raise HelloFreshError("No food-profile changes were provided")
+        response = await self._async_api_request(
+            "PATCH",
+            self._PROFILE_PATH,
+            params=self._profile_params(source="food-profile"),
+            json_payload=patch,
+        )
+        if response.status >= 400:
+            details = await response.text()
+            raise HelloFreshError(
+                f"HelloFresh food-profile update failed (HTTP {response.status}): {details[:300]}"
+            )
+        payload = await self._async_response_json(response)
+        _LOGGER.info("HelloFresh food-profile update succeeded")
+        return HelloFreshFoodProfile.from_api(payload)
 
     @staticmethod
     def _existing_recipe_quantity(recipe: HelloFreshRecipe) -> int:
