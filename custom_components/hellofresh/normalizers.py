@@ -761,17 +761,24 @@ class HelloFreshPayloadNormalizer:
         """Configured history lookback in weeks (falls back to the class default)."""
         return getattr(self, "_history_lookback_weeks", None) or self._HISTORY_LOOKBACK_WEEKS
 
+    # How many weeks ahead to request deliveries for. HelloFresh schedules deliveries further out
+    # than it publishes *menus*, so reaching a bit past the menu horizon is fine — weeks beyond the
+    # published menu come back with no recipes and are filtered out downstream (the meal-planner
+    # card only shows weeks that actually have menu data). The deliveries payload stays bounded
+    # because those empty future weeks are tiny.
+    _FUTURE_DELIVERY_WEEKS = 8
+
     def _build_delivery_history_range(self) -> dict[str, str]:
         """Return the range for account delivery lookups.
 
         Spans ``self._history_weeks`` of history so the meal-planner card and history sensors can
         browse the configured window of past boxes — the API supports far wider ranges, but the
-        cap keeps the per-poll deliveries payload bounded. Extends 6 weeks ahead so the
-        upcoming-delivery sensors see subsequent scheduled weeks too.
+        cap keeps the per-poll deliveries payload bounded. Extends ``_FUTURE_DELIVERY_WEEKS``
+        ahead; weeks past the published-menu horizon return empty and are filtered downstream.
         """
         today = datetime.now(UTC).date()
         start = today - timedelta(weeks=self._history_weeks)
-        end = today + timedelta(weeks=6)
+        end = today + timedelta(weeks=self._FUTURE_DELIVERY_WEEKS)
         start_iso = start.isocalendar()
         end_iso = end.isocalendar()
         return {
