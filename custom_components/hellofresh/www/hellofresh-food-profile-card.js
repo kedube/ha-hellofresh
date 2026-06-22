@@ -24,7 +24,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const FOOD_PROFILE_CARD_VERSION = "0.4.0";
+const FOOD_PROFILE_CARD_VERSION = "0.4.1";
 
 // Sub-card titles, matching the labels HelloFresh's web food-profile page uses (which differ
 // from the raw API slugs, e.g. exclusions -> "Exclude", goals -> "Personal").
@@ -677,7 +677,8 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       .stepval { min-width: 32px; text-align: center; font-weight: 700; }
 
       /* Sub-cards (collapsed preview + expand to edit) */
-      .subcards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+      .subcards { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      @media (max-width: 600px) { .subcards { grid-template-columns: 1fr; } }
       .subcard {
         background: var(--hf-card-bg); border: 1px solid var(--divider-color);
         border-radius: 12px; padding: 12px 14px;
