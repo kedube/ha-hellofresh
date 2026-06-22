@@ -656,11 +656,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ? `<span class="chip preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
           : ""}
         <button
-          class="chip filterchip ${this._showSelectedOnly ? "on" : ""}"
+          class="chip filterchip"
           data-action="toggle-filter"
-          aria-pressed="${this._showSelectedOnly ? "true" : "false"}"
-          title="Toggle showing only selected meals"
-        >${this._showSelectedOnly ? "Selected only" : "All meals"}</button>
+          title="${this._showSelectedOnly ? "Show all meals" : "Show only selected meals"}"
+        >${this._showSelectedOnly ? "Show all meals" : "Show selected only"}</button>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
         ${editable ? `<span class="hint">Tap meals to choose, then Save.</span>` : ""}
@@ -991,10 +990,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .filterchip {
         border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em;
       }
-      .filterchip.on {
-        background: var(--primary-color); color: var(--text-primary-color, #fff);
-        border-color: var(--primary-color);
-      }
+      .filterchip:hover { filter: brightness(0.95); }
       .orderbar {
         display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px;
         padding: 10px 12px; border-radius: 10px;
