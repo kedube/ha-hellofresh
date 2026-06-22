@@ -375,21 +375,25 @@ class HelloFreshMarketCard extends HTMLElement {
             ${week.delivery_date ? this._esc(this._fmtDate(week.delivery_date)) : ""}
             ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
           </div>
+          ${this._renderCurrentWeek()}
         </div>
         <button class="nav" data-action="next" aria-label="Next week">›</button>
       </div>
-      ${this._renderCurrentWeekRow()}
       ${this._renderStatusRow(week)}
     `;
   }
 
-  // A "Current Week" button that jumps the cursor to the week matching today's date. Hidden
-  // when the cursor is already on the current week or when no week carries a delivery_date.
-  _renderCurrentWeekRow() {
+  // A "Current Week" button that jumps the cursor to the week matching today's date. Lives
+  // inside .weekinfo so the nav arrows stay centered on the full block. When the cursor is
+  // already on the current week (or no week has a date) we render an empty placeholder of the
+  // same height so the header doesn't change size and the layout doesn't bounce.
+  _renderCurrentWeek() {
     const target = this._currentWeekIndex();
-    if (target < 0 || target === this._cursor) return "";
+    if (target < 0 || target === this._cursor) {
+      return `<div class="currentweekslot"></div>`;
+    }
     return `
-      <div class="currentweekrow">
+      <div class="currentweekslot">
         <button class="currentweekbtn" data-action="goto-current">Current Week</button>
       </div>`;
   }
@@ -580,7 +584,7 @@ class HelloFreshMarketCard extends HTMLElement {
 
   static _styles() {
     return `
-      ha-card { padding: 12px 16px 16px; }
+      ha-card { padding: 16px 16px 16px; }
       .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
       .head .logo { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none; }
       .title-text { font-size: 1.5em; font-weight: 500; }
@@ -596,7 +600,10 @@ class HelloFreshMarketCard extends HTMLElement {
         color: var(--primary-text-color); padding: 4px 12px; border-radius: 50%;
       }
       .nav:hover { background: var(--secondary-background-color); }
-      .currentweekrow { display: flex; justify-content: center; margin: 8px 0 0; }
+      .currentweekslot {
+        display: flex; justify-content: center; align-items: center;
+        min-height: 36px; margin-top: 6px;
+      }
       .currentweekbtn {
         font: inherit; font-size: 0.8em; font-weight: 600; cursor: pointer;
         padding: 5px 14px; border-radius: 14px; border: 1px solid var(--divider-color);
