@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.18.1";
+const CARD_VERSION = "0.18.2";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -505,15 +505,29 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       </div>`;
   }
 
-  // A week still needs a selection when it's editable and fewer meals are saved than the
-  // box requires. Returns the list of such weeks (in cursor order).
+  // A week still needs the customer's attention when it's editable AND either:
+  //   • fewer meals are saved than the box requires (under-filled), or
+  //   • HelloFresh has only *preselected* the meals (auto-picked), so the box is "full" of
+  //     auto-picks the customer hasn't confirmed/reviewed yet.
+  // A preselected week reports meals_selected == meals_required, so a pure count check misses it —
+  // the meals_preselected/auto_picked flag is what surfaces those. Returns the list (cursor order).
   _weeksNeedingChoice() {
     return (this._weeks || []).filter((w) => {
       if (!this._isEditable(w)) return false;
+      if (this._isPreselected(w)) return true;
       const required = w.meals_required;
       if (!required) return false;
       return this._savedSelection(w).size < required;
     });
+  }
+
+  // Whether HelloFresh auto-picked (preselected) this week's meals rather than the customer
+  // choosing them. Prefers the server's auto_picked flag (delivery-date aware) and falls back to
+  // the raw meals_preselected flag, ignoring paused weeks whose preselection never ships.
+  _isPreselected(week) {
+    if (!week || this._isPaused(week)) return false;
+    if (week.auto_picked != null) return Boolean(week.auto_picked);
+    return Boolean(week.meals_preselected);
   }
 
   // Banner summarizing weeks that still need meals chosen, with the soonest deadline. Moved
