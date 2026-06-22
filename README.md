@@ -279,7 +279,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
-- **Schedule** — the delivery calendar, an always-visible "next box" and "next selectable box" summary, subscription details, a holiday-delivery banner (conditional), and a per-week "weeks needing selection" breakdown table (conditional).
+- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, status and price) and a timeline of upcoming weeks with their selection state, above the delivery calendar, a holiday-delivery banner (conditional), and a foldable "Subscription details" list with the full per-box metrics.
 - **Diagnostics** — token-expiry and integration-health entities plus a refresh action, tucked out of the way.
 
 ### Meal planner card
@@ -355,6 +355,24 @@ What it does, driven entirely by the options catalog so new HelloFresh options a
 - **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes.
 
 > The profile read/write shapes (the `taste` / `household` / `goals` sections, the weighted +100/−100 maps, and the PATCH payload) are HAR-verified against the live US profile-service API.
+
+### Schedule card
+
+The integration also ships **`custom:hellofresh-schedule-card`**, a clean overview of your delivery schedule. Like the other cards it reads per-week data on demand from `hellofresh.get_weeks` (one call builds the whole view) and is auto-registered the same way; in YAML-mode dashboards add `/hellofresh/hellofresh-schedule-card.js` as a *JavaScript module* resource.
+
+```yaml
+type: custom:hellofresh-schedule-card
+# title: Schedule           # optional header
+# logo: true                # optional bundled HelloFresh logo in the header
+# max_weeks: 8              # optional cap on timeline rows (default 8)
+# config_entry_id: <id>     # required only with multiple HelloFresh accounts
+```
+
+What it does:
+
+- **Next-box summary** — the nearest upcoming delivery's date (with a relative "in 3 days"), the selection-deadline countdown (highlighted red when under 24h), and the order status with the box total.
+- **Timeline** — a chronological row per upcoming week with a status dot, date, week label, a one-line detail (meals chosen, "Pick N meals" with the time left, or "No box this week"), and a state badge. The current box is highlighted; **Set** / **Needs picking** / **Skipped** / **Delivered** states are colour-coded.
+- It's read-only; edit selections from the [Meal planner card](#meal-planner-card).
 
 ### Recorder attribute sizes
 
