@@ -412,11 +412,10 @@ class HelloFreshMarketCard extends HTMLElement {
           Market total ${this._fmtPrice(totalCents / 100, currency)}${dirty ? " · unsaved" : ""}
         </span>
         <button
-          class="chip filterchip ${this._showSelectedOnly ? "on" : ""}"
+          class="chip filterchip"
           data-action="toggle-filter"
-          aria-pressed="${this._showSelectedOnly ? "true" : "false"}"
-          title="Toggle showing only selected market items"
-        >${this._showSelectedOnly ? "Selected only" : "All items"}</button>
+          title="${this._showSelectedOnly ? "Show all market items" : "Show only selected market items"}"
+        >${this._showSelectedOnly ? "Show all items" : "Show selected only"}</button>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
         ${dirty
@@ -619,7 +618,7 @@ class HelloFreshMarketCard extends HTMLElement {
       .chip.locked { opacity: 0.7; }
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
       .filterchip { border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em; }
-      .filterchip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+      .filterchip:hover { filter: brightness(0.95); }
       .skipbtn {
         margin-left: auto; font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
         border: 1px solid var(--divider-color); background: var(--card-background-color);
