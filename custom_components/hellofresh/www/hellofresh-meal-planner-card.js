@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.17.0";
+const CARD_VERSION = "0.18.1";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -110,17 +110,59 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const response = (result && result.response) || {};
       const weeks = response.weeks || [];
       this._account = response.account || null; // account-level fallbacks (e.g. plan price)
-      this._weeks = weeks;
+      this._weeks = this._browsableWeeks(weeks);
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
       this._savedSelCache = null;
-      this._cursor = this._defaultCursor(weeks);
+      this._cursor = this._defaultCursor(this._weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
       this._loading = false;
       this._render();
     }
+  }
+
+  // Trim the week list to what's actually browsable in the planner.
+  //
+  // HelloFresh schedules deliveries further out than it publishes *menus*, so the deliveries feed
+  // includes future weeks that have no recipes yet. The planner should show exactly the weeks that
+  // have menu data and no further — if HelloFresh has published 5 future weeks, show 5; if 7, show
+  // 7 — without any fixed cap. So we walk the weeks in chronological order and, once we reach a
+  // FUTURE week with no menu data, stop including everything from there on. Past and current weeks
+  // are always kept (they belong to the browsable history even if their recipe payload is absent).
+  _browsableWeeks(weeks) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const ordered = (weeks || [])
+      .slice()
+      .sort((a, b) => this._weekSortKey(a) - this._weekSortKey(b));
+    const result = [];
+    let futureMenuEnded = false;
+    for (const week of ordered) {
+      const isFuture = week.delivery_date
+        ? Date.parse(week.delivery_date) >= today.getTime()
+        : true; // undated weeks are treated as future (can't anchor them to the past)
+      const hasMenu = (week.recipes || []).length > 0;
+      if (!isFuture) {
+        result.push(week); // past/current week: always browsable history
+        continue;
+      }
+      // Future week: include only while menus are still being published contiguously.
+      if (futureMenuEnded || !hasMenu) {
+        futureMenuEnded = true;
+        continue;
+      }
+      result.push(week);
+    }
+    return result;
+  }
+
+  // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
+  // future weeks in _browsableWeeks).
+  _weekSortKey(week) {
+    const ms = week && week.delivery_date ? Date.parse(week.delivery_date) : NaN;
+    return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
   }
 
   // Land on the first week that still needs/allows a selection, else the first week.
@@ -305,7 +347,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // Tap a recipe tile: toggle it in/out of the selection at quantity 1 (or remove if present).
   _toggleRecipe(week, recipe) {
-    if (this._busy || !this._isEditable(week)) return;
+    if (this._busy || !this._canEdit(week)) return;
     const pending = this._ensurePending(week);
     const idx = this._activeIndex(pending, recipe);
     if (pending.has(idx)) {
@@ -320,7 +362,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // +/- stepper: change a meal's serving count by delta, clamped to [0, MAX_QUANTITY].
   // Reaching 0 removes the meal entirely.
   _changeQuantity(week, recipe, delta) {
-    if (this._busy || !this._isEditable(week)) return;
+    if (this._busy || !this._canEdit(week)) return;
     const pending = this._ensurePending(week);
     const idx = this._activeIndex(pending, recipe);
     const current = pending.get(idx) || 0;
@@ -478,21 +520,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // here from the dashboard's Overview view so the prompt lives with the planner that fixes
   // it; tapping the banner jumps the week cursor to the first week needing a choice.
   _renderNeedsChoosingBanner() {
+    // The banner is a prompt to edit, so it only shows while the grid is in its editable
+    // "show all meals" mode. In "show selected only" mode editing is disabled, so prompting to
+    // pick meals there would be misleading.
+    if (this._showSelectedOnly) return "";
     const pending = this._weeksNeedingChoice();
     if (pending.length === 0) return "";
-    const deadlines = pending
-      .map((w) => (w.selection_deadline ? new Date(w.selection_deadline) : null))
-      .filter(Boolean)
-      .sort((a, b) => a - b);
-    const soonest = deadlines[0];
     const plural = pending.length === 1 ? "week" : "weeks";
     return `
       <div class="banner" data-action="goto-needs" role="button" tabindex="0">
         <span class="banner-icon">🍽️</span>
         <span class="banner-text">
-          <strong>${pending.length} ${plural}</strong> still need a meal selection${
-            soonest ? ` · next deadline ${this._esc(this._fmtDateTime(soonest))}` : ""
-          }
+          <strong>${pending.length} ${plural}</strong> still need a meal selection
         </span>
       </div>`;
   }
@@ -662,7 +701,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         >${this._showSelectedOnly ? "Show all meals" : "Show selected only"}</button>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
-        ${editable ? `<span class="hint">Tap meals to choose, then Save.</span>` : ""}
+        ${editable && this._showSelectedOnly
+          ? `<span class="hint">Switch to “Show all meals” to change your selection.</span>`
+          : editable
+            ? `<span class="hint">Tap meals to choose, then Save.</span>`
+            : ""}
         ${dirty
           ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Save selection</button>
              <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
@@ -721,12 +764,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return entry;
   }
 
+  // Whether the user can edit the selection right now: the week must be editable AND the grid
+  // must be in "show all meals" mode. In "show selected only" mode the unselected meals are
+  // hidden, so toggling/quantity edits there are disabled to avoid editing against a partial view.
+  _canEdit(week) {
+    return this._isEditable(week) && !this._showSelectedOnly;
+  }
+
   // Per-render constants shared by every tile of a week (avoids recomputing per tile).
   _tileContext(week) {
     const { nameCounts } = this._dedupedFor(week);
     const display = this._displaySelection(week);
     return {
-      editable: this._isEditable(week),
+      editable: this._canEdit(week),
       display,
       nameCounts,
       // A tile is selected if its own index OR any collapsed-duplicate index is chosen.

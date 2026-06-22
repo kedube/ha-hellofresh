@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.5.0";
+const MARKET_CARD_VERSION = "0.6.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -120,7 +120,7 @@ class HelloFreshMarketCard extends HTMLElement {
       const result = await this._hass.callService("hellofresh", "get_weeks", data, undefined, false, true);
       const response = (result && result.response) || {};
       // Only weeks that actually carry a market catalog are browsable here.
-      this._weeks = (response.weeks || []).filter((w) => (w.market_items || []).length > 0);
+      this._weeks = this._browsableWeeks(response.weeks || []);
       this._pending = {};
       this._cursor = 0;
     } catch (err) {
@@ -129,6 +129,49 @@ class HelloFreshMarketCard extends HTMLElement {
       this._loading = false;
       this._render();
     }
+  }
+
+  // Trim the week list to what's actually browsable in the Market.
+  //
+  // HelloFresh schedules deliveries further out than it publishes the Market catalog, so the
+  // deliveries feed includes future weeks with no market items yet. Show exactly the weeks that
+  // have a catalog and no further — if HelloFresh has published 5 future weeks, show 5; if 7, show
+  // 7 — without any fixed cap. So we walk the weeks in chronological order and, once we reach a
+  // FUTURE week with no market data, stop including everything from there on. Past and current
+  // weeks are kept only when they carry a catalog (a past week with no market items has nothing
+  // to browse), matching the original "weeks that carry a market catalog" rule for history.
+  _browsableWeeks(weeks) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const ordered = (weeks || [])
+      .slice()
+      .sort((a, b) => this._weekSortKey(a) - this._weekSortKey(b));
+    const result = [];
+    let futureMarketEnded = false;
+    for (const week of ordered) {
+      const isFuture = week.delivery_date
+        ? Date.parse(week.delivery_date) >= today.getTime()
+        : true; // undated weeks are treated as future (can't anchor them to the past)
+      const hasMarket = (week.market_items || []).length > 0;
+      if (!isFuture) {
+        if (hasMarket) result.push(week); // past/current week with a catalog: browsable history
+        continue;
+      }
+      // Future week: include only while the catalog is still being published contiguously.
+      if (futureMarketEnded || !hasMarket) {
+        futureMarketEnded = true;
+        continue;
+      }
+      result.push(week);
+    }
+    return result;
+  }
+
+  // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
+  // future weeks in _browsableWeeks).
+  _weekSortKey(week) {
+    const ms = week && week.delivery_date ? Date.parse(week.delivery_date) : NaN;
+    return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
   }
 
   _step(delta) {
@@ -177,6 +220,13 @@ class HelloFreshMarketCard extends HTMLElement {
     const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
     if (deadline && deadline < Date.now()) return false;
     return true;
+  }
+
+  // Whether the user can change the cart right now: the week must be editable AND the grid must
+  // be in "show all items" mode. In "show selected only" mode the unselected items are hidden,
+  // so quantity edits there are disabled to avoid editing against a partial view.
+  _canEdit(week) {
+    return this._isEditable(week) && !this._showSelectedOnly;
   }
 
   // ---- selection state -----------------------------------------------------
@@ -231,7 +281,7 @@ class HelloFreshMarketCard extends HTMLElement {
 
   // +/- stepper: change an item's quantity, clamped to [0, min(maxQuantity, MAX_QUANTITY)].
   _changeQuantity(week, item, delta) {
-    if (this._busy || !this._isEditable(week)) return;
+    if (this._busy || !this._canEdit(week)) return;
     const pending = this._ensurePending(week);
     const cap = Math.min(
       item.max_quantity != null ? item.max_quantity : HelloFreshMarketCard.MAX_QUANTITY,
@@ -256,7 +306,7 @@ class HelloFreshMarketCard extends HTMLElement {
     const idAttr = item.item_id;
     const tile = this._shell.body.querySelector(`.item[data-id="${CSS.escape(idAttr)}"]`);
     if (tile) {
-      const editable = this._isEditable(week);
+      const editable = this._canEdit(week);
       const qty = this._displaySelection(week).get(item.item_id) || 0;
       const frag = this._fragment(this._renderTile(week, item, editable, qty));
       if (frag.firstElementChild) tile.replaceWith(frag.firstElementChild);
@@ -418,6 +468,9 @@ class HelloFreshMarketCard extends HTMLElement {
         >${this._showSelectedOnly ? "Show all items" : "Show selected only"}</button>
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
+        ${editable && this._showSelectedOnly
+          ? `<span class="hint">Switch to “Show all items” to change your cart.</span>`
+          : ""}
         ${dirty
           ? `<button class="savebtn" data-action="save" ${this._busy ? "disabled" : ""}>Save selection</button>
              <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
@@ -428,7 +481,7 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _renderGroups(week) {
-    const editable = this._isEditable(week);
+    const editable = this._canEdit(week);
     const display = this._displaySelection(week);
     const qtyOf = (item) => display.get(item.item_id) || 0;
 
@@ -617,6 +670,7 @@ class HelloFreshMarketCard extends HTMLElement {
       .chip.ok { background: var(--success-color, #4caf50); color: #fff; }
       .chip.locked { opacity: 0.7; }
       .chip.editable { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .hint { font-size: 0.78em; color: var(--secondary-text-color); }
       .filterchip { border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em; }
       .filterchip:hover { filter: brightness(0.95); }
       .skipbtn {

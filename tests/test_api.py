@@ -1826,6 +1826,21 @@ def test_history_range_honors_configured_lookback() -> None:
     assert short_start == f"{expected_iso.year}-W{expected_iso.week:02d}"
 
 
+def test_history_range_reaches_far_enough_into_the_future() -> None:
+    """The future bound must reach past HelloFresh's menu-publish horizon so no upcoming week
+    with a published menu is clipped (regression: a fixed 6-week reach dropped the last weeks)."""
+    from datetime import UTC, datetime, timedelta
+
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    range_end = client._build_delivery_history_range()["range_end"]
+    today = datetime.now(UTC).date()
+    key = HelloFreshClient._iso_week_sort_key
+    # A box 8 weeks out (within HelloFresh's typical publish window) must be at/before range_end.
+    eight_out = today + timedelta(weeks=8)
+    eight_iso = eight_out.isocalendar()
+    assert key(range_end) >= key(f"{eight_iso.year}-W{eight_iso.week:02d}")
+
+
 def test_iso_week_sort_key_orders_across_year_boundary() -> None:
     """ISO week ordering must be chronological, not lexical, across a year change."""
     key = HelloFreshClient._iso_week_sort_key
