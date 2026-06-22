@@ -308,7 +308,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return `
       <div class="hero">
         <h2 class="herotitle">Meals matched to your taste</h2>
-        <p class="herosub">Your food profile helps us set your meal picks and sort the menu by
+        <p class="herosub">Your food profile helps HelloFresh set your meal picks and sort the menu by
           what's most relevant to you. You'll always have access to the full menu.</p>
       </div>
       <div class="panelgrid top">
