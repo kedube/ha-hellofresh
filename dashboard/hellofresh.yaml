@@ -22,8 +22,8 @@
 #    makes the built-in cards show "Entity not available".
 #
 # ── Notes ─────────────────────────────────────────────────────────────────────
-# • The two custom cards — `custom:hellofresh-meal-planner-card` and
-#   `custom:hellofresh-market-card` — are served and registered automatically when the
+# • The custom cards — `custom:hellofresh-meal-planner-card`, `custom:hellofresh-market-card`,
+#   and `custom:hellofresh-food-profile-card` — are served and registered automatically when the
 #   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
 #   dashboards, add `/hellofresh/<card>.js` once under Settings → Dashboards → Resources
 #   as a JavaScript module. Every other view is 100% built-in Lovelace.
@@ -49,6 +49,15 @@ views:
     cards:
       - type: custom:hellofresh-market-card
         title: Market
+        logo: true
+    type: panel
+  - title: Food Profile
+    path: food-profile
+    icon: mdi:food-apple
+    panel: true
+    cards:
+      - type: custom:hellofresh-food-profile-card
+        title: Food Profile
         logo: true
     type: panel
   - title: Schedule

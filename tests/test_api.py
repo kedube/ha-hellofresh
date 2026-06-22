@@ -14,6 +14,8 @@ from custom_components.hellofresh.api import (
     HelloFreshCapabilities,
     HelloFreshClient,
     HelloFreshError,
+    HelloFreshFoodProfile,
+    HelloFreshFoodProfileOptions,
     HelloFreshNotImplementedError,
     HelloFreshOrder,
     HelloFreshRecipe,
@@ -5739,3 +5741,153 @@ def test_subscription_status_derived_from_real_payload_fields() -> None:
     assert _status_for({"id": "s", "status": "ACTIVE", "isActive": False}) == "ACTIVE"
     # Nothing usable -> None (sensor shows Unknown, as before).
     assert _status_for({"id": "s"}) is None
+
+
+# --- Food profile (auto-preselection preferences) -----------------------------
+# Payloads below are the exact shapes captured from the HelloFresh web app HAR for the
+# /gw/profile-service/v2 profile and options endpoints.
+
+_FOOD_PROFILE_OPTIONS = {
+    "taste": {
+        "exclusions": ["gluten", "pork", "shellfish", "spicy"],
+        "mealTypes": ["quick-easy", "batch", "chef-style", "family-style"],
+        "dietaryPreferences": ["flexitarian", "mostly-meat", "vegetarian", "pescatarian"],
+        "nutritions": ["high-protein", "low-carb"],
+        "cuisines": ["chinese", "indian", "italian"],
+        "flavors": ["herbs", "cheesy", "spicy"],
+        "dishTypes": ["pasta", "bowl", "salad"],
+        "primaryProteins": ["beef", "pork", "tofu"],
+    },
+    "household": {"adults": [1, 2, 3, 4], "children": [0, 1, 2, 3]},
+    "goals": {"goals": ["save-time", "try-new-recipes", "improve-health"]},
+    "_meta": {"fieldsWithNone": ["taste.exclusions"]},
+}
+
+_FOOD_PROFILE = {
+    "taste": {
+        "exclusions": [],
+        "dietaryPreferences": ["mostly-meat"],
+        "cuisines": {"chinese": 100, "italian": 100},
+        "primaryProteins": {"beef": 100, "tofu": -100},
+        "flavors": {"cheesy": 100},
+        "nutritions": ["high-protein"],
+        "dishTypes": {"pasta": 100},
+        "mealTypes": ["quick-easy", "batch"],
+        "plans": {"abc": {"planPreference": "quick"}},
+        "legacySinglePreference": "quick",
+        "ingredients": {},
+    },
+    "household": {"totalPeople": 2, "adults": 2, "children": 0},
+    "goals": {"goals": ["try-new-recipes", "save-time"]},
+}
+
+
+def test_food_profile_options_from_api_preserves_groups_and_meta() -> None:
+    options = HelloFreshFoodProfileOptions.from_api(_FOOD_PROFILE_OPTIONS)
+    assert options.taste["dietaryPreferences"] == ["flexitarian", "mostly-meat", "vegetarian", "pescatarian"]
+    assert options.household["adults"] == [1, 2, 3, 4]
+    assert options.goals["goals"][0] == "save-time"
+    # The _meta block (which fields support "None") is preserved for the card.
+    assert options.meta["fieldsWithNone"] == ["taste.exclusions"]
+    # Round-trips through as_dict for the response service.
+    assert options.as_dict()["taste"]["cuisines"] == ["chinese", "indian", "italian"]
+
+
+def test_food_profile_from_api_keeps_raw_extras() -> None:
+    profile = HelloFreshFoodProfile.from_api(_FOOD_PROFILE)
+    assert profile.taste["dietaryPreferences"] == ["mostly-meat"]
+    assert profile.household["adults"] == 2
+    # Extras the card never models still survive on .raw.
+    assert profile.raw["taste"]["legacySinglePreference"] == "quick"
+    # as_dict exposes only the three editable sections.
+    assert set(profile.as_dict()) == {"taste", "household", "goals"}
+
+
+def test_food_profile_build_patch_normalizes_weighted_fields() -> None:
+    patch = HelloFreshFoodProfile.build_patch(
+        {
+            "taste": {
+                "exclusions": ["gluten"],
+                "dietaryPreferences": ["vegetarian"],
+                # A bare list of liked slugs -> all +100.
+                "cuisines": ["italian", "thai"],
+                # Mixed weights get snapped to +/-100 by sign; 0 is dropped (neutral).
+                "primaryProteins": {"beef": 50, "tofu": -3, "pork": 0},
+            },
+            "household": {"adults": 3, "children": 1},
+            "goals": {"goals": ["save-time"]},
+        }
+    )
+    assert patch["taste"]["exclusions"] == ["gluten"]
+    assert patch["taste"]["dietaryPreferences"] == ["vegetarian"]
+    assert patch["taste"]["cuisines"] == {"italian": 100, "thai": 100}
+    assert patch["taste"]["primaryProteins"] == {"beef": 100, "tofu": -100}
+    assert patch["household"] == {"adults": 3, "children": 1}
+    assert patch["goals"] == {"goals": ["save-time"]}
+
+
+def test_food_profile_build_patch_includes_only_supplied_sections() -> None:
+    patch = HelloFreshFoodProfile.build_patch({"household": {"adults": 4}})
+    assert patch == {"household": {"adults": 4}}
+
+
+def test_async_get_food_profile_parses_response() -> None:
+    client = HelloFreshClient(session=None, country="us")  # type: ignore[arg-type]
+
+    async def fake_get(path, params=None, extra_headers=None):
+        assert path == "/gw/profile-service/v2/customers/me/profile"
+        assert params["regionCode"] == "US"
+        assert params["brand"] == "BRAND_HELLOFRESH"
+
+        class Resp:
+            status = 200
+
+            async def json(self, content_type=None):
+                return _FOOD_PROFILE
+
+        return Resp()
+
+    client._async_api_get = fake_get  # type: ignore[method-assign]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    profile = loop.run_until_complete(client.async_get_food_profile())
+    assert profile.taste["cuisines"]["italian"] == 100
+
+
+def test_async_update_food_profile_patches_normalized_payload() -> None:
+    client = HelloFreshClient(session=None, country="us")  # type: ignore[arg-type]
+    sent: dict[str, object] = {}
+
+    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+        sent["method"] = method
+        sent["path"] = path
+        sent["params"] = params
+        sent["json_payload"] = json_payload
+
+        class Resp:
+            status = 200
+
+            async def json(self, content_type=None):
+                return _FOOD_PROFILE
+
+        return Resp()
+
+    client._async_api_request = fake_req  # type: ignore[method-assign]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_update_food_profile({"taste": {"cuisines": ["italian"]}})
+    )
+    assert sent["method"] == "PATCH"
+    assert sent["path"] == "/gw/profile-service/v2/customers/me/profile"
+    assert sent["params"]["source"] == "food-profile"
+    # The list-of-likes shorthand was normalized to the +100 map form before sending.
+    assert sent["json_payload"] == {"taste": {"cuisines": {"italian": 100}}}
+
+
+def test_async_update_food_profile_rejects_empty_changes() -> None:
+    client = HelloFreshClient(session=None, country="us")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="No food-profile changes"):
+        loop.run_until_complete(client.async_update_food_profile({}))

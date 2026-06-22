@@ -441,6 +441,147 @@ class HelloFreshCapabilities:
         }
 
 
+# HelloFresh's food-profile "taste" section is split into two kinds of fields:
+#   • list fields — a flat array of chosen slugs (e.g. exclusions, nutritions).
+#   • weighted fields — a {slug: weight} map where weight is +100 (like) or -100 (dislike);
+#     a slug absent from the map is "neutral". The web app only ever writes +100/-100.
+# Keeping these two sets explicit lets the model normalize a PATCH payload without guessing.
+FOOD_PROFILE_TASTE_LIST_FIELDS = (
+    "exclusions",
+    "nutritions",
+    "mealTypes",
+    "dietaryPreferences",
+)
+FOOD_PROFILE_TASTE_WEIGHTED_FIELDS = (
+    "cuisines",
+    "flavors",
+    "dishTypes",
+    "primaryProteins",
+)
+FOOD_PROFILE_LIKE = 100
+FOOD_PROFILE_DISLIKE = -100
+
+
+@dataclass(slots=True)
+class HelloFreshFoodProfileOptions:
+    """All selectable food-profile options (the API's ``/profile/options`` catalog).
+
+    This is the universe of choices HelloFresh offers; the customer's actual picks live in
+    :class:`HelloFreshFoodProfile`. Stored as the decoded JSON so new option groups appear
+    in the dashboard automatically, with the ``_meta`` block (e.g. which fields support a
+    "none" choice, the per-diet primary-protein groupings) preserved for the card.
+    """
+
+    taste: dict[str, list[Any]] = field(default_factory=dict)
+    household: dict[str, list[Any]] = field(default_factory=dict)
+    goals: dict[str, list[Any]] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, payload: dict[str, Any]) -> "HelloFreshFoodProfileOptions":
+        payload = payload or {}
+        return cls(
+            taste=dict(payload.get("taste") or {}),
+            household=dict(payload.get("household") or {}),
+            goals=dict(payload.get("goals") or {}),
+            meta=dict(payload.get("_meta") or {}),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "taste": self.taste,
+            "household": self.household,
+            "goals": self.goals,
+            "meta": self.meta,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshFoodProfile:
+    """A customer's food profile — the preferences HelloFresh uses to auto-pick future meals.
+
+    Mirrors the ``/customers/me/profile`` shape (``taste`` / ``household`` / ``goals``). The
+    raw decoded payload is kept verbatim so read-only extras the card doesn't model (e.g.
+    ``plans``, ``legacySinglePreference``, ``ingredients``) survive a round-trip.
+    """
+
+    taste: dict[str, Any] = field(default_factory=dict)
+    household: dict[str, Any] = field(default_factory=dict)
+    goals: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, payload: dict[str, Any]) -> "HelloFreshFoodProfile":
+        payload = payload or {}
+        return cls(
+            taste=dict(payload.get("taste") or {}),
+            household=dict(payload.get("household") or {}),
+            goals=dict(payload.get("goals") or {}),
+            raw=dict(payload),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize for the get_food_profile response service (consumed by the card)."""
+        return {
+            "taste": self.taste,
+            "household": self.household,
+            "goals": self.goals,
+        }
+
+    @staticmethod
+    def build_patch(changes: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a partial ``{taste, household, goals}`` update into a PATCH payload.
+
+        Accepts the same nested shape the card edits and coerces weighted taste fields to the
+        canonical ``{slug: +/-100}`` map form (a bare list of slugs is treated as all-liked,
+        and any non-zero weight is snapped to +/-100). Only the sections present in ``changes``
+        are included, so callers can PATCH just ``household`` without touching ``taste``.
+        """
+        patch: dict[str, Any] = {}
+
+        taste = changes.get("taste")
+        if isinstance(taste, dict):
+            out_taste: dict[str, Any] = {}
+            for key, value in taste.items():
+                if key in FOOD_PROFILE_TASTE_WEIGHTED_FIELDS:
+                    out_taste[key] = HelloFreshFoodProfile._coerce_weighted(value)
+                else:
+                    out_taste[key] = list(value) if isinstance(value, (list, tuple)) else value
+            patch["taste"] = out_taste
+
+        household = changes.get("household")
+        if isinstance(household, dict):
+            patch["household"] = {k: v for k, v in household.items()}
+
+        goals = changes.get("goals")
+        if isinstance(goals, dict):
+            patch["goals"] = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in goals.items()}
+
+        return patch
+
+    @staticmethod
+    def _coerce_weighted(value: Any) -> dict[str, int]:
+        """Coerce a weighted taste field to ``{slug: +/-100}``.
+
+        A list/tuple of slugs becomes all-liked; a mapping snaps each weight to LIKE/DISLIKE
+        by its sign (0 / falsy is dropped, i.e. treated as neutral/unset).
+        """
+        if isinstance(value, (list, tuple)):
+            return {str(slug): FOOD_PROFILE_LIKE for slug in value}
+        if isinstance(value, dict):
+            out: dict[str, int] = {}
+            for slug, weight in value.items():
+                try:
+                    num = int(weight)
+                except (TypeError, ValueError):
+                    continue
+                if not num:
+                    continue
+                out[str(slug)] = FOOD_PROFILE_LIKE if num > 0 else FOOD_PROFILE_DISLIKE
+            return out
+        return {}
+
+
 def _tracked_order_sort_key(
     order: HelloFreshOrder,
 ) -> tuple[bool, bool, bool, bool, bool, date]:

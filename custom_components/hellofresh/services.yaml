@@ -23,6 +23,47 @@ get_weeks:
       selector:
         text:
 
+get_food_profile:
+  name: Get food profile
+  description: >-
+    Return the customer's food profile (the preferences HelloFresh uses to
+    auto-preselect future meals) together with the full catalog of selectable
+    options. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+set_food_profile:
+  name: Set food profile
+  description: >-
+    Update the customer's food profile. Provide any of taste, household, or
+    goals; only the sections supplied are changed. Returns the saved profile.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    taste:
+      required: false
+      description: >-
+        Taste section, e.g. exclusions, dietaryPreferences, nutritions,
+        mealTypes (lists) and cuisines, flavors, dishTypes, primaryProteins
+        (maps of slug to +100 liked / -100 disliked).
+      selector:
+        object:
+    household:
+      required: false
+      description: "Household section, e.g. {adults: 2, children: 0}."
+      selector:
+        object:
+    goals:
+      required: false
+      description: "Goals section, e.g. {goals: [save-time, try-new-recipes]}."
+      selector:
+        object:
+
 select_meals:
   name: Select meals
   description: Submit meal selections for a delivery week.

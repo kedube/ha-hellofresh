@@ -29,6 +29,8 @@ CARD_FILENAME = "hellofresh-meal-planner-card.js"
 CARD_VERSION = "0.17.0"
 MARKET_CARD_FILENAME = "hellofresh-market-card.js"
 MARKET_CARD_VERSION = "0.5.0"
+FOOD_PROFILE_CARD_FILENAME = "hellofresh-food-profile-card.js"
+FOOD_PROFILE_CARD_VERSION = "0.4.0"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"
@@ -36,6 +38,8 @@ CARD_URL_PATH = f"{WWW_URL_BASE}/{CARD_FILENAME}"
 CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
 MARKET_CARD_URL_PATH = f"{WWW_URL_BASE}/{MARKET_CARD_FILENAME}"
 MARKET_CARD_RESOURCE_URL = f"{MARKET_CARD_URL_PATH}?v={MARKET_CARD_VERSION}"
+FOOD_PROFILE_CARD_URL_PATH = f"{WWW_URL_BASE}/{FOOD_PROFILE_CARD_FILENAME}"
+FOOD_PROFILE_CARD_RESOURCE_URL = f"{FOOD_PROFILE_CARD_URL_PATH}?v={FOOD_PROFILE_CARD_VERSION}"
 # Public URL of the bundled HelloFresh logo, usable in picture/markdown cards.
 LOGO_URL_PATH = f"{WWW_URL_BASE}/hellofresh-logo.png"
 
@@ -43,6 +47,7 @@ LOGO_URL_PATH = f"{WWW_URL_BASE}/hellofresh-logo.png"
 _CARDS = (
     (CARD_FILENAME, CARD_URL_PATH, CARD_RESOURCE_URL),
     (MARKET_CARD_FILENAME, MARKET_CARD_URL_PATH, MARKET_CARD_RESOURCE_URL),
+    (FOOD_PROFILE_CARD_FILENAME, FOOD_PROFILE_CARD_URL_PATH, FOOD_PROFILE_CARD_RESOURCE_URL),
 )
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
