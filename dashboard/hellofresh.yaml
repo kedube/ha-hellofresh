@@ -65,37 +65,14 @@ views:
     path: planning
     icon: mdi:calendar-month
     cards:
-      # Clean overview of upcoming deliveries and their selection state (custom card).
       - type: custom:hellofresh-schedule-card
         title: Schedule
         logo: true
-      # Holiday banner only appears when HelloFresh has shifted a delivery.
-      - type: conditional
-        conditions:
-          - entity: sensor.hellofresh_us_next_holiday_message
-            state_not: unknown
-          - entity: sensor.hellofresh_us_next_holiday_message
-            state_not: unavailable
-        card:
-          type: markdown
-          content: >
-            ### 🎄 Holiday delivery change
-
-            {{ states('sensor.hellofresh_us_next_holiday_message') }}
-
-            New date: **{{
-            states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
       - type: calendar
         title: Delivery schedule
         initial_view: dayGridMonth
         entities:
           - calendar.hellofresh_us_delivery_schedule
-      - type: tile
-        entity: sensor.hellofresh_us_delivery_address
-        name: Delivery address
-        vertical: false
-        features_position: bottom
-      # Full detail kept, but folded out of the way for when it's needed.
       - type: entities
         title: Subscription details
         show_header_toggle: false
@@ -115,6 +92,8 @@ views:
             name: Servings
           - entity: sensor.hellofresh_us_boxes_received
             name: Boxes received
+          - entity: sensor.hellofresh_us_delivery_address
+            name: Delivery address
           - type: section
             label: Upcoming
           - entity: sensor.hellofresh_us_upcoming_delivery_count
@@ -147,6 +126,21 @@ views:
             name: Meal count
           - entity: sensor.hellofresh_us_next_selectable_delivery_preselected
             name: Meals preselected
+      - type: conditional
+        conditions:
+          - entity: sensor.hellofresh_us_next_holiday_message
+            state_not: unknown
+          - entity: sensor.hellofresh_us_next_holiday_message
+            state_not: unavailable
+        card:
+          type: markdown
+          content: >
+            ### 🎄 Holiday delivery change
+
+            {{ states('sensor.hellofresh_us_next_holiday_message') }}
+
+            New date: **{{
+            states('sensor.hellofresh_us_next_holiday_delivery_date') }}**
     type: masonry
   - title: Diagnostics
     path: diagnostics
