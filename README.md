@@ -445,6 +445,30 @@ This integration includes Home Assistant diagnostics support for config entries,
 
 To download a diagnostics export: **Settings → Devices & services → HelloFresh → ⋮ (the three-dot menu) → Download diagnostics**. Tokens and personal details are redacted automatically, so it is safe to attach to a bug report.
 
+### Debug logging
+
+When troubleshooting (e.g. auth/refresh problems, parsing errors, or before filing an issue), enable debug logging for the integration so its activity is written to the Home Assistant log.
+
+**Option 1 — no restart, temporary.** From **Settings → Devices & services → HelloFresh → ⋮ → Enable debug logging**. Reproduce the problem, then choose **Disable debug logging** to download the captured log. This is the quickest way and resets on the next restart.
+
+**Option 2 — `configuration.yaml`, persistent.** Add a `logger:` block, then restart Home Assistant. The integration logs under the `custom_components.hellofresh` namespace:
+
+```yaml
+# configuration.yaml
+logger:
+  default: warning          # keep everything else quiet
+  logs:
+    custom_components.hellofresh: debug
+```
+
+Tips:
+
+- To trace only the parts you care about, target a submodule instead of the whole package — e.g. `custom_components.hellofresh.client: debug` for the HTTP/auth calls, or `custom_components.hellofresh.normalizers: debug` for payload parsing.
+- Debug output can include request paths and parameters (week ids, ranges, endpoints). It does **not** log your password, and access/refresh tokens are not written in full — but treat the log as sensitive and review it before sharing.
+- After capturing what you need, remove the `logs:` entry (or set it back to `warning`) and restart, since `debug` is verbose.
+
+Logs appear in **Settings → System → Logs** (and in `config/home-assistant.log`).
+
 For lower-level endpoint details and normalization notes, see [HELLOFRESH_API.md](HELLOFRESH_API.md).
 
 ## Development
