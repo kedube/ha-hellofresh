@@ -2342,13 +2342,12 @@ def test_merge_past_delivery_clears_preselected_flag() -> None:
     assert by_id["2025-W40"].meals_preselected is False
 
 
-def test_merge_past_delivery_replaces_catalog_with_delivered_meals() -> None:
-    """A past week shows exactly the delivered meals, replacing any attached menu catalog.
+def test_merge_past_delivery_keeps_menu_catalog_and_flags_delivered() -> None:
+    """A recent past week with a menu catalog keeps it (to show the options) with delivered flagged.
 
-    The menu endpoint can serve a past week a meal grid (for a recent week a small one, for an
-    old week the full selectable menu) whose per-meal images/flags don't reflect what shipped.
-    Past-deliveries is authoritative: it carries exactly the delivered meals with their images,
-    so it REPLACES the catalog rather than just re-flagging it.
+    The planning menu published this week's full grid (every option). Past-deliveries says which
+    meals actually shipped — those are flagged selected on the catalog, the rest are shown as
+    unselected options, so the card can display "what else was available that week".
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     past_account_week = HelloFreshWeek(
@@ -2357,16 +2356,15 @@ def test_merge_past_delivery_replaces_catalog_with_delivered_meals() -> None:
         subscription_id="6959884",
         delivery_date=date(2026, 2, 13),
         meals_required=3,
-        meals_selected=3,
         recipes=[
-            HelloFreshRecipe(recipe_id="cat-1", name="Catalog A", is_selected=True),
-            HelloFreshRecipe(recipe_id="cat-2", name="Catalog B", is_selected=True),
-            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C", is_selected=False),
-            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D", is_selected=True),
-            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E", is_selected=False),
+            HelloFreshRecipe(recipe_id="cat-1", name="Catalog A", is_selected=True, image_url="https://img/1.jpg"),
+            HelloFreshRecipe(recipe_id="cat-2", name="Catalog B", is_selected=True, image_url="https://img/2.jpg"),
+            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C", is_selected=False, image_url="https://img/3.jpg"),
+            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D", is_selected=True, image_url="https://img/4.jpg"),
+            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E", is_selected=False, image_url="https://img/5.jpg"),
         ],
     )
-    # What was actually delivered that week, each with its image.
+    # Delivered meals match catalog copies cat-3/cat-4/cat-5 (by id).
     delivered_week = HelloFreshWeek(
         week_id="2026-W07",
         display_name="Feb 9 - Feb 15",
@@ -2374,9 +2372,9 @@ def test_merge_past_delivery_replaces_catalog_with_delivered_meals() -> None:
         source="past_deliveries",
         meals_selected=3,
         recipes=[
-            HelloFreshRecipe(recipe_id="d-3", name="Delivered C", image_url="https://img/c.jpg"),
-            HelloFreshRecipe(recipe_id="d-4", name="Delivered D", image_url="https://img/d.jpg"),
-            HelloFreshRecipe(recipe_id="d-5", name="Delivered E", image_url="https://img/e.jpg"),
+            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C"),
+            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D"),
+            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E"),
         ],
     )
 
@@ -2386,67 +2384,56 @@ def test_merge_past_delivery_replaces_catalog_with_delivered_meals() -> None:
     )
 
     week = merged[0]
-    # Catalog replaced by exactly the delivered meals (with images), all marked selected.
-    assert [r.recipe_id for r in week.recipes] == ["d-3", "d-4", "d-5"]
+    # Full 5-meal catalog kept (with images), so the other options still show.
+    assert [r.recipe_id for r in week.recipes] == ["cat-1", "cat-2", "cat-3", "cat-4", "cat-5"]
+    assert all(r.image_url for r in week.recipes)
+    # Only the actually-delivered meals are flagged selected.
+    assert {r.recipe_id for r in week.recipes if r.is_selected} == {"cat-3", "cat-4", "cat-5"}
+    assert week.meals_selected == 3
+
+
+def test_merge_past_delivery_shows_delivered_only_without_menu_catalog() -> None:
+    """An older past week with no menu catalog shows exactly the delivered meals.
+
+    When the planning menu no longer serves the week (only the ~3 delivered meals are present,
+    not a browsable grid), there's nothing to browse — show just what shipped, with images.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    # No menu catalog attached (account week has no recipes of its own).
+    past_account_week = HelloFreshWeek(
+        week_id="2025-W40",
+        display_name="Sep 28 - Oct 4",
+        subscription_id="6959884",
+        delivery_date=date(2025, 10, 1),
+        meals_required=3,
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2025-W40",
+        display_name="Sep 28 - Oct 4",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="d-1", name="Delivered A", image_url="https://img/a.jpg"),
+            HelloFreshRecipe(recipe_id="d-2", name="Delivered B", image_url="https://img/b.jpg"),
+            HelloFreshRecipe(recipe_id="d-3", name="Delivered C", image_url="https://img/c.jpg"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[past_account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    assert [r.name for r in week.recipes] == ["Delivered A", "Delivered B", "Delivered C"]
     assert all(r.is_selected for r in week.recipes)
     assert all(r.image_url for r in week.recipes)
     assert week.meals_selected == 3
 
 
-def test_merge_past_delivery_replaces_flooded_full_menu_catalog() -> None:
-    """A past week carrying the full planning-menu catalog is replaced by the delivered meals.
-
-    Regression: the planning-menu endpoint can serve a past week the ENTIRE selectable catalog
-    (hundreds of meals across every variant). Keeping that floods the week with meals that never
-    shipped. When the catalog is far larger than what was delivered, past-deliveries replaces it
-    so the week shows only its ~3 real meals.
-    """
-    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    flooded_catalog = [
-        HelloFreshRecipe(recipe_id=f"cat-{i}", name=f"Catalog {i}", course_index=i)
-        for i in range(200)
-    ]
-    past_account_week = HelloFreshWeek(
-        week_id="2026-W20",
-        display_name="Past Week",
-        subscription_id="6959884",
-        delivery_date=date(2026, 6, 14),
-        meals_required=3,
-        recipes=flooded_catalog,
-    )
-    delivered_week = HelloFreshWeek(
-        week_id="2026-W20",
-        display_name="Past Week",
-        subscription_id="6959884",
-        source="past_deliveries",
-        meals_selected=3,
-        meals_required=3,
-        recipes=[
-            HelloFreshRecipe(recipe_id="d-1", name="Delivered A"),
-            HelloFreshRecipe(recipe_id="d-2", name="Delivered B"),
-            HelloFreshRecipe(recipe_id="d-3", name="Delivered C"),
-        ],
-    )
-
-    merged = client._merge_past_delivery_recipes_into_account_weeks(
-        account_weeks=[past_account_week],
-        past_delivery_weeks=[delivered_week],
-    )
-
-    week = merged[0]
-    # The 200-recipe catalog is gone; only the 3 delivered meals remain.
-    assert [r.name for r in week.recipes] == ["Delivered A", "Delivered B", "Delivered C"]
-    assert week.meals_selected == 3
-    assert week.meals_required == 3
-
-
-def test_merge_past_delivery_replaces_even_when_ids_do_not_overlap() -> None:
-    """Delivered meals replace the catalog even when their ids don't match the catalog's.
-
-    Past-deliveries is the source of truth for what shipped, so its meals become the week's
-    list regardless of whether their ids line up with whatever catalog was attached — there is
-    no catalog to match onto anymore.
-    """
+def test_merge_past_delivery_appends_delivered_meal_absent_from_catalog() -> None:
+    """A delivered meal not present in the kept catalog is appended so it stays visible."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     past_account_week = HelloFreshWeek(
         week_id="2026-W07",
@@ -2471,8 +2458,10 @@ def test_merge_past_delivery_replaces_even_when_ids_do_not_overlap() -> None:
         past_delivery_weeks=[delivered_week],
     )
 
-    assert [r.name for r in merged[0].recipes] == ["Actually Delivered"]
-    assert merged[0].recipes[0].is_selected is True
+    week = merged[0]
+    # Catalog kept, delivered meal appended and selected; catalog meals deselected.
+    assert [r.name for r in week.recipes] == ["Catalog A", "Catalog B", "Actually Delivered"]
+    assert {r.name for r in week.recipes if r.is_selected} == {"Actually Delivered"}
 
 
 def test_merge_past_delivery_matches_by_name_when_id_drifts() -> None:

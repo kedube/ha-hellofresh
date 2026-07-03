@@ -1278,25 +1278,66 @@ class HelloFreshPayloadNormalizer:
             # wrongly badge a week you personally chose as "Preselected".
             account_week.meals_preselected = False
 
-            # Past-deliveries is authoritative for a shipped week: it carries exactly the meals
-            # that were delivered, each with its image and nutrition. Use it directly rather than
-            # keeping whatever the planning-menu endpoint attached — that catalog can be the full
-            # selectable menu (hundreds of never-delivered meals) or a small imageless grid, both
-            # wrong for history. Only keep the existing catalog when past-deliveries gave us no
-            # recipes to replace it with.
             delivered = self._delivered_meals_only(account_week, past_week.recipes)
-            if delivered:
+            if not delivered:
+                continue
+
+            # When the planning menu published this (recent) week's full catalog, KEEP it so the
+            # card can show what the OTHER meal options were, and just flag the delivered meals as
+            # selected on it. For an older week with no menu catalog, there is nothing to browse —
+            # show exactly the delivered meals. "Has a menu catalog" = the account week already
+            # carries more recipes than were delivered (a real per-week grid), since the delivered
+            # set alone is only the ~3 shipped meals.
+            has_menu_catalog = len(account_week.recipes) > len(delivered)
+            if has_menu_catalog:
+                self._flag_delivered_on_catalog(account_week, delivered)
+            else:
                 for recipe in delivered:
                     recipe.is_selected = True
                 account_week.recipes = delivered
-                account_week.menu_title = account_week.menu_title or past_week.menu_title
-                # Counts follow what actually shipped, overriding any stale menu/plan values.
-                account_week.meals_selected = past_week.meals_selected or len(delivered)
-                account_week.meals_required = (
-                    past_week.meals_required or account_week.meals_required
-                )
+            account_week.menu_title = account_week.menu_title or past_week.menu_title
+            # Counts follow what actually shipped, overriding any stale menu/plan values.
+            account_week.meals_selected = past_week.meals_selected or len(delivered)
+            account_week.meals_required = (
+                past_week.meals_required or account_week.meals_required
+            )
 
         return list(account_weeks)
+
+    @staticmethod
+    def _flag_delivered_on_catalog(
+        account_week: HelloFreshWeek,
+        delivered: Sequence[HelloFreshRecipe],
+    ) -> None:
+        """Mark exactly the delivered meals as selected on the week's full menu catalog.
+
+        The catalog (from the planning menu) shows every meal option for the week; the delivered
+        set is what actually shipped. Match each delivered meal onto the catalog by recipe id,
+        then by name (HelloFresh re-ids portion/variant copies, so id-only matching drops a
+        delivered meal the website still shows as chosen). A delivered meal absent from the
+        catalog is appended so every shipped meal stays visible. If nothing could be matched or
+        appended, leave the catalog's flags untouched rather than blanking the week.
+        """
+        catalog_by_id = {r.recipe_id: r for r in account_week.recipes if r.recipe_id}
+        catalog_by_name = {
+            r.name.strip().casefold(): r for r in account_week.recipes if r.name
+        }
+        matched: list[HelloFreshRecipe] = []
+        unmatched: list[HelloFreshRecipe] = []
+        for meal in delivered:
+            target = catalog_by_id.get(meal.recipe_id)
+            if target is None and meal.name:
+                target = catalog_by_name.get(meal.name.strip().casefold())
+            (matched if target is not None else unmatched).append(target or meal)
+
+        if not matched and not unmatched:
+            return
+        matched_refs = {id(r) for r in matched}
+        for recipe in account_week.recipes:
+            recipe.is_selected = id(recipe) in matched_refs
+        for meal in unmatched:
+            meal.is_selected = True
+            account_week.recipes.append(meal)
 
     def _delivered_meals_only(
         self,
