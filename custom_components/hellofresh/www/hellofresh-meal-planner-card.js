@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.24.0";
+const CARD_VERSION = "0.25.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -190,6 +190,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // A paused week never shipped, so its preselected/auto-fill picks are not a real selection.
   _isPaused(week) {
     return Boolean(week) && String(week.status || "").toUpperCase() === "PAUSED";
+  }
+
+  // A week whose delivery date is before today (undated weeks are not treated as past).
+  _isPast(week) {
+    if (!week || !week.delivery_date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Date.parse(week.delivery_date) < today.getTime();
   }
 
   _step(delta) {
@@ -851,7 +859,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _renderGrid(week) {
     const { recipes } = this._dedupedFor(week);
     if (recipes.length === 0) {
-      return `<div class="state">No menu available for this week yet.</div>`;
+      // A skipped/paused week never shipped, and a past week with no meals simply had none —
+      // "no menu yet" only makes sense for an upcoming week whose menu hasn't published.
+      const emptyMessage =
+        week.is_skipped || this._isPaused(week)
+          ? "This week was skipped — no meals selected."
+          : this._isPast(week)
+            ? "No meals selected for this week."
+            : "No menu available for this week yet.";
+      return `<div class="state">${emptyMessage}</div>`;
     }
     // Cache the deduped tiles (which carry `_aliasIndexes`) so click handling resolves the same
     // objects the grid rendered, not the raw recipe list.
