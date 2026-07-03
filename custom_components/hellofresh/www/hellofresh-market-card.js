@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.6.0";
+const MARKET_CARD_VERSION = "0.7.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -51,6 +51,7 @@ class HelloFreshMarketCard extends HTMLElement {
     this._loading = false;
     this._error = null;
     this._busy = false;
+    this._saving = null; // persistent "please wait" banner text while a save + reload is in flight
     this._fetched = false;
     this._hass = null;
     // Pending (unsaved) edit per week: week_id -> Map(item_id -> quantity). Absent = show saved.
@@ -109,7 +110,9 @@ class HelloFreshMarketCard extends HTMLElement {
     this._render();
   }
 
-  async _fetchWeeks() {
+  // `keepWeekId`: after a write (e.g. save), stay on the week the user was on rather than
+  // snapping back to the first week. Falls back to the first week when that week is gone.
+  async _fetchWeeks(keepWeekId = null) {
     if (!this._hass) return;
     this._loading = true;
     this._error = null;
@@ -122,7 +125,10 @@ class HelloFreshMarketCard extends HTMLElement {
       // Only weeks that actually carry a market catalog are browsable here.
       this._weeks = this._browsableWeeks(response.weeks || []);
       this._pending = {};
-      this._cursor = 0;
+      const kept = keepWeekId != null
+        ? this._weeks.findIndex((w) => w.week_id === keepWeekId)
+        : -1;
+      this._cursor = kept >= 0 ? kept : 0;
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -335,18 +341,23 @@ class HelloFreshMarketCard extends HTMLElement {
     for (const [id, qty] of pending) if (qty > 0) quantities[id] = qty;
 
     this._busy = true;
+    this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
     this._render();
     try {
       const data = { week_id: week.week_id, quantities };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", "select_market_items", data);
       delete this._pending[week.week_id];
+      this._busy = false;
+      await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       this._flash("Market selection updated.");
     } catch (err) {
+      this._busy = false;
+      await this._fetchWeeks(week.week_id); // resync from the source of truth
       this._flash(`Selection failed: ${(err && err.message) || err}`, true);
     } finally {
-      this._busy = false;
-      await this._fetchWeeks();
+      this._saving = null;
+      this._render();
     }
   }
 
@@ -388,9 +399,13 @@ class HelloFreshMarketCard extends HTMLElement {
       ${this._renderLogo()}
       <span class="title-text">${this._esc(this._config.title)}</span>`;
     this._shell.body.innerHTML = this._renderBody(week);
-    this._shell.toast.innerHTML = this._toast
-      ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
-      : "";
+    // A save in flight shows a persistent "please wait" banner (with a spinner) until the
+    // reload completes; a transient toast otherwise. The saving banner takes precedence.
+    this._shell.toast.innerHTML = this._saving
+      ? `<div class="toast saving"><span class="spinner"></span>${this._esc(this._saving)}</div>`
+      : this._toast
+        ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
+        : "";
   }
 
   // Optional header logo. `logo: true` uses the bundled HelloFresh logo served by the
@@ -737,6 +752,16 @@ class HelloFreshMarketCard extends HTMLElement {
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
       }
       .toast.error { background: var(--error-color, #db4437); color: #fff; }
+      .toast.saving {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        background: var(--primary-color); color: var(--text-primary-color, #fff);
+      }
+      .toast.saving .spinner {
+        width: 14px; height: 14px; flex: none; border-radius: 50%;
+        border: 2px solid currentColor; border-right-color: transparent;
+        animation: hf-spin 0.7s linear infinite;
+      }
+      @keyframes hf-spin { to { transform: rotate(360deg); } }
       .actions { text-align: center; margin-top: 8px; }
       .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
     `;
