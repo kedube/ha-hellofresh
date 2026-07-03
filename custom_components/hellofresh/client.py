@@ -2184,14 +2184,27 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             or subscription.raw.get("preset")
             or subscription.raw.get("preference")
         )
-        product_sku = self._find_first_nested_value(
-            subscription.raw, ("sku",)
-        ) or self._find_first_nested_value(
-            account_week.raw,
-            ("handle", "sku"),
+        # Prefer the WEEK's own box SKU over the subscription's base plan. A week can be resized
+        # to a different box (e.g. a 2-meal box on a 3-meal plan), and HelloFresh serves that
+        # week's menu — and its real selection — only when queried with the matching SKU. Using
+        # the base-plan SKU returns the larger box's default/preselected view, so a resized week
+        # shows the wrong meals (a 3-meal-default set instead of the 2 the customer chose).
+        week_product = (
+            account_week.raw.get("product")
+            if isinstance(account_week.raw.get("product"), dict)
+            else {}
         )
+        product_sku = (
+            week_product.get("handle")
+            or week_product.get("sku")
+            or self._find_first_nested_value(subscription.raw, ("sku",))
+            or self._find_first_nested_value(account_week.raw, ("handle", "sku"))
+        )
+        # Servings likewise from the week's own product spec first (the box size), then the plan.
+        week_specs = week_product.get("specs") if isinstance(week_product.get("specs"), dict) else {}
         servings = coerce_int(
-            self._find_first_nested_value(subscription.raw, ("size", "servings", "numberOfPersons"))
+            week_specs.get("size")
+            or self._find_first_nested_value(subscription.raw, ("size", "servings", "numberOfPersons"))
             or subscription.servings
         )
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))

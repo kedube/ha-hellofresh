@@ -108,8 +108,13 @@ class HelloFreshPayloadNormalizer:
                 )
                 or (sum(1 for recipe in recipes if recipe.is_selected) if raw_meals else None)
             )
+            # A week's required meal count is the size of ITS OWN box, which can differ from the
+            # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
+            # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
+            # to fuzzier fields and the subscription plan when the week doesn't carry its own box.
             meals_required = coerce_int(
-                raw_week.get("mealsRequired")
+                self._week_box_meal_count(raw_week)
+                or raw_week.get("mealsRequired")
                 or raw_week.get("requiredMealCount")
                 or raw_week.get("recipeCount")
                 or self._find_first_nested_value(
@@ -573,6 +578,25 @@ class HelloFreshPayloadNormalizer:
                 return nested
 
         return {}
+
+    @staticmethod
+    def _week_box_meal_count(raw_week: dict[str, Any]) -> int | None:
+        """Return the meal count of a week's OWN box from its ``product.specs.meals``.
+
+        This is the per-delivery box size (which can differ from the subscription's base plan
+        when the week was resized). Read explicitly from ``product.specs`` / ``productType.specs``
+        rather than a fuzzy nested search so an unrelated ``meals`` key elsewhere can't win.
+        """
+        for product_key in ("product", "productType"):
+            product = raw_week.get(product_key)
+            if not isinstance(product, dict):
+                continue
+            specs = product.get("specs")
+            if isinstance(specs, dict):
+                count = coerce_int(specs.get("meals"))
+                if count:
+                    return count
+        return None
 
     def _find_first_nested_value(
         self,
@@ -1349,7 +1373,9 @@ class HelloFreshPayloadNormalizer:
                         raw_week.get("selectionDeadline") or raw_week.get("cutoffDate")
                     ),
                     status=raw_week.get("status") or "menu",
-                    meals_required=subscription.meals_required,
+                    # The week's own box size wins over the subscription's base plan (a resized
+                    # week can hold fewer/more meals than the plan default).
+                    meals_required=self._week_box_meal_count(raw_week) or subscription.meals_required,
                     meals_selected=meals_selected,
                     meals_preselected=bool(raw_week.get("mealsPreselected")),
                     recipes=recipes,
