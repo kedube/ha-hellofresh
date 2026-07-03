@@ -1825,8 +1825,10 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
 def test_paused_week_has_no_selected_meals() -> None:
     """A PAUSED week's auto-fill picks are phantom — no meal may show as selected.
 
-    The week's menu still carries selection.quantity auto-fills, but a paused box never shipped.
-    The catalog stays visible for browsing; is_selected and meals_selected are cleared.
+    A future/undated paused week keeps its catalog for browsing (the customer could un-pause);
+    is_selected and meals_selected are cleared. A PAST paused/skipped week never shipped and
+    can't be edited, so its catalog (which can be the whole selectable menu) is dropped entirely
+    — it must show an empty meal list, not a flood.
     """
     from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
 
@@ -1842,6 +1844,24 @@ def test_paused_week_has_no_selected_meals() -> None:
             HelloFreshRecipe(recipe_id="c", name="Browse C", is_selected=False),
         ],
     )
+    past_paused = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Past Paused Week",
+        subscription_id="6959884",
+        status="PAUSED",
+        delivery_date=date.today() - timedelta(days=30),
+        meals_selected=0,
+        recipes=[HelloFreshRecipe(recipe_id=f"cat-{i}", name=f"Catalog {i}") for i in range(50)],
+    )
+    past_skipped = HelloFreshWeek(
+        week_id="2026-W21",
+        display_name="Past Skipped Week",
+        subscription_id="6959884",
+        status="DELIVERED",
+        is_skipped=True,
+        delivery_date=date.today() - timedelta(days=23),
+        recipes=[HelloFreshRecipe(recipe_id=f"s-{i}", name=f"Skipped {i}") for i in range(40)],
+    )
     active = HelloFreshWeek(
         week_id="2026-W25",
         display_name="Active Week",
@@ -1851,13 +1871,20 @@ def test_paused_week_has_no_selected_meals() -> None:
         recipes=[HelloFreshRecipe(recipe_id="x", name="Chosen", is_selected=True)],
     )
 
-    HelloFreshPayloadNormalizer._clear_paused_week_selection([paused, active])
+    HelloFreshPayloadNormalizer._clear_paused_week_selection(
+        [paused, past_paused, past_skipped, active]
+    )
 
-    # Paused: catalog intact, nothing selected.
+    # Undated paused: catalog intact, nothing selected.
     assert [r.name for r in paused.recipes] == ["Auto A", "Auto B", "Browse C"]
     assert not any(r.is_selected for r in paused.recipes)
     assert all(r.selected_quantity is None for r in paused.recipes)
     assert paused.meals_selected == 0
+    # Past paused / skipped: recipes dropped entirely, count zeroed.
+    assert past_paused.recipes == []
+    assert past_paused.meals_selected == 0
+    assert past_skipped.recipes == []
+    assert past_skipped.meals_selected == 0
     # Active week untouched.
     assert active.recipes[0].is_selected is True
     assert active.meals_selected == 1
@@ -2252,17 +2279,15 @@ def test_merge_past_delivery_clears_preselected_flag() -> None:
     assert by_id["2025-W40"].meals_preselected is False
 
 
-def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
-    """A past week's catalog keeps its meals but selection is corrected to the delivered ones.
+def test_merge_past_delivery_replaces_catalog_with_delivered_meals() -> None:
+    """A past week shows exactly the delivered meals, replacing any attached menu catalog.
 
-    The menu endpoint serves a past week's full meal grid (for browsing) but its per-meal
-    selection flags reflect the default/preselected meals, not what was actually delivered.
-    The delivered meals (past-deliveries) are authoritative, so is_selected must be re-derived
-    from them by recipe id while the full catalog is preserved.
+    The menu endpoint can serve a past week a meal grid (for a recent week a small one, for an
+    old week the full selectable menu) whose per-meal images/flags don't reflect what shipped.
+    Past-deliveries is authoritative: it carries exactly the delivered meals with their images,
+    so it REPLACES the catalog rather than just re-flagging it.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    # Past week with a full browsable catalog; the menu endpoint marked the WRONG meals
-    # (cat-1/cat-2, the chef-default picks) as selected.
     past_account_week = HelloFreshWeek(
         week_id="2026-W07",
         display_name="Feb 9 - Feb 15",
@@ -2278,7 +2303,7 @@ def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
             HelloFreshRecipe(recipe_id="cat-5", name="Catalog E", is_selected=False),
         ],
     )
-    # What was actually delivered that week: cat-3, cat-4, cat-5.
+    # What was actually delivered that week, each with its image.
     delivered_week = HelloFreshWeek(
         week_id="2026-W07",
         display_name="Feb 9 - Feb 15",
@@ -2286,9 +2311,9 @@ def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
         source="past_deliveries",
         meals_selected=3,
         recipes=[
-            HelloFreshRecipe(recipe_id="cat-3", name="Catalog C"),
-            HelloFreshRecipe(recipe_id="cat-4", name="Catalog D"),
-            HelloFreshRecipe(recipe_id="cat-5", name="Catalog E"),
+            HelloFreshRecipe(recipe_id="d-3", name="Delivered C", image_url="https://img/c.jpg"),
+            HelloFreshRecipe(recipe_id="d-4", name="Delivered D", image_url="https://img/d.jpg"),
+            HelloFreshRecipe(recipe_id="d-5", name="Delivered E", image_url="https://img/e.jpg"),
         ],
     )
 
@@ -2298,17 +2323,10 @@ def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
     )
 
     week = merged[0]
-    # Full catalog preserved (browsing still works).
-    assert [r.recipe_id for r in week.recipes] == [
-        "cat-1",
-        "cat-2",
-        "cat-3",
-        "cat-4",
-        "cat-5",
-    ]
-    # Selection corrected to the actually-delivered meals.
-    selected = {r.recipe_id for r in week.recipes if r.is_selected}
-    assert selected == {"cat-3", "cat-4", "cat-5"}
+    # Catalog replaced by exactly the delivered meals (with images), all marked selected.
+    assert [r.recipe_id for r in week.recipes] == ["d-3", "d-4", "d-5"]
+    assert all(r.is_selected for r in week.recipes)
+    assert all(r.image_url for r in week.recipes)
     assert week.meals_selected == 3
 
 
@@ -2359,11 +2377,12 @@ def test_merge_past_delivery_replaces_flooded_full_menu_catalog() -> None:
     assert week.meals_required == 3
 
 
-def test_merge_past_delivery_keeps_catalog_flags_when_no_id_overlap() -> None:
-    """If no delivered id is found in the catalog, leave selection flags untouched.
+def test_merge_past_delivery_replaces_even_when_ids_do_not_overlap() -> None:
+    """Delivered meals replace the catalog even when their ids don't match the catalog's.
 
-    Safety net: rather than blanking every meal when the id schemes don't line up, the
-    existing catalog flags are preserved.
+    Past-deliveries is the source of truth for what shipped, so its meals become the week's
+    list regardless of whether their ids line up with whatever catalog was attached — there is
+    no catalog to match onto anymore.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     past_account_week = HelloFreshWeek(
@@ -2381,7 +2400,7 @@ def test_merge_past_delivery_keeps_catalog_flags_when_no_id_overlap() -> None:
         display_name="Feb 9 - Feb 15",
         subscription_id="6959884",
         source="past_deliveries",
-        recipes=[HelloFreshRecipe(recipe_id="other-1", name="Mismatch")],
+        recipes=[HelloFreshRecipe(recipe_id="d-1", name="Actually Delivered")],
     )
 
     merged = client._merge_past_delivery_recipes_into_account_weeks(
@@ -2389,8 +2408,8 @@ def test_merge_past_delivery_keeps_catalog_flags_when_no_id_overlap() -> None:
         past_delivery_weeks=[delivered_week],
     )
 
-    selected = {r.recipe_id for r in merged[0].recipes if r.is_selected}
-    assert selected == {"cat-1"}
+    assert [r.name for r in merged[0].recipes] == ["Actually Delivered"]
+    assert merged[0].recipes[0].is_selected is True
 
 
 def test_merge_past_delivery_matches_by_name_when_id_drifts() -> None:

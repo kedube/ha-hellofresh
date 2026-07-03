@@ -7,7 +7,7 @@ HelloFresh payloads into integration models.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from .models import (
@@ -44,12 +44,6 @@ _COUNTRY_CURRENCIES = {
 
 class HelloFreshPayloadNormalizer:
     """Mixin for pure-ish HelloFresh payload normalization methods."""
-
-    # How many recipes past a week's delivered count still counts as a genuine per-week browsable
-    # grid (kept, selection corrected). Beyond delivered + this margin, the "catalog" is really the
-    # full planning menu (dozens–hundreds of meals), which is replaced by the delivered set so past
-    # weeks don't show meals that never shipped. Sized to clear a real box grid but not the menu.
-    _PAST_CATALOG_FLOOD_MARGIN = 20
 
     @staticmethod
     def _effective_week_status(raw_week: dict[str, Any]) -> str:
@@ -551,19 +545,30 @@ class HelloFreshPayloadNormalizer:
 
     @staticmethod
     def _clear_paused_week_selection(weeks: Sequence[HelloFreshWeek]) -> None:
-        """Unmark every recipe on a PAUSED week — nothing was ever delivered for it.
+        """Clear phantom selections on paused/skipped weeks — nothing was ever delivered.
 
-        A paused week's menu still carries the system's auto-fill picks (``selection.quantity``),
-        which the merges turn into ``is_selected``. But a paused box never shipped, so those are
-        phantom selections. Clear them (keeping the catalog visible for browsing) and zero the
-        selected count. Market items are left alone — pausing meals is independent of add-ons.
+        A paused/skipped week's menu still carries the system's auto-fill picks
+        (``selection.quantity``), which the merges turn into ``is_selected``. But that box never
+        shipped, so those are phantom selections; zero them and the selected count.
+
+        For a PAST paused/skipped week the planning-menu catalog (which can be the full selectable
+        menu — hundreds of meals) is also meaningless: the week never shipped and can't be edited,
+        so it must show an empty meal list, not a flood. Drop its recipes entirely. A FUTURE
+        paused week keeps its catalog so it stays browsable if the customer un-pauses. Market
+        items are left alone — pausing meals is independent of add-ons.
         """
+        today = date.today()
         for week in weeks:
-            if (week.status or "").strip().upper() != "PAUSED":
+            is_paused = (week.status or "").strip().upper() == "PAUSED"
+            if not (is_paused or week.is_skipped):
                 continue
-            for recipe in week.recipes:
-                recipe.is_selected = False
-                recipe.selected_quantity = None
+            is_past = week.delivery_date is not None and week.delivery_date < today
+            if is_past:
+                week.recipes = []
+            else:
+                for recipe in week.recipes:
+                    recipe.is_selected = False
+                    recipe.selected_quantity = None
             week.meals_selected = 0
 
     def _extract_available_one_off_options(
@@ -1273,68 +1278,39 @@ class HelloFreshPayloadNormalizer:
             # wrongly badge a week you personally chose as "Preselected".
             account_week.meals_preselected = False
 
-            # The planning-menu endpoint can serve a past week its full selectable CATALOG
-            # (dozens–hundreds of meals across every variant), not just the box's meals. Keeping
-            # that floods the week with meals that were never delivered. A genuine per-week grid
-            # is at most a handful larger than what shipped; a catalog many times that size is the
-            # full menu, so the delivered set (past-deliveries) REPLACES it. Otherwise keep the
-            # catalog for browsing and just correct the SELECTION (the menu's per-meal flags for a
-            # past week reflect defaults/preselects, not what shipped).
-            delivered = past_week.recipes
-            is_flooded_catalog = (
-                bool(delivered)
-                and len(account_week.recipes) > len(delivered) + self._PAST_CATALOG_FLOOD_MARGIN
-            )
-            if account_week.recipes and not is_flooded_catalog:
-                self._apply_delivered_selection(account_week, past_week)
-                continue
-
-            account_week.recipes = delivered
-            account_week.menu_title = account_week.menu_title or past_week.menu_title
-            # A past week's counts follow what actually shipped, overriding any stale menu/plan
-            # values (e.g. a menu catalog that set meals_selected to the full grid size).
-            account_week.meals_selected = past_week.meals_selected or account_week.meals_selected
-            account_week.meals_required = past_week.meals_required or account_week.meals_required
+            # Past-deliveries is authoritative for a shipped week: it carries exactly the meals
+            # that were delivered, each with its image and nutrition. Use it directly rather than
+            # keeping whatever the planning-menu endpoint attached — that catalog can be the full
+            # selectable menu (hundreds of never-delivered meals) or a small imageless grid, both
+            # wrong for history. Only keep the existing catalog when past-deliveries gave us no
+            # recipes to replace it with.
+            delivered = self._delivered_meals_only(account_week, past_week.recipes)
+            if delivered:
+                for recipe in delivered:
+                    recipe.is_selected = True
+                account_week.recipes = delivered
+                account_week.menu_title = account_week.menu_title or past_week.menu_title
+                # Counts follow what actually shipped, overriding any stale menu/plan values.
+                account_week.meals_selected = past_week.meals_selected or len(delivered)
+                account_week.meals_required = (
+                    past_week.meals_required or account_week.meals_required
+                )
 
         return list(account_weeks)
 
-    def _apply_delivered_selection(
+    def _delivered_meals_only(
         self,
         account_week: HelloFreshWeek,
-        past_week: HelloFreshWeek,
-    ) -> None:
-        """Mark exactly the actually-delivered meals as selected on a past week's catalog.
+        delivered_recipes: Sequence[HelloFreshRecipe],
+    ) -> list[HelloFreshRecipe]:
+        """Return the delivered MEALS, with market add-ons filtered out.
 
-        ``account_week`` holds the full menu catalog (for browsing); ``past_week`` holds the
-        meals that were really delivered. Each delivered meal is matched onto the catalog by
-        recipe id first, then by name as a fallback — the catalog can list the same dish under
-        a different id than the delivered record (HelloFresh re-ids portion/variant copies), so
-        id-only matching dropped a delivered meal that the website still shows as chosen. Any
-        delivered MEAL that matches nothing in the catalog is appended so all selections remain
-        visible (the past week must show every meal that was delivered, like the website).
-
-        Market add-ons (appetizers/sides/desserts) also appear in the delivered record, but they
-        belong to the Market view, not the meal list — so a delivered item that is a known market
-        item for the week is never appended to ``recipes``. The market merge marks those selected
-        separately.
-
-        If not a single delivered meal could be placed (id-scheme drift), leave the existing
-        flags untouched rather than blanking the week.
+        The delivered record includes ordered market add-ons (appetizers/sides/desserts)
+        alongside the box meals, but those belong to the Market view, not the meal list. A
+        delivered item that is a known market item for the week (from the week's raw ``addOns``
+        catalog, matched by id or name) is dropped so it never shows in My Menu; the market merge
+        marks those selected separately.
         """
-        if not past_week.recipes:
-            return
-
-        catalog_by_id = {
-            recipe.recipe_id: recipe for recipe in account_week.recipes if recipe.recipe_id
-        }
-        catalog_by_name = {
-            recipe.name.strip().casefold(): recipe
-            for recipe in account_week.recipes
-            if recipe.name
-        }
-
-        # Market add-ons that were delivered must not leak into the meal list. Build the week's
-        # market id/name set from its raw addOns catalog so we can recognise and skip them.
         market_ids: set[str] = set()
         market_names: set[str] = set()
         if isinstance(account_week.raw, dict):
@@ -1344,38 +1320,13 @@ class HelloFreshPayloadNormalizer:
                 if item.name:
                     market_names.add(item.name.strip().casefold())
 
-        matched: list[HelloFreshRecipe] = []
-        unmatched: list[HelloFreshRecipe] = []
-        for delivered in past_week.recipes:
-            target = catalog_by_id.get(delivered.recipe_id)
-            if target is None and delivered.name:
-                target = catalog_by_name.get(delivered.name.strip().casefold())
-            if target is not None:
-                matched.append(target)
-                continue
-            # Unmatched: only append if it's a real meal, not a market add-on.
+        meals: list[HelloFreshRecipe] = []
+        for delivered in delivered_recipes:
             delivered_name = delivered.name.strip().casefold() if delivered.name else ""
             if delivered.recipe_id in market_ids or delivered_name in market_names:
                 continue
-            unmatched.append(delivered)
-
-        if not matched and not unmatched:
-            return
-        # Safety net: if the catalog and delivered records share no id AND no name, don't risk
-        # blanking a populated catalog — bail and keep whatever flags are already there.
-        if not matched and len(unmatched) == len(past_week.recipes) and account_week.recipes:
-            return
-
-        matched_ids = {id(recipe) for recipe in matched}
-        for recipe in account_week.recipes:
-            recipe.is_selected = id(recipe) in matched_ids
-        for delivered in unmatched:
-            delivered.is_selected = True
-            account_week.recipes.append(delivered)
-
-        account_week.meals_selected = (
-            past_week.meals_selected or len(matched) + len(unmatched)
-        )
+            meals.append(delivered)
+        return meals
 
     def _normalize_menu_weeks(
         self,

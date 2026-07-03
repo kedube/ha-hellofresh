@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.23.0";
+const CARD_VERSION = "0.24.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -741,13 +741,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     // Saving is gated only by the smallest box HelloFresh sells, not the base plan.
     const canSave = !this._busy && meals >= min;
+    // A skipped/paused week never ships, so it's neither "resized" nor under-filled — just show
+    // a plain "0 meals" with no plan/resize hint (that framing only makes sense for a live box).
+    const inactive = week.is_skipped || this._isPaused(week);
     // The box resizes when the meal count differs from the base plan (repriced by HelloFresh).
-    const resized = required && meals !== required;
+    const resized = !inactive && required && meals !== required;
     const mealLabel = `${meals} meal${meals === 1 ? "" : "s"}`;
     const servingsLabel = servings !== meals ? ` · ${servings} servings` : "";
     return `
       <div class="statusrow">
-        <span class="chip ${meals >= min ? "ok" : "warn"}" title="${resized ? `Resizes your ${required}-meal plan to a ${meals}-meal box for this week` : ""}">
+        <span class="chip ${inactive ? "" : meals >= min ? "ok" : "warn"}" title="${resized ? `Resizes your ${required}-meal plan to a ${meals}-meal box for this week` : ""}">
           ${mealLabel}${resized ? ` (plan: ${required})` : ""}${servingsLabel}${dirty ? " · unsaved" : ""}
         </span>
         ${week.meals_preselected && !this._isPaused(week)
