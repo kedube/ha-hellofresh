@@ -2089,28 +2089,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         subscription: HelloFreshSubscription,
         account_week: HelloFreshWeek,
     ) -> list[HelloFreshWeek]:
-        """Load a subscribed week's full menu from the authenticated delivery menu page.
-
-        Only for the current/upcoming weeks. The planning-menu endpoint is a *browse-and-choose*
-        surface — for a past week it serves the full selectable catalog (hundreds of meals across
-        every variant), which the web app never requests for history. Attaching that to a past
-        week floods it with meals that were never delivered; past weeks must instead show the few
-        meals actually delivered (from past-deliveries). A week-mismatch guard below used to catch
-        this indirectly, but a correct per-week SKU can make the endpoint answer for the requested
-        past week, so gate explicitly on the delivery date here.
-        """
-        if account_week.delivery_date is not None and account_week.delivery_date < date.today():
-            self._record_debug_attempt(
-                "menu_attempts",
-                {
-                    "subscription_id": subscription.subscription_id,
-                    "path": "/gw/my-deliveries/menu",
-                    "week_id": account_week.week_id,
-                    "skipped": "past_week",
-                },
-            )
-            return []
-
+        """Load a subscribed week's full menu from the authenticated delivery menu page."""
         plan_preference = await self._async_get_subscription_plan_preference(subscription)
         params = self._build_delivery_menu_params(subscription, account_week, plan_preference)
         if params is None:
