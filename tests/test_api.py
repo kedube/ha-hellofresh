@@ -3463,6 +3463,121 @@ def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> Non
     ]
 
 
+def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
+    """Selecting MORE distinct meals than the plan holds upgrades the cart's product-sku.
+
+    HelloFresh encodes the plan size in the box SKU (``US-CBU-3-2-0`` = 3 meals × 2 servings).
+    Picking a 4th distinct meal on a 3-meal plan must raise the meal digit to ``US-CBU-4-2-0``,
+    matching the web app; otherwise the cart endpoint rejects the write with MEAL_SIZE_MISMATCH.
+    The servings digit is unchanged.
+    """
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+        },
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W32",
+        display_name="Week 32",
+        subscription_id="6959884",
+        selection_deadline=datetime(2026, 7, 29, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
+        meals_required=3,
+        meals_selected=0,
+        recipes=[
+            HelloFreshRecipe(recipe_id=f"recipe-{i}", name=f"Meal {i}", is_selected=False)
+            for i in (11, 48, 59, 47)
+        ],
+        raw={
+            "product": {"handle": "US-CBU-3-2-0"},
+            "_menu_payload": {
+                "week": "2026-W32",
+                "meals": [
+                    {
+                        "index": i,
+                        "selection": {"limit": 2},
+                        "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"},
+                    }
+                    for i in (11, 48, 59, 47)
+                ],
+            },
+        },
+    )
+    client._last_account_data = HelloFreshAccountData(weeks=[week]).finalize()
+
+    requests: list[dict[str, object | None]] = []
+
+    async def fake_get_subscriptions():
+        return [subscription]
+
+    async def fake_get_subscription_plan_preference(_subscription):
+        return "quick"
+
+    async def fake_api_request(
+        method: str,
+        path: str,
+        params=None,
+        json_payload=None,
+        extra_headers=None,
+        _allow_refresh_retry=True,
+    ):
+        requests.append({"method": method, "path": path, "params": params, "json_payload": json_payload})
+
+        class DummyResponse:
+            status = 200
+
+        return DummyResponse()
+
+    client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
+    client._async_get_subscription_plan_preference = fake_get_subscription_plan_preference  # type: ignore[method-assign]
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_meals("2026-W32", ["recipe-11", "recipe-48", "recipe-59", "recipe-47"])
+    )
+
+    assert len(requests) == 1
+    assert requests[0]["params"]["product-sku"] == "US-CBU-4-2-0"
+    assert requests[0]["json_payload"]["meals"] == [
+        {"index": 11, "quantity": 1},
+        {"index": 48, "quantity": 1},
+        {"index": 59, "quantity": 1},
+        {"index": 47, "quantity": 1},
+    ]
+
+
+def test_sku_for_meal_count_resizes_box_both_directions() -> None:
+    """The SKU meal digit resizes up or down to match the selection, ignoring unknown shapes."""
+    fn = HelloFreshClient._sku_for_meal_count
+    # Raise when over-selecting.
+    assert fn("US-CBU-3-2-0", 4) == "US-CBU-4-2-0"
+    assert fn("US-CBU-3-2-0", 5) == "US-CBU-5-2-0"
+    # Lower when under-selecting (a smaller box for the week) — HAR-confirmed.
+    assert fn("US-CBU-3-2-0", 2) == "US-CBU-2-2-0"
+    # No change when the count matches the base plan.
+    assert fn("US-CBU-3-2-0", 3) == "US-CBU-3-2-0"
+    # Never resize below the minimum box: a sub-minimum count (e.g. 0 meals on a market-only
+    # write with no confirmed meals, or 1) keeps the base SKU instead of an invalid box.
+    assert fn("US-CBU-3-2-0", 0) == "US-CBU-3-2-0"
+    assert fn("US-CBU-3-2-0", 1) == "US-CBU-3-2-0"
+    # Servings digit is preserved when the meal digit changes.
+    assert fn("US-CBU-2-4-0", 3) == "US-CBU-3-4-0"
+    # Unknown / non-box (zero-meal add-on/charge) SKUs are returned untouched.
+    assert fn("US-CHARGE-0-0-0", 4) == "US-CHARGE-0-0-0"
+    assert fn("not-a-sku", 4) == "not-a-sku"
+
+
 def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, object | None]]]:
     """Build a client + week wired for select_meals call-shape assertions."""
     client = HelloFreshClient(
@@ -3520,7 +3635,7 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
 
 
 def test_async_select_meals_allows_more_than_required() -> None:
-    """Selecting MORE meals than the box's required count is allowed (extra/add-on meals)."""
+    """Selecting MORE meals than the base plan is allowed (the box resizes up for the week)."""
     client, requests = _build_select_meals_client()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -3530,15 +3645,6 @@ def test_async_select_meals_allows_more_than_required() -> None:
     assert len(requests) == 1
     meals = requests[0]["json_payload"]["meals"]
     assert [m["index"] for m in meals] == [11, 18, 20, 32]
-
-
-def test_async_select_meals_rejects_fewer_than_required() -> None:
-    """Selecting FEWER meals than required is still rejected (an under-filled box)."""
-    client, _requests = _build_select_meals_client()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    with pytest.raises(HelloFreshError, match="at least 3"):
-        loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"]))
 
 
 def test_async_select_meals_sends_per_recipe_quantities() -> None:
@@ -3559,30 +3665,30 @@ def test_async_select_meals_sends_per_recipe_quantities() -> None:
     assert {m["index"]: m["quantity"] for m in meals} == {11: 2, 18: 1}
 
 
-def test_async_select_meals_counts_servings_toward_required() -> None:
-    """Total servings (sum of quantities), not distinct meals, must meet the required minimum."""
+def test_async_select_meals_allows_fewer_meals_than_plan() -> None:
+    """Selecting FEWER distinct meals than the base plan is allowed (the box resizes down).
+
+    Two meals on a 3-meal plan is a valid smaller box (>= MIN_MEALS_PER_WEEK), not an error.
+    """
     client, requests = _build_select_meals_client()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    # Two distinct meals, but recipe-11 at quantity 2 -> 3 servings == required 3: accepted.
     loop.run_until_complete(
-        client.async_select_meals(
-            "2026-W26",
-            ["recipe-11", "recipe-18"],
-            quantities={"recipe-11": 2},
-        )
+        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"])
     )
     assert len(requests) == 1
+    meals = requests[0]["json_payload"]["meals"]
+    assert [m["index"] for m in meals] == [11, 18]
 
 
-def test_async_select_meals_rejects_when_servings_below_required() -> None:
-    """Two meals at quantity 1 = 2 servings is below required 3 and is rejected."""
+def test_async_select_meals_rejects_below_minimum_box() -> None:
+    """A single distinct meal is below HelloFresh's smallest box and is rejected client-side."""
     client, _requests = _build_select_meals_client()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    with pytest.raises(HelloFreshError, match="at least 3 servings"):
+    with pytest.raises(HelloFreshError, match="at least 2 meals"):
         loop.run_until_complete(
-            client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"])
+            client.async_select_meals("2026-W26", ["recipe-11"])
         )
 
 
@@ -3736,6 +3842,74 @@ def test_select_market_items_writes_extras_and_preserves_meals() -> None:
     ]
     # The selected meal is preserved so a market write doesn't clear the box's meals.
     assert payload["meals"] == [{"index": 11, "quantity": 1}]
+
+
+def test_select_market_items_keeps_base_sku_when_meals_below_minimum() -> None:
+    """A market-only write must not resize the box SKU below the minimum.
+
+    The shared cart builder sizes the box SKU from the meal list. On a market write that meal
+    list is the week's *existing* selection, which can be under the minimum (here 1 confirmed
+    meal, and it would be 0 on an unconfirmed/preselected week). The SKU must stay at the base
+    plan (``US-CBU-3-2-0``), never an invalid ``US-CBU-1-2-0`` / ``US-CBU-0-2-0``.
+    """
+    from custom_components.hellofresh.models import HelloFreshMarketItem
+
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="6959884",
+        selection_deadline=datetime(2026, 7, 22, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
+        meals_required=3,
+        recipes=[
+            # Only ONE confirmed meal — below MIN_MEALS_PER_WEEK.
+            HelloFreshRecipe(recipe_id="recipe-11", name="Meal 11", is_selected=True, course_index=11),
+        ],
+        market_items=[
+            HelloFreshMarketItem(
+                item_id="m-app", name="Salmon Bites", index=70185, sku="US-AAB-0-0-0",
+                group_type="appetizer", max_quantity=6,
+            ),
+        ],
+        raw={"product": {"handle": "US-CBU-3-2-0"}, "_menu_payload": {"week": "2026-W26"}},
+    )
+    client._last_account_data = HelloFreshAccountData(weeks=[week]).finalize()
+    requests: list[dict[str, object | None]] = []
+
+    async def fake_subs():
+        return [subscription]
+
+    async def fake_pref(_s):
+        return "quick"
+
+    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+        requests.append({"params": params})
+
+        class R:
+            status = 200
+
+        return R()
+
+    client._async_get_subscriptions = fake_subs  # type: ignore[method-assign]
+    client._async_get_subscription_plan_preference = fake_pref  # type: ignore[method-assign]
+    client._async_api_request = fake_req  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-app": 1}))
+
+    assert len(requests) == 1
+    assert requests[0]["params"]["product-sku"] == "US-CBU-3-2-0"
 
 
 def test_select_market_items_rejects_over_max_quantity() -> None:

@@ -685,7 +685,7 @@ Each `meals[]` entry may wrap the actual recipe in a nested `recipe` object and 
 - `meals[].selection.quantity` — when present and `> 0`, the meal is **currently chosen** (this is how `is_selected` is resolved for recipes). `meals[].selection.selected` (a bool) is honored when present.
 - `meals[].charge` — `{label, unitAmount, totalAmount, reason, strategy}` for premium/variant meals; `label` (e.g. `+7.99/serving`) and `unitAmount` (cents) drive a tile's surcharge display.
 - `meals[].recipe.label.text` — a badge such as `Premium Picks`.
-- **`modularity[]`** — the variant system. Each group has a `defaultCourseIndex` (the base meal) plus `variations[]` / `addOns[]` whose `{index, title}` name how each variant differs (e.g. `"2x Bacon"`, `"Ground Turkey"`). The `index` equals a meal's own `index`, so the integration joins them to attach a human-readable `variation_title` to each recipe. This is what distinguishes same-named meals whose price/nutrition can otherwise look identical.
+- **`modularity[]`** — the variant system. Each group has a `defaultCourseIndex` (the base meal) plus `variations[]` / `addOns[]` whose `{index, title}` name how each variant differs (e.g. `"2x Bacon"`, `"Ground Turkey"`). The `index` equals a meal's own `index`, so the integration joins them to attach a human-readable `variation_title` to each recipe. This is what distinguishes same-named meals whose price/nutrition can otherwise look identical. In the meal-planner card, a variant tile shows its `variation_title`; the base meal in such a set (the one with **no** modifier, i.e. `defaultCourseIndex`) is labeled **Default**.
 
 #### `addOns` — HelloFresh Market catalog
 
@@ -1156,7 +1156,7 @@ Observed query params include:
 - `cutoff_time`
 - `ignore_addons=false`
 - `preference`
-- `product-sku`
+- `product-sku` — the box SKU, and **the meal digit resizes with the selection** (see [Box resizing](#box-resizing-via-product-sku) below)
 - `subscription`
 - `update_quantity=true`
 - `week`
@@ -1182,6 +1182,28 @@ Observed success response:
 
 The integration now uses this `PUT /gw/v1/carts/{week}` request as the primary meal-selection write path when the authenticated menu payload includes stable meal `index` values.
 
+#### Box resizing via `product-sku`
+
+A week's box is **not fixed to the base plan's meal count** — choosing more or fewer distinct meals resizes the box for that delivery, and the `product-sku` query param must reflect the new size or the endpoint rejects the write:
+
+```
+HTTP 400 (MEAL_SIZE_MISMATCH: Product 'US-CBU-3-2-0' requires 3 meals but 4 meals were selected)
+```
+
+Box SKUs encode the plan as `<PREFIX>-<MEALS>-<SERVINGS>-<N>` (e.g. `US-CBU-3-2-0` = **3 meals × 2 servings**). The web app resizes by swapping the **meal digit** to the number of **distinct meals** selected, leaving the servings digit alone — HAR-confirmed in both directions:
+
+| Selection on a 3-meal plan | `product-sku` sent | Observed box price |
+| --- | --- | --- |
+| 2 distinct meals | `US-CBU-2-2-0` | $49.96 |
+| 3 distinct meals (base) | `US-CBU-3-2-0` | $65.94 |
+| 4 distinct meals | `US-CBU-4-2-0` | $87.92 |
+
+Key points:
+
+- The digit tracks **distinct meals**, not total servings. A meal at `quantity: 2` fills extra servings of one box slot; it does **not** add a meal or change the meal digit.
+- The integration adjusts the SKU in `HelloFreshClient._sku_for_meal_count()` from `len(meals)`. It only rewrites the known `<prefix>-<meals>-<servings>-<n>` shape, never touches zero-meal add-on/charge SKUs (e.g. `US-CHARGE-0-0-0`), and **clamps** below the minimum: a meal count under 2 keeps the base plan SKU (this guards market-only writes, which reuse this builder with the week's existing — possibly empty — meal list; see [Select market items](#select-market-items)).
+- **Minimum box is 2 meals.** This is HelloFresh's smallest box and the only lower bound confirmed; the integration rejects fewer than 2 client-side.
+
 Current implementation notes:
 
 - meal indexes are preserved from the authenticated `/gw/my-deliveries/menu` payload
@@ -1194,7 +1216,7 @@ Validation rules before sending:
 - `week_id` must exist in previously loaded account data
 - at least one `recipe_id` is required
 - duplicate recipe ids are removed
-- if `meals_required` is known, the submitted **total servings** (sum of quantities) must be **at least** that many — fewer is rejected (an under-filled box), but **more is allowed**: HelloFresh treats the extras as add-on meals (typically surcharged), and the cart endpoint is the authority on whether a given over-selection is accepted
+- the number of **distinct meals** must be **at least 2** (`MIN_MEALS_PER_WEEK`) — HelloFresh's smallest box; fewer is rejected. There is **no upper cap**: choosing more distinct meals than the base plan resizes the box up (the cart endpoint reprices and is the authority on acceptance). See [Box resizing via `product-sku`](#box-resizing-via-product-sku). Note this floor is on distinct meals, not total servings — a doubled portion adds servings, not a meal
 - if the selected recipe set (with quantities) already matches the current state, no request is sent
 
 ### Select market items
@@ -1233,6 +1255,7 @@ Implementation notes:
 
 - the caller passes a map of market item id/sku/index → desired **total** quantity; the integration resolves each against the week's market catalog, keeps any existing recurring (`preselectedQuantity`) portion, and applies the remainder as `oneOffQuantity`
 - quantity is clamped to the item's `maxQuantity`; quantity `0` (or omitting an item) removes it
+- because this reuses the shared cart builder, the `product-sku` still reflects the week's **existing** meal selection. That meal list can be under the minimum (0 meals on an unconfirmed/preselected week, or 1), so the SKU-resize step **clamps to the base plan SKU** below 2 meals rather than emitting an invalid box like `US-CBU-0-2-0` — see [Box resizing via `product-sku`](#box-resizing-via-product-sku)
 - success response mirrors the meal write (`{"hasSeamlessDowngraded": false}`)
 
 ### Skip / unskip week

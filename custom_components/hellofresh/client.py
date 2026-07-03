@@ -466,16 +466,17 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         def _qty(recipe_id: str) -> int:
             return quantities.get(recipe_id, 1)
 
-        total_servings = sum(_qty(recipe_id) for recipe_id in deduplicated_recipe_ids)
-        # meals_required is the box's included meal count. Filling FEWER servings than that is
-        # rejected (an under-filled box isn't a valid cart); filling MORE is allowed —
-        # HelloFresh treats the extras as add-on meals (typically surcharged). The cart
-        # endpoint, not this client, is the authority on whether a given over-selection is
-        # accepted for the account/region, so we don't cap the upper bound here.
-        if week.meals_required is not None and total_servings < week.meals_required:
+        # A week can be resized to a different box for that delivery: picking more or fewer
+        # DISTINCT meals than the base plan swaps the box SKU up or down (see
+        # _sku_for_meal_count), and HelloFresh reprices it. The only floor is the smallest box
+        # HelloFresh sells — MIN_MEALS_PER_WEEK distinct meals — below which no valid box exists.
+        # The count that resizes the box is distinct meals, NOT total servings (a meal at
+        # quantity 2 fills extra servings of the same box slot, it doesn't add a meal).
+        distinct_meals = len(deduplicated_recipe_ids)
+        if distinct_meals < self.MIN_MEALS_PER_WEEK:
             raise HelloFreshError(
-                f"Week {week_id} needs at least {week.meals_required} servings, "
-                f"got {total_servings}"
+                f"Week {week_id} needs at least {self.MIN_MEALS_PER_WEEK} meals, "
+                f"got {distinct_meals}"
             )
 
         selected = {
@@ -716,6 +717,42 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         extras = self._build_cart_existing_extras(week)
         return await self._async_build_cart_update(week, subscription, selected_meals, extras)
 
+    # HelloFresh box SKUs encode the plan as ``<PREFIX>-<MEALS>-<SERVINGS>-<N>`` (e.g.
+    # ``US-CBU-3-2-0`` is 3 meals × 2 servings). Selecting a different number of DISTINCT meals
+    # than the base plan resizes the box for that week: the cart PUT's ``product-sku`` must carry
+    # the matching meal-count digit or the endpoint rejects the write with MEAL_SIZE_MISMATCH.
+    # This mirrors the web app, which swaps the digit up (``US-CBU-3-2-0`` → ``US-CBU-4-2-0`` for
+    # a 4th meal) OR down (``US-CBU-2-2-0`` for 2 meals) to match the selection; the servings
+    # digit is unchanged. Both directions are HAR-confirmed against a 3-meal plan.
+    _BOX_SKU_RE = re.compile(r"^(?P<prefix>.+-)(?P<meals>\d+)(?P<rest>-\d+-\d+)$")
+
+    # Smallest box HelloFresh accepts. 2 distinct meals is the known minimum (and the smallest
+    # box the HAR proves works); fewer has no valid box SKU to resize to.
+    MIN_MEALS_PER_WEEK = 2
+
+    @classmethod
+    def _sku_for_meal_count(cls, product_sku: str, meal_count: int) -> str:
+        """Return ``product_sku`` with its meal-count segment set to ``meal_count``.
+
+        Resizes the box in either direction (up or down) to match the number of distinct meals
+        selected, and only rewrites SKUs matching the known ``<prefix>-<meals>-<servings>-<n>``
+        box shape; anything else is returned unchanged so we never corrupt an unexpected format.
+        """
+        match = cls._BOX_SKU_RE.match(product_sku)
+        if match is None:
+            return product_sku
+        current_meals = int(match.group("meals"))
+        # A zero meal-count marks an add-on/charge SKU (e.g. ``US-CHARGE-0-0-0``), not a meal
+        # box — never rewrite those.
+        if current_meals <= 0 or meal_count == current_meals:
+            return product_sku
+        # Never resize below the smallest real box. A sub-minimum count means "no meal info to
+        # size by" (e.g. a market-only write on a week with no confirmed meals, where the meal
+        # list is empty) — keep the base plan's SKU rather than emitting an invalid box.
+        if meal_count < cls.MIN_MEALS_PER_WEEK:
+            return product_sku
+        return f"{match.group('prefix')}{meal_count}{match.group('rest')}"
+
     async def _async_build_cart_update(
         self,
         week: HelloFreshWeek,
@@ -743,6 +780,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         if not all((customer_id, cutoff_time, preference, product_sku, week.subscription_id)):
             return None
+
+        # Upgrade the box SKU when more distinct meals are selected than the base plan holds, so
+        # HelloFresh accepts the larger selection (and prices the extra meals) instead of failing
+        # with MEAL_SIZE_MISMATCH. The SKU's meal digit tracks DISTINCT meals, not total servings.
+        product_sku = self._sku_for_meal_count(str(product_sku), len(meals))
 
         return {
             "path": f"/gw/v1/carts/{week.week_id}",

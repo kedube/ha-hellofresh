@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.19.1";
+const CARD_VERSION = "0.20.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -248,6 +248,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return 4;
   }
 
+  // Smallest box HelloFresh accepts: a week must have at least this many DISTINCT meals. The
+  // box resizes to match the number of distinct meals chosen (up or down from the base plan),
+  // so this floor — not the base plan's meal count — is what gates saving. Mirrors the client's
+  // MIN_MEALS_PER_WEEK.
+  static get MIN_MEALS() {
+    return 2;
+  }
+
   // localStorage key for the "show selected only" view preference.
   static get FILTER_STORAGE_KEY() {
     return "hellofresh-meal-planner:show-selected-only";
@@ -308,12 +316,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Number.isFinite(q) && q > 0 ? q : 1;
   }
 
-  // Total servings in a selection map (sum of quantities) — this is what counts toward the
-  // box's required-meal minimum, matching HelloFresh's box math.
+  // Total servings in a selection map (sum of quantities) — reflects box size in servings.
   _servingsTotal(selectionMap) {
     let total = 0;
     for (const q of selectionMap.values()) total += q;
     return total;
+  }
+
+  // Number of DISTINCT meals in a selection (one entry per chosen recipe, regardless of its
+  // serving quantity). This is what sizes the box and gates saving against MIN_MEALS.
+  _mealsCount(selectionMap) {
+    return selectionMap.size;
   }
 
   // The quantity currently shown for a tile, accounting for collapsed-duplicate aliases.
@@ -359,7 +372,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (pending.has(idx)) {
       pending.delete(idx);
     } else {
-      this._nudgeIfOver(week, pending, 1);
+      this._nudgeIfOver(week, pending, true); // adding a new distinct meal
       pending.set(idx, 1);
     }
     this._renderSelectionChange(week, recipe);
@@ -377,7 +390,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (next === 0) {
       pending.delete(idx);
     } else {
-      if (delta > 0) this._nudgeIfOver(week, pending, next - current);
+      // A serving bump on an existing meal doesn't grow the box (no new distinct meal).
       pending.set(idx, next);
     }
     this._renderSelectionChange(week, recipe);
@@ -415,14 +428,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return tpl.content;
   }
 
-  // meals_required is the box's included serving count, not a hard cap — extras are allowed
-  // (HelloFresh bills them as add-ons). Nudge once when an increase pushes total over the box.
-  _nudgeIfOver(week, pending, added) {
+  // Choosing more DISTINCT meals than the base plan resizes the box up for this week (a larger
+  // box, repriced by HelloFresh) — not a hard cap. Nudge once when a newly-added meal takes the
+  // selection past the plan's meal count so the price change isn't a surprise.
+  _nudgeIfOver(week, pending, addedMeal) {
     const required = week.meals_required;
-    const total = this._servingsTotal(pending);
-    if (required && total >= required) {
+    // Only a new distinct meal grows the box; bumping an existing meal's servings does not.
+    if (addedMeal && required && this._mealsCount(pending) >= required) {
       this._flash(
-        `Adding ${added} serving${added > 1 ? "s" : ""} past the included ${required} — extras may be charged as add-ons.`
+        `Choosing more than your ${required}-meal plan resizes this week's box — the price will update to match.`
       );
     }
   }
@@ -436,10 +450,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   async _saveSelection(week) {
     const pending = this._pending[week.week_id];
     if (!pending) return;
-    const required = week.meals_required;
-    const servings = this._servingsTotal(pending);
-    if (required && servings < required) {
-      this._flash(`Choose at least ${required} servings before saving (${servings} selected).`);
+    // The box resizes to the number of DISTINCT meals chosen, so the only floor is HelloFresh's
+    // smallest box (MIN_MEALS) — not the base plan's meal count. Fewer has no valid box.
+    const meals = this._mealsCount(pending);
+    const min = HelloFreshMealPlannerCard.MIN_MEALS;
+    if (meals < min) {
+      this._flash(`Choose at least ${min} meals before saving (${meals} selected).`);
       return;
     }
     // Translate chosen course_index values back into recipe ids + per-recipe quantities.
@@ -517,18 +533,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // A week still needs the customer's attention when it's editable AND either:
-  //   • fewer meals are saved than the box requires (under-filled), or
+  //   • it has fewer than the minimum number of meals saved (an invalid, under-sized box), or
   //   • HelloFresh has only *preselected* the meals (auto-picked), so the box is "full" of
   //     auto-picks the customer hasn't confirmed/reviewed yet.
   // A preselected week reports meals_selected == meals_required, so a pure count check misses it —
-  // the meals_preselected/auto_picked flag is what surfaces those. Returns the list (cursor order).
+  // the meals_preselected/auto_picked flag is what surfaces those. Saving fewer meals than the
+  // base plan is a valid box resize, not a problem, so we no longer flag those. Returns the list
+  // (cursor order).
   _weeksNeedingChoice() {
     return (this._weeks || []).filter((w) => {
       if (!this._isEditable(w)) return false;
       if (this._isPreselected(w)) return true;
-      const required = w.meals_required;
-      if (!required) return false;
-      return this._savedSelection(w).size < required;
+      return this._savedSelection(w).size < HelloFreshMealPlannerCard.MIN_MEALS;
     });
   }
 
@@ -708,17 +724,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _renderStatusRow(week) {
     const editable = this._isEditable(week);
     const required = week.meals_required;
+    const min = HelloFreshMealPlannerCard.MIN_MEALS;
     const display = this._displaySelection(week);
-    // Count total servings (a 2× meal fills two slots), matching HelloFresh's box math.
-    const selected = this._servingsTotal(display);
+    // The box sizes to DISTINCT meals; servings (a 2× meal) portion within that box.
+    const meals = this._mealsCount(display);
+    const servings = this._servingsTotal(display);
     const dirty = this._isDirty(week);
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
-    const canSave = !this._busy && (!required || selected >= required);
-    const extra = required && selected > required ? selected - required : 0;
+    // Saving is gated only by the smallest box HelloFresh sells, not the base plan.
+    const canSave = !this._busy && meals >= min;
+    // The box resizes when the meal count differs from the base plan (repriced by HelloFresh).
+    const resized = required && meals !== required;
+    const mealLabel = `${meals} meal${meals === 1 ? "" : "s"}`;
+    const servingsLabel = servings !== meals ? ` · ${servings} servings` : "";
     return `
       <div class="statusrow">
-        <span class="chip ${!required || selected >= required ? "ok" : "warn"}">
-          ${selected}${required ? `/${required}` : ""} servings${extra ? ` (+${extra} extra)` : ""}${dirty ? " · unsaved" : ""}
+        <span class="chip ${meals >= min ? "ok" : "warn"}" title="${resized ? `Resizes your ${required}-meal plan to a ${meals}-meal box for this week` : ""}">
+          ${mealLabel}${resized ? ` (plan: ${required})` : ""}${servingsLabel}${dirty ? " · unsaved" : ""}
         </span>
         ${week.meals_preselected && !this._isPaused(week)
           ? `<span class="chip preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
