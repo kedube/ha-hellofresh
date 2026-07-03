@@ -922,6 +922,84 @@ def test_normalize_weeks_payload_extracts_meals_required_from_product_specs() ->
     assert orders[0].total_price == 12.99
 
 
+def test_resized_week_meals_required_from_own_box_not_subscription_plan() -> None:
+    """A week resized to a smaller box uses ITS box's meal count, not the plan's base count.
+
+    Regression (HAR www.hellofresh.com.29.har, W32): the customer saved 2 meals on a 3-meal
+    plan, so HelloFresh downsized that week's box to ``US-CBU-2-2-0`` (``product.specs.meals``
+    = 2). Sourcing ``meals_required`` from the subscription plan (3) made the week look
+    under-filled (2 < 3 ⇒ needs_selection), wrongly flagging it as still needing selection.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        meals_required=3,  # base plan is 3 meals
+    )
+    payload = {
+        "items": [
+            {
+                "id": "2026-W32",
+                "deliveryDate": "2026-07-30",
+                "status": "RUNNING",
+                "product": {
+                    "handle": "US-CBU-2-2-0",
+                    "productName": "Classic - 2 meals per week for 2 people",
+                    "specs": {"meals": 2, "size": 2},
+                },
+            }
+        ]
+    }
+
+    weeks, _orders = client._normalize_weeks_payload(payload, subscription=subscription)
+
+    assert len(weeks) == 1
+    week = weeks[0]
+    assert week.meals_required == 2  # the week's OWN box, not the plan's 3
+    week.meals_selected = 2
+    assert week.needs_selection is False  # 2 of a 2-meal box is complete
+
+
+def test_delivery_menu_params_use_weeks_own_box_sku() -> None:
+    """The menu request uses the WEEK's box SKU, not the subscription's base-plan SKU.
+
+    Regression (W32): querying ``/gw/my-deliveries/menu`` with the base-plan SKU
+    (``US-CBU-3-2-0``) returned the 3-meal default/preselected view instead of the resized
+    week's real 2-meal selection. The week's own ``product.handle`` must win.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "preset": "quick",
+            "shippingAddress": {"postcode": "01930"},
+            "product": {"sku": "US-CBU-3-2-0"},  # base plan
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+        },
+    )
+    account_week = HelloFreshWeek(
+        week_id="2026-W32",
+        display_name="Week 32",
+        subscription_id="6959884",
+        raw={
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+            "product": {"handle": "US-CBU-2-2-0", "specs": {"meals": 2, "size": 2}},
+        },
+    )
+
+    params = client._build_delivery_menu_params(subscription, account_week, plan_preference="quick")
+
+    assert params is not None
+    assert params["product-sku"] == "US-CBU-2-2-0"  # week's box, not US-CBU-3-2-0
+    assert params["servings"] == "2"
+    assert params["week"] == "2026-W32"
+
+
 def test_order_total_prefers_subtotal_plus_shipping_and_defaults_currency() -> None:
     """Split subtotal and shipping fields should be combined into the visible total."""
     client = HelloFreshClient(session=None, country="us")  # type: ignore[arg-type]
