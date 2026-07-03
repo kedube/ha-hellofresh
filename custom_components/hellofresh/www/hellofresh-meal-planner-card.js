@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.22.0";
+const CARD_VERSION = "0.23.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -294,13 +294,21 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // Saved selection as a Map of course_index -> serving quantity (>=1 for chosen meals).
   // Cached per week_id (depends only on server data, invalidated on fetch) since it's consulted
   // repeatedly per render (display, dirty check, needs-choice, tile selected state).
+  // Stable key for a recipe in the selection map. Menu recipes carry a numeric course_index
+  // (used for editing/cart writes); delivered past-week recipes have no index (index=null), so
+  // fall back to recipe_id — otherwise every null-index meal collapses onto one map entry and a
+  // 3-meal past week miscounts as "1 meal".
+  _selKey(recipe) {
+    return recipe.course_index != null ? recipe.course_index : recipe.recipe_id;
+  }
+
   _savedSelection(week) {
     if (!this._savedSelCache) this._savedSelCache = new Map();
     const cached = this._savedSelCache.get(week.week_id);
     if (cached) return cached;
     const map = new Map();
     for (const r of week.recipes || []) {
-      if (this._isSelected(r)) map.set(r.course_index, this._recipeQuantity(r));
+      if (this._isSelected(r)) map.set(this._selKey(r), this._recipeQuantity(r));
     }
     this._savedSelCache.set(week.week_id, map);
     return map;
@@ -332,7 +340,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // The quantity currently shown for a tile, accounting for collapsed-duplicate aliases.
   _displayedQuantity(week, recipe) {
     const display = this._displaySelection(week);
-    const idx = (recipe._aliasIndexes || [recipe.course_index]).find((i) => display.has(i));
+    const idx = (recipe._aliasIndexes || [this._selKey(recipe)]).find((i) => display.has(i));
     return idx === undefined ? 0 : display.get(idx);
   }
 
@@ -830,9 +838,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       editable: this._canEdit(week),
       display,
       nameCounts,
-      // A tile is selected if its own index OR any collapsed-duplicate index is chosen.
+      // A tile is selected if its own key OR any collapsed-duplicate index is chosen. Uses the
+      // same key as _savedSelection (course_index, or recipe_id when the meal has no index).
       sel: (r) =>
-        display.has(r.course_index) || (r._aliasIndexes || []).some((i) => display.has(i)),
+        display.has(this._selKey(r)) || (r._aliasIndexes || []).some((i) => display.has(i)),
     };
   }
 

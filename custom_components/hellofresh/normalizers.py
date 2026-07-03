@@ -45,6 +45,12 @@ _COUNTRY_CURRENCIES = {
 class HelloFreshPayloadNormalizer:
     """Mixin for pure-ish HelloFresh payload normalization methods."""
 
+    # How many recipes past a week's delivered count still counts as a genuine per-week browsable
+    # grid (kept, selection corrected). Beyond delivered + this margin, the "catalog" is really the
+    # full planning menu (dozens–hundreds of meals), which is replaced by the delivered set so past
+    # weeks don't show meals that never shipped. Sized to clear a real box grid but not the menu.
+    _PAST_CATALOG_FLOOD_MARGIN = 20
+
     @staticmethod
     def _effective_week_status(raw_week: dict[str, Any]) -> str:
         """Return the week's status, preferring the live ``state`` lifecycle field.
@@ -1267,21 +1273,28 @@ class HelloFreshPayloadNormalizer:
             # wrongly badge a week you personally chose as "Preselected".
             account_week.meals_preselected = False
 
-            # The week already carries a browsable catalog (the menu endpoint served this past
-            # week's full meal grid). Keep that catalog so browsing still works, but correct the
-            # SELECTION: the menu endpoint's per-meal flags for a past week reflect the default
-            # /preselected meals, not what was actually delivered. The delivered meals
-            # (past-deliveries) are the source of truth, so re-derive is_selected from them.
-            if account_week.recipes:
+            # The planning-menu endpoint can serve a past week its full selectable CATALOG
+            # (dozens–hundreds of meals across every variant), not just the box's meals. Keeping
+            # that floods the week with meals that were never delivered. A genuine per-week grid
+            # is at most a handful larger than what shipped; a catalog many times that size is the
+            # full menu, so the delivered set (past-deliveries) REPLACES it. Otherwise keep the
+            # catalog for browsing and just correct the SELECTION (the menu's per-meal flags for a
+            # past week reflect defaults/preselects, not what shipped).
+            delivered = past_week.recipes
+            is_flooded_catalog = (
+                bool(delivered)
+                and len(account_week.recipes) > len(delivered) + self._PAST_CATALOG_FLOOD_MARGIN
+            )
+            if account_week.recipes and not is_flooded_catalog:
                 self._apply_delivered_selection(account_week, past_week)
                 continue
 
-            account_week.recipes = past_week.recipes
+            account_week.recipes = delivered
             account_week.menu_title = account_week.menu_title or past_week.menu_title
-            if account_week.meals_selected in (None, 0):
-                account_week.meals_selected = past_week.meals_selected
-            if account_week.meals_required is None:
-                account_week.meals_required = past_week.meals_required
+            # A past week's counts follow what actually shipped, overriding any stale menu/plan
+            # values (e.g. a menu catalog that set meals_selected to the full grid size).
+            account_week.meals_selected = past_week.meals_selected or account_week.meals_selected
+            account_week.meals_required = past_week.meals_required or account_week.meals_required
 
         return list(account_weeks)
 

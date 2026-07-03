@@ -2090,48 +2090,6 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     assert weeks[0].recipes[0].is_selected is False
 
 
-def test_delivery_menu_not_fetched_for_past_weeks() -> None:
-    """The planning-menu endpoint is never queried for a past week.
-
-    Regression: the planning menu serves the full selectable catalog (hundreds of meals across
-    every variant). Attaching it to a past week floods the week with meals that were never
-    delivered. Past weeks must fall through to past-deliveries, so the menu fetch is skipped
-    entirely for any week whose delivery date is before today.
-    """
-    client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
-    subscription = HelloFreshSubscription(
-        subscription_id="6959884",
-        account_id="acct-1",
-        locale="en-US",
-        servings=2,
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
-    )
-    past_week = HelloFreshWeek(
-        week_id="2026-W20",
-        display_name="Past Week",
-        subscription_id="6959884",
-        delivery_date=date.today() - timedelta(days=19),  # ~19 days ago: the reported boundary
-        raw={"product": {"handle": "US-CBU-3-2-0"}},
-    )
-
-    calls: list[str] = []
-
-    async def fake_api_get(path: str, params=None):
-        calls.append(path)
-        raise AssertionError(f"no HTTP call expected for a past week, got {path}")
-
-    client._async_api_get = fake_api_get  # type: ignore[method-assign]
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(
-        client._async_get_delivery_menu_week_data(subscription=subscription, account_week=past_week)
-    )
-
-    assert result == []
-    assert calls == []  # the menu endpoint was not hit at all
-
-
 def test_delivery_menu_rejects_substitute_menu_for_mismatched_week() -> None:
     """A menu payload for a different week than requested must not be stamped onto the week.
 
@@ -2352,6 +2310,53 @@ def test_merge_past_delivery_corrects_selection_on_browsable_catalog() -> None:
     selected = {r.recipe_id for r in week.recipes if r.is_selected}
     assert selected == {"cat-3", "cat-4", "cat-5"}
     assert week.meals_selected == 3
+
+
+def test_merge_past_delivery_replaces_flooded_full_menu_catalog() -> None:
+    """A past week carrying the full planning-menu catalog is replaced by the delivered meals.
+
+    Regression: the planning-menu endpoint can serve a past week the ENTIRE selectable catalog
+    (hundreds of meals across every variant). Keeping that floods the week with meals that never
+    shipped. When the catalog is far larger than what was delivered, past-deliveries replaces it
+    so the week shows only its ~3 real meals.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    flooded_catalog = [
+        HelloFreshRecipe(recipe_id=f"cat-{i}", name=f"Catalog {i}", course_index=i)
+        for i in range(200)
+    ]
+    past_account_week = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Past Week",
+        subscription_id="6959884",
+        delivery_date=date(2026, 6, 14),
+        meals_required=3,
+        recipes=flooded_catalog,
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Past Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=3,
+        meals_required=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="d-1", name="Delivered A"),
+            HelloFreshRecipe(recipe_id="d-2", name="Delivered B"),
+            HelloFreshRecipe(recipe_id="d-3", name="Delivered C"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[past_account_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    # The 200-recipe catalog is gone; only the 3 delivered meals remain.
+    assert [r.name for r in week.recipes] == ["Delivered A", "Delivered B", "Delivered C"]
+    assert week.meals_selected == 3
+    assert week.meals_required == 3
 
 
 def test_merge_past_delivery_keeps_catalog_flags_when_no_id_overlap() -> None:
