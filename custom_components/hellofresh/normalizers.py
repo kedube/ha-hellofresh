@@ -300,6 +300,14 @@ class HelloFreshPayloadNormalizer:
         if variation_titles and course_index is not None:
             variation_title = variation_titles.get(course_index)
 
+        # The protein category (Poultry/Beef/Pork/Seafood) drives the tile's color dot. Meatless
+        # dishes carry no protein `category`, so fall back to "Veggie" when the recipe is tagged
+        # Veggie/Vegan — otherwise a plant-based meal shows an unlabeled neutral dot with no
+        # signal that it's meatless. Matches the card's PREFERENCE_COLORS "Veggie" swatch.
+        preference = recipe_data.get("preference") or recipe_data.get("category")
+        if not preference and any(tag in ("Veggie", "Vegan") for tag in tags):
+            preference = "Veggie"
+
         return HelloFreshRecipe(
             recipe_id=str(
                 recipe_data.get("id")
@@ -309,7 +317,7 @@ class HelloFreshPayloadNormalizer:
                 or name
             ),
             name=name,
-            preference=recipe_data.get("preference") or recipe_data.get("category"),
+            preference=preference,
             is_selected=is_selected,
             selected_quantity=selected_quantity,
             course_index=course_index,
@@ -370,22 +378,68 @@ class HelloFreshPayloadNormalizer:
                         titles.setdefault(idx, title.strip())
         return titles
 
+    @staticmethod
+    def _build_variation_groups(raw_week: dict[str, Any]) -> dict[int, int]:
+        """Map every meal `index` in a variant group to that group's base dish index.
+
+        Keyed on the modularity group's ``defaultCourseIndex`` (the base dish). Each of the
+        group's variation/addOn indexes — AND the base index itself — maps to that base index,
+        so all members of a dish's variant set share one group key even when their names differ
+        (e.g. a Salmon dish whose variants include an "Icelandic Cod" swap). Used to group a
+        dish's variants together in the meal-planner card.
+        """
+        groups: dict[int, int] = {}
+        modularity = raw_week.get("modularity")
+        if not isinstance(modularity, list):
+            nested = raw_week.get("_menu_payload")
+            if isinstance(nested, dict):
+                modularity = nested.get("modularity")
+        if not isinstance(modularity, list):
+            return groups
+        for group in modularity:
+            if not isinstance(group, dict):
+                continue
+            base = coerce_int(group.get("defaultCourseIndex"))
+            if base is None:
+                continue
+            member_indexes = {base}
+            for key in ("variations", "addOns"):
+                items = group.get(key)
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if isinstance(item, dict):
+                        idx = coerce_int(item.get("index"))
+                        if idx is not None:
+                            member_indexes.add(idx)
+            # A single-member "group" (base with no variants) is not a variant set — skip it so
+            # standalone dishes don't each get a spurious one-element group key.
+            if len(member_indexes) < 2:
+                continue
+            for idx in member_indexes:
+                groups.setdefault(idx, base)
+        return groups
+
     def _apply_variation_titles(self, weeks: Sequence[HelloFreshWeek]) -> None:
-        """Fill in each recipe's ``variation_title`` from its week's ``modularity`` block.
+        """Fill in each recipe's ``variation_title`` and ``variation_group`` from ``modularity``.
 
         Recipes are built by several normalization paths (delivery weeks, menu weeks, past
         deliveries) and only some pass the modularity map through at build time. This pass runs
-        once over the fully-assembled week list so the variant modifier ("2x Bacon", ...) is
-        present no matter which path produced a given week — resolved by ``course_index``, the
-        same index the modularity block keys on. Existing values are left untouched.
+        once over the fully-assembled week list so the variant modifier ("2x Bacon", ...) and the
+        variant-group key are present no matter which path produced a given week — resolved by
+        ``course_index``, the same index the modularity block keys on. Existing values are left
+        untouched.
         """
         for week in weeks:
             if not week.recipes or not isinstance(week.raw, dict):
                 continue
             titles = self._build_variation_titles(week.raw)
-            if not titles:
+            group_by_index = self._build_variation_groups(week.raw)
+            if not titles and not group_by_index:
                 continue
             for recipe in week.recipes:
+                if recipe.course_index is not None and recipe.variation_group is None:
+                    recipe.variation_group = group_by_index.get(recipe.course_index)
                 if recipe.variation_title:
                     continue
                 if recipe.course_index is not None:
