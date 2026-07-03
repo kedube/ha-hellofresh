@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.18.2";
+const CARD_VERSION = "0.19.1";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -56,6 +56,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._loading = false;
     this._error = null;
     this._busy = false; // a write (select/skip) is in flight
+    this._saving = null; // persistent "please wait" banner text while a save + reload is in flight
     this._fetched = false; // guard so we only auto-fetch once per hass attach
     this._hass = null;
     // Pending (unsaved) selection while the user edits a week, keyed by week_id -> Set of
@@ -96,7 +97,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return { type: "custom:hellofresh-meal-planner-card" };
   }
 
-  async _fetchWeeks() {
+  // `keepWeekId`: after a write (e.g. save), stay on the week the user was on rather than
+  // snapping back to the default cursor. Falls back to the default when that week is gone.
+  async _fetchWeeks(keepWeekId = null) {
     if (!this._hass) return;
     this._loading = true;
     this._error = null;
@@ -114,7 +117,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
       this._savedSelCache = null;
-      this._cursor = this._defaultCursor(this._weeks);
+      const kept = keepWeekId != null
+        ? this._weeks.findIndex((w) => w.week_id === keepWeekId)
+        : -1;
+      this._cursor = kept >= 0 ? kept : this._defaultCursor(this._weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -448,6 +454,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
 
     this._busy = true;
+    this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
     this._render();
     try {
       const data = { week_id: week.week_id, recipe_ids: recipeIds };
@@ -455,12 +462,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", "select_meals", data);
       delete this._pending[week.week_id]; // saved — drop the pending overlay
+      this._busy = false;
+      await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       this._flash("Meal selection updated.");
     } catch (err) {
+      this._busy = false;
+      await this._fetchWeeks(week.week_id); // resync from the source of truth
       this._flash(`Selection failed: ${(err && err.message) || err}`, true);
     } finally {
-      this._busy = false;
-      await this._fetchWeeks(); // resync from the source of truth
+      this._saving = null;
+      this._render();
     }
   }
 
@@ -578,9 +589,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._shell.header.innerHTML = this._renderCardHeader();
     this._shell.banner.innerHTML = this._renderNeedsChoosingBanner();
     this._shell.content.innerHTML = this._renderBody(week);
-    this._shell.toast.innerHTML = this._toast
-      ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
-      : "";
+    // A save in flight shows a persistent "please wait" banner (with a spinner) until the
+    // reload completes; a transient toast otherwise. The saving banner takes precedence.
+    this._shell.toast.innerHTML = this._saving
+      ? `<div class="toast saving"><span class="spinner"></span>${this._esc(this._saving)}</div>`
+      : this._toast
+        ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
+        : "";
   }
 
   _renderBody(week) {
@@ -817,7 +832,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No meals selected for this week yet.</div>`;
     }
 
-    const ordered = visible.slice().sort((a, b) => (ctx.sel(b) ? 1 : 0) - (ctx.sel(a) ? 1 : 0));
+    // Selected meals lead (in their existing order); the remaining menu is grouped by meal name
+    // so a dish's variants (2x fish, broccoli, green beans, …) sit together instead of scattered.
+    // Array.sort is stable, so equal-name unselected tiles keep their catalog order within the group.
+    const ordered = visible.slice().sort((a, b) => {
+      const selDelta = (ctx.sel(b) ? 1 : 0) - (ctx.sel(a) ? 1 : 0);
+      if (selDelta !== 0) return selDelta;
+      if (ctx.sel(a)) return 0; // both selected: preserve their existing order
+      return (a.name || "").localeCompare(b.name || ""); // both unselected: group by meal name
+    });
     const cards = ordered.map((r) => this._renderRecipeTile(week, r, ctx)).join("");
     return `<div class="grid ${this._busy ? "busy" : ""}">${cards}</div>`;
   }
@@ -852,7 +875,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
           ${variantTitle
             ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
-            : isVariant ? `<div class="variant-flag">Variant</div>` : ""}
+            : isVariant ? `<div class="variant-flag">Default</div>` : ""}
         </div>
         <div class="meta">
           <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
@@ -1156,6 +1179,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         margin: 4px 16px 12px; padding: 8px 12px; border-radius: 8px;
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
       }
+      .toast.saving {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        background: var(--primary-color); color: var(--text-primary-color, #fff);
+      }
+      .toast.saving .spinner {
+        width: 14px; height: 14px; flex: none; border-radius: 50%;
+        border: 2px solid currentColor; border-right-color: transparent;
+        animation: hf-spin 0.7s linear infinite;
+      }
+      @keyframes hf-spin { to { transform: rotate(360deg); } }
       .actions { text-align: center; margin-top: 8px; }
       .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
     `;
