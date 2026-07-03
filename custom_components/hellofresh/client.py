@@ -1641,7 +1641,16 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # website itself uses. Letting whichever answers first win meant an old week (e.g. the
         # one delivered ~4 months ago) never got its real delivered meals, so the card showed a
         # fabricated selection. Always consult past-deliveries; prefer its recipes per week.
+        # The single authoritative history source: the comprehensive, paginated endpoint the
+        # website itself uses. Recipes here carry their images; the other history endpoints
+        # (e.g. customer-complaints, which only knows the last couple of weeks) return
+        # image-less recipes, so this endpoint must WIN per week over them.
+        authoritative_path = "/gw/my-deliveries/past-deliveries"
         delivered_by_week: dict[str, HelloFreshWeek] = {}
+        # Which endpoint filled each week, so the authoritative source can overwrite a week that a
+        # narrower endpoint filled first (all history weeks share source="past_deliveries", so the
+        # model's source can't distinguish them — track the fetch path here instead).
+        filled_by_path: dict[str, str] = {}
         preferred_endpoint: tuple[str, dict[str, Any] | None] | None = None
         fallback_weeks: tuple[str, dict[str, Any] | None, list[HelloFreshWeek]] | None = None
         for path, params in ordered_calls:
@@ -1695,12 +1704,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             for week in weeks:
                 if not week.recipes:
                     continue
-                # past-deliveries is authoritative; once a week is filled from it, don't let a
-                # narrower endpoint overwrite it. Other endpoints fill only gaps.
-                existing = delivered_by_week.get(week.week_id)
-                if existing is not None and existing.source == "past_deliveries":
+                # Fill a week unless it was already filled by the authoritative endpoint. This lets
+                # /gw/my-deliveries/past-deliveries (with images) OVERWRITE a week that a narrower
+                # endpoint (e.g. customer-complaints, image-less) grabbed first, while never
+                # letting a narrower endpoint clobber an authoritative fill.
+                if filled_by_path.get(week.week_id) == authoritative_path:
                     continue
                 delivered_by_week[week.week_id] = week
+                filled_by_path[week.week_id] = path
             if preferred_endpoint is None:
                 preferred_endpoint = (path, params)
 

@@ -2012,6 +2012,69 @@ def test_past_delivery_history_prefers_recipe_bearing_endpoint() -> None:
     assert "/gw/my-deliveries/past-deliveries" in requests
 
 
+def test_past_deliveries_overwrites_customer_complaints_recipes() -> None:
+    """The comprehensive past-deliveries endpoint wins over customer-complaints per week.
+
+    Regression (W26/W27, "no images"): ``/gw/customer-complaints/...`` returns the last couple of
+    delivered weeks but its recipes are IMAGE-LESS (and carry a menu-style index). It runs first
+    and all history weeks share source="past_deliveries", so the old "don't overwrite" guard let
+    it block the authoritative ``/gw/my-deliveries/past-deliveries`` (which carries images) from
+    replacing those weeks. The image-bearing endpoint must win.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+
+    class DummyResponse:
+        status = 200
+
+    requests: list[str] = []
+
+    async def fake_api_get(path: str, params=None, extra_headers=None):
+        requests.append(path)
+        return DummyResponse()
+
+    async def fake_response_json(_response):
+        path = requests[-1]
+        if path == "/gw/customer-complaints/users/me/deliveries":
+            # Runs FIRST; recipes have an index but NO image.
+            return {
+                "weeks": [
+                    {
+                        "week": "2026-W26",
+                        "subscriptionId": "sub-1",
+                        "meals": [{"id": "meal-a", "name": "Cantina Fajitas", "index": 11}],
+                    },
+                ],
+            }
+        if path == "/gw/api/customers/me/deliveries":
+            return {"items": []}
+        # past-deliveries: the SAME week WITH images (and no menu index).
+        return {
+            "weeks": [
+                {
+                    "week": "2026-W26",
+                    "subscriptionId": "sub-1",
+                    "meals": [
+                        {"id": "meal-a", "name": "Cantina Fajitas", "image": "https://img/a.jpg"},
+                    ],
+                },
+            ],
+            "nextWeek": None,
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+
+    w26 = next(w for w in weeks if w.week_id == "2026-W26")
+    # The image-bearing past-deliveries version won over the image-less customer-complaints one.
+    assert w26.recipes[0].image_url == "https://img/a.jpg"
+    assert w26.recipes[0].course_index is None
+
+
 def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     """The live delivery menu endpoint should be used when week metadata is available."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
