@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.20.0";
+const CARD_VERSION = "0.22.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -854,14 +854,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No meals selected for this week yet.</div>`;
     }
 
-    // Selected meals lead (in their existing order); the remaining menu is grouped by meal name
-    // so a dish's variants (2x fish, broccoli, green beans, …) sit together instead of scattered.
-    // Array.sort is stable, so equal-name unselected tiles keep their catalog order within the group.
+    // Selected meals lead (in their existing order); the remaining menu is grouped so a dish's
+    // variants (2x fish, broccoli, green beans, …) sit together instead of scattered. Grouping
+    // uses the variant-group key (the base dish's index) when present, so protein swaps that
+    // carry a DIFFERENT name (Salmon vs. Cod in the same group) still cluster; it falls back to
+    // the meal name otherwise. Array.sort is stable, so ties keep their catalog order.
+    const groupKey = (r) => (r.variation_group != null ? `g:${r.variation_group}` : `n:${r.name || ""}`);
+    // Within a group, the base ("Default") meal is the one whose own index IS the group key
+    // (the modularity defaultCourseIndex). Sort it ahead of its variants; 0 for everything else.
+    const isBase = (r) => (r.variation_group != null && r.course_index === r.variation_group ? 0 : 1);
     const ordered = visible.slice().sort((a, b) => {
       const selDelta = (ctx.sel(b) ? 1 : 0) - (ctx.sel(a) ? 1 : 0);
       if (selDelta !== 0) return selDelta;
       if (ctx.sel(a)) return 0; // both selected: preserve their existing order
-      return (a.name || "").localeCompare(b.name || ""); // both unselected: group by meal name
+      const groupDelta = groupKey(a).localeCompare(groupKey(b)); // group variants together
+      if (groupDelta !== 0) return groupDelta;
+      return isBase(a) - isBase(b); // within a group, the Default meal leads its variants
     });
     const cards = ordered.map((r) => this._renderRecipeTile(week, r, ctx)).join("");
     return `<div class="grid ${this._busy ? "busy" : ""}">${cards}</div>`;
@@ -878,8 +886,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const stats = [];
     if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
     if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
-    // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs).
-    const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious", "Veggie", "Vegan"];
+    // A meatless dish carries no protein category, so surface an explicit "Veggie" chip driven
+    // by preference (reliably set to "Veggie" for Veggie/Vegan meals) — the protein dot alone is
+    // an unlabeled color. Meat meals identify their protein via that dot instead.
+    const isVeggie = r.preference === "Veggie";
+    // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs). Drop the
+    // Veggie/Vegan tags here since the dedicated chip below already conveys "meatless".
+    const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious"];
     const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
     // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
     const qty = isSelected ? this._displayedQuantity(week, r) : 0;
@@ -903,9 +916,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
           ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
           ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
-          ${r.badge || tags.length
+          ${r.badge || isVeggie || tags.length
             ? `<div class="chips">
                  ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
+                 ${isVeggie ? `<span class="rchip veggie">🌱 Veggie</span>` : ""}
                  ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
                </div>`
             : ""}
@@ -1196,6 +1210,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         background: var(--secondary-background-color); color: var(--primary-text-color);
       }
       .rchip.badge { background: #333332; color: #fff; }
+      .rchip.veggie { background: #4caf50; color: #fff; font-weight: 600; }
       .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
       .toast {
         margin: 4px 16px 12px; padding: 8px 12px; border-radius: 8px;

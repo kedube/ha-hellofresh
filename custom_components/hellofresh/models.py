@@ -61,6 +61,12 @@ class HelloFreshRecipe:
     # menu's `modularity` block (e.g. "2x Bacon", "Ground Turkey", "Added Broccoli"). This is the
     # clearest distinguisher for same-named variants whose price/nutrition look identical.
     variation_title: str | None = None
+    # The `course_index` of the base dish this recipe is a variant of (the modularity group's
+    # `defaultCourseIndex`). Every variant in a group — including the base itself and protein
+    # swaps that carry a different NAME (Salmon vs. Cod) — shares this key, so the meal planner
+    # card can group a dish's variants together even when their names differ. None when the meal
+    # is not part of any variant group.
+    variation_group: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize recipe data for Home Assistant state attributes."""
@@ -87,6 +93,7 @@ class HelloFreshRecipe:
             "surcharge_cents": self.surcharge_cents,
             "badge": self.badge,
             "variation_title": self.variation_title,
+            "variation_group": self.variation_group,
         }
 
 

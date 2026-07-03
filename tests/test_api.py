@@ -2924,6 +2924,87 @@ def test_recipe_parses_variation_title_from_modularity() -> None:
     assert variant.as_dict()["variation_title"] == "2x Bacon"
 
 
+def test_variation_group_clusters_variants_including_renamed_swaps() -> None:
+    """Every meal in a variant group shares the base dish's index as its ``variation_group``.
+
+    Regression (W33 "Air Fryer Sour Cream & Onion Salmon"): the group includes protein swaps
+    that carry a DIFFERENT name (an "Icelandic Cod" variant). Grouping by name alone scatters
+    those, so the card groups by ``variation_group`` — the modularity ``defaultCourseIndex`` —
+    which all members (base + every variation) map to.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipe, HelloFreshWeek
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    raw_week = {
+        "modularity": [
+            {
+                "defaultCourseIndex": 68,
+                "variations": [
+                    {"index": 348, "title": "2x Salmon"},
+                    {"index": 350, "title": "Asparagus"},
+                    {"index": 351, "title": "Green Beans"},
+                    {"index": 349, "title": "Icelandic Cod"},
+                ],
+            },
+            # A lone dish with no variants must NOT get a group key.
+            {"defaultCourseIndex": 500, "variations": []},
+        ]
+    }
+    groups = HelloFreshPayloadNormalizer._build_variation_groups(raw_week)
+    assert groups == {68: 68, 348: 68, 350: 68, 351: 68, 349: 68}
+    assert 500 not in groups
+
+    week = HelloFreshWeek(
+        week_id="2026-W33",
+        display_name="Week 33",
+        recipes=[
+            HelloFreshRecipe(recipe_id="r68", name="Salmon", course_index=68),
+            HelloFreshRecipe(recipe_id="r349", name="Cod", course_index=349),  # different name
+            HelloFreshRecipe(recipe_id="r500", name="Standalone", course_index=500),
+        ],
+        raw=raw_week,
+    )
+    HelloFreshPayloadNormalizer()._apply_variation_titles([week])
+    by_id = {r.recipe_id: r for r in week.recipes}
+    # Salmon and the renamed Cod share the group key, so the card clusters them.
+    assert by_id["r68"].variation_group == 68
+    assert by_id["r349"].variation_group == 68
+    # A standalone dish stays ungrouped.
+    assert by_id["r500"].variation_group is None
+    assert by_id["r349"].as_dict()["variation_group"] == 68
+
+
+def test_meatless_recipe_gets_veggie_preference_from_tag() -> None:
+    """A meatless dish (no protein category) tagged Veggie/Vegan resolves preference to Veggie.
+
+    Meat meals carry `category` = Poultry/Beef/Pork/Seafood, which drives the tile's color dot
+    and label. Plant-based dishes have no protein category; without this fallback they'd render
+    an unlabeled neutral dot with no signal that they're meatless.
+    """
+    client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
+
+    veggie = client._recipe_from_raw_meal(
+        {"index": 10, "recipe": {"id": "v1", "name": "Silky Sicilian Penne", "tags": ["pasta-noodles", "Veggie"]}},
+        default_selected=False,
+    )
+    assert veggie.preference == "Veggie"
+    assert veggie.as_dict()["preference"] == "Veggie"
+
+    # A protein category still wins over the tag fallback.
+    poultry = client._recipe_from_raw_meal(
+        {"index": 11, "recipe": {"id": "p1", "name": "Chicken Bake", "category": "Poultry", "tags": ["High Protein"]}},
+        default_selected=False,
+    )
+    assert poultry.preference == "Poultry"
+
+    # A meat dish with no veggie tag keeps whatever category it has (here none).
+    plain = client._recipe_from_raw_meal(
+        {"index": 12, "recipe": {"id": "m1", "name": "Mystery Meal", "tags": ["Quick"]}},
+        default_selected=False,
+    )
+    assert plain.preference is None
+
+
 def test_account_data_collects_debug_trace_for_menu_and_delivery_attempts() -> None:
     """Debug trace should expose endpoint attempts for diagnostics."""
     client = HelloFreshClient(
