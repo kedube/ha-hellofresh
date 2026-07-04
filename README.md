@@ -18,6 +18,8 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 - [HelloFresh Dashboard](#hellofresh-dashboard)
   - [Meal planner card](#meal-planner-card)
   - [Market card](#market-card)
+  - [Food Profile card](#food-profile-card)
+  - [Schedule card](#schedule-card)
   - [Recorder attribute sizes](#recorder-attribute-sizes)
 - [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
@@ -109,13 +111,13 @@ The available options are:
 
 ### Supported regions
 
-Choose the matching country during setup:
+Choose the matching country during setup. **Status** reflects real-world testing: ✅ = verified end to end (including write actions); *Untested* = the region is wired up and should work for reading, but no one has confirmed it — reports welcome.
 
 | Region | Code | Website | Status |
 | --- | --- | --- | --- |
-| United States | `us` | https://www.hellofresh.com | ✅ |
+| United States | `us` | https://www.hellofresh.com | ✅ Verified |
+| United Kingdom | `uk` | https://www.hellofresh.co.uk | ✅ Verified |
 | Canada | `ca` | https://www.hellofresh.ca | Untested |
-| United Kingdom | `uk` | https://www.hellofresh.co.uk | ✅ |  
 | Australia | `au` | https://www.hellofresh.com.au | Untested |
 | Germany | `de` | https://www.hellofresh.de | Untested |
 | Netherlands | `nl` | https://www.hellofresh.nl | Untested |
@@ -301,26 +303,19 @@ What it does:
 - **Variant differentiation** — when HelloFresh lists the same dish in several forms, the tile calls out exactly what differs: the modifier (e.g. "2x Bacon", "Gluten-Free Linguine"), any per-serving surcharge, and protein/calorie deltas. The plain, unmodified base option in such a set carries no modifier label. Genuinely identical duplicate listings are collapsed into a single tile.
 - **Edit, quantity & save** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): tap recipes to build a pending selection, use the **− N +** stepper to set per-meal servings (a doubled portion fills two box slots), then **Save selection** submits it via `hellofresh.select_meals` and re-reads to confirm (**Cancel** discards the edit). You can choose **more or fewer** distinct meals than your plan — the box **resizes** for that week (and HelloFresh reprices it accordingly), down to a minimum of **2 meals**. While the selection saves, a "Please wait while saving selections…" banner is shown, and afterward the card stays on the week you edited. Locked/past weeks render read-only.
 - **Order strip** at the top of each week showing that week's order detail (status, carrier, tracking number/link, billed total, order ID), falling back to the standing plan price for weeks not yet billed.
-- **Meal filters** (current & upcoming weeks) — a filter bar to narrow the menu by **protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear) and to **hide variants** so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Your currently selected meals always stay visible regardless of the filter. Choices are remembered across weeks and reloads; the bar is hidden on past weeks (which just show what was delivered).
-- **Filter toggle** to show only selected meals or all meals (the choice is remembered across weeks and reloads), **skip / unskip** the displayed week, a refresh button, and a banner summarizing any weeks that still need a selection (tap it to jump to the first one).
+- **Meal filters** (current & upcoming weeks) — a filter bar to narrow the menu by **protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear) and to **hide variants** so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Your currently selected meals always stay visible regardless of the filter. The bar is hidden on past weeks (which just show what was delivered).
+- **Week actions** — a **Show selected only** toggle (hide everything but your picks), **Skip / Unskip** the displayed week, a **refresh** button, and a banner summarizing any weeks that still need a selection (tap it to jump to the first one). Filter and view choices are remembered across weeks and reloads.
 - **Week stays in sync with the Market card** — navigating to a week here moves the [Market card](#market-card) to the same week (and vice versa), even when the two cards are on different dashboard views. The selected week is remembered across reloads and tab switches.
 
 > Meal-selection writes are confirmed on the US site; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
 
-If your dashboard is in **YAML mode** (resources are user-managed), add the resource once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js`.
-
-The Schedule view's per-week "weeks needing selection" breakdown reads directly from an entity **attribute** (the `weeks` list on the selection-deadline sensor) — data the headline state alone doesn't show.
-
-To use it:
-
-1. Open **Settings → Dashboards → ⋮ → Edit in YAML** (or add a new YAML-mode dashboard) and paste the file's contents.
-2. Update the entity-ID prefix. Because entities use `has_entity_name`, their IDs derive from your config-entry title — a "HelloFresh (US)" account produces IDs like `sensor.hellofresh_us_next_delivery_date`. The example uses the `hellofresh_us_` prefix throughout; **find-and-replace it** with the prefix your account actually uses (check **Settings → Devices & Services → HelloFresh → entities** for the real IDs).
+> **YAML-mode dashboards only.** In storage-mode dashboards the card resource is registered automatically. If your dashboard is in **YAML mode** (you manage resources yourself), add it once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js`. The same applies to the Market, Food Profile, and Schedule cards below — each has its own `/hellofresh/hellofresh-*-card.js` resource path.
 
 ### Market card
 
 ![HelloFresh market dashboard in Home Assistant](images/hellofresh_screenshot-3.png)
 
-The integration also ships **`custom:hellofresh-market-card`**, for browsing and ordering HelloFresh Market add-ons (the extras you can add to a box: appetizers, breakfast, desserts, proteins, sides, and more) week by week. Like the meal-planner card it reads on demand from `hellofresh.get_weeks` (market items aren't exposed as entity attributes) and writes via `hellofresh.select_market_items`. It is auto-registered the same way; in YAML-mode dashboards add `/hellofresh/hellofresh-market-card.js` as a *JavaScript module* resource.
+The integration also ships **`custom:hellofresh-market-card`**, for browsing and ordering HelloFresh Market add-ons (the extras you can add to a box: appetizers, breakfast, desserts, proteins, sides, and more) week by week. Like the meal-planner card it reads on demand from `hellofresh.get_weeks` and writes via `hellofresh.select_market_items`, and is auto-registered the same way.
 
 ```yaml
 type: custom:hellofresh-market-card
@@ -344,7 +339,7 @@ What it does:
 
 ![HelloFresh food profile dashboard in Home Assistant](images/hellofresh_screenshot-4.png)
 
-The integration also ships **`custom:hellofresh-food-profile-card`**, for viewing and editing your **food profile** — the preferences HelloFresh uses to automatically pre-select meals for upcoming weeks. It reads the profile and the full catalog of options live from `hellofresh.get_food_profile` (the profile isn't part of the regular sensor poll) and saves via `hellofresh.set_food_profile`. It is auto-registered the same way; in YAML-mode dashboards add `/hellofresh/hellofresh-food-profile-card.js` as a *JavaScript module* resource.
+The integration also ships **`custom:hellofresh-food-profile-card`**, for viewing and editing your **food profile** — the preferences HelloFresh uses to automatically pre-select meals for upcoming weeks. It reads the profile and the full catalog of options live from `hellofresh.get_food_profile` (the profile isn't part of the regular sensor poll) and saves via `hellofresh.set_food_profile`, and is auto-registered the same way.
 
 ```yaml
 type: custom:hellofresh-food-profile-card
@@ -365,7 +360,9 @@ What it does, driven entirely by the options catalog so new HelloFresh options a
 
 ### Schedule card
 
-The integration also ships **`custom:hellofresh-schedule-card`**, a clean overview of your delivery schedule. Like the other cards it reads per-week data on demand from `hellofresh.get_weeks` (one call builds the whole view) and is auto-registered the same way; in YAML-mode dashboards add `/hellofresh/hellofresh-schedule-card.js` as a *JavaScript module* resource.
+![HelloFresh schedule dashboard in Home Assistant](images/hellofresh_screenshot-5.png)
+
+The integration also ships **`custom:hellofresh-schedule-card`**, a clean overview of your delivery schedule. Like the other cards it reads per-week data on demand from `hellofresh.get_weeks` (one call builds the whole view) and is auto-registered the same way.
 
 ```yaml
 type: custom:hellofresh-schedule-card
