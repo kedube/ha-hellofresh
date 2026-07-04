@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.26.0";
+const CARD_VERSION = "0.27.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -1088,9 +1088,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${isSelected ? `<div class="check">✓</div>` : ""}
           ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
           ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
-          ${variantTitle
-            ? `<div class="variant-flag">${this._esc(variantTitle)}</div>`
-            : isVariant ? `<div class="variant-flag">Default</div>` : ""}
+          ${variantTitle ? `<div class="variant-flag">${this._esc(variantTitle)}</div>` : ""}
         </div>
         <div class="meta">
           <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
