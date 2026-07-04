@@ -212,8 +212,15 @@ class HelloFreshWeek:
         can deliberately RESIZE a week to fewer meals than their base plan (e.g. pick 2 on a
         3-meal plan). That is a complete, valid choice — flagging it would be a false "needs
         selection" (it wrongly kept ``binary_sensor.needs_meal_selection`` on).
+
+        Past weeks are never counted (an already-shipped box can't be changed), mirroring
+        ``auto_picked`` — otherwise a past preselected/empty week (e.g. a skipped-then-unpaused old
+        week with 0 meals) would keep this sensor on while "Weeks preselected by HelloFresh" shows
+        0, since that count already excludes past weeks.
         """
         if self.is_skipped:
+            return False
+        if self.delivery_date is not None and self.delivery_date < date.today():
             return False
         if self.meals_selected is None:
             return False

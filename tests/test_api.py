@@ -82,6 +82,20 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
         ).needs_selection
         is False
     )
+    # A PAST week never needs selection (the box already shipped), even if preselected/empty.
+    # Regression: this kept binary_sensor.needs_meal_selection on while "Weeks preselected by
+    # HelloFresh" (which excludes past weeks) showed 0.
+    assert (
+        HelloFreshWeek(
+            week_id="week-past",
+            display_name="Past",
+            delivery_date=date.today() - timedelta(days=30),
+            meals_required=3,
+            meals_selected=0,
+            meals_preselected=True,
+        ).needs_selection
+        is False
+    )
 
 
 def _account_data_with_large_menu() -> HelloFreshAccountData:
@@ -996,11 +1010,14 @@ def test_normalize_weeks_payload_extracts_nested_delivery_recipes_and_counts() -
         account_id="acct-1",
         locale="en-US",
     )
+    # A FUTURE week (dated after today) so the needs_selection assertion is meaningful — a past
+    # week can never need selection regardless of its counts.
+    future = date.today() + timedelta(days=10)
     payload = {
         "items": [
             {
-                "deliveryWeek": "2026-W25",
-                "deliveryDate": "2026-06-15",
+                "deliveryWeek": future.strftime("%G-W%V"),
+                "deliveryDate": future.isoformat(),
                 "deadline": "2026-06-10T23:59:59-07:00",
                 "deliveryStatus": "RUNNING",
                 "selection": {
@@ -1020,11 +1037,11 @@ def test_normalize_weeks_payload_extracts_nested_delivery_recipes_and_counts() -
     weeks, orders = client._normalize_weeks_payload(payload, subscription=subscription)
 
     assert len(weeks) == 1
-    assert weeks[0].week_id == "2026-W25"
     assert weeks[0].recipes[0].name == "Pasta"
     assert len(weeks[0].recipes) == 2
     assert weeks[0].meals_required == 2
     assert weeks[0].meals_selected == 1
+    # 1 of 2 selected on a future week — below the minimum box, so it needs selection.
     assert weeks[0].needs_selection is True
     assert len(orders) == 1
     assert orders[0].status == "RUNNING"
@@ -3467,6 +3484,11 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
         session=None,  # type: ignore[arg-type]
         access_token="token",
     )
+    # A FUTURE modifiable week — needs_selection (and thus next_selection_week) only considers
+    # upcoming weeks, since a past box can't be changed.
+    future = date.today() + timedelta(days=10)
+    future_week = future.strftime("%G-W%V")
+    future_iso = future.strftime("%Y-%m-%dT00:00:00-0700")
     subscription = HelloFreshSubscription(
         subscription_id="6959884",
         account_id="acct-1",
@@ -3475,10 +3497,10 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
         raw={
             "id": "6959884",
             "isActive": True,
-            "nextDelivery": "2026-06-15T00:00:00-0700",
-            "nextDeliveryWeek": "2026-W25",
-            "nextModifiableDeliveryDate": "2026-06-15T00:00:00-0700",
-            "nextModifiableDeliveryWeek": "2026-W25",
+            "nextDelivery": future_iso,
+            "nextDeliveryWeek": future_week,
+            "nextModifiableDeliveryDate": future_iso,
+            "nextModifiableDeliveryWeek": future_week,
             "nextCutoffDate": "2026-06-10T23:59:59-0700",
             "nextDeliveryOption": {
                 "deliveryName": "Mondays: 8AM - 8PM",
@@ -3499,13 +3521,14 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
 
     async def fake_get_account_menu_data(_subscriptions, weeks):
         assert len(weeks) == 1
-        assert weeks[0].week_id == "2026-W25"
+        assert weeks[0].week_id == future_week
         return {
             "weeks": [
                 HelloFreshWeek(
-                    week_id="2026-W25",
-                    display_name="Week 25",
+                    week_id=future_week,
+                    display_name="Upcoming Week",
                     subscription_id="6959884",
+                    delivery_date=future,
                     meals_required=3,
                     meals_selected=1,
                     source="account_menu_api",
@@ -3514,7 +3537,7 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
                     ],
                 )
             ],
-            "available_labels": ["Week 25"],
+            "available_labels": ["Upcoming Week"],
         }
 
     client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
@@ -3526,7 +3549,7 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
     result = loop.run_until_complete(client.async_get_account_data())
 
     assert result.next_selection_week is not None
-    assert result.next_selection_week.week_id == "2026-W25"
+    assert result.next_selection_week.week_id == future_week
     assert result.next_selection_week.selection_deadline is not None
     assert result.next_selection_week.selection_progress == "1/3"
     assert result.next_selection_week.slot_label == "Mondays: 8AM - 8PM"
