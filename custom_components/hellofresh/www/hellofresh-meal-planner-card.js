@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.25.0";
+const CARD_VERSION = "0.26.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -37,6 +37,7 @@ const PREFERENCE_COLORS = {
   Beef: "#c1432f",
   Pork: "#e6789b",
   Seafood: "#2f8fc1",
+  Lamb: "#8d5b3f",
   Veggie: "#4caf50",
 };
 
@@ -53,6 +54,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // "Show selected only" filter. Persisted in localStorage so it survives reloads/reboots and
     // is shared across weeks (a view preference, not per-week state).
     this._showSelectedOnly = this._loadShowSelectedOnly();
+    // Meal filters for current/future weeks (a view preference, persisted like the above):
+    //  * _proteinFilter: Set of allowed protein preferences (empty = allow all).
+    //  * _showVariants: when false, hide variant meals (2x protein, protein swaps, veg swaps),
+    //    showing only the default meal of each group plus meals that have no variants.
+    this._proteinFilter = this._loadProteinFilter();
+    this._showVariants = this._loadShowVariants();
     this._loading = false;
     this._error = null;
     this._busy = false; // a write (select/skip) is in flight
@@ -269,11 +276,45 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return "hellofresh-meal-planner:show-selected-only";
   }
 
+  // The protein preferences that can be filtered on. Mirrors HelloFresh's own grouping (the same
+  // set that colors the protein dot); the value is the recipe `preference` field.
+  static get PROTEIN_FILTERS() {
+    return ["Beef", "Poultry", "Pork", "Seafood", "Lamb", "Veggie"];
+  }
+
+  static get PROTEIN_STORAGE_KEY() {
+    return "hellofresh-meal-planner:protein-filter";
+  }
+
+  static get VARIANTS_STORAGE_KEY() {
+    return "hellofresh-meal-planner:show-variants";
+  }
+
   _loadShowSelectedOnly() {
     try {
       return window.localStorage.getItem(HelloFreshMealPlannerCard.FILTER_STORAGE_KEY) === "1";
     } catch (_e) {
       return false; // private mode / storage disabled: default to showing all meals
+    }
+  }
+
+  // Load the persisted protein filter as a Set, dropping any stored value no longer valid.
+  _loadProteinFilter() {
+    try {
+      const raw = window.localStorage.getItem(HelloFreshMealPlannerCard.PROTEIN_STORAGE_KEY);
+      const allowed = HelloFreshMealPlannerCard.PROTEIN_FILTERS;
+      return new Set((raw ? JSON.parse(raw) : []).filter((p) => allowed.includes(p)));
+    } catch (_e) {
+      return new Set(); // empty = show all proteins
+    }
+  }
+
+  _loadShowVariants() {
+    try {
+      // Default to showing variants (only "0" turns them off) so first-run shows the full menu.
+      return window.localStorage.getItem(HelloFreshMealPlannerCard.VARIANTS_STORAGE_KEY) !== "0";
+    } catch (_e) {
+      return true;
     }
   }
 
@@ -289,6 +330,70 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       /* storage unavailable: keep the in-memory setting for this session */
     }
     this._render();
+  }
+
+  // Toggle one protein in/out of the filter set, persist, and re-render.
+  _toggleProteinFilter(protein) {
+    if (!HelloFreshMealPlannerCard.PROTEIN_FILTERS.includes(protein)) return;
+    if (this._proteinFilter.has(protein)) this._proteinFilter.delete(protein);
+    else this._proteinFilter.add(protein);
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.PROTEIN_STORAGE_KEY,
+        JSON.stringify([...this._proteinFilter])
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+    this._render();
+  }
+
+  // Clear all protein filters (the "All" chip), persist, and re-render.
+  _clearProteinFilter() {
+    if (this._proteinFilter.size === 0) return;
+    this._proteinFilter.clear();
+    try {
+      window.localStorage.setItem(HelloFreshMealPlannerCard.PROTEIN_STORAGE_KEY, "[]");
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // Flip the "show variants" toggle, persist, and re-render.
+  _toggleShowVariants() {
+    this._showVariants = !this._showVariants;
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.VARIANTS_STORAGE_KEY,
+        this._showVariants ? "1" : "0"
+      );
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // Whether the meal filters (protein / variants) apply to this week. They only make sense for
+  // the browsable menu of a current or upcoming week; a past week just shows what was delivered.
+  _filtersApply(week) {
+    return Boolean(week) && !this._isPast(week) && !this._showSelectedOnly;
+  }
+
+  // A "default" meal is one shown when variants are hidden: it has no variant group, or it IS
+  // the base (default) meal of its group. Variant tiles (2x protein, protein/veg swaps) are the
+  // group members whose own index differs from the group's base index.
+  _isDefaultMeal(r) {
+    return r.variation_group == null || r.course_index === r.variation_group;
+  }
+
+  // Whether a recipe passes the active protein/variant filters. Selected meals bypass the filter
+  // so a chosen meal never vanishes from view while you're editing (it always leads the grid).
+  _passesFilters(r, ctx) {
+    if (ctx.sel(r)) return true;
+    if (this._proteinFilter.size > 0 && !this._proteinFilter.has(r.preference)) return false;
+    if (!this._showVariants && !this._isDefaultMeal(r)) return false;
+    return true;
   }
 
   // The course_index -> quantity map currently shown for a week: the user's pending edit if one
@@ -640,7 +745,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No delivery weeks found.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderHeader(week)}${this._renderOrder(week)}${this._renderGrid(week)}`;
+    return `${this._renderHeader(week)}${this._renderOrder(week)}${this._renderFilterBar(week)}${this._renderGrid(week)}`;
   }
 
   // Per-week order/shipment summary shown above the recipe grid: order id, delivery status,
@@ -856,6 +961,44 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     };
   }
 
+  // The protein/variant filter bar. Shown only for current/future weeks (a past week just shows
+  // what was delivered) and hidden while "Show selected only" is active (nothing to filter).
+  _renderFilterBar(week) {
+    if (!this._filtersApply(week)) return "";
+    const allActive = this._proteinFilter.size === 0;
+    const proteinChips = HelloFreshMealPlannerCard.PROTEIN_FILTERS.map((p) => {
+      const on = this._proteinFilter.has(p);
+      const color = PREFERENCE_COLORS[p] || "var(--secondary-text-color)";
+      return `<button
+          class="fbtn protein ${on ? "on" : ""}"
+          data-action="filter-protein"
+          data-protein="${p}"
+          aria-pressed="${on ? "true" : "false"}"
+        ><span class="fdot" style="background:${color}"></span>${p}</button>`;
+    }).join("");
+    return `
+      <div class="filterbar">
+        <div class="fgroup">
+          <span class="flabel">Protein</span>
+          <button
+            class="fbtn ${allActive ? "on" : ""}"
+            data-action="filter-protein-all"
+            aria-pressed="${allActive ? "true" : "false"}"
+          >All</button>
+          ${proteinChips}
+        </div>
+        <div class="fgroup">
+          <button
+            class="fbtn ${this._showVariants ? "on" : ""}"
+            data-action="toggle-variants"
+            aria-pressed="${this._showVariants ? "true" : "false"}"
+            title="Variants are the 2× protein, protein-swap and veggie-swap versions of a meal"
+          >${this._showVariants ? "Hide variants" : "Show variants"}</button>
+        </div>
+      </div>
+    `;
+  }
+
   _renderGrid(week) {
     const { recipes } = this._dedupedFor(week);
     if (recipes.length === 0) {
@@ -877,9 +1020,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // When "show selected only" is on, hide unselected tiles. Uses the display selection, so a
     // meal stays visible while the user is toggling it off mid-edit (it disappears on the next
     // full render only if still deselected). Variant aliases are respected via sel().
-    const visible = this._showSelectedOnly ? recipes.filter((r) => ctx.sel(r)) : recipes;
+    let visible = this._showSelectedOnly ? recipes.filter((r) => ctx.sel(r)) : recipes;
     if (this._showSelectedOnly && visible.length === 0) {
       return `<div class="state">No meals selected for this week yet.</div>`;
+    }
+    // Protein / variant filters (current & future weeks only). Selected meals always pass so an
+    // active filter never hides a meal you've chosen.
+    if (this._filtersApply(week)) {
+      const filtered = visible.filter((r) => this._passesFilters(r, ctx));
+      if (filtered.length === 0) {
+        return `<div class="state">No meals match the current filter. Adjust the filters above to see more.</div>`;
+      }
+      visible = filtered;
     }
 
     // Selected meals lead (in their existing order); the remaining menu is grouped so a dish's
@@ -1002,6 +1154,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       else if (action === "goto-current") this._gotoCurrentWeek();
       else if (action === "goto-needs") this._gotoNeedsChoice();
       else if (action === "toggle-filter") this._toggleShowSelectedOnly();
+      else if (action === "filter-protein")
+        this._toggleProteinFilter(actionEl.getAttribute("data-protein"));
+      else if (action === "filter-protein-all") this._clearProteinFilter();
+      else if (action === "toggle-variants") this._toggleShowVariants();
     });
   }
 
@@ -1142,6 +1298,27 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em;
       }
       .filterchip:hover { filter: brightness(0.95); }
+      .filterbar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 12px;
+        padding: 8px 12px; border-radius: 10px; background: var(--secondary-background-color);
+      }
+      .fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .flabel {
+        font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--secondary-text-color); margin-right: 2px;
+      }
+      .fbtn {
+        display: inline-flex; align-items: center; gap: 6px;
+        font: inherit; font-size: 0.8em; padding: 4px 10px; border-radius: 14px; cursor: pointer;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+      .fbtn:hover { filter: brightness(0.95); }
+      .fbtn.on {
+        background: var(--primary-color); color: var(--text-primary-color, #fff);
+        border-color: var(--primary-color);
+      }
+      .fdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
       .orderbar {
         display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px;
         padding: 10px 12px; border-radius: 10px;
