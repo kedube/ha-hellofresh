@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.7.1";
+const MARKET_CARD_VERSION = "0.9.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -58,6 +58,18 @@ class HelloFreshMarketCard extends HTMLElement {
     this._pending = {};
     // Persisted "show selected only" view preference (shared across weeks, survives reloads).
     this._showSelectedOnly = this._loadShowSelectedOnly();
+    // Cross-card week sync: follow a sibling HelloFresh card (e.g. the Meal Planner) to the same
+    // week. If the event arrives before this card has loaded, remember the id and apply on fetch.
+    this._syncPendingWeekId = null;
+    this._onSyncWeek = (ev) => this._receiveSyncedWeek(ev);
+  }
+
+  connectedCallback() {
+    window.addEventListener(HelloFreshMarketCard.WEEK_SYNC_EVENT, this._onSyncWeek);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener(HelloFreshMarketCard.WEEK_SYNC_EVENT, this._onSyncWeek);
   }
 
   setConfig(config) {
@@ -125,10 +137,16 @@ class HelloFreshMarketCard extends HTMLElement {
       // Only weeks that actually carry a market catalog are browsable here.
       this._weeks = this._browsableWeeks(response.weeks || []);
       this._pending = {};
-      const kept = keepWeekId != null
+      // Land on: an explicit keep (post-save), else a week a sibling card asked us to sync to
+      // before we'd loaded, else the first week.
+      let landing = keepWeekId != null
         ? this._weeks.findIndex((w) => w.week_id === keepWeekId)
         : -1;
-      this._cursor = kept >= 0 ? kept : 0;
+      if (landing < 0 && this._syncPendingWeekId != null) {
+        landing = this._weeks.findIndex((w) => w.week_id === this._syncPendingWeekId);
+      }
+      this._syncPendingWeekId = null;
+      this._cursor = landing >= 0 ? landing : 0;
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -180,11 +198,21 @@ class HelloFreshMarketCard extends HTMLElement {
     return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
   }
 
+  // Move the cursor to an index, render, and (unless syncing FROM another card) broadcast the
+  // resulting week so a sibling HelloFresh card on the same dashboard follows to the same week.
+  _setCursor(index, { broadcast = true } = {}) {
+    if (!this._weeks || this._weeks.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, this._weeks.length - 1));
+    if (clamped === this._cursor) return;
+    this._cursor = clamped;
+    this._render();
+    if (broadcast) this._broadcastWeek();
+  }
+
   _step(delta) {
     if (!this._weeks || this._weeks.length === 0) return;
     const count = this._weeks.length;
-    this._cursor = (this._cursor + delta + count) % count;
-    this._render();
+    this._setCursor((this._cursor + delta + count) % count);
   }
 
   // Index of the "current" week by date: the week whose delivery_date is nearest to today,
@@ -214,10 +242,48 @@ class HelloFreshMarketCard extends HTMLElement {
   // Jump the cursor to the current week by date (the "Current Week" button).
   _gotoCurrentWeek() {
     const target = this._currentWeekIndex();
-    if (target >= 0 && target !== this._cursor) {
-      this._cursor = target;
-      this._render();
+    if (target >= 0) this._setCursor(target);
+  }
+
+  // ---- cross-card week sync ------------------------------------------------
+
+  // The window event both HelloFresh cards use to keep their selected week in step. Must match
+  // the meal-planner card's event name exactly.
+  static get WEEK_SYNC_EVENT() {
+    return "hellofresh-week-selected";
+  }
+
+  // The config entry (account) this card is bound to, if pinned. Only cards for the SAME account
+  // sync with each other, so a multi-account dashboard doesn't cross-drive unrelated cards.
+  _accountKey() {
+    return (this._config && this._config.config_entry_id) || null;
+  }
+
+  // Announce the currently displayed week so a sibling card follows to it.
+  _broadcastWeek() {
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    if (!week) return;
+    window.dispatchEvent(
+      new CustomEvent(HelloFreshMarketCard.WEEK_SYNC_EVENT, {
+        detail: { weekId: week.week_id, accountKey: this._accountKey() },
+      })
+    );
+  }
+
+  // Follow a sibling card's week change. Ignore our own broadcasts and cards for other accounts.
+  _receiveSyncedWeek(ev) {
+    const detail = (ev && ev.detail) || {};
+    if (!detail.weekId) return;
+    if ((detail.accountKey || null) !== this._accountKey()) return;
+    if (!this._weeks) {
+      this._syncPendingWeekId = detail.weekId; // not loaded yet — apply on fetch
+      return;
     }
+    const current = this._weeks[this._cursor];
+    if (current && current.week_id === detail.weekId) return; // already there
+    const target = this._weeks.findIndex((w) => w.week_id === detail.weekId);
+    if (target >= 0) this._setCursor(target, { broadcast: false }); // don't echo into a loop
+    // Loaded but this week isn't browsable here: stay put.
   }
 
   _isEditable(week) {
@@ -226,6 +292,16 @@ class HelloFreshMarketCard extends HTMLElement {
     const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
     if (deadline && deadline < Date.now()) return false;
     return true;
+  }
+
+  // A week whose delivery date is before today (undated weeks are not treated as past). Mirrors
+  // the meal-planner card. For a past week the market catalog is history, so only the items that
+  // were actually selected/ordered are shown — never the full browsable catalog.
+  _isPast(week) {
+    if (!week || !week.delivery_date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Date.parse(week.delivery_date) < today.getTime();
   }
 
   // Whether the user can change the cart right now: the week must be editable AND the grid must
@@ -343,6 +419,10 @@ class HelloFreshMarketCard extends HTMLElement {
     this._busy = true;
     this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
     this._render();
+    // Yield a paint frame so the banner is actually drawn before the (possibly fast-resolving)
+    // service call and reload run — otherwise the microtask after `await` can pre-empt the paint
+    // and the banner appears not to show until the page refreshes.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     try {
       const data = { week_id: week.week_id, quantities };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
@@ -476,11 +556,13 @@ class HelloFreshMarketCard extends HTMLElement {
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
           Market total ${this._fmtPrice(totalCents / 100, currency)}${dirty ? " · unsaved" : ""}
         </span>
-        <button
+        ${this._isPast(week)
+          ? "" // Past weeks always show only what was ordered, so the toggle is meaningless.
+          : `<button
           class="chip filterchip"
           data-action="toggle-filter"
           title="${this._showSelectedOnly ? "Show all market items" : "Show only selected market items"}"
-        >${this._showSelectedOnly ? "Show all items" : "Show selected only"}</button>
+        >${this._showSelectedOnly ? "Show all items" : "Show selected only"}</button>`}
         ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
         <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
         ${editable && this._showSelectedOnly
@@ -500,15 +582,21 @@ class HelloFreshMarketCard extends HTMLElement {
     const display = this._displaySelection(week);
     const qtyOf = (item) => display.get(item.item_id) || 0;
 
+    // A past week's catalog is history: show only what was selected/ordered, never the full
+    // browsable catalog (mirrors the meal-planner card). Otherwise honor the "show selected
+    // only" toggle for current/future weeks.
+    const isPast = this._isPast(week);
+    const selectedOnly = isPast || this._showSelectedOnly;
+
     let items = week.market_items || [];
-    if (this._showSelectedOnly) items = items.filter((i) => qtyOf(i) > 0);
+    if (selectedOnly) items = items.filter((i) => qtyOf(i) > 0);
     if (items.length === 0) {
       // The "…yet" phrasing implies you can still add items, so it only fits an editable week.
       // A locked/past week is final — say so plainly instead.
       const noneSelected = this._isEditable(week)
         ? "No market items selected for this week yet."
         : "No market items selected.";
-      return `<div class="state">${this._showSelectedOnly ? noneSelected : "No market items for this week."}</div>`;
+      return `<div class="state">${selectedOnly ? noneSelected : "No market items for this week."}</div>`;
     }
 
     // Group by group_type, preserving the catalog order of first appearance.
@@ -664,8 +752,9 @@ class HelloFreshMarketCard extends HTMLElement {
       .state.error { color: var(--error-color, #db4437); }
       .header { display: flex; align-items: center; gap: 8px; }
       .header .weekinfo { flex: 1; text-align: center; }
-      .weektitle { font-size: 1.05em; font-weight: 700; }
-      .weeksub { font-size: 0.82em; color: var(--secondary-text-color); }
+      /* Match the meal-planner card's header sizing so "Classic Box" + week read identically. */
+      .weektitle { font-size: 1.2em; font-weight: 600; }
+      .weeksub { font-size: 0.9em; color: var(--secondary-text-color); }
       .skipped { color: var(--warning-color, #ff9800); font-weight: 700; }
       .nav {
         font-size: 1.6em; line-height: 1; border: none; background: none; cursor: pointer;
@@ -730,7 +819,7 @@ class HelloFreshMarketCard extends HTMLElement {
       }
       .price {
         position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 10px;
-        background: rgba(0,0,0,0.72); color: #fff; font-size: 0.74em; font-weight: 700;
+        background: rgba(0,0,0,0.72); color: #fff; font-size: 0.72em; font-weight: 700;
       }
       .item.soldout .imgwrap img { opacity: 0.5; }
       .soldoutflag {
@@ -740,7 +829,7 @@ class HelloFreshMarketCard extends HTMLElement {
       }
       .meta { padding: 8px; }
       .name { font-size: 0.9em; font-weight: 600; }
-      .desc { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
+      .desc { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
       .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
       .stepper { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
       .qbtn {
@@ -757,9 +846,15 @@ class HelloFreshMarketCard extends HTMLElement {
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
       }
       .toast.error { background: var(--error-color, #db4437); color: #fff; }
+      /* Pin the "please wait while saving" banner to the top of the viewport so it's visible the
+         instant Save is pressed, rather than sitting below a tall grid where it only scrolls into
+         view once the reload shrinks the content (looking like it never appeared). */
       .toast.saving {
+        position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 9;
+        margin: 0; width: max-content; max-width: calc(100vw - 32px);
         display: flex; align-items: center; justify-content: center; gap: 8px;
         background: var(--primary-color); color: var(--text-primary-color, #fff);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
       }
       .toast.saving .spinner {
         width: 14px; height: 14px; flex: none; border-radius: 50%;
