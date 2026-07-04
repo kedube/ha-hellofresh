@@ -10,6 +10,7 @@ from custom_components.hellofresh.parsers import (
     MAX_SEARCH_DEPTH,
     coerce_float,
     coerce_int,
+    date_from_iso_week,
     decode_jwt_claims,
     extract_allowed_actions,
     extract_menu_labels,
@@ -93,6 +94,16 @@ def test_iso_week_label_returns_week_identifier() -> None:
     assert iso_week_label(None, date(2027, 1, 1)) == "2026-W53"
     # Nothing usable -> None.
     assert iso_week_label(None, None) is None
+
+
+def test_date_from_iso_week_returns_monday_of_week() -> None:
+    # ISO week 2026-W27's Monday is Jun 29, 2026 — matches HelloFresh's UI label.
+    assert date_from_iso_week("2026-W27") == date(2026, 6, 29)
+    assert date_from_iso_week("2026-W26") == date(2026, 6, 22)
+    # Non-week / out-of-range / None inputs return None.
+    assert date_from_iso_week("garbage") is None
+    assert date_from_iso_week("2026-W99") is None
+    assert date_from_iso_week(None) is None
     assert iso_week_label("garbage", None) is None
 
 

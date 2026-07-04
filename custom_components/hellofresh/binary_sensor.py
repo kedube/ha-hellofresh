@@ -35,6 +35,7 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
         key="payload_shape_changed",
         translation_key="payload_shape_changed",
         device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 

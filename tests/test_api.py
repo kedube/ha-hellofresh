@@ -34,22 +34,50 @@ _RECORDER_ATTR_CAP_BYTES = 16384
 
 
 def test_week_needs_selection_respects_skip_and_counts() -> None:
-    """Weeks should only need selection when active and incomplete."""
+    """A week needs selection when HelloFresh auto-picked it OR it's below the minimum box.
+
+    It must NOT fire merely because meals_selected < meals_required: a deliberate resize to fewer
+    meals than the base plan (e.g. 2 on a 3-meal plan) is a complete, valid choice.
+    """
+    # Deliberate resize (2 selected, not preselected) — a complete choice, not "needs selection".
     assert (
         HelloFreshWeek(
-            week_id="week-1",
-            display_name="Week 1",
-            meals_required=4,
+            week_id="week-resized",
+            display_name="Resized",
+            meals_required=3,
             meals_selected=2,
+        ).needs_selection
+        is False
+    )
+    # HelloFresh auto-picked the meals — worth reviewing, so it DOES need selection.
+    assert (
+        HelloFreshWeek(
+            week_id="week-preselected",
+            display_name="Preselected",
+            meals_required=3,
+            meals_selected=3,
+            meals_preselected=True,
         ).needs_selection
         is True
     )
+    # Below the smallest valid box (0 meals) — genuinely incomplete.
     assert (
         HelloFreshWeek(
-            week_id="week-2",
-            display_name="Week 2",
+            week_id="week-empty",
+            display_name="Empty",
+            meals_required=3,
+            meals_selected=0,
+        ).needs_selection
+        is True
+    )
+    # A skipped week never needs selection, even if auto-picked / incomplete.
+    assert (
+        HelloFreshWeek(
+            week_id="week-skipped",
+            display_name="Skipped",
             meals_required=4,
-            meals_selected=2,
+            meals_selected=0,
+            meals_preselected=True,
             is_skipped=True,
         ).needs_selection
         is False
@@ -282,6 +310,45 @@ def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> Non
     assert data.last_delivery_week.week_id == "delivered-newest"
 
 
+def test_last_delivery_week_excludes_future_week_from_history() -> None:
+    """The past-deliveries endpoint also lists the UPCOMING week, so "Last delivery date" must
+    pick the newest week dated strictly before today — not the future box the endpoint includes.
+
+    Reproduces the real payload: history returns W28 (future) alongside the delivered W27.
+    """
+    today = date.today()
+    data = HelloFreshAccountData(
+        weeks=[],
+        orders=[],
+        past_delivery_weeks=[
+            HelloFreshWeek(
+                week_id="delivered",
+                display_name="Delivered",
+                delivery_date=today - timedelta(days=5),
+                source="past_deliveries",
+            ),
+            # The upcoming week the history endpoint also returns — must be ignored here.
+            HelloFreshWeek(
+                week_id="upcoming",
+                display_name="Upcoming",
+                delivery_date=today + timedelta(days=2),
+                source="past_deliveries",
+            ),
+        ],
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                account_id="acct-1",
+                display_name="Classic Plan",
+            )
+        ],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+
+    assert data.last_delivery_week is not None
+    assert data.last_delivery_week.week_id == "delivered"
+
+
 def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
     """next_order/upcoming_orders must resolve to future deliveries, not the oldest one.
 
@@ -437,6 +504,37 @@ def test_normalize_past_delivery_payload_extracts_recipe_history() -> None:
     assert weeks[0].delivery_date == date(2026, 6, 8)
     assert weeks[0].recipes[0].name == "Creamy Mushroom Pasta"
     assert weeks[0].recipes[0].ingredients == ["Pasta", "Mushrooms"]
+
+
+def test_normalize_past_delivery_derives_date_from_iso_week_when_absent() -> None:
+    """The /gw/my-deliveries/past-deliveries payload gives only a ``week`` id (no date field).
+
+    The delivery date must be derived from the ISO week (Monday) so the week isn't date-less —
+    otherwise "Last delivery date" is Unknown even though the box shipped. Matches the real HAR
+    shape: ``{"week": ..., "menuId": ..., "meals": [...]}``.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884", account_id="acct-1", locale="en-US", meals_required=3
+    )
+
+    weeks = client._normalize_past_delivery_payload(
+        {
+            "weeks": [
+                {
+                    "week": "2026-W27",
+                    "menuId": "6a0689d177f0a38c916f4048",
+                    "meals": [{"id": "r-1", "name": "Delivered Dish"}],
+                }
+            ]
+        },
+        [subscription],
+    )
+
+    assert len(weeks) == 1
+    assert weeks[0].week_id == "2026-W27"
+    # ISO week 2026-W27's Monday is Jun 29, 2026 — what the HelloFresh UI shows.
+    assert weeks[0].delivery_date == date(2026, 6, 29)
 
 
 def test_normalize_past_delivery_payload_preserves_holiday_and_one_off_metadata() -> None:
@@ -725,7 +823,9 @@ def test_normalize_weeks_payload_extracts_tracking_and_meals() -> None:
     weeks, orders = client._normalize_weeks_payload(payload, subscription=subscription)
 
     assert len(weeks) == 1
-    assert weeks[0].needs_selection is True
+    # 2 of 3 selected, not preselected: a complete deliberate choice, so it does NOT need
+    # selection (a resize below the base plan is valid). See needs_selection semantics.
+    assert weeks[0].needs_selection is False
     assert weeks[0].recipes[0].name == "Creamy Mushroom Pasta"
     assert weeks[0].recipes[0].ingredients == ["Mushrooms", "Pasta"]
     assert weeks[0].recipes[0].tags == ["Veggie", "Quick"]

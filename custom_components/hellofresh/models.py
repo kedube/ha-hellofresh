@@ -5,9 +5,15 @@ No HTTP, no aiohttp, no BeautifulSoup — just dataclasses and exceptions.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
+
+# Smallest valid box HelloFresh sells: a week with fewer distinct meals than this has no valid
+# box, so it genuinely still needs a selection. Mirrors the client's MIN_MEALS_PER_WEEK; kept as
+# a plain module constant here so models.py stays dependency-free (no import from client).
+MIN_MEALS_PER_WEEK = 2
 
 
 class HelloFreshError(Exception):
@@ -194,12 +200,26 @@ class HelloFreshWeek:
 
     @property
     def needs_selection(self) -> bool:
-        """Return True when the week still needs meal choices."""
+        """Return True when the week still needs the customer's attention for meal choices.
+
+        A week needs attention when either:
+          * HelloFresh AUTO-PICKED the meals (``meals_preselected``) and the customer hasn't
+            overridden them — the app's "we picked these, review them" state; or
+          * the selection is below the smallest valid box (< ``MIN_MEALS_PER_WEEK``), e.g. an
+            untouched week with 0 meals.
+
+        Crucially it does NOT fire merely because ``meals_selected < meals_required``: a customer
+        can deliberately RESIZE a week to fewer meals than their base plan (e.g. pick 2 on a
+        3-meal plan). That is a complete, valid choice — flagging it would be a false "needs
+        selection" (it wrongly kept ``binary_sensor.needs_meal_selection`` on).
+        """
         if self.is_skipped:
             return False
-        if self.meals_required is None or self.meals_selected is None:
+        if self.meals_selected is None:
             return False
-        return self.meals_selected < self.meals_required
+        if self.meals_selected < MIN_MEALS_PER_WEEK:
+            return True
+        return self.meals_preselected
 
     @property
     def auto_picked(self) -> bool:
@@ -934,18 +954,19 @@ class HelloFreshAccountData:
             and order.delivery_date.isocalendar()[:2] == current_iso
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
-        # The most recent DELIVERED week. Prefer the dedicated past-deliveries history
-        # (sorted ascending above, so [-1] is newest). When that endpoint returns nothing for
-        # the account/region, fall back to the newest past-dated, non-skipped week from the main
-        # deliveries list — otherwise the "Last delivery date" sensor is Unknown even for
-        # accounts that clearly have shipped boxes.
-        self._last_delivery_week = (
-            self.past_delivery_weeks[-1]
-            if self.past_delivery_weeks
-            else max(
+        # The most recent DELIVERED week — its date drives the "Last delivery date" sensor.
+        #
+        # Prefer the dedicated past-deliveries history, but that endpoint also returns the
+        # UPCOMING week (e.g. it lists W28/Jul 6 alongside the delivered W27/Jun 29), so a naive
+        # "newest week" would report a future box as the last delivery. Restrict to weeks dated
+        # strictly before today. When history yields nothing usable, fall back to the newest
+        # past-dated, non-skipped week from the main deliveries list, so the sensor still resolves
+        # for accounts/regions where the history endpoint is empty.
+        def _newest_past(weeks: Iterable[HelloFreshWeek]) -> HelloFreshWeek | None:
+            return max(
                 (
                     week
-                    for week in self.weeks
+                    for week in weeks
                     if week.delivery_date is not None
                     and week.delivery_date < today
                     and not week.is_skipped
@@ -953,6 +974,9 @@ class HelloFreshAccountData:
                 default=None,
                 key=lambda week: (week.delivery_date, week.week_id),
             )
+
+        self._last_delivery_week = _newest_past(self.past_delivery_weeks) or _newest_past(
+            self.weeks
         )
         self._serialized_orders = None
         self._serialized_weeks = None

@@ -225,10 +225,15 @@ A few conventions used in the tables:
 
 | Entity | Notes |
 | --- | --- |
-| `binary_sensor.needs_meal_selection` | `True` when at least one upcoming delivery week still requires meal selection; the primary signal for reminder automations |
-| `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.); diagnostic entity |
+| `binary_sensor.needs_meal_selection` | `True` when at least one upcoming week still needs your attention — HelloFresh auto-picked its meals (review them) or it has fewer than the minimum 2 meals. A week you deliberately resized to fewer meals than your plan (e.g. 2 on a 3-meal plan) counts as complete and does **not** trigger this. The primary signal for reminder automations. |
 | `binary_sensor.tracked_shipment_available` | `True` when the most-recent order has active shipment tracking data (carrier, tracking number, or tracking URL) |
-| `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised; diagnostic entity |
+
+**Diagnostic** (shown under the device's *Diagnostic* section)
+
+| Entity | Notes |
+| --- | --- |
+| `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.) |
+| `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised |
 
 #### Other
 
