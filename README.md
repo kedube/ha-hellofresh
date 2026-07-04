@@ -238,9 +238,9 @@ A few conventions used in the tables:
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
 
-Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes, and authenticated history endpoints feed recent delivered-week context into the delivery-history sensors' attributes. Full per-week recipe lists are intentionally **not** included in attributes (to stay under the recorder's size limit — see [Recorder attribute sizes](#recorder-attribute-sizes)); they remain available in the diagnostics export.
+Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit — see [Recorder attribute sizes](#recorder-attribute-sizes)) and read on demand via `hellofresh.get_weeks`.
 
-Several entity IDs differ from their displayed names — for example `sensor.required_meal_count` shows as **Number of meals**, `sensor.weeks_needing_selection` as **Weeks preselected by HelloFresh** (the ID kept its original suffix when the sensor was repurposed), `sensor.public_menu_recipe_count` as **Available menu recipe count**, `sensor.recent_order_id` as **Next delivery order ID**, `sensor.next_delivery_slot` as **Delivery Window**, `sensor.selected_meal_count` as **Next delivery meal count**, `sensor.selected_market_count` as **Next delivery market count**, `sensor.delivery_count_this_week` as **Next delivery count**, `sensor.next_order_status` as **Next delivery status**, `sensor.shipment_tracking_status` as **Tracked shipment status**, and `switch.skip_next_modifiable_week` as **Skip next selectable delivery week** (see the Name columns above).
+Some entity IDs keep an older suffix that no longer matches the displayed name (e.g. `sensor.weeks_needing_selection` shows as **Weeks preselected by HelloFresh**, `sensor.required_meal_count` as **Number of meals**). The **Name** and **Entity** columns above are authoritative — match on the entity ID, not the label.
 
 ### Voice and Assist
 
@@ -269,11 +269,11 @@ When multiple HelloFresh accounts are configured, service calls can target a spe
 
 For an interactive alternative to calling these services by hand, the [Meal planner card](#meal-planner-card) drives `select_meals`, `skip_week`, and `unskip_week`, the [Market card](#market-card) drives `select_market_items`, and the [Food Profile card](#food-profile-card) drives `get_food_profile`/`set_food_profile`, all from the dashboard. The `switch.skip_next_modifiable_week` entity (**Skip next selectable delivery week**) also skips/restores the next modifiable week with a single toggle.
 
-How write actions behave (skip/unskip and meal selection) is described under [Current Scope](#current-scope): the integration uses the website's verified write endpoints first and stops with a clear error — raising a Repairs issue — rather than guessing endlessly.
+Write actions (meal/market selection, skip/unskip) use the website's verified endpoints first and stop with a clear error — raising a Repairs issue — rather than guessing; see [Current Scope](#current-scope).
 
 ## HelloFresh Dashboard
 
-A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml), organized around how you actually use HelloFresh. It is **100% built-in Lovelace plus the integration's two packaged cards** — no HACS frontend add-ons required. Its four views:
+A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml), organized around how you actually use HelloFresh. It is **100% built-in Lovelace plus the integration's packaged cards** — no HACS frontend add-ons required. Its four views:
 
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
@@ -285,7 +285,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 
 ![HelloFresh meal-planner dashboard in Home Assistant](images/hellofresh_screenshot-2.png)
 
-The integration ships a custom Lovelace card, **`custom:hellofresh-meal-planner-card`**, for browsing your delivery weeks recipe-by-recipe with images and changing the selection on weeks that are still editable. It reads full per-week recipe detail on demand from the response-returning `hellofresh.get_weeks` service (recipes aren't exposed as entity attributes, to stay under the recorder's size limit), so it shows the complete menu with images, your current picks highlighted, calories, and per-protein tags — none of which fit in a sensor attribute.
+The integration ships a custom Lovelace card, **`custom:hellofresh-meal-planner-card`**, for browsing your delivery weeks recipe-by-recipe and changing the selection on weeks that are still editable. It reads full per-week recipe detail on demand via `hellofresh.get_weeks`, so it shows the complete menu with images, your current picks highlighted, calories, and per-protein tags — none of which fit in a sensor attribute.
 
 The card is served and registered automatically when the integration loads (no manual resource step in storage-mode dashboards). Add it to any dashboard:
 
@@ -307,7 +307,7 @@ What it does:
 - **Week actions** — a **Show selected only** toggle (hide everything but your picks), **Skip / Unskip** the displayed week, a **refresh** button, and a banner summarizing any weeks that still need a selection (tap it to jump to the first one). Filter and view choices are remembered across weeks and reloads.
 - **Week stays in sync with the Market card** — navigating to a week here moves the [Market card](#market-card) to the same week (and vice versa), even when the two cards are on different dashboard views. The selected week is remembered across reloads and tab switches.
 
-> Meal-selection writes are confirmed on the US site; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
+> Meal-selection writes are confirmed on the US and UK sites; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
 
 > **YAML-mode dashboards only.** In storage-mode dashboards the card resource is registered automatically. If your dashboard is in **YAML mode** (you manage resources yourself), add it once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js`. The same applies to the Market, Food Profile, and Schedule cards below — each has its own `/hellofresh/hellofresh-*-card.js` resource path.
 
@@ -405,18 +405,19 @@ What works:
 - delivery calendar plus selection-deadline timestamp sensors for both the next delivery and the next selectable (modifiable) delivery
 - account credit balance from the payments balance endpoint
 - meal selection (with per-meal serving quantity) via `select_meals`, using the website's HAR-verified cart endpoint (`PUT /gw/v1/carts/{week}`) as the primary path, with guessed fallbacks only if the cart request can't be built. Choosing more or fewer distinct meals than the base plan resizes the box for that week (the cart's `product-sku` meal digit is adjusted up or down, matching the web app), with a minimum of 2 meals
-- HelloFresh Market add-on (extras) browsing and ordering via `select_market_items` — selection state, single- and multi-item writes, recurring-vs-one-off quantities, and meal preservation are all HAR-verified against the live US cart API
+- HelloFresh Market add-on (extras) browsing and ordering via `select_market_items` — selection state, single- and multi-item writes, recurring-vs-one-off quantities, and meal preservation are all HAR-verified against the live US cart API (the same endpoints are confirmed working on the UK site)
+- reading and updating the customer **food profile** (dietary preference, taste likes/dislikes, household, and goals) via `get_food_profile` / `set_food_profile`, HAR-verified against the live US profile-service API
 - per-week order detail (tracking, status, carrier, billed total) surfaced alongside each week, with the billed total computed the same way as the `next_box_total_price` sensor
 - skipping/restoring the next modifiable delivery week from a switch, plus `skip_week` / `unskip_week` services that use the website's own write endpoints with conservative fallbacks
 - on-demand per-week recipe, market, selection, and order detail via the response-returning `hellofresh.get_weeks` service (kept out of entity attributes to respect the recorder size limit)
-- two packaged Lovelace cards — a [Meal planner card](#meal-planner-card) and a [Market card](#market-card) — for browsing weeks and editing selections/quantities, both auto-registered by the integration
+- four packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), and [Schedule](#schedule-card) — for browsing weeks, editing selections/quantities, managing food preferences, and reviewing the delivery timeline, all auto-registered by the integration
 - Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
 
 What is not implemented yet:
 
-- a first-party OAuth / account-linking flow (the integration logs in directly with your stored email and password, or reuses a pasted token, instead)
-- verification of the write endpoints beyond the US site (the US meal-selection and skip/unskip requests are confirmed; other regions fall back to best-effort guesses)
-- live push updates from HelloFresh, if an official push channel exists
+- verification of the write endpoints beyond the **US and UK** sites (meal-selection, market, and skip/unskip requests are confirmed there; other regions share the same `/gw` endpoints and should work, but fall back to best-effort guesses where a request can't be built)
+
+> **No first-party OAuth by design.** HelloFresh publishes no public OAuth app or consumer API, so account linking isn't possible — the integration signs in directly with your stored email and password (or a pasted token), exactly as the website does. For the same reason there is **no push/webhook channel** — the integration polls on the configurable [refresh interval](#options).
 
 Because HelloFresh does not publish a stable consumer integration contract here, write actions stay cautious: the integration uses the website's confirmed write endpoints first, tries a small set of fallbacks if those don't fit your account, and stops with a clear error rather than guessing endlessly.
 

@@ -934,8 +934,25 @@ class HelloFreshAccountData:
             and order.delivery_date.isocalendar()[:2] == current_iso
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
+        # The most recent DELIVERED week. Prefer the dedicated past-deliveries history
+        # (sorted ascending above, so [-1] is newest). When that endpoint returns nothing for
+        # the account/region, fall back to the newest past-dated, non-skipped week from the main
+        # deliveries list — otherwise the "Last delivery date" sensor is Unknown even for
+        # accounts that clearly have shipped boxes.
         self._last_delivery_week = (
-            self.past_delivery_weeks[-1] if self.past_delivery_weeks else None
+            self.past_delivery_weeks[-1]
+            if self.past_delivery_weeks
+            else max(
+                (
+                    week
+                    for week in self.weeks
+                    if week.delivery_date is not None
+                    and week.delivery_date < today
+                    and not week.is_skipped
+                ),
+                default=None,
+                key=lambda week: (week.delivery_date, week.week_id),
+            )
         )
         self._serialized_orders = None
         self._serialized_weeks = None
