@@ -10,6 +10,7 @@ from homeassistant.components.calendar import (
     CalendarEvent,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -33,6 +34,10 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
 
     _attr_translation_key = "delivery_schedule"
     _attr_icon = "mdi:truck-delivery-outline"
+    # A calendar entity's state is just on/off (event active now / not), which is noise in the
+    # main entities list. Categorize it as diagnostic so it's tucked under the device's Diagnostic
+    # section while staying fully usable on a Calendar dashboard card and in calendar automations.
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: HelloFreshDataUpdateCoordinator) -> None:
         """Initialize the calendar."""
