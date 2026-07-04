@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.9.2";
+const MARKET_CARD_VERSION = "0.10.0";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -147,7 +147,8 @@ class HelloFreshMarketCard extends HTMLElement {
       this._pending = {};
       // Land on, in priority order: an explicit keep (post-save), else a week a sibling card
       // asked us to sync to before we'd loaded, else the week another HelloFresh card last
-      // selected (shared storage — cross-tab sync), else the first week.
+      // selected (shared storage — cross-tab sync), else the CURRENT week by date (so both cards
+      // start on the same week), else the first week.
       const syncId = this._syncPendingWeekId ?? this._loadSyncedWeekId();
       this._syncPendingWeekId = null;
       let landing = keepWeekId != null
@@ -156,6 +157,7 @@ class HelloFreshMarketCard extends HTMLElement {
       if (landing < 0 && syncId != null) {
         landing = this._weeks.findIndex((w) => w.week_id === syncId);
       }
+      if (landing < 0) landing = this._currentWeekIndex(); // -1 if no week is dated
       this._cursor = landing >= 0 ? landing : 0;
     } catch (err) {
       this._error = (err && err.message) || String(err);

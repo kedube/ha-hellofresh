@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.28.1";
+const CARD_VERSION = "0.29.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -210,7 +210,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // Land on the first week that still needs/allows a selection, else the first week.
+  // Where the card opens when there's no synced/kept week: the CURRENT week by date, so both
+  // HelloFresh cards start on the same week. Falls back to the first editable week (then week 0)
+  // when no week carries a delivery date.
   _defaultCursor(weeks) {
+    const current = this._currentWeekIndex();
+    if (current >= 0) return current;
     const idx = weeks.findIndex((w) => this._isEditable(w));
     return idx >= 0 ? idx : 0;
   }
