@@ -1265,7 +1265,17 @@ class HelloFreshPayloadNormalizer:
             # Last write wins is fine: a given week id maps to one delivered menu.
             past_by_week_id[past_week.week_id] = past_week
 
+        today = date.today()
         for account_week in account_weeks:
+            # Only replace recipes for weeks that are actually in the PAST. The deliveries/
+            # past-deliveries endpoints can surface the current week (once its cutoff passes it
+            # starts reporting as "delivered"), and replacing a current/future week's full
+            # browsable menu with just the delivered/selected meals would strip its menu so the
+            # customer can no longer see or change their options. A week with no delivery_date, or
+            # one dated today or later, is current/future — leave its menu intact.
+            if account_week.delivery_date is None or account_week.delivery_date >= today:
+                continue
+
             past_week = past_by_key.get(
                 (account_week.subscription_id, account_week.week_id)
             ) or past_by_week_id.get(account_week.week_id)
