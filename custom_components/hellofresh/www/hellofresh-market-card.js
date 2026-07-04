@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.7.0";
+const MARKET_CARD_VERSION = "0.7.1";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -503,7 +503,12 @@ class HelloFreshMarketCard extends HTMLElement {
     let items = week.market_items || [];
     if (this._showSelectedOnly) items = items.filter((i) => qtyOf(i) > 0);
     if (items.length === 0) {
-      return `<div class="state">${this._showSelectedOnly ? "No market items selected for this week yet." : "No market items for this week."}</div>`;
+      // The "…yet" phrasing implies you can still add items, so it only fits an editable week.
+      // A locked/past week is final — say so plainly instead.
+      const noneSelected = this._isEditable(week)
+        ? "No market items selected for this week yet."
+        : "No market items selected.";
+      return `<div class="state">${this._showSelectedOnly ? noneSelected : "No market items for this week."}</div>`;
     }
 
     // Group by group_type, preserving the catalog order of first appearance.

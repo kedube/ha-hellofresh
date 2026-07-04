@@ -838,14 +838,22 @@ Which recipes you have *chosen* for a week (`is_selected`) is resolved different
 
 **Past weeks** (selection no longer editable):
 
-The planning menu's per-meal flags for a past week reflect the system's *default/auto-fill* picks, not what you actually received — so for past weeks the **delivered meals from `past-deliveries` are authoritative**. `_merge_past_delivery_recipes_into_account_weeks` + `_apply_delivered_selection` overlay that selection onto the week's browsable catalog:
+The planning menu's per-meal flags for a past week reflect the system's *default/auto-fill* picks, not what you actually received — so for past weeks the **delivered meals from `past-deliveries` are authoritative**. `_merge_past_delivery_recipes_into_account_weeks` **replaces** a past week's recipes with exactly the delivered set (all flagged `is_selected`):
 
-- Each delivered meal is matched to the catalog **by `recipe_id` first, then by name** (HelloFresh re-ids portion/variant copies of the same dish across weeks, so id-only matching dropped meals the website still shows as chosen — `test_merge_past_delivery_matches_by_name_when_id_drifts`).
-- A delivered **meal** that matches nothing in the catalog is **appended** so every delivered meal stays visible, like the website (`test_merge_past_delivery_appends_meal_missing_from_catalog`).
-- A delivered **market add-on** (appetizer/side/dessert) must *not* leak into the meal list. Delivered items that are known market items for the week (matched against the week's `addOns` catalog) are recognised and skipped (`test_merge_past_delivery_does_not_leak_market_items_into_meals`). Market selection is tracked separately on `market_items`.
-- A past week's `meals_required` prefers the **delivered count** (`len(recipes)`) over the *current* subscription plan — otherwise a 4-meal box delivered under today's 3-meal plan would be capped at 3.
+- **Only weeks dated strictly before today** get this replacement. Once a week's cutoff passes, `past-deliveries` can start reporting the *current, still-editable* week as "delivered"; replacing its full browsable menu with just the 2–3 delivered meals would strip the customer's ability to see or change their options. The merge skips any account week with no `delivery_date` or one dated today-or-later, leaving its live menu intact (`test_merge_past_delivery_leaves_current_week_menu_intact`). "Past" is gated on **UTC** to match the rest of the module's date logic.
+- The delivered set from `past-deliveries` **replaces** whatever catalog the planning-menu endpoint attached — it is not merged onto it. For an old week HelloFresh has no real per-week menu, so `/gw/my-deliveries/menu` returns a bloated multi-week **aggregate** (~1000+ dishes spanning many weeks). There is **no reliable structural signal** (only fragile size heuristics) to tell that apart from a genuine per-week menu, so rather than risk flooding a past week with meals that were never available, the delivered recipes (which carry their images) win outright (`test_merge_past_delivery_shows_only_delivered_replacing_any_catalog`, `test_merge_past_delivery_shows_delivered_only_without_menu_catalog`). The tradeoff — you can't browse "what else was available" for a past week — is deliberate; it is not worth an arbitrary threshold that would misclassify aggregates as real menus.
+- A delivered **market add-on** (appetizer/side/dessert) must *not* leak into the meal list. `_delivered_meals_only` drops delivered items that are known market items for the week (matched by id or name against the week's `addOns` catalog) before the replacement (`test_merge_past_delivery_does_not_leak_market_items_into_meals`). Market selection is tracked separately on `market_items`.
+- A past week's `meals_selected` / `meals_required` prefer the **delivered values** over the *current* subscription plan — otherwise a 4-meal box delivered under today's 3-meal plan would be capped at 3.
+- The stale `mealsPreselected` flag on a long-past week is cleared: once a week has delivery history, what shipped **is** your selection, so it must not badge as "Preselected" (`test_merge_past_delivery_clears_preselected_flag`).
 
-**Paused weeks** (`status`/`state` = `PAUSED`): a paused box never shipped, so any "selected" meals are pure auto-fill placeholders. A universal post-merge pass (`_clear_paused_week_selection`) clears `is_selected` and `selected_quantity` on every recipe and sets `meals_selected = 0`, while leaving the catalog visible for browsing and market items untouched (`test_paused_week_has_no_selected_meals`).
+The comprehensive history source is `/gw/my-deliveries/past-deliveries` (paginated ~4 weeks/page via a `nextWeek` cursor, ~16 weeks back), whose recipes carry images. The narrower `/gw/customer-complaints/...` endpoint knows only the last ~2 weeks and returns image-less recipes; because all history endpoints normalize to `source="past_deliveries"`, a `filled_by_path` map ensures the authoritative endpoint **wins** per week over the narrower one, never the reverse (`test_past_deliveries_overwrites_customer_complaints_recipes`).
+
+**Paused / skipped weeks** (`status`/`state` = `PAUSED`, or `is_skipped`): a paused/skipped box never shipped, so any "selected" meals are pure auto-fill placeholders. A universal post-merge pass (`_clear_paused_week_selection`) sets `meals_selected = 0` and:
+
+- For a **future/undated** paused week it clears `is_selected` and `selected_quantity` on every recipe but **keeps the catalog** visible for browsing (the customer can still un-pause).
+- For a **past** paused/skipped week it **drops the recipes entirely** (`recipes = []`) — the week never shipped and can't be edited, so it must show an empty meal list, not the (potentially ~1000-recipe aggregate) menu catalog that would otherwise flood it. "Past" is gated on UTC (`test_paused_week_has_no_selected_meals`).
+
+Market items are left untouched in both cases — pausing meals is independent of add-ons.
 
 **Menu catalog keying.** `/gw/menus-service/menus` items carry both an internal Mongo `id` and the ISO `week` (and return ~16 product/preset variants per week). Menu weeks are keyed by the **ISO `week`** (not the `id`, which never matched account weeks and mis-attached a week's catalog), and when several variants share a week the **richest (most recipes)** one wins so the week gets its full browsable catalog (`test_menu_week_id_prefers_iso_week_over_object_id`, `test_merge_keeps_richest_menu_variant_per_week`).
 
@@ -888,7 +896,7 @@ Backfill notes:
 | --- | --- |
 | `recipe_id` | `id`, `slug`, slugified name |
 | `name` | `name`, `title`, `slug` |
-| `preference` | `preference`, `category` |
+| `preference` | `preference`, `category`; falls back to `Veggie` when the recipe is untyped but tagged `Veggie`/`Vegan` (a meatless dish carries no protein category). Drives the card's protein color dot and protein filter. |
 | `is_selected` | `selection.selected` (bool), `selection.quantity > 0`, or `selected` field. In the authenticated menu (`/gw/my-deliveries/menu`), chosen meals carry `selection.quantity > 0` and unchosen ones a bare `selection.limit` — this is how the integration learns the current selection (see [Selection-state resolution](#selection-state-resolution)). For directly-listed delivery/account recipes the default is `true` (their presence is the selection). |
 | `course_index` | `index` — the meal's course index within the week's menu. This, not `recipe_id`, is the cart's selection unit (`recipeIndexes` / `quantityPerCourse`); the same dish can recur under several ids/indexes (portion variants), so the index is the robust key for `select_meals` writes and for a dashboard card to round-trip selections. |
 | `image_url` | `imagePath`, `image`, `imageUrl` |
@@ -906,8 +914,9 @@ Backfill notes:
 | `surcharge_label`, `surcharge_cents` | `charge.label` (e.g. `+7.99/serving`), `charge.unitAmount` (cents) |
 | `badge` | `recipe.label.text` (e.g. `Premium Picks`) |
 | `variation_title` | resolved from the week's `modularity` block by `course_index` (e.g. `2x Bacon`) — names how a same-named variant differs |
+| `variation_group` | the `defaultCourseIndex` of the `modularity` group this recipe belongs to (base meal + every variation/add-on member share it); `null` for a meal that has no variants. A recipe is the group's **base ("Default")** meal when its own `course_index == variation_group`. Lets the card cluster a dish's variants — including renamed protein swaps — and hide variants down to the default. |
 
-Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields. `surcharge_*`, `badge`, `protein_g`, `selected_quantity`, and `variation_title` exist to differentiate same-named meal variants on a dashboard (the meal-planner card collapses truly-identical duplicate listings and calls out the rest).
+Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields. `surcharge_*`, `badge`, `protein_g`, `selected_quantity`, `variation_title`, and `variation_group` exist to differentiate same-named meal variants on a dashboard (the meal-planner card collapses truly-identical duplicate listings and calls out the rest). `preference` (one of `Beef`, `Poultry`, `Pork`, `Seafood`, `Lamb`, `Veggie`, falling back to `Veggie` for meals tagged `Veggie`/`Vegan`) and `variation_group` also drive the card's **protein** and **hide-variants** filters on current/upcoming weeks.
 
 Nutrition handling:
 
