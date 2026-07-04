@@ -2298,7 +2298,8 @@ def test_merge_past_delivery_leaves_current_week_menu_intact() -> None:
     strictly before today get the delivered-only replacement.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()
+    # The merge gates "past" on UTC (matching normalizers), so pin the boundary to UTC too.
+    today = datetime.now(timezone.utc).date()
     # Current week: full menu catalog present, dated today (not past).
     current_week = HelloFreshWeek(
         week_id="2026-W27",

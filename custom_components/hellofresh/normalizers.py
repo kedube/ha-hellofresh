@@ -7,7 +7,7 @@ HelloFresh payloads into integration models.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .models import (
@@ -557,7 +557,7 @@ class HelloFreshPayloadNormalizer:
         paused week keeps its catalog so it stays browsable if the customer un-pauses. Market
         items are left alone — pausing meals is independent of add-ons.
         """
-        today = date.today()
+        today = datetime.now(UTC).date()
         for week in weeks:
             is_paused = (week.status or "").strip().upper() == "PAUSED"
             if not (is_paused or week.is_skipped):
@@ -1265,14 +1265,15 @@ class HelloFreshPayloadNormalizer:
             # Last write wins is fine: a given week id maps to one delivered menu.
             past_by_week_id[past_week.week_id] = past_week
 
-        today = date.today()
+        today = datetime.now(UTC).date()
         for account_week in account_weeks:
             # Only replace recipes for weeks that are actually in the PAST. The deliveries/
             # past-deliveries endpoints can surface the current week (once its cutoff passes it
             # starts reporting as "delivered"), and replacing a current/future week's full
             # browsable menu with just the delivered/selected meals would strip its menu so the
             # customer can no longer see or change their options. A week with no delivery_date, or
-            # one dated today or later, is current/future — leave its menu intact.
+            # one dated today or later, is current/future — leave its menu intact. Use UTC to
+            # match the rest of this module's past/future gating (models.is_editable, etc.).
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
