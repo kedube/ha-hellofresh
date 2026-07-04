@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.27.0";
+const CARD_VERSION = "0.28.0";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -71,6 +71,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // seeded from the server's is_selected on first edit, then mutated freely until the user
     // saves (submitting once) or it is discarded on refresh.
     this._pending = {};
+    // Cross-card week sync: a sibling HelloFresh card (e.g. the Market card) broadcasts the week
+    // it navigates to; we follow it to the same week. If the event arrives before this card has
+    // loaded its weeks, remember the id and apply it once the fetch completes.
+    this._syncPendingWeekId = null;
+    this._onSyncWeek = (ev) => this._receiveSyncedWeek(ev);
+  }
+
+  connectedCallback() {
+    window.addEventListener(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, this._onSyncWeek);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, this._onSyncWeek);
   }
 
   setConfig(config) {
@@ -124,10 +137,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
       this._savedSelCache = null;
-      const kept = keepWeekId != null
+      // Resolve which week to land on: an explicit keep (post-save), else a week a sibling card
+      // asked us to sync to before we'd loaded, else the default.
+      let landing = keepWeekId != null
         ? this._weeks.findIndex((w) => w.week_id === keepWeekId)
         : -1;
-      this._cursor = kept >= 0 ? kept : this._defaultCursor(this._weeks);
+      if (landing < 0 && this._syncPendingWeekId != null) {
+        landing = this._weeks.findIndex((w) => w.week_id === this._syncPendingWeekId);
+      }
+      this._syncPendingWeekId = null;
+      this._cursor = landing >= 0 ? landing : this._defaultCursor(this._weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -207,11 +226,21 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Date.parse(week.delivery_date) < today.getTime();
   }
 
+  // Move the cursor to an index, render, and (unless syncing FROM another card) broadcast the
+  // resulting week so a sibling HelloFresh card on the same dashboard follows to the same week.
+  _setCursor(index, { broadcast = true } = {}) {
+    if (!this._weeks || this._weeks.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, this._weeks.length - 1));
+    if (clamped === this._cursor) return;
+    this._cursor = clamped;
+    this._render();
+    if (broadcast) this._broadcastWeek();
+  }
+
   _step(delta) {
     if (!this._weeks || this._weeks.length === 0) return;
     const count = this._weeks.length;
-    this._cursor = (this._cursor + delta + count) % count;
-    this._render();
+    this._setCursor((this._cursor + delta + count) % count);
   }
 
   // Index of the "current" week by date: the week whose delivery_date is nearest to today,
@@ -241,10 +270,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // Jump the cursor to the current week by date (the "Current Week" button).
   _gotoCurrentWeek() {
     const target = this._currentWeekIndex();
-    if (target >= 0 && target !== this._cursor) {
-      this._cursor = target;
-      this._render();
-    }
+    if (target >= 0) this._setCursor(target);
   }
 
   // Jump the cursor to the first week that still needs a meal selection (banner tap).
@@ -252,10 +278,49 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const needing = this._weeksNeedingChoice();
     if (needing.length === 0) return;
     const target = this._weeks.indexOf(needing[0]);
-    if (target >= 0) {
-      this._cursor = target;
-      this._render();
+    if (target >= 0) this._setCursor(target);
+  }
+
+  // ---- cross-card week sync ------------------------------------------------
+
+  // The window event both HelloFresh cards use to keep their selected week in step.
+  static get WEEK_SYNC_EVENT() {
+    return "hellofresh-week-selected";
+  }
+
+  // The config entry (account) this card is bound to, if pinned. Only cards for the SAME account
+  // sync with each other, so a multi-account dashboard doesn't cross-drive unrelated cards.
+  _accountKey() {
+    return (this._config && this._config.config_entry_id) || null;
+  }
+
+  // Announce the currently displayed week so a sibling card follows to it.
+  _broadcastWeek() {
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    if (!week) return;
+    window.dispatchEvent(
+      new CustomEvent(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, {
+        detail: { weekId: week.week_id, accountKey: this._accountKey() },
+      })
+    );
+  }
+
+  // Follow a sibling card's week change. Ignore our own broadcasts and cards for other accounts.
+  _receiveSyncedWeek(ev) {
+    const detail = (ev && ev.detail) || {};
+    if (!detail.weekId) return;
+    // Only sync cards bound to the same account (or both unpinned).
+    if ((detail.accountKey || null) !== this._accountKey()) return;
+    if (!this._weeks) {
+      // Not loaded yet — remember the request and apply once the fetch completes.
+      this._syncPendingWeekId = detail.weekId;
+      return;
     }
+    const current = this._weeks[this._cursor];
+    if (current && current.week_id === detail.weekId) return; // already there
+    const target = this._weeks.findIndex((w) => w.week_id === detail.weekId);
+    if (target >= 0) this._setCursor(target, { broadcast: false }); // don't echo into a loop
+    // Loaded but this week isn't browsable here (e.g. no market catalog that week): stay put.
   }
 
   // Max servings the +/- stepper allows for one meal (HelloFresh's typical per-recipe cap).
@@ -593,6 +658,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._busy = true;
     this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
     this._render();
+    // Yield a paint frame so the banner is actually drawn before the (possibly fast-resolving)
+    // service call and reload run — otherwise the microtask after `await` can pre-empt the paint
+    // and the banner appears not to show until the page refreshes.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     try {
       const data = { week_id: week.week_id, recipe_ids: recipeIds };
       if (Object.keys(quantities).length) data.quantities = quantities;
@@ -1419,9 +1488,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         margin: 4px 16px 12px; padding: 8px 12px; border-radius: 8px;
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
       }
+      /* The "please wait while saving" banner must be seen the instant Save is pressed. The grid
+         can be tall, so an inline toast at the bottom of the card sits below the fold and only
+         scrolls into view once the reload shrinks the content — looking like it never appeared.
+         Pin it to the top of the viewport instead so it's visible regardless of scroll position. */
       .toast.saving {
+        position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 9;
+        margin: 0; width: max-content; max-width: calc(100vw - 32px);
         display: flex; align-items: center; justify-content: center; gap: 8px;
         background: var(--primary-color); color: var(--text-primary-color, #fff);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
       }
       .toast.saving .spinner {
         width: 14px; height: 14px; flex: none; border-radius: 50%;
