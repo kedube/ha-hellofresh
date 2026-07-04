@@ -67,6 +67,24 @@ def parse_date(value: Any) -> date | None:
 _ISO_WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
 
 
+def date_from_iso_week(week_id: str | None) -> date | None:
+    """Return the delivery date for a ``YYYY-Www`` ISO week, or ``None``.
+
+    Some HelloFresh history payloads (notably ``/gw/my-deliveries/past-deliveries``) identify a
+    delivered week by its ISO week id only, with no explicit delivery date. The delivery falls in
+    that ISO week; HelloFresh's own UI labels it with the week's Monday, so use ISO weekday 1.
+    """
+    if not isinstance(week_id, str):
+        return None
+    match = _ISO_WEEK_RE.match(week_id.strip())
+    if not match:
+        return None
+    try:
+        return date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1)
+    except ValueError:
+        return None  # out-of-range week number
+
+
 def iso_week_label(week_id: str | None, fallback: date | None = None) -> str | None:
     """Return the ISO week identifier for a delivery week (e.g. ``"2026-W25"``).
 

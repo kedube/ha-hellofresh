@@ -21,6 +21,7 @@ from .parsers import (
     MAX_SEARCH_DEPTH,
     coerce_float,
     coerce_int,
+    date_from_iso_week,
     extract_allowed_actions,
     extract_name_list,
     extract_tracking_details,
@@ -1562,6 +1563,12 @@ class HelloFreshPayloadNormalizer:
                 or raw_week.get("deliveryDate")
                 or raw_week.get("date")
             )
+            # The /gw/my-deliveries/past-deliveries payload identifies each delivered week by its
+            # ISO ``week`` id ONLY (no explicit date), so derive the date from the week id when no
+            # date field is present — otherwise these weeks stay date-less and "Last delivery date"
+            # is Unknown even though the box shipped.
+            if delivery_date is None:
+                delivery_date = date_from_iso_week(week_id)
             if week_id.startswith("past-week-") and delivery_date is None:
                 continue
 
