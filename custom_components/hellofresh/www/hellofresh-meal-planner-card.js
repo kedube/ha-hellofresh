@@ -21,7 +21,7 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.28.0";
+const CARD_VERSION = "0.28.1";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
@@ -80,6 +80,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   connectedCallback() {
     window.addEventListener(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, this._onSyncWeek);
+    // Switching back to this card's dashboard tab re-connects the (already-loaded) element
+    // without re-fetching, so pick up any week another card selected while we were hidden.
+    if (this._weeks) this._applySyncedWeekId(this._loadSyncedWeekId());
   }
 
   disconnectedCallback() {
@@ -102,6 +105,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (hass && !this._fetched && !this._loading) {
       this._fetched = true;
       this._fetchWeeks();
+    } else if (this._weeks) {
+      // hass updates fire when a dashboard view becomes active. Some HA versions keep hidden
+      // views in the DOM (no re-connect/re-fetch), so this is the reliable moment to pick up a
+      // week another HelloFresh card selected while this one was hidden. Cheap: no service call.
+      this._applySyncedWeekId(this._loadSyncedWeekId());
     }
   }
 
@@ -137,15 +145,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
       this._savedSelCache = null;
-      // Resolve which week to land on: an explicit keep (post-save), else a week a sibling card
-      // asked us to sync to before we'd loaded, else the default.
+      // Resolve which week to land on, in priority order:
+      //  1. an explicit keep (post-save — stay where the user was),
+      //  2. a week a sibling card asked us to sync to before we'd loaded,
+      //  3. the week another HelloFresh card last selected (shared storage — cross-tab sync),
+      //  4. this card's own default.
+      const syncId = this._syncPendingWeekId ?? this._loadSyncedWeekId();
+      this._syncPendingWeekId = null;
       let landing = keepWeekId != null
         ? this._weeks.findIndex((w) => w.week_id === keepWeekId)
         : -1;
-      if (landing < 0 && this._syncPendingWeekId != null) {
-        landing = this._weeks.findIndex((w) => w.week_id === this._syncPendingWeekId);
+      if (landing < 0 && syncId != null) {
+        landing = this._weeks.findIndex((w) => w.week_id === syncId);
       }
-      this._syncPendingWeekId = null;
       this._cursor = landing >= 0 ? landing : this._defaultCursor(this._weeks);
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -282,6 +294,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // ---- cross-card week sync ------------------------------------------------
+  //
+  // The meal-planner and market cards share the selected week. The two cards can live on
+  // DIFFERENT dashboard views (tabs), so a live event alone is not enough — the other card may
+  // be unmounted when you navigate, and only mounts when you switch to its tab. So the selected
+  // week is PERSISTED in localStorage (keyed by account) and restored on load; the live event is
+  // an optimization for when both cards are mounted on the same view at once.
 
   // The window event both HelloFresh cards use to keep their selected week in step.
   static get WEEK_SYNC_EVENT() {
@@ -291,13 +309,32 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // The config entry (account) this card is bound to, if pinned. Only cards for the SAME account
   // sync with each other, so a multi-account dashboard doesn't cross-drive unrelated cards.
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || null;
+    return (this._config && this._config.config_entry_id) || "default";
   }
 
-  // Announce the currently displayed week so a sibling card follows to it.
+  _syncStorageKey() {
+    return `hellofresh:selected-week:${this._accountKey()}`;
+  }
+
+  // The week id a sibling card last selected (from shared storage), or null.
+  _loadSyncedWeekId() {
+    try {
+      return window.localStorage.getItem(this._syncStorageKey()) || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  // Announce + persist the currently displayed week so a sibling card follows to it — now (live
+  // event, if it's mounted) and later (storage, when it next mounts / you switch to its tab).
   _broadcastWeek() {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     if (!week) return;
+    try {
+      window.localStorage.setItem(this._syncStorageKey(), week.week_id);
+    } catch (_e) {
+      /* storage unavailable: fall back to the live event only */
+    }
     window.dispatchEvent(
       new CustomEvent(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, {
         detail: { weekId: week.week_id, accountKey: this._accountKey() },
@@ -305,22 +342,29 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     );
   }
 
-  // Follow a sibling card's week change. Ignore our own broadcasts and cards for other accounts.
+  // Move to a synced week id if this card carries it. Returns true if it handled the id.
+  _applySyncedWeekId(weekId) {
+    if (!weekId || !this._weeks) return false;
+    const current = this._weeks[this._cursor];
+    if (current && current.week_id === weekId) return true; // already there
+    const target = this._weeks.findIndex((w) => w.week_id === weekId);
+    if (target >= 0) {
+      this._setCursor(target, { broadcast: false }); // don't echo into a loop
+      return true;
+    }
+    return false; // this week isn't browsable in this card
+  }
+
+  // Follow a sibling card's live week change. Ignore our own broadcasts and other accounts.
   _receiveSyncedWeek(ev) {
     const detail = (ev && ev.detail) || {};
     if (!detail.weekId) return;
-    // Only sync cards bound to the same account (or both unpinned).
-    if ((detail.accountKey || null) !== this._accountKey()) return;
+    if ((detail.accountKey || "default") !== this._accountKey()) return;
     if (!this._weeks) {
-      // Not loaded yet — remember the request and apply once the fetch completes.
-      this._syncPendingWeekId = detail.weekId;
+      this._syncPendingWeekId = detail.weekId; // not loaded yet — apply on fetch
       return;
     }
-    const current = this._weeks[this._cursor];
-    if (current && current.week_id === detail.weekId) return; // already there
-    const target = this._weeks.findIndex((w) => w.week_id === detail.weekId);
-    if (target >= 0) this._setCursor(target, { broadcast: false }); // don't echo into a loop
-    // Loaded but this week isn't browsable here (e.g. no market catalog that week): stay put.
+    this._applySyncedWeekId(detail.weekId);
   }
 
   // Max servings the +/- stepper allows for one meal (HelloFresh's typical per-recipe cap).
