@@ -18,7 +18,7 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const MARKET_CARD_VERSION = "0.9.1";
+const MARKET_CARD_VERSION = "0.9.2";
 
 function resizedImage(url, width) {
   if (!url || !width) return url;
@@ -550,6 +550,7 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _renderHeader(week) {
+    const rel = this._relativeWeek(week);
     return `
       <div class="header">
         <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
@@ -557,6 +558,7 @@ class HelloFreshMarketCard extends HTMLElement {
           <div class="weektitle">${this._esc(week.display_name || week.week_id)}</div>
           <div class="weeksub">
             ${week.delivery_date ? this._esc(this._fmtDate(week.delivery_date)) : ""}
+            ${rel ? ` · ${this._esc(rel)}` : ""}
             ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
           </div>
           ${this._renderCurrentWeek()}
@@ -745,6 +747,22 @@ class HelloFreshMarketCard extends HTMLElement {
       .replace(/[_-]+/g, " ")
       .toLowerCase()
       .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  // How far the week's delivery is from today, in words (e.g. "in 3 days", "2 weeks ago").
+  // Mirrors the meal-planner card so both headers read identically.
+  _relativeWeek(week) {
+    if (!week.delivery_date) return "";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const d = new Date(week.delivery_date);
+    d.setHours(0, 0, 0, 0);
+    const days = Math.round((d - today) / 86400000);
+    if (days === 0) return "today";
+    if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
+    if (days < 7) return `in ${days} days`;
+    const weeks = Math.round(days / 7);
+    return weeks === 1 ? "next week" : `in ${weeks} weeks`;
   }
 
   _fmtDate(iso) {
