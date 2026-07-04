@@ -2289,6 +2289,56 @@ def test_merge_past_delivery_recipes_fills_recipe_free_account_weeks() -> None:
     assert [r.name for r in by_id["2026-W30"].recipes] == ["Live Menu Dish"]
 
 
+def test_merge_past_delivery_leaves_current_week_menu_intact() -> None:
+    """A current/future week is never collapsed to delivered-only, even if past-deliveries lists it.
+
+    Once a week's cutoff passes it can start reporting as "delivered" while it is still the
+    current, editable week. Replacing its full browsable menu with just the delivered/selected
+    meals would strip the customer's ability to see or change their options. Only weeks dated
+    strictly before today get the delivered-only replacement.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = date.today()
+    # Current week: full menu catalog present, dated today (not past).
+    current_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="This Week",
+        subscription_id="6959884",
+        delivery_date=today,
+        recipes=[
+            HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A"),
+            HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B"),
+            HelloFreshRecipe(recipe_id="m-3", name="Menu Dish C"),
+            HelloFreshRecipe(recipe_id="m-4", name="Menu Dish D"),
+        ],
+    )
+    # past-deliveries also reports this week id (cutoff passed) with a smaller delivered set.
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="This Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=2,
+        recipes=[
+            HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A"),
+            HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[current_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    # Full menu is preserved; not collapsed to the 2 delivered meals.
+    assert [r.name for r in merged[0].recipes] == [
+        "Menu Dish A",
+        "Menu Dish B",
+        "Menu Dish C",
+        "Menu Dish D",
+    ]
+
+
 def test_merge_past_delivery_clears_preselected_flag() -> None:
     """A delivered week is your real selection, so its meals_preselected flag is cleared.
 
