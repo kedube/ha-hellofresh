@@ -286,6 +286,33 @@ def test_account_credit_sensor_reports_amount_currency_and_precision() -> None:
     assert sensor.suggested_display_precision == 2
 
 
+def test_absence_string_sensors_report_none_text_when_empty() -> None:
+    """String sensors whose empty value means "there isn't one" surface the literal "None",
+
+    not HA's "Unknown" (which reads as a data gap). Date/number sensors keep reporting None.
+    """
+    data = HelloFreshAccountData().finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+        last_update_success=True,
+    )
+
+    def _value(key: str):
+        description = next(d for d in SENSOR_DESCRIPTIONS if d.key == key)
+        sensor = HelloFreshSensor(coordinator, description)
+        sensor.coordinator = coordinator
+        return sensor.native_value
+
+    assert _value("next_skipped_week") == "None"
+    assert _value("next_box_coupon") == "None"
+    assert _value("next_holiday_message") == "None"
+    # A date sensor with no value stays None (renders as Unknown) — not converted to "None" text.
+    assert _value("last_delivery_date") is None
+    assert _value("next_holiday_delivery_date") is None
+
+
 def test_account_credit_sensor_handles_missing_credit() -> None:
     """With no credit data the sensor reports None value and no currency unit."""
     description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "account_credit")

@@ -804,6 +804,10 @@ The raw subscription payload also contains useful next-week fallback fields that
 | `slot_label` | `timeSlot`, `slotLabel`, `deliveryName`, `deliveryFrom`, `deliveryTo` |
 | `shipping_method` | `shippingMethod`, subscription default |
 | `box_size` | `boxSize`, subscription default |
+| `meals_preselected` | `mealsPreselected` — HelloFresh auto-picked the week's meals from the food profile; stays `true` until the customer swaps in different meals (it does **not** clear just because meals are present). Drives `auto_picked` / `needs_selection`. |
+| `delivery_blocked` | `deliveryBlocked`, `isBlocked` — HelloFresh blocked delivery for the week (area out of zone, carrier/weather disruption, no-delivery holiday). Imposed by HelloFresh, distinct from a customer skip. |
+| `holiday_delivery_date` | `holidayDelivery` — rescheduled date when the week's box is shifted for a holiday; `null` when no shift applies. |
+| `holiday_message` | `holidayMessage` — HelloFresh's holiday-shift notice; `null` when none. |
 
 Delivery recipe payloads may be wrapped in nested containers such as:
 

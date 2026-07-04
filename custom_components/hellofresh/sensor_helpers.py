@@ -64,6 +64,19 @@ HUMANIZED_STATUS_KEYS = frozenset(
     }
 )
 
+# String sensors whose empty value is a definite "there is none" — not missing data. HA renders a
+# ``None`` state as "Unknown", which reads as a data gap; for these we know the answer is "there
+# isn't one" (no skipped week, no coupon, no holiday message), so surface the literal ``"None"``.
+# Deliberately excludes date/number sensors (Unknown is idiomatic there) and fields where None
+# genuinely means "not reported" (tracking, address, ids, statuses).
+NONE_WHEN_EMPTY_KEYS = frozenset(
+    {
+        "next_skipped_week",
+        "next_box_coupon",
+        "next_holiday_message",
+    }
+)
+
 
 def _next_order_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
     return lambda data: getattr(data.next_order, attr) if data.next_order else None
@@ -257,6 +270,8 @@ def sensor_native_value(
     value = handler(data) if handler is not None else None
     if key in HUMANIZED_STATUS_KEYS:
         return humanize_status(value)
+    if value is None and key in NONE_WHEN_EMPTY_KEYS:
+        return "None"
     return value
 
 

@@ -136,7 +136,7 @@ A few conventions used in the tables:
 
 - **Entity ID prefix.** Because entities use `has_entity_name`, the real IDs are prefixed from your config-entry title — a "HelloFresh (US)" account produces `sensor.hellofresh_us_next_delivery_date`, etc. The tables show the suffix only; substitute your own prefix.
 - **Device class.** Where noted (`Date`, `Timestamp`, monetary), Home Assistant formats and graphs the value accordingly. Sensors without a noted device class are plain strings or numbers.
-- **`None` / unavailable.** Many sensors report `None` (shown as *Unknown* in the UI) when the underlying field isn't set for your account or region — e.g. no holiday shift, no coupon, no tracked shipment. This is normal, not an error.
+- **`None` / unavailable.** Many sensors report `None` (shown as *Unknown* in the UI) when the underlying field isn't set for your account or region — e.g. no holiday shift, no tracked shipment. This is normal, not an error. A few sensors where "empty" is a definite *"there isn't one"* rather than missing data instead show the literal **`None`** so the dashboard reads clearly: **Next skipped week**, **Next delivery coupon**, and **Holiday delivery message**.
 - **Attributes vs. state.** The state is the single headline value; richer context (the full week, order, subscription, or tracking object) is exposed as entity **attributes**. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit) and are read on demand via `hellofresh.get_weeks` — see [Recorder attribute sizes](#recorder-attribute-sizes).
 
 **Deliveries & orders**
@@ -150,9 +150,9 @@ A few conventions used in the tables:
 | Delivery Window | `sensor.next_delivery_slot` | Delivery time-slot label for the next order (e.g. `Mondays: 8AM - 8PM`); `None` when no preferred window is set. |
 | Upcoming delivery count | `sensor.upcoming_delivery_count` | Number of non-skipped deliveries with a delivery date today or later. |
 | Next delivery count | `sensor.delivery_count_this_week` | Number of deliveries scheduled within the current calendar week (Mon–Sun). |
-| Next delivery blocked | `sensor.next_delivery_blocked` | `True`/`False` flag for whether HelloFresh has blocked delivery for the next configurable week (e.g. unavailable in your area that week). |
+| Next delivery blocked | `sensor.next_delivery_blocked` | `True`/`False` for whether **HelloFresh** has blocked delivery for the next configurable week (its `deliveryBlocked` flag) — e.g. your area is temporarily out of the delivery zone that week, a carrier/weather disruption, or a no-delivery holiday week. This is imposed by HelloFresh, distinct from *you* skipping a week; usually `False`. |
 | Holiday delivery date | `sensor.next_holiday_delivery_date` | Rescheduled delivery date when the next week's box is shifted for a holiday; `None` when no holiday shift applies. `Date` device class. |
-| Holiday delivery message | `sensor.next_holiday_message` | HelloFresh's holiday-shift notice for the next week (e.g. why the date moved); `None` when no holiday message is present. |
+| Holiday delivery message | `sensor.next_holiday_message` | HelloFresh's holiday-shift notice for the next week (e.g. why the date moved); shows **`None`** when no holiday message is present. |
 
 **Meal selection**
 
@@ -179,7 +179,7 @@ A few conventions used in the tables:
 | Recent payment date | `sensor.recent_payment_date` | Date of the most recent HelloFresh charge that has **already been billed** (the order's `createdAt`), from order history. Because HelloFresh bills a box a few days before it ships, this reflects your last actual charge even when that box's delivery is still upcoming. Charges dated in the future are ignored. `Date` device class. |
 | Next delivery payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
 | Next delivery order ID | `sensor.recent_order_id` | Order number for the next upcoming delivery, as shown in the HelloFresh UI (the `orderNr` field). |
-| Next delivery coupon | `sensor.next_box_coupon` | Active promo/coupon code applied to the primary subscription; `None` when no coupon is on file. |
+| Next delivery coupon | `sensor.next_box_coupon` | Active promo/coupon code applied to the primary subscription; shows **`None`** when no coupon is on file. |
 
 **Account & subscription**
 
@@ -210,7 +210,7 @@ A few conventions used in the tables:
 | --- | --- | --- |
 | Last delivery date | `sensor.last_delivery_date` | Delivery date of the most recently completed week from delivery history. `Date` device class. |
 | Skipped week count | `sensor.skipped_week_count` | Number of upcoming weeks marked as skipped. |
-| Next skipped week | `sensor.next_skipped_week` | Display name of the nearest upcoming skipped week (e.g. `2026-W24`); `None` when none are skipped. |
+| Next skipped week | `sensor.next_skipped_week` | Display name of the nearest upcoming skipped week (e.g. `2026-W24`); shows **`None`** when no weeks are skipped. |
 
 **Diagnostic** (shown under the device's *Diagnostic* section)
 
@@ -234,12 +234,12 @@ A few conventions used in the tables:
 | --- | --- |
 | `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.) |
 | `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised |
+| `calendar.delivery_schedule` | Calendar of all upcoming and recent HelloFresh deliveries (each event title includes the delivery week and order status). Add it to a **Calendar** dashboard card to see the dates, or use it in calendar-trigger automations. Its own state is just `on`/`off` (a delivery is active today or not) — the standard for any calendar entity — so it's filed here under Diagnostic to keep it out of the main entities list. |
 
 #### Other
 
 | Entity | Notes |
 | --- | --- |
-| `calendar.delivery_schedule` | Calendar entity showing all upcoming and recent HelloFresh deliveries as calendar events; each event title includes the delivery week and order status |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
 
