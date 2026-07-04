@@ -234,6 +234,54 @@ def test_account_data_finalize_builds_serialized_views() -> None:
     assert data.last_delivery_week.week_id == last_week_id
 
 
+def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> None:
+    """When the past-deliveries endpoint returns nothing, the "Last delivery date" sensor must
+    still resolve — from the newest past-dated, non-skipped week in the main deliveries list —
+    instead of showing Unknown for an account that has clearly shipped boxes.
+    """
+    today = date.today()
+    data = HelloFreshAccountData(
+        weeks=[
+            # A skipped past week must NOT win even though it's the newest past-dated one.
+            HelloFreshWeek(
+                week_id="skipped-recent",
+                display_name="Skipped",
+                delivery_date=today - timedelta(days=2),
+                is_skipped=True,
+            ),
+            HelloFreshWeek(
+                week_id="delivered-newest",
+                display_name="Delivered Newest",
+                delivery_date=today - timedelta(days=9),
+            ),
+            HelloFreshWeek(
+                week_id="delivered-older",
+                display_name="Delivered Older",
+                delivery_date=today - timedelta(days=16),
+            ),
+            # A future week must never be treated as "delivered".
+            HelloFreshWeek(
+                week_id="future",
+                display_name="Future",
+                delivery_date=today + timedelta(days=5),
+            ),
+        ],
+        orders=[],
+        past_delivery_weeks=[],  # history endpoint returned nothing
+        subscriptions=[
+            HelloFreshSubscription(
+                subscription_id="sub-1",
+                account_id="acct-1",
+                display_name="Classic Plan",
+            )
+        ],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+
+    assert data.last_delivery_week is not None
+    assert data.last_delivery_week.week_id == "delivered-newest"
+
+
 def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
     """next_order/upcoming_orders must resolve to future deliveries, not the oldest one.
 
