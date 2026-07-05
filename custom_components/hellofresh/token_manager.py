@@ -511,19 +511,17 @@ class TokenManager:
                 # the password is wrong. Raise a transient error so HA does not prompt the
                 # user to re-enter correct credentials; the next poll retries the login.
                 _LOGGER.warning(
-                    "HelloFresh login BLOCKED by bot protection (HTTP %s) for %s; this is not a "
+                    "HelloFresh login BLOCKED by bot protection (HTTP %s); this is not a "
                     "password error -- the request was rejected before reaching the login API. "
                     "Will retry on the next poll.",
                     response.status,
-                    self._username,
                 )
                 raise HelloFreshError(
                     f"HelloFresh login blocked by bot protection: HTTP {response.status}"
                 )
             _LOGGER.warning(
-                "HelloFresh login REJECTED HTTP %s for %s: %s",
+                "HelloFresh login REJECTED HTTP %s: %s",
                 response.status,
-                self._username,
                 error_body[:300],
             )
             raise HelloFreshAuthError(f"HelloFresh login failed: HTTP {response.status}")
