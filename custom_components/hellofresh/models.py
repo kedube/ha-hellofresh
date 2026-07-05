@@ -512,7 +512,7 @@ class HelloFreshFoodProfileOptions:
     meta: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, payload: dict[str, Any]) -> "HelloFreshFoodProfileOptions":
+    def from_api(cls, payload: dict[str, Any]) -> HelloFreshFoodProfileOptions:
         payload = payload or {}
         return cls(
             taste=dict(payload.get("taste") or {}),
@@ -545,7 +545,7 @@ class HelloFreshFoodProfile:
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, payload: dict[str, Any]) -> "HelloFreshFoodProfile":
+    def from_api(cls, payload: dict[str, Any]) -> HelloFreshFoodProfile:
         payload = payload or {}
         return cls(
             taste=dict(payload.get("taste") or {}),
@@ -589,7 +589,9 @@ class HelloFreshFoodProfile:
 
         goals = changes.get("goals")
         if isinstance(goals, dict):
-            patch["goals"] = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in goals.items()}
+            patch["goals"] = {
+                k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in goals.items()
+            }
 
         return patch
 
@@ -891,9 +893,7 @@ class HelloFreshAccountData:
             for order in self.orders
             if order.delivery_date is not None
             and order.delivery_date >= today
-            and not (
-                (week := self._weeks_by_id.get(order.week_id)) is not None and week.is_skipped
-            )
+            and not ((week := self._weeks_by_id.get(order.week_id)) is not None and week.is_skipped)
         ]
         self._next_order = self._upcoming_orders[0] if self._upcoming_orders else None
         tracked_orders = [
@@ -961,6 +961,7 @@ class HelloFreshAccountData:
             and order.delivery_date.isocalendar()[:2] == current_iso
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
+
         # The most recent DELIVERED week — its date drives the "Last delivery date" sensor.
         #
         # Prefer the dedicated past-deliveries history, but that endpoint also returns the
