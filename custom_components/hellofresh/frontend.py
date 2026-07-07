@@ -14,6 +14,7 @@ sensors/calendar/services work without the card.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -24,35 +25,37 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# All cards share the integration release version (manifest.json, bumped by the release
+# workflow) as their cache-busting ?v= query, so every release automatically invalidates
+# stale card JS without per-card manual bumps. The manifest is tiny and colocated, so a
+# read at import keeps the URL constants module-level.
+INTEGRATION_VERSION: str = json.loads(
+    (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+)["version"]
+
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
-# Bump when the card file changes so HA/browsers cache-bust the resource URL.
-CARD_VERSION = "0.29.0"
 MARKET_CARD_FILENAME = "hellofresh-market-card.js"
-MARKET_CARD_VERSION = "0.10.0"
 FOOD_PROFILE_CARD_FILENAME = "hellofresh-food-profile-card.js"
-FOOD_PROFILE_CARD_VERSION = "0.4.1"
 SCHEDULE_CARD_FILENAME = "hellofresh-schedule-card.js"
-SCHEDULE_CARD_VERSION = "0.1.0"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"
-CARD_URL_PATH = f"{WWW_URL_BASE}/{CARD_FILENAME}"
-CARD_RESOURCE_URL = f"{CARD_URL_PATH}?v={CARD_VERSION}"
-MARKET_CARD_URL_PATH = f"{WWW_URL_BASE}/{MARKET_CARD_FILENAME}"
-MARKET_CARD_RESOURCE_URL = f"{MARKET_CARD_URL_PATH}?v={MARKET_CARD_VERSION}"
-FOOD_PROFILE_CARD_URL_PATH = f"{WWW_URL_BASE}/{FOOD_PROFILE_CARD_FILENAME}"
-FOOD_PROFILE_CARD_RESOURCE_URL = f"{FOOD_PROFILE_CARD_URL_PATH}?v={FOOD_PROFILE_CARD_VERSION}"
-SCHEDULE_CARD_URL_PATH = f"{WWW_URL_BASE}/{SCHEDULE_CARD_FILENAME}"
-SCHEDULE_CARD_RESOURCE_URL = f"{SCHEDULE_CARD_URL_PATH}?v={SCHEDULE_CARD_VERSION}"
 # Public URL of the bundled HelloFresh logo, usable in picture/markdown cards.
 LOGO_URL_PATH = f"{WWW_URL_BASE}/hellofresh-logo.png"
 
 # Cards the integration ships and auto-registers: (filename, url_path, resource_url).
-_CARDS = (
-    (CARD_FILENAME, CARD_URL_PATH, CARD_RESOURCE_URL),
-    (MARKET_CARD_FILENAME, MARKET_CARD_URL_PATH, MARKET_CARD_RESOURCE_URL),
-    (FOOD_PROFILE_CARD_FILENAME, FOOD_PROFILE_CARD_URL_PATH, FOOD_PROFILE_CARD_RESOURCE_URL),
-    (SCHEDULE_CARD_FILENAME, SCHEDULE_CARD_URL_PATH, SCHEDULE_CARD_RESOURCE_URL),
+_CARDS = tuple(
+    (
+        filename,
+        f"{WWW_URL_BASE}/{filename}",
+        f"{WWW_URL_BASE}/{filename}?v={INTEGRATION_VERSION}",
+    )
+    for filename in (
+        CARD_FILENAME,
+        MARKET_CARD_FILENAME,
+        FOOD_PROFILE_CARD_FILENAME,
+        SCHEDULE_CARD_FILENAME,
+    )
 )
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
@@ -114,13 +117,59 @@ async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
         return
 
     existing = [
-        str(item.get("url", "")) for item in resources.async_items() if isinstance(item, dict)
+        (str(item.get("url", "")), item.get("id"))
+        for item in resources.async_items()
+        if isinstance(item, dict)
     ]
     for _filename, url_path, resource_url in _CARDS:
-        if any(url.startswith(url_path) for url in existing):
+        matches = [(url, item_id) for url, item_id in existing if url.startswith(url_path)]
+        if any(url == resource_url for url, _item_id in matches):
+            continue
+        if matches:
+            # Registered under a previous ?v= — update in place so the release's cache-bust
+            # actually reaches existing installs instead of only fresh ones.
+            stale_url, item_id = matches[0]
+            try:
+                await resources.async_update_item(item_id, {"url": resource_url})
+                _LOGGER.info(
+                    "Updated HelloFresh card resource %s -> %s", stale_url, resource_url
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "HelloFresh could not update card resource %s", resource_url
+                )
             continue
         try:
             await resources.async_create_item({"res_type": "module", "url": resource_url})
             _LOGGER.info("Registered HelloFresh card resource at %s", resource_url)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("HelloFresh could not auto-register card resource %s", resource_url)
+
+
+def async_get_frontend_diagnostics(hass: HomeAssistant) -> dict[str, object]:
+    """Return card-version info for the diagnostics export.
+
+    Compares the resource URLs this build expects (all stamped with the manifest version)
+    against what Lovelace actually has registered, so a stale ?v= — a user running an old
+    cached card — is visible straight from a diagnostics download.
+    """
+    registered: list[str] = []
+    lovelace = hass.data.get("lovelace")
+    resources = getattr(lovelace, "resources", None)
+    if resources is not None:
+        try:
+            registered = [
+                str(item.get("url", ""))
+                for item in resources.async_items()
+                if isinstance(item, dict)
+                and str(item.get("url", "")).startswith(f"{WWW_URL_BASE}/")
+            ]
+        except Exception:  # noqa: BLE001 - diagnostics must never fail the export
+            _LOGGER.debug("Could not read Lovelace resources for diagnostics")
+    return {
+        "integration_version": INTEGRATION_VERSION,
+        "expected_resources": {
+            filename: resource_url for filename, _url_path, resource_url in _CARDS
+        },
+        "registered_resources": registered,
+    }

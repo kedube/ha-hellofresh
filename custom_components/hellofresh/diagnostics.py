@@ -13,6 +13,7 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
 )
+from .frontend import async_get_frontend_diagnostics
 
 # async_redact_data scrubs these keys at ANY nesting depth, so listing a key name covers it
 # wherever it appears (entry data, serialized models, AND the debug_trace request-param blobs).
@@ -77,6 +78,9 @@ async def async_get_config_entry_diagnostics(
             "options": dict(config_entry.options),
         },
         "token_health": token_health,
+        # Expected card resource URLs (stamped with the release version) vs. what Lovelace
+        # actually has registered — a mismatch means the user is loading a stale cached card.
+        "frontend": async_get_frontend_diagnostics(hass),
         "runtime": {
             "account_id": getattr(data, "account_id", None),
             "subscription_id": getattr(data, "subscription_id", None),

@@ -21,7 +21,9 @@
  * directory, registered as a Lovelace resource by the integration at startup.
  */
 
-const CARD_VERSION = "0.29.0";
+// The integration stamps its release version onto the resource URL as ?v= (cache-bust),
+// so the banner reports exactly which build the browser actually loaded.
+const CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size

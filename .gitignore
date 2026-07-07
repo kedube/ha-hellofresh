@@ -16,3 +16,4 @@ env/
 dist/
 build/
 *.egg-info/
+uv.lock

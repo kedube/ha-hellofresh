@@ -19,7 +19,9 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const SCHEDULE_CARD_VERSION = "0.1.0";
+// The integration stamps its release version onto the resource URL as ?v= (cache-bust),
+// so the banner reports exactly which build the browser actually loaded.
+const SCHEDULE_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
 class HelloFreshScheduleCard extends HTMLElement {
   constructor() {
