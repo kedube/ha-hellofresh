@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 
 def _bump_minor(version: str) -> str:
