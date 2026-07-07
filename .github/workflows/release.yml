@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows:
       - CI
@@ -18,9 +19,12 @@ jobs:
   release:
     name: Bump manifest and publish release
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
 
     steps:
@@ -34,31 +38,54 @@ jobs:
         id: head_check
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           current_sha="$(git rev-parse origin/main)"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [ "$current_sha" = "$EXPECTED_SHA" ]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "release_action=bump" >> "$GITHUB_OUTPUT"
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous_sha="$(git rev-parse "$current_sha^")"
+          latest_subject="$(git log -1 --format=%s "$current_sha")"
+          if [ "$previous_sha" = "$EXPECTED_SHA" ] && [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]; then
+            echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "Skipping stale run for $EXPECTED_SHA because main is already at $current_sha."
-          echo "should_release=false" >> "$GITHUB_OUTPUT"
+          echo "release_action=skip" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
-        if: steps.head_check.outputs.should_release == 'true'
+        if: steps.head_check.outputs.release_action != 'skip'
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
       - name: Bump manifest version
-        if: steps.head_check.outputs.should_release == 'true'
+        if: steps.head_check.outputs.release_action == 'bump'
         id: bump
         run: |
           new_version="$(python .github/scripts/bump_manifest_version.py)"
           echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
 
+      - name: Read existing manifest version
+        if: steps.head_check.outputs.release_action == 'existing'
+        id: current_version
+        run: |
+          new_version="$(python -c 'import json; print(json.load(open("custom_components/hellofresh/manifest.json"))["version"])')"
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+
       - name: Commit release version
-        if: steps.head_check.outputs.should_release == 'true'
+        if: steps.head_check.outputs.release_action == 'bump'
         id: commit_release
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
@@ -70,15 +97,15 @@ jobs:
           echo "release_target=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Push release commit
-        if: steps.head_check.outputs.should_release == 'true'
+        if: steps.head_check.outputs.release_action == 'bump'
         run: git push origin HEAD:main
 
       - name: Create GitHub release
-        if: steps.head_check.outputs.should_release == 'true'
+        if: steps.head_check.outputs.release_action != 'skip'
         uses: actions/github-script@v9
         env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-          RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target }}
+          NEW_VERSION: ${{ steps.bump.outputs.new_version || steps.current_version.outputs.new_version }}
+          RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target || steps.head_check.outputs.release_target }}
         with:
           script: |
             const tag = process.env.NEW_VERSION

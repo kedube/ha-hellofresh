@@ -19,7 +19,7 @@ body:
     id: integration_version
     attributes:
       label: Integration version
-      placeholder: "0.1.0"
+      placeholder: "0.01"
     validations:
       required: true
   - type: dropdown
@@ -30,6 +30,30 @@ body:
         - HACS
         - Manual copy
         - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: region
+    attributes:
+      label: HelloFresh region
+      options:
+        - United States
+        - United Kingdom
+        - Canada
+        - Australia
+        - Germany
+        - Netherlands
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: auth_method
+    attributes:
+      label: Authentication method
+      options:
+        - Email and password
+        - Access token
+        - Not sure
     validations:
       required: true
   - type: textarea
@@ -56,6 +80,11 @@ body:
       label: Relevant log output
       description: Paste relevant Home Assistant logs or diagnostics with secrets removed.
       render: shell
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics export
+      description: If this involves parsing, menus, delivery data, or account state, attach a Home Assistant diagnostics export after reviewing it for private data.
   - type: textarea
     id: additional
     attributes:
