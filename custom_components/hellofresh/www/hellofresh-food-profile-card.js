@@ -24,7 +24,9 @@
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
 
-const FOOD_PROFILE_CARD_VERSION = "0.4.1";
+// The integration stamps its release version onto the resource URL as ?v= (cache-bust),
+// so the banner reports exactly which build the browser actually loaded.
+const FOOD_PROFILE_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
 // Sub-card titles, matching the labels HelloFresh's web food-profile page uses (which differ
 // from the raw API slugs, e.g. exclusions -> "Exclude", goals -> "Personal").
