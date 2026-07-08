@@ -1031,7 +1031,7 @@ The integration does not mirror every reverse-engineered endpoint as a separate 
 - `market_items[]` — the week's HelloFresh Market add-on catalog with selection state and prices
 - `order` — the week's matching order (tracking, status, carrier, `billed_total_price`), or `null`
 
-The top-level `account` object carries fallbacks like `selected_plan_total_price` (used by the meal card's order strip when a week isn't billed yet). Passing `include_debug: true` adds diagnostic sections (`variation_debug` per week, including market-selection field probing). This is the recorder-safe data path behind both packaged Lovelace cards — `custom:hellofresh-meal-planner-card` and `custom:hellofresh-market-card` — which call the service via `hass.callService(..., return_response=true)`. The cards are bundled in the integration's `www/` directory and auto-registered as Lovelace resources (see [Frontend assets](#frontend-assets)).
+The top-level `account` object carries fallbacks like `selected_plan_total_price` (used by the meal card's order strip when a week isn't billed yet). Passing `include_debug: true` adds diagnostic sections (`variation_debug` per week, including market-selection field probing). This is the recorder-safe data path behind the packaged Lovelace cards that render week data — `custom:hellofresh-meal-planner-card`, `custom:hellofresh-market-card`, and `custom:hellofresh-schedule-card` — which call the service via `hass.callService(..., return_response=true)` (the Food Profile card uses `get_food_profile`/`set_food_profile` instead). The cards are bundled in the integration's `www/` directory and auto-registered as Lovelace resources (see [Frontend assets](#frontend-assets)).
 
 Sensors backed by authenticated profile and history endpoints:
 
@@ -1090,10 +1090,12 @@ Entity behavior notes:
 
 ### Frontend assets
 
-The integration ships two custom Lovelace cards (`www/hellofresh-meal-planner-card.js` and `www/hellofresh-market-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
+The integration ships four custom Lovelace cards (`www/hellofresh-meal-planner-card.js`, `www/hellofresh-market-card.js`, `www/hellofresh-food-profile-card.js`, and `www/hellofresh-schedule-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
 
 - the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so each card is reachable at `/hellofresh/<filename>` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
-- in storage-mode dashboards each card URL is added to the Lovelace resource list automatically (versioned with a `?v=` query so a card update cache-busts); YAML-mode dashboards get a log line with the URLs to add manually
+- every card resource URL carries a `?v=` cache-bust stamped with the **integration release version** read from `manifest.json` (`INTEGRATION_VERSION`), so the release workflow's automatic manifest bump invalidates cached card JS on every release — there are no per-card version constants to maintain
+- in storage-mode dashboards each card URL is added to the Lovelace resource list automatically, and a resource already registered under an older `?v=` is **updated in place** so upgrades reach existing installs; YAML-mode dashboards get a log line with the exact URLs to add manually
+- each card's console startup banner reads its version from its own script URL (`import.meta.url` `?v=` param), so the banner reports exactly which build the browser loaded — the cards must remain ES modules for this to work
 - registration is best-effort and never blocks integration setup — the sensors/calendar/services work without the cards
 - because this uses `hass.http`, `http` is declared in `manifest.json`'s `dependencies`
 
@@ -1101,7 +1103,7 @@ The cards are pure read+write clients of existing services: they call `get_weeks
 
 ### Diagnostics redaction
 
-The config-entry diagnostics export ([diagnostics.py](custom_components/hellofresh/diagnostics.py)) serializes the redacted config entry, non-sensitive **token timing/health** (expiry timestamps and boolean `has_refresh_token` / `has_credentials` flags — **never the tokens themselves**), and the normalized account views (subscriptions, orders, weeks, public-menu weeks, capabilities, and the `debug_trace` of attempted endpoints).
+The config-entry diagnostics export ([diagnostics.py](custom_components/hellofresh/diagnostics.py)) serializes the redacted config entry, non-sensitive **token timing/health** (expiry timestamps and boolean `has_refresh_token` / `has_credentials` flags — **never the tokens themselves**), a **`frontend` block** (the integration release version, the card resource URLs this build expects, and the URLs actually registered in Lovelace — a `?v=` mismatch means the user is loading a stale cached card), and the normalized account views (subscriptions, orders, weeks, public-menu weeks, capabilities, and the `debug_trace` of attempted endpoints).
 
 Sensitive values are stripped by `async_redact_data(diagnostics, TO_REDACT)`, which redacts by **key name at any nesting depth**, so a redacted key is removed wherever it appears — including inside the `debug_trace` request params, which record full query strings. The redacted set covers:
 
@@ -1429,10 +1431,13 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 | [normalizers.py](custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
 | [coordinator.py](custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
 | [config_flow.py](custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
-| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the meal-planner Lovelace card |
+| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the four Lovelace cards, stamping each resource URL with the manifest release version (`?v=` cache-bust) and updating stale registrations |
 | [diagnostics.py](custom_components/hellofresh/diagnostics.py) | Config-entry diagnostics export with `TO_REDACT` key-name redaction (secrets, account IDs, PII) |
 | [tls_transport.py](custom_components/hellofresh/tls_transport.py) | `curl_cffi` Chrome-fingerprint transport for auth POSTs and data XHRs (with `verify=True`), `aiohttp` fallback |
-| [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals` |
+| [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals`, skip/unskip weeks |
+| [www/hellofresh-market-card.js](custom_components/hellofresh/www/hellofresh-market-card.js) | Packaged Lovelace card: browse and order Market add-ons via `get_weeks` + `select_market_items` |
+| [www/hellofresh-food-profile-card.js](custom_components/hellofresh/www/hellofresh-food-profile-card.js) | Packaged Lovelace card: view/edit meal-preselection preferences via `get_food_profile` + `set_food_profile` |
+| [www/hellofresh-schedule-card.js](custom_components/hellofresh/www/hellofresh-schedule-card.js) | Packaged Lovelace card: next-box summary and upcoming-week timeline via `get_weeks` (read-only) |
 | [const.py](custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds, history-window bounds (`DEFAULT/MIN/MAX_HISTORY_WEEKS`) |
 | [api.py](custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
 | [services.yaml](custom_components/hellofresh/services.yaml) | Service definitions |
