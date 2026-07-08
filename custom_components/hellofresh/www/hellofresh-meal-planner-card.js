@@ -243,7 +243,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // fall back to the same default before the first fetch resolves.
   _menuGraceWeeks() {
     const weeks = this._account && this._account.menu_grace_weeks;
-    return Number.isFinite(weeks) ? weeks : 1;
+    return Number.isFinite(weeks) ? weeks : 2;
   }
 
   // A week whose delivery date is more than the menu grace window before today (undated weeks
