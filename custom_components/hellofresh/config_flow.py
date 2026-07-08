@@ -19,6 +19,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_HISTORY_WEEKS,
+    CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_MINUTES,
@@ -28,11 +29,14 @@ from .const import (
     DEFAULT_COUNTRY,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
+    DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
     MAX_HISTORY_WEEKS,
+    MAX_MENU_GRACE_WEEKS,
     MAX_SCAN_INTERVAL_MINUTES,
     MIN_HISTORY_WEEKS,
+    MIN_MENU_GRACE_WEEKS,
     MIN_SCAN_INTERVAL_MINUTES,
 )
 from .parsers import token_payload_to_entry_data
@@ -356,8 +360,9 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
-                    # NumberSelector yields a float; store a clean int (whole weeks).
+                    # NumberSelector yields a float; store a clean int (whole weeks/days).
                     CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
+                    CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
                 },
             )
 
@@ -390,6 +395,21 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                         NumberSelectorConfig(
                             min=MIN_HISTORY_WEEKS,
                             max=MAX_HISTORY_WEEKS,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="weeks",
+                        )
+                    ),
+                    vol.Required(
+                        CONF_MENU_GRACE_WEEKS,
+                        default=self.config_entry.options.get(
+                            CONF_MENU_GRACE_WEEKS,
+                            DEFAULT_MENU_GRACE_WEEKS,
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_MENU_GRACE_WEEKS,
+                            max=MAX_MENU_GRACE_WEEKS,
                             step=1,
                             mode=NumberSelectorMode.BOX,
                             unit_of_measurement="weeks",

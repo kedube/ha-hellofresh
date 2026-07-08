@@ -237,12 +237,26 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Boolean(week) && String(week.status || "").toUpperCase() === "PAUSED";
   }
 
-  // A week whose delivery date is before today (undated weeks are not treated as past).
+  // The menu grace window in whole weeks: how long after its delivery date a week keeps its
+  // full browsable menu. The integration reports its configured value (the "Full menu after
+  // delivery" option, DEFAULT_MENU_GRACE_WEEKS in const.py) on the get_weeks account payload;
+  // fall back to the same default before the first fetch resolves.
+  _menuGraceWeeks() {
+    const weeks = this._account && this._account.menu_grace_weeks;
+    return Number.isFinite(weeks) ? weeks : 1;
+  }
+
+  // A week whose delivery date is more than the menu grace window before today (undated weeks
+  // are not treated as past). Mirrors the integration's gating: a just-delivered week still
+  // carries its full browsable menu (with the delivered meals marked selected), so it keeps
+  // the filter bar and browsable rendering; only older weeks render as delivered-only
+  // history. Editability is unaffected — that's gated by allowed_actions/cutoff.
   _isPast(week) {
     if (!week || !week.delivery_date) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return Date.parse(week.delivery_date) < today.getTime();
+    const graceMs = this._menuGraceWeeks() * 7 * 24 * 60 * 60 * 1000;
+    return Date.parse(week.delivery_date) < today.getTime() - graceMs;
   }
 
   // Move the cursor to an index, render, and (unless syncing FROM another card) broadcast the

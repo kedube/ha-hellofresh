@@ -60,11 +60,13 @@
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
           "history_weeks": "Past delivery history (weeks)",
+          "menu_grace_weeks": "Full menu history (weeks)",
           "enable_public_menu_fallback": "Use public menu fallback"
         },
         "data_description": {
           "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
           "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
+          "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 1 (the previous week stays browsable until the next box). 0 turns the grace window off. Values past 1 rarely help — HelloFresh stops publishing the menu for older weeks. Changing this reloads the integration.",
           "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data."
         }
       }

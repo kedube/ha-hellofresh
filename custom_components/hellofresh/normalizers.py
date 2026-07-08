@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from .const import DEFAULT_MENU_GRACE_WEEKS
 from .models import (
     HelloFreshMarketItem,
     HelloFreshOrder,
@@ -544,8 +545,7 @@ class HelloFreshPayloadNormalizer:
             if items:
                 week.market_items = items
 
-    @staticmethod
-    def _clear_paused_week_selection(weeks: Sequence[HelloFreshWeek]) -> None:
+    def _clear_paused_week_selection(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Clear phantom selections on paused/skipped weeks — nothing was ever delivered.
 
         A paused/skipped week's menu still carries the system's auto-fill picks
@@ -555,15 +555,18 @@ class HelloFreshPayloadNormalizer:
         For a PAST paused/skipped week the planning-menu catalog (which can be the full selectable
         menu — hundreds of meals) is also meaningless: the week never shipped and can't be edited,
         so it must show an empty meal list, not a flood. Drop its recipes entirely. A FUTURE
-        paused week keeps its catalog so it stays browsable if the customer un-pauses. Market
-        items are left alone — pausing meals is independent of add-ons.
+        paused week keeps its catalog so it stays browsable if the customer un-pauses — as does a
+        week still inside the menu grace window (``menu_grace_weeks``), where the catalog is
+        the real published menu, matching the grace treatment of shipped weeks. Market items
+        are left alone — pausing meals is independent of add-ons.
         """
         today = datetime.now(UTC).date()
+        grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for week in weeks:
             is_paused = (week.status or "").strip().upper() == "PAUSED"
             if not (is_paused or week.is_skipped):
                 continue
-            is_past = week.delivery_date is not None and week.delivery_date < today
+            is_past = week.delivery_date is not None and week.delivery_date < grace_floor
             if is_past:
                 week.recipes = []
             else:
@@ -850,6 +853,20 @@ class HelloFreshPayloadNormalizer:
     def _history_weeks(self) -> int:
         """Configured history lookback in weeks (falls back to the class default)."""
         return getattr(self, "_history_lookback_weeks", None) or self._HISTORY_LOOKBACK_WEEKS
+
+    @property
+    def menu_grace_weeks(self) -> int:
+        """Configured menu grace window in whole weeks (falls back to the const default).
+
+        Weeks after its delivery date that a week keeps its full browsable menu (with the
+        delivered meals overlaid as the selection) before collapsing to delivered-only. The
+        instance value ``self._menu_grace_weeks_option`` is set from the user option
+        (DEFAULT_MENU_GRACE_WEEKS in const.py); 0 is a valid value (grace disabled), so only
+        None falls back. Public because the ``get_weeks`` service exposes it to the
+        meal-planner card, which mirrors the same window in its past-week gating.
+        """
+        option = getattr(self, "_menu_grace_weeks_option", None)
+        return DEFAULT_MENU_GRACE_WEEKS if option is None else option
 
     # How many weeks ahead to request deliveries for. HelloFresh schedules deliveries further out
     # than it publishes *menus*, so reaching a bit past the menu horizon is fine — weeks beyond the
@@ -1267,14 +1284,15 @@ class HelloFreshPayloadNormalizer:
             past_by_week_id[past_week.week_id] = past_week
 
         today = datetime.now(UTC).date()
+        grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for account_week in account_weeks:
-            # Only replace recipes for weeks that are actually in the PAST. The deliveries/
-            # past-deliveries endpoints can surface the current week (once its cutoff passes it
-            # starts reporting as "delivered"), and replacing a current/future week's full
-            # browsable menu with just the delivered/selected meals would strip its menu so the
-            # customer can no longer see or change their options. A week with no delivery_date, or
-            # one dated today or later, is current/future — leave its menu intact. Use UTC to
-            # match the rest of this module's past/future gating (models.is_editable, etc.).
+            # Only touch weeks that are actually in the PAST. The deliveries/past-deliveries
+            # endpoints can surface the current week (once its cutoff passes it starts reporting
+            # as "delivered"), and replacing a current/future week's full browsable menu with
+            # just the delivered/selected meals would strip its menu so the customer can no
+            # longer see or change their options. A week with no delivery_date, or one dated
+            # today or later, is current/future — leave its menu intact. Use UTC to match the
+            # rest of this module's past/future gating (models.is_editable, etc.).
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
@@ -1294,13 +1312,30 @@ class HelloFreshPayloadNormalizer:
             if not delivered:
                 continue
 
-            # A past week shows exactly the meals that were DELIVERED. We deliberately do NOT keep
-            # whatever the planning-menu endpoint attached as a "browsable catalog": for an old
-            # week HelloFresh has no real menu, so it returns a bloated multi-week AGGREGATE
-            # (~1000+ dishes spanning many weeks), and there is no reliable structural signal to
-            # tell that apart from a genuine per-week menu (only fragile size heuristics). Rather
-            # than risk flooding a past week with meals that were never available that week, the
-            # delivered set (from past-deliveries, with images) is authoritative and replaces it.
+            # A week within the menu grace window (delivered less than menu_grace_weeks ago)
+            # keeps its full browsable catalog: HelloFresh still publishes the REAL menu for the
+            # immediately previous week, and the per-week fetch validated the payload's week id,
+            # so the catalog is trustworthy. Delivered history stays the source of truth for the
+            # SELECTION — overlay it onto the catalog rather than trusting the menu's own flags.
+            # A recent week whose menu fetch was rejected (no catalog) falls through to the
+            # delivered-only replacement below, same as an old week.
+            if account_week.delivery_date >= grace_floor and account_week.recipes:
+                self._overlay_delivered_selection(account_week, delivered)
+                account_week.menu_title = account_week.menu_title or past_week.menu_title
+                account_week.meals_selected = past_week.meals_selected or len(delivered)
+                account_week.meals_required = (
+                    past_week.meals_required or account_week.meals_required
+                )
+                continue
+
+            # An OLDER past week shows exactly the meals that were DELIVERED. We deliberately do
+            # NOT keep whatever the planning-menu endpoint attached as a "browsable catalog": for
+            # an old week HelloFresh has no real menu, so it returns a bloated multi-week
+            # AGGREGATE (~1000+ dishes spanning many weeks), and there is no reliable structural
+            # signal to tell that apart from a genuine per-week menu (only fragile size
+            # heuristics). Rather than risk flooding a past week with meals that were never
+            # available that week, the delivered set (from past-deliveries, with images) is
+            # authoritative and replaces it.
             for recipe in delivered:
                 recipe.is_selected = True
             account_week.recipes = delivered
@@ -1312,6 +1347,39 @@ class HelloFreshPayloadNormalizer:
             )
 
         return list(account_weeks)
+
+    @staticmethod
+    def _overlay_delivered_selection(
+        account_week: HelloFreshWeek,
+        delivered: Sequence[HelloFreshRecipe],
+    ) -> None:
+        """Mark exactly the delivered meals as selected within a week's browsable catalog.
+
+        Used for past weeks inside the menu grace window, where the full catalog is kept but
+        the menu payload's own selection flags can't be trusted for a shipped week (they revert
+        to the system's auto-fill view). Clears every selection flag, then re-selects catalog
+        entries matching a delivered meal by recipe id, falling back to a case-insensitive name
+        match (past-deliveries ids don't always line up with menu ids). A delivered meal with no
+        catalog match at all is appended, so what shipped is always visible.
+        """
+        catalog_by_id = {recipe.recipe_id: recipe for recipe in account_week.recipes}
+        catalog_by_name: dict[str, HelloFreshRecipe] = {}
+        for recipe in account_week.recipes:
+            recipe.is_selected = False
+            recipe.selected_quantity = None
+            if recipe.name:
+                catalog_by_name.setdefault(recipe.name.strip().casefold(), recipe)
+
+        for delivered_recipe in delivered:
+            match = catalog_by_id.get(delivered_recipe.recipe_id)
+            if match is None and delivered_recipe.name:
+                match = catalog_by_name.get(delivered_recipe.name.strip().casefold())
+            if match is None:
+                delivered_recipe.is_selected = True
+                account_week.recipes.append(delivered_recipe)
+                continue
+            match.is_selected = True
+            match.selected_quantity = delivered_recipe.selected_quantity
 
     def _delivered_meals_only(
         self,
