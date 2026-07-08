@@ -43,6 +43,21 @@ DEFAULT_HISTORY_WEEKS = 26
 MIN_HISTORY_WEEKS = 1
 MAX_HISTORY_WEEKS = 104
 
+# How many weeks after its delivery date a week keeps its full browsable menu instead of
+# collapsing to delivered-meals-only (whole weeks — HelloFresh's natural unit). HelloFresh
+# still publishes the real menu for the current and immediately previous weeks, so within
+# this window the validated per-week menu stays visible (with the delivered meals overlaid
+# as the selection); older weeks show only what shipped, since their "menu" from the API is
+# an unusable multi-week aggregate. User option like history_weeks; 0 disables the grace
+# entirely (past weeks always delivered-only). The meal-planner card reads the configured
+# value from the get_weeks account payload. Values past ~2 weeks buy little: HelloFresh
+# stops serving a real menu for older weeks, whose fetch then fails validation and the week
+# falls back to delivered-only anyway.
+CONF_MENU_GRACE_WEEKS = "menu_grace_weeks"
+DEFAULT_MENU_GRACE_WEEKS = 1
+MIN_MENU_GRACE_WEEKS = 0
+MAX_MENU_GRACE_WEEKS = 3
+
 PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,

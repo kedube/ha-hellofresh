@@ -105,6 +105,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         password: str | None = None,
         enable_public_menu_fallback: bool = True,
         history_weeks: int | None = None,
+        menu_grace_weeks: int | None = None,
         token_refresh_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Initialize the client."""
@@ -112,6 +113,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self._country = country
         # How many weeks of past history to fetch/browse. None -> the normalizer default.
         self._history_lookback_weeks = history_weeks
+        # How many weeks a just-delivered week keeps its full menu. None -> normalizer default.
+        self._menu_grace_weeks_option = menu_grace_weeks
         self._base_url = COUNTRY_BASE_URLS.get(country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY])
         # All access/refresh token state and the /gw login/refresh calls live in the
         # TokenManager (composition, not inheritance). The client reads the current token /

@@ -16,6 +16,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
   - [Supported regions](#supported-regions)
 - [What It Provides](#what-it-provides)
   - [Entities](#entities) — full reference in [docs/entities.md](docs/entities.md)
+  - [Automation ideas](#automation-ideas)
 - [HelloFresh Dashboard](#hellofresh-dashboard)
   - [Meal planner card](#meal-planner-card)
   - [Market card](#market-card)
@@ -109,6 +110,7 @@ The available options are:
 - **Refresh interval (minutes)** — how often account data is polled. Default is **180**; allowed range is **5–1440**. (This is the data-refresh cadence; the bearer token is refreshed on its own faster-running schedule regardless of this value.)
 - **Use public menu fallback** — when authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.
 - **Weeks of past history to load** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
+- **Full menu history (weeks)** — how long after its delivery date a week keeps its **full browsable menu** in the meal-planner card (with your delivered meals highlighted) before collapsing to just the delivered meals. Default is **1 week** (the previous week stays browsable until the next box arrives); allowed range is **0–3**, where **0** turns the grace window off entirely. Values past 1 rarely add anything — HelloFresh stops publishing the real menu for older weeks, and a week whose menu can't be validated falls back to delivered-only automatically. Changing it reloads the integration.
 
 ### Supported regions
 
@@ -150,7 +152,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 ### Services
 
 - `hellofresh.refresh_data` — refresh account data immediately, outside the normal polling interval
-- `hellofresh.get_weeks` — **returns a response**: delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, and the variant modifier (`variation_title`, e.g. "2x Bacon"); each week also includes its `market_items` (HelloFresh Market add-ons) and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner card](#meal-planner-card) and [Market card](#market-card).
+- `hellofresh.get_weeks` — **returns a response**: delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, and the variant modifier (`variation_title`, e.g. "2x Bacon"); each week also includes its `market_items` (HelloFresh Market add-ons) and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner](#meal-planner-card), [Market](#market-card), and [Schedule](#schedule-card) cards.
 - `hellofresh.select_meals` — set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's HAR-verified cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals)
 - `hellofresh.select_market_items` — set the HelloFresh Market add-on (extras) selection for a week (`week_id` + a `quantities` map of market item id/sku/index → quantity; 0 removes an item); writes the cart's `extras`, preserving the week's meal selection
 - `hellofresh.skip_week` — skip a chosen delivery week so no box ships
@@ -165,6 +167,49 @@ When multiple HelloFresh accounts are configured, service calls can target a spe
 For an interactive alternative to calling these services by hand, the [Meal planner card](#meal-planner-card) drives `select_meals`, `skip_week`, and `unskip_week`, the [Market card](#market-card) drives `select_market_items`, and the [Food Profile card](#food-profile-card) drives `get_food_profile`/`set_food_profile`, all from the dashboard. The `switch.skip_next_modifiable_week` entity (**Skip next selectable delivery week**) also skips/restores the next modifiable week with a single toggle.
 
 Write actions (meal/market selection, skip/unskip) use the website's verified endpoints first and stop with a clear error — raising a Repairs issue — rather than guessing; see [Current Scope](#current-scope).
+
+### Automation ideas
+
+Entity IDs below use a `hellofresh_us` prefix as the example — substitute your own (it comes from your config-entry title; see [docs/entities.md](docs/entities.md)).
+
+**Remind me to pick meals before the cutoff.** `binary_sensor.needs_meal_selection` turns on when any upcoming week still needs your attention (HelloFresh auto-picked it, or it has too few meals); pairing it with the selection-deadline sensor puts the actual cutoff in the message:
+
+```yaml
+automation:
+  - alias: "HelloFresh: meal selection reminder"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.hellofresh_us_needs_meal_selection
+        to: "on"
+    actions:
+      - action: notify.mobile_app_your_phone
+        data:
+          title: "Pick your HelloFresh meals"
+          message: >-
+            HelloFresh chose meals for an upcoming week. Review them before
+            {{ as_timestamp(states('sensor.hellofresh_us_next_selectable_delivery_selection_deadline'))
+               | timestamp_custom('%A %-I:%M %p') }}.
+```
+
+**Tell me when the box is out for delivery.** The tracked-shipment status follows the carrier feed:
+
+```yaml
+automation:
+  - alias: "HelloFresh: box on the way"
+    triggers:
+      - trigger: state
+        entity_id: sensor.hellofresh_us_shipment_tracking_status
+        to: "Out for delivery"
+    actions:
+      - action: notify.mobile_app_your_phone
+        data:
+          title: "HelloFresh is out for delivery"
+          message: >-
+            Box {{ states('sensor.hellofresh_us_shipment_tracking_number') }} is out
+            for delivery ({{ states('sensor.hellofresh_us_tracked_shipment_carrier') }}).
+```
+
+Other useful triggers: the `calendar.delivery_schedule` entity for day-of-delivery automations, `sensor.next_selection_deadline` (a timestamp) with a time-based trigger for "24 hours before cutoff" reminders, and `binary_sensor.payload_shape_changed` to get notified if a HelloFresh site change breaks parsing.
 
 ## HelloFresh Dashboard
 
@@ -194,11 +239,11 @@ type: custom:hellofresh-meal-planner-card
 What it does:
 
 - **Week cursor** (‹ ›) across past, current, and upcoming weeks, **opening on the current week** by date. A **Current Week** button jumps back to it, and the header shows the delivery date plus how far off it is (e.g. `Mon, Jul 6 · in 3 days`).
-- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **meal count** is shown alongside your plan's meal count (e.g. `2 meals (plan: 3)` when you've resized the week). The grid is **sorted** so your selected meals lead, and the remaining menu is grouped by dish so a meal's variants sit together. For **past** weeks the card shows **only the meals that were actually delivered** (sourced from delivery history, all flagged selected) — not the planning menu's browsable catalog or its auto-fill — and **paused/skipped** past weeks correctly show no meals since nothing shipped. A full calendar year of past boxes is browsable.
+- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **meal count** is shown alongside your plan's meal count (e.g. `2 meals (plan: 3)` when you've resized the week). The grid is **sorted** so your selected meals lead, and the remaining menu is grouped by dish so a meal's variants sit together. A **just-delivered week keeps its full browsable menu for a week** after the delivery date (configurable via the [**Full menu history** option](#options)) — the menu HelloFresh actually published for it, with the delivered meals marked ✓ — so the "current" week doesn't collapse the day after the box arrives. For **older past** weeks the card shows **only the meals that were actually delivered** (sourced from delivery history, all flagged selected) — not the planning menu's browsable catalog or its auto-fill — and **paused/skipped** past weeks correctly show no meals since nothing shipped. A full calendar year of past boxes is browsable.
 - **Variant differentiation** — when HelloFresh lists the same dish in several forms, the tile calls out exactly what differs: the modifier (e.g. "2x Bacon", "Gluten-Free Linguine"), any per-serving surcharge, and protein/calorie deltas. The plain, unmodified base option in such a set carries no modifier label. Genuinely identical duplicate listings are collapsed into a single tile.
 - **Edit, quantity & save** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): tap recipes to build a pending selection, use the **− N +** stepper to set per-meal servings (a doubled portion fills two box slots), then **Save selection** submits it via `hellofresh.select_meals` and re-reads to confirm (**Cancel** discards the edit). You can choose **more or fewer** distinct meals than your plan — the box **resizes** for that week (and HelloFresh reprices it accordingly), down to a minimum of **2 meals**. While the selection saves, a "Please wait while saving selections…" banner is shown, and afterward the card stays on the week you edited. Locked/past weeks render read-only.
 - **Order strip** at the top of each week showing that week's order detail (status, carrier, tracking number/link, billed total, order ID), falling back to the standing plan price for weeks not yet billed.
-- **Meal filters** (current & upcoming weeks) — a filter bar to narrow the menu by **protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear) and to **hide variants** so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Your currently selected meals always stay visible regardless of the filter. The bar is hidden on past weeks (which just show what was delivered).
+- **Meal filters** (current & upcoming weeks) — a filter bar to narrow the menu by **protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear) and to **hide variants** so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Your currently selected meals always stay visible regardless of the filter. The bar is hidden on weeks past the [**Full menu history** window](#options) (which just show what was delivered); a just-delivered week still has its full menu, so it keeps the filters.
 - **Week actions** — a **Show selected only** toggle (hide everything but your picks), **Skip / Unskip** the displayed week, a **refresh** button, and a banner summarizing any weeks that still need a selection (tap it to jump to the first one). Filter and view choices are remembered across weeks and reloads.
 - **Week stays in sync with the Market card** — navigating to a week here moves the [Market card](#market-card) to the same week (and vice versa), even when the two cards are on different dashboard views. The selected week is remembered across reloads and tab switches.
 
@@ -292,7 +337,7 @@ What works:
 - account profile metrics such as delivered box counts when exposed by authenticated profile endpoints
 - delivered-week history summaries from authenticated past-delivery endpoints, covering a full calendar year of past boxes
 - richer recipe parsing including nutrition, image, tag, and per-recipe selection metadata from the authenticated menu, with `course_index` for round-tripping selections
-- per-week meal-selection state (which recipes you've chosen) that reflects your actual picks: for current/upcoming weeks from the authenticated menu's cart quantities, and for **past** weeks from the meals that were actually delivered (so old weeks aren't shown with the system's auto-fill placeholders, and paused weeks correctly show no selection)
+- per-week meal-selection state (which recipes you've chosen) that reflects your actual picks: for current/upcoming weeks from the authenticated menu's cart quantities, and for **past** weeks from the meals that were actually delivered (so old weeks aren't shown with the system's auto-fill placeholders, and paused weeks correctly show no selection). Recently delivered weeks keep their **full browsable menu** for the configurable [**Full menu history** window](#options), with the delivered meals overlaid as the selection
 - authenticated menu API attempts before falling back to public HTML scraping
 - shipment tracking extraction and SCM enrichment when the payload includes carrier, parcel, or HelloFresh tracking-page details
 - public menu scraping from the regional `/menus` page
@@ -334,7 +379,7 @@ HelloFresh's website fronts its login with Cloudflare bot protection that someti
 The integration couldn't load structured menu data from the authenticated API and fell back to scraping the public menu page. Delivery tracking still works; recipe details may be less complete until the API payload is recognized again.
 
 **A past week shows the wrong meals selected (or a paused week shows meals).**
-For weeks that already shipped, the selection is taken from your **delivery history**, not the editable menu, because the menu reports the system's auto-fill picks for old weeks. A paused week shipped nothing, so it shows no selection. The integration browses a full calendar year of history; weeks older than that aren't available. If a recent past week still looks wrong, attach a [diagnostics export](#diagnostics) to a GitHub issue.
+For weeks that already shipped, the selection is taken from your **delivery history**, not the editable menu, because the menu reports the system's auto-fill picks for old weeks. Within the [**Full menu history** window](#options) (1 week by default) the full published menu is still shown, with your delivered meals highlighted; older weeks show just the delivered meals. A paused week shipped nothing, so it shows no selection. The integration browses a full calendar year of history; weeks older than that aren't available. If a recent past week still looks wrong, attach a [diagnostics export](#diagnostics) to a GitHub issue.
 
 **A "payload shape changed" Repairs issue appears.**
 HelloFresh returned account data the integration couldn't fully parse — usually a sign the website changed. Attaching a [diagnostics export](#diagnostics) to a GitHub issue is the most helpful thing you can do here.
@@ -396,10 +441,7 @@ It also includes:
 - a full [entity reference](docs/entities.md) under `docs/`
 - a documented [quality-scale target](QUALITY_SCALE.md)
 
-Recent local verification included:
-
-- `python3 -m pytest -q`
-- `python3 -m compileall custom_components/hellofresh`
+Version history: each push to `main` publishes a tagged release with generated notes — see the [Releases page](https://github.com/kedube/ha-hellofresh/releases). The installed version appears in `manifest.json`, under **Settings → Devices & services → HelloFresh**, and stamped as `?v=` on the card resource URLs (see [Diagnostics](#diagnostics)).
 
 ## References
 

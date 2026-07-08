@@ -34,6 +34,7 @@ from .const import (
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
     CONF_ISSUED_AT,
+    CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_EXPIRES_IN,
     CONF_REFRESH_TOKEN,
@@ -43,6 +44,7 @@ from .const import (
     CONF_USERNAME,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
+    DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
     PLATFORMS,
@@ -280,6 +282,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
         ),
         history_weeks=entry.options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
+        menu_grace_weeks=entry.options.get(CONF_MENU_GRACE_WEEKS, DEFAULT_MENU_GRACE_WEEKS),
         token_refresh_callback=_persist_refreshed_token,
     )
     coordinator = HelloFreshDataUpdateCoordinator(
@@ -406,10 +409,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             return payload
 
         # Account-level fallback fields the card can use when a week has no billed order yet —
-        # e.g. the recurring plan total (matches the selected_plan_total_price sensor).
+        # e.g. the recurring plan total (matches the selected_plan_total_price sensor). Also
+        # carries the configured menu grace window so the card's past-week gating matches the
+        # integration's (a just-delivered week keeps its browsable menu for this many weeks).
         account = {
             "selected_plan_total_price": data.selected_plan_total_price,
             "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
+            "menu_grace_weeks": coordinator.client.menu_grace_weeks,
         }
 
         if service_call.data.get("include_debug"):

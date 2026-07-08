@@ -1995,8 +1995,7 @@ def test_paused_week_has_no_selected_meals() -> None:
     can't be edited, so its catalog (which can be the whole selectable menu) is dropped entirely
     — it must show an empty meal list, not a flood.
     """
-    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
-
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     paused = HelloFreshWeek(
         week_id="2024-W24",
         display_name="Paused Week",
@@ -2036,9 +2035,7 @@ def test_paused_week_has_no_selected_meals() -> None:
         recipes=[HelloFreshRecipe(recipe_id="x", name="Chosen", is_selected=True)],
     )
 
-    HelloFreshPayloadNormalizer._clear_paused_week_selection(
-        [paused, past_paused, past_skipped, active]
-    )
+    client._clear_paused_week_selection([paused, past_paused, past_skipped, active])
 
     # Undated paused: catalog intact, nothing selected.
     assert [r.name for r in paused.recipes] == ["Auto A", "Auto B", "Browse C"]
@@ -2559,11 +2556,13 @@ def test_merge_past_delivery_clears_preselected_flag() -> None:
 
 
 def test_merge_past_delivery_shows_only_delivered_replacing_any_catalog() -> None:
-    """A past week shows ONLY the delivered meals, replacing any attached menu catalog.
+    """A past week older than the grace window shows ONLY the delivered meals.
 
-    Whatever the planning-menu endpoint attached is discarded for history: for an old week it is
-    a bloated multi-week aggregate, and there's no reliable way to tell that from a real per-week
-    menu, so we never keep it. Past-deliveries (with images) is authoritative and replaces it.
+    Whatever the planning-menu endpoint attached is discarded for old history: beyond the
+    menu grace window it can be a bloated multi-week aggregate, and there's no reliable way to
+    tell that from a real per-week menu, so we never keep it. Past-deliveries (with images) is
+    authoritative and replaces it. (Weeks inside the grace window instead keep their catalog
+    with the delivered meals overlaid — see the grace-window tests.)
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     past_account_week = HelloFreshWeek(
@@ -2642,6 +2641,253 @@ def test_merge_past_delivery_shows_delivered_only_without_menu_catalog() -> None
     assert all(r.is_selected for r in week.recipes)
     assert all(r.image_url for r in week.recipes)
     assert week.meals_selected == 3
+
+
+def test_merge_past_delivery_grace_window_keeps_catalog_with_delivered_overlay() -> None:
+    """A week delivered within the grace window keeps its full menu; delivered meals overlay it.
+
+    HelloFresh still publishes the real menu for the immediately previous week, so instead of
+    collapsing it to delivered-only, the browsable catalog is kept and the delivered history
+    (the selection source of truth) is overlaid: the menu's own stale selection flags are
+    cleared, catalog entries matching a delivered meal — by id, or by name when ids differ —
+    are re-selected, and a delivered meal missing from the catalog is appended.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = datetime.now(timezone.utc).date()
+    recent_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(days=3),
+        meals_preselected=True,
+        recipes=[
+            # Stale menu flag: the menu marks a meal the customer never got (auto-fill view).
+            HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A", is_selected=True, course_index=0),
+            HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B", course_index=1),
+            HelloFreshRecipe(recipe_id="m-3", name="Menu Dish C", course_index=2),
+            HelloFreshRecipe(recipe_id="m-4", name="Menu Dish D", course_index=3),
+        ],
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=2,
+        recipes=[
+            # Matches m-2 by id; a doubled portion whose quantity must carry over.
+            HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B", selected_quantity=2),
+            # Different id than the catalog's m-3 — must match by name instead.
+            HelloFreshRecipe(recipe_id="hist-3", name="Menu Dish C"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[recent_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    # Full catalog preserved (not collapsed to the 2 delivered meals).
+    assert [r.name for r in week.recipes] == [
+        "Menu Dish A",
+        "Menu Dish B",
+        "Menu Dish C",
+        "Menu Dish D",
+    ]
+    # Exactly the delivered meals are selected; the menu's stale flag on A is cleared.
+    assert [r.name for r in week.recipes if r.is_selected] == ["Menu Dish B", "Menu Dish C"]
+    by_id = {r.recipe_id: r for r in week.recipes}
+    assert by_id["m-2"].selected_quantity == 2
+    assert week.meals_selected == 2
+    assert week.meals_preselected is False
+
+
+def test_merge_past_delivery_grace_window_appends_unmatched_delivered_meal() -> None:
+    """A delivered meal absent from the kept catalog is appended, selected — never hidden."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = datetime.now(timezone.utc).date()
+    recent_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(days=2),
+        recipes=[HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A", course_index=0)],
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="hist-9", name="Off-Menu Special")],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[recent_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    assert [r.name for r in week.recipes] == ["Menu Dish A", "Off-Menu Special"]
+    assert [r.name for r in week.recipes if r.is_selected] == ["Off-Menu Special"]
+
+
+def test_merge_past_delivery_grace_window_without_catalog_shows_delivered_only() -> None:
+    """A recent week whose menu fetch yielded nothing falls back to delivered-only.
+
+    The grace window only keeps a catalog that actually exists (the per-week menu fetch
+    validated its week id). When the endpoint rejected/returned nothing, the week has no
+    recipes of its own, so it gets the plain delivered-only fill — same as an old week.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = datetime.now(timezone.utc).date()
+    recent_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(days=3),
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Last Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        meals_selected=2,
+        recipes=[
+            HelloFreshRecipe(recipe_id="d-1", name="Delivered A"),
+            HelloFreshRecipe(recipe_id="d-2", name="Delivered B"),
+        ],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[recent_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    assert [r.name for r in week.recipes] == ["Delivered A", "Delivered B"]
+    assert all(r.is_selected for r in week.recipes)
+
+
+def test_merge_past_delivery_older_than_grace_replaces_catalog() -> None:
+    """A week just OUTSIDE the grace window still collapses to delivered-only.
+
+    Boundary check for the default grace window: one day past it, the attached catalog (which
+    for old weeks can be an untrustworthy aggregate) is discarded in favor of what shipped.
+    """
+    from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
+
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = datetime.now(timezone.utc).date()
+    old_week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Older Week",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(weeks=DEFAULT_MENU_GRACE_WEEKS, days=1),
+        recipes=[
+            HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A"),
+            HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B"),
+            HelloFreshRecipe(recipe_id="m-3", name="Menu Dish C"),
+        ],
+    )
+    delivered_week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Older Week",
+        subscription_id="6959884",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="d-1", name="Delivered A")],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[old_week],
+        past_delivery_weeks=[delivered_week],
+    )
+
+    week = merged[0]
+    assert [r.name for r in week.recipes] == ["Delivered A"]
+    assert week.recipes[0].is_selected is True
+
+
+def test_menu_grace_weeks_option_is_honored() -> None:
+    """The grace window follows the menu_grace_weeks option, not the built-in default.
+
+    0 disables the grace entirely (yesterday's week collapses to delivered-only despite its
+    catalog); a raised value keeps a week browsable that the 1-week default would collapse.
+    None (option unset) falls back to DEFAULT_MENU_GRACE_WEEKS.
+    """
+    from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
+
+    today = datetime.now(timezone.utc).date()
+
+    def _week_pair(days_ago: int) -> tuple[HelloFreshWeek, HelloFreshWeek]:
+        account_week = HelloFreshWeek(
+            week_id="2026-W27",
+            display_name="Week",
+            subscription_id="6959884",
+            delivery_date=today - timedelta(days=days_ago),
+            recipes=[
+                HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A"),
+                HelloFreshRecipe(recipe_id="m-2", name="Menu Dish B"),
+            ],
+        )
+        delivered_week = HelloFreshWeek(
+            week_id="2026-W27",
+            display_name="Week",
+            subscription_id="6959884",
+            source="past_deliveries",
+            recipes=[HelloFreshRecipe(recipe_id="m-1", name="Menu Dish A")],
+        )
+        return account_week, delivered_week
+
+    # Grace disabled: even yesterday's week is delivered-only.
+    client = HelloFreshClient(session=None, menu_grace_weeks=0)  # type: ignore[arg-type]
+    assert client.menu_grace_weeks == 0
+    account_week, delivered_week = _week_pair(days_ago=1)
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week], past_delivery_weeks=[delivered_week]
+    )
+    assert [r.name for r in merged[0].recipes] == ["Menu Dish A"]
+
+    # Raised window: a 10-day-old week (past the 1-week default) keeps its catalog.
+    client = HelloFreshClient(session=None, menu_grace_weeks=2)  # type: ignore[arg-type]
+    account_week, delivered_week = _week_pair(days_ago=10)
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week], past_delivery_weeks=[delivered_week]
+    )
+    assert [r.name for r in merged[0].recipes] == ["Menu Dish A", "Menu Dish B"]
+    assert [r.name for r in merged[0].recipes if r.is_selected] == ["Menu Dish A"]
+
+    # Unset option falls back to the default.
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    assert client.menu_grace_weeks == DEFAULT_MENU_GRACE_WEEKS
+
+
+def test_paused_week_in_grace_window_keeps_catalog_unselected() -> None:
+    """A paused/skipped week inside the grace window keeps its catalog, selection cleared.
+
+    Mirrors the grace treatment of shipped weeks: the catalog is the real published menu, so
+    it stays browsable; but nothing shipped, so no meal may show as selected. Weeks older than
+    the grace window still drop their recipes entirely (covered by the phantom-selection test).
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    recent_skipped = HelloFreshWeek(
+        week_id="2026-W27",
+        display_name="Skipped Last Week",
+        subscription_id="6959884",
+        status="PAUSED",
+        delivery_date=date.today() - timedelta(days=3),
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="a", name="Auto A", is_selected=True, selected_quantity=1),
+            HelloFreshRecipe(recipe_id="b", name="Browse B"),
+        ],
+    )
+
+    client._clear_paused_week_selection([recent_skipped])
+
+    assert [r.name for r in recent_skipped.recipes] == ["Auto A", "Browse B"]
+    assert not any(r.is_selected for r in recent_skipped.recipes)
+    assert recent_skipped.meals_selected == 0
 
 
 def test_merge_past_delivery_does_not_leak_market_items_into_meals() -> None:
