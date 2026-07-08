@@ -2812,7 +2812,7 @@ def test_menu_grace_weeks_option_is_honored() -> None:
     """The grace window follows the menu_grace_weeks option, not the built-in default.
 
     0 disables the grace entirely (yesterday's week collapses to delivered-only despite its
-    catalog); a raised value keeps a week browsable that the 1-week default would collapse.
+    catalog); a raised value keeps a week browsable that the 2-week default would collapse.
     None (option unset) falls back to DEFAULT_MENU_GRACE_WEEKS.
     """
     from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
@@ -2848,9 +2848,9 @@ def test_menu_grace_weeks_option_is_honored() -> None:
     )
     assert [r.name for r in merged[0].recipes] == ["Menu Dish A"]
 
-    # Raised window: a 10-day-old week (past the 1-week default) keeps its catalog.
-    client = HelloFreshClient(session=None, menu_grace_weeks=2)  # type: ignore[arg-type]
-    account_week, delivered_week = _week_pair(days_ago=10)
+    # Raised window: a 16-day-old week (past the 2-week default) keeps its catalog.
+    client = HelloFreshClient(session=None, menu_grace_weeks=3)  # type: ignore[arg-type]
+    account_week, delivered_week = _week_pair(days_ago=16)
     merged = client._merge_past_delivery_recipes_into_account_weeks(
         account_weeks=[account_week], past_delivery_weeks=[delivered_week]
     )

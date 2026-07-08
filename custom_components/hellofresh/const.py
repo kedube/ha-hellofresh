@@ -54,7 +54,7 @@ MAX_HISTORY_WEEKS = 104
 # stops serving a real menu for older weeks, whose fetch then fails validation and the week
 # falls back to delivered-only anyway.
 CONF_MENU_GRACE_WEEKS = "menu_grace_weeks"
-DEFAULT_MENU_GRACE_WEEKS = 1
+DEFAULT_MENU_GRACE_WEEKS = 2
 MIN_MENU_GRACE_WEEKS = 0
 MAX_MENU_GRACE_WEEKS = 3
 
