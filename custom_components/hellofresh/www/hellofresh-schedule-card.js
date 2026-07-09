@@ -2,19 +2,25 @@
  * HelloFresh Schedule Card
  * ------------------------
  * A clean, scannable overview of your HelloFresh delivery schedule: a summary of the next box
- * (delivery date, selection deadline countdown, status and price) followed by a timeline of
- * upcoming weeks — each showing its state (meals chosen / needs picking / skipped / locked).
+ * (delivery date, selection deadline countdown, status and price), a month calendar with every
+ * delivery day marked by its state, and a timeline of recent past and upcoming weeks — each
+ * showing its delivery date, box status, and state (meals chosen / needs picking / skipped /
+ * delivered / locked).
  *
  * Like the other HelloFresh cards it reads per-week data on demand from the response-returning
  * `hellofresh.get_weeks` service (none of this is exposed as entity attributes), so one call
- * builds the whole view. Read-only; it links into the My Menu card for editing.
+ * builds the whole view — including the calendar, which replaces a separate
+ * `calendar.delivery_schedule` dashboard widget. Read-only; clicking a delivery day broadcasts
+ * the week-sync event so the meal-planner/market cards jump to that week.
  *
  * Config:
  *   type: custom:hellofresh-schedule-card
  *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
  *   title: Schedule               # optional card header
  *   logo: true                    # optional bundled HelloFresh logo in the header
- *   max_weeks: 8                  # optional cap on timeline rows (default 8)
+ *   max_weeks: 8                  # optional cap on upcoming timeline rows (default 8)
+ *   past_weeks: 4                 # optional recent past deliveries in the timeline (default 4, 0 hides)
+ *   calendar: true                # optional month calendar section (default true)
  *
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
@@ -34,10 +40,12 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._loading = false;
     this._error = null;
     this._fetched = false;
+    // First-of-month currently shown in the calendar; null = the real current month.
+    this._calMonth = null;
   }
 
   setConfig(config) {
-    this._config = { title: "Schedule", max_weeks: 8, ...config };
+    this._config = { title: "Schedule", max_weeks: 8, past_weeks: 4, calendar: true, ...config };
     this._render();
   }
 
@@ -50,7 +58,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 10;
+    return this._config && this._config.calendar === false ? 10 : 13;
   }
 
   static getStubConfig() {
@@ -144,8 +152,44 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._shell = { card, head: card.querySelector(".head"), body: card.querySelector(".body") };
     card.addEventListener("click", (ev) => {
       const actionEl = ev.target.closest("[data-action]");
-      if (actionEl && actionEl.getAttribute("data-action") === "refresh") this._fetch();
+      if (!actionEl) return;
+      const action = actionEl.getAttribute("data-action");
+      if (action === "refresh") this._fetch();
+      else if (action === "cal-prev") this._shiftCalMonth(-1);
+      else if (action === "cal-next") this._shiftCalMonth(1);
+      else if (action === "cal-today") {
+        this._calMonth = null;
+        this._render();
+      } else if (action === "cal-week") {
+        // Clicking a delivery day drives the meal-planner/market cards to that week — the
+        // same window event those cards use to stay in step, plus the same localStorage key
+        // so cards on other dashboard tabs pick the week up when they reconnect.
+        const weekId = actionEl.getAttribute("data-week-id");
+        if (weekId) {
+          const accountKey = (this._config && this._config.config_entry_id) || "default";
+          try {
+            window.localStorage.setItem(`hellofresh:selected-week:${accountKey}`, weekId);
+          } catch (_e) {
+            /* storage unavailable (private mode) — live sync below still works */
+          }
+          window.dispatchEvent(
+            new CustomEvent("hellofresh-week-selected", { detail: { weekId, accountKey } })
+          );
+        }
+      }
     });
+  }
+
+  _shiftCalMonth(delta) {
+    const shown = this._shownCalMonth();
+    this._calMonth = new Date(shown.getFullYear(), shown.getMonth() + delta, 1);
+    this._render();
+  }
+
+  _shownCalMonth() {
+    if (this._calMonth) return this._calMonth;
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
   }
 
   _renderLogo() {
@@ -165,7 +209,63 @@ class HelloFreshScheduleCard extends HTMLElement {
       return `<div class="state">No delivery weeks found.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderSummary()}${this._renderTimeline()}${this._renderFooter()}`;
+    return `${this._renderSummary()}${this._renderCalendar()}${this._renderTimeline()}${this._renderFooter()}`;
+  }
+
+  // A month grid with every delivery day marked by its week's state (replaces the separate
+  // calendar.delivery_schedule dashboard widget). Days with a delivery are clickable and sync
+  // the sibling HelloFresh cards to that week.
+  _renderCalendar() {
+    if (this._config.calendar === false) return "";
+    const shown = this._shownCalMonth();
+    const year = shown.getFullYear();
+    const month = shown.getMonth();
+    const byDay = new Map();
+    for (const week of this._weeks) {
+      if (!week.delivery_date) continue;
+      const d = new Date(week.delivery_date);
+      byDay.set(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(), week);
+    }
+    const today = new Date();
+    const todayKey = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    // Weekday header, Sunday-first (2023-01-01 was a Sunday), in the viewer's locale.
+    const dows = [...Array(7)]
+      .map((_, i) => new Date(2023, 0, 1 + i).toLocaleDateString(undefined, { weekday: "narrow" }))
+      .map((d) => `<span class="cal-dow">${this._esc(d)}</span>`)
+      .join("");
+    const cells = [];
+    const firstDow = new Date(year, month, 1).getDay();
+    for (let i = 0; i < firstDow; i += 1) cells.push(`<span class="cal-day blank"></span>`);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const key = new Date(year, month, day).getTime();
+      const week = byDay.get(key);
+      const isToday = key === todayKey ? " today" : "";
+      if (!week) {
+        cells.push(`<span class="cal-day${isToday}"><span class="cal-num">${day}</span></span>`);
+        continue;
+      }
+      const state = this._weekState(week);
+      const meta = HelloFreshScheduleCard.STATE_META[state];
+      const title = `${week.display_name || week.week_id} — ${meta.label}`;
+      cells.push(`
+        <button class="cal-day has ${state}${isToday}" data-action="cal-week"
+          data-week-id="${this._esc(week.week_id)}" title="${this._esc(title)}">
+          <span class="cal-num">${day}</span><span class="cal-mark ${state}"></span>
+        </button>`);
+    }
+    const monthLabel = shown.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+    return `
+      <div class="calendar">
+        <div class="cal-head">
+          <button class="cal-nav" data-action="cal-prev" title="Previous month">‹</button>
+          <span class="cal-title">${this._esc(monthLabel)}</span>
+          <button class="cal-nav" data-action="cal-next" title="Next month">›</button>
+          ${isCurrentMonth ? "" : `<button class="cal-nav cal-today-btn" data-action="cal-today">Today</button>`}
+        </div>
+        <div class="cal-grid">${dows}${cells.join("")}</div>
+      </div>`;
   }
 
   // The "next box" summary: the nearest upcoming delivery, or the most recent if none upcoming.
@@ -197,24 +297,39 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   _renderTimeline() {
     const max = Number(this._config.max_weeks) || 8;
-    // Show upcoming weeks first; if there aren't enough, backfill with the most recent past ones.
+    const pastRaw = Number(this._config.past_weeks);
+    const pastMax = Number.isFinite(pastRaw) ? Math.max(0, pastRaw) : 4;
     const upcoming = this._weeks.filter((w) => this._isCurrent(w));
     const past = this._weeks.filter((w) => !this._isCurrent(w));
-    const rows = (upcoming.length ? upcoming : past.slice(-max)).slice(0, max);
+    // Recent past deliveries lead (dimmed), then the upcoming weeks; if nothing is upcoming,
+    // fall back to the most recent history so the card is never empty.
+    const pastRows = upcoming.length ? past.slice(-pastMax) : past.slice(-max);
+    const rows = [...pastRows, ...upcoming.slice(0, max)];
     if (!rows.length) return "";
     const current = upcoming[0];
     return `
       <div class="timeline">
-        ${rows.map((w) => this._renderRow(w, w === current)).join("")}
+        ${rows.map((w) => this._renderRow(w, w === current, !this._isCurrent(w))).join("")}
       </div>`;
   }
 
-  _renderRow(week, isCurrent) {
+  // Whether HelloFresh auto-picked (preselected) this week's meals rather than the customer
+  // choosing them. Mirrors the meal-planner card: a skipped/paused week's preselection never
+  // ships, so it doesn't count.
+  _isPreselected(week) {
+    if (week.is_skipped || String(week.status || "").toUpperCase() === "PAUSED") return false;
+    return Boolean(week.meals_preselected);
+  }
+
+  _renderRow(week, isCurrent, isPast) {
     const state = this._weekState(week);
     const meta = HelloFreshScheduleCard.STATE_META[state];
     const detail = this._rowDetail(week, state);
+    const preselected = this._isPreselected(week)
+      ? `<span class="badge preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
+      : "";
     return `
-      <div class="row ${isCurrent ? "current" : ""}">
+      <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}">
         <span class="dot ${state}" title="${this._esc(meta.label)}">${meta.icon}</span>
         <div class="rowmain">
           <div class="rowtop">
@@ -223,8 +338,18 @@ class HelloFreshScheduleCard extends HTMLElement {
           </div>
           ${detail ? `<div class="rowsub">${detail}</div>` : ""}
         </div>
+        ${preselected}
         <span class="badge ${state}">${this._esc(meta.label)}</span>
       </div>`;
+  }
+
+  // The box/tracking status for a week (e.g. "Preparing", "On the way", "Delivered"), when it
+  // adds information beyond the state badge — a status that just repeats the badge is dropped.
+  _rowStatus(week, badgeLabel) {
+    const order = week.order || {};
+    const status = this._titleCase(order.tracking_status || order.status || week.status || "");
+    if (!status || status.toLowerCase() === badgeLabel.toLowerCase()) return "";
+    return status;
   }
 
   _rowDetail(week, state) {
@@ -235,10 +360,21 @@ class HelloFreshScheduleCard extends HTMLElement {
       const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
       return `Pick ${required || "your"} meals${deadline ? ` <span class="urgent">· ${this._esc(this._countdown(deadline))}</span>` : ""}`;
     }
-    if (required) {
-      return `${selected}/${required} meals${week.meals_preselected ? ` <span class="muted">· preselected</span>` : ""}`;
+    const status = this._rowStatus(week, HelloFreshScheduleCard.STATE_META[state].label);
+    const statusSuffix = status ? ` <span class="muted">· ${this._esc(status)}</span>` : "";
+    // Show the ACTUAL selected count, not selected/required: a week can be resized to more
+    // or fewer meals than the plan (the box SKU changes with it), so a plan-based "3/3" is
+    // wrong for a 4-meal week. The plan count only appears when it differs, as context.
+    // (Preselection is surfaced as a row badge, not here.)
+    if (selected) {
+      const plan =
+        required && required !== selected ? ` <span class="muted">· plan: ${required}</span>` : "";
+      return `${selected} meal${selected === 1 ? "" : "s"}${plan}${statusSuffix}`;
     }
-    return "";
+    if (required) {
+      return `<span class="muted">No meals selected</span>${statusSuffix}`;
+    }
+    return status ? `<span class="muted">${this._esc(status)}</span>` : "";
   }
 
   _renderFooter() {
@@ -344,7 +480,7 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   static get STATE_META() {
     return {
-      ready: { icon: "●", label: "Set", cls: "ready" },
+      ready: { icon: "●", label: "Editable", cls: "ready" },
       needs: { icon: "!", label: "Needs picking", cls: "needs" },
       delivered: { icon: "✓", label: "Delivered", cls: "delivered" },
       skipped: { icon: "⊘", label: "Skipped", cls: "skipped" },
@@ -382,6 +518,43 @@ class HelloFreshScheduleCard extends HTMLElement {
       .sumlabel { font-size: 0.82em; color: var(--secondary-text-color); flex: none; }
       .sumval { font-size: 0.95em; font-weight: 600; text-align: right; }
 
+      .calendar {
+        border: 1px solid var(--divider-color); border-radius: 12px;
+        padding: 10px 12px 12px; margin-bottom: 14px;
+      }
+      .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+      .cal-title { flex: 1; text-align: center; font-weight: 600; font-size: 0.95em; }
+      .cal-nav {
+        font: inherit; font-size: 0.9em; line-height: 1; cursor: pointer;
+        padding: 4px 10px; border-radius: 8px; border: 1px solid var(--divider-color);
+        background: var(--secondary-background-color); color: var(--primary-text-color);
+      }
+      .cal-today-btn { font-size: 0.78em; }
+      .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+      .cal-dow {
+        text-align: center; font-size: 0.7em; font-weight: 700;
+        color: var(--secondary-text-color); padding-bottom: 4px;
+      }
+      .cal-day {
+        position: relative; display: flex; flex-direction: column; align-items: center;
+        justify-content: flex-start; min-height: 34px; padding: 3px 0 2px;
+        border: none; border-radius: 8px; background: none; font: inherit;
+        color: var(--primary-text-color);
+      }
+      .cal-day.blank { min-height: 0; }
+      .cal-num { font-size: 0.8em; line-height: 1.4; }
+      .cal-day.today { box-shadow: inset 0 0 0 1.5px var(--primary-color); }
+      .cal-day.has { cursor: pointer; background: var(--secondary-background-color); }
+      .cal-day.has .cal-num { font-weight: 700; }
+      .cal-mark { width: 7px; height: 7px; border-radius: 50%; margin-top: 2px; }
+      .cal-mark.ready, .cal-mark.delivered { background: var(--hf-green); }
+      .cal-mark.needs { background: var(--warning-color, #ff9800); }
+      .cal-mark.locked { background: var(--secondary-text-color); }
+      .cal-mark.skipped {
+        background: none; box-shadow: inset 0 0 0 1.5px var(--secondary-text-color);
+      }
+      .cal-day.has.skipped .cal-num { text-decoration: line-through; color: var(--secondary-text-color); }
+
       .timeline { display: flex; flex-direction: column; }
       .row {
         display: flex; align-items: center; gap: 12px; padding: 10px 8px;
@@ -389,6 +562,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       }
       .row:last-child { border-bottom: none; }
       .row.current { background: color-mix(in srgb, var(--hf-green) 10%, transparent); border-radius: 10px; }
+      .row.past { opacity: 0.65; }
       .dot {
         flex: none; width: 26px; height: 26px; border-radius: 50%;
         display: flex; align-items: center; justify-content: center;
@@ -409,6 +583,7 @@ class HelloFreshScheduleCard extends HTMLElement {
         background: var(--secondary-background-color); color: var(--secondary-text-color);
       }
       .badge.ready { background: color-mix(in srgb, var(--hf-green) 18%, transparent); color: var(--hf-green); }
+      .badge.preselected { background: var(--warning-color, #ff9800); color: #fff; }
       .badge.delivered { background: color-mix(in srgb, var(--hf-green) 18%, transparent); color: var(--hf-green); }
       .badge.needs { background: var(--warning-color, #ff9800); color: #fff; }
       .badge.skipped { background: var(--secondary-background-color); color: var(--secondary-text-color); }
@@ -431,7 +606,8 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-schedule-card",
   name: "HelloFresh Schedule Card",
-  description: "A clean overview of upcoming HelloFresh deliveries and their selection state.",
+  description:
+    "HelloFresh delivery schedule: next-box summary, a month calendar of delivery days, and a timeline of past and upcoming weeks with status.",
 });
 
 console.info(

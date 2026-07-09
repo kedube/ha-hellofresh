@@ -1438,7 +1438,7 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 | [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals`, skip/unskip weeks |
 | [www/hellofresh-market-card.js](custom_components/hellofresh/www/hellofresh-market-card.js) | Packaged Lovelace card: browse and order Market add-ons via `get_weeks` + `select_market_items` |
 | [www/hellofresh-food-profile-card.js](custom_components/hellofresh/www/hellofresh-food-profile-card.js) | Packaged Lovelace card: view/edit meal-preselection preferences via `get_food_profile` + `set_food_profile` |
-| [www/hellofresh-schedule-card.js](custom_components/hellofresh/www/hellofresh-schedule-card.js) | Packaged Lovelace card: next-box summary and upcoming-week timeline via `get_weeks` (read-only) |
+| [www/hellofresh-schedule-card.js](custom_components/hellofresh/www/hellofresh-schedule-card.js) | Packaged Lovelace card: next-box summary, month calendar of delivery days, and past + upcoming timeline via `get_weeks` (read-only; calendar clicks broadcast the week-sync event) |
 | [const.py](custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds, history-window bounds (`DEFAULT/MIN/MAX_HISTORY_WEEKS`) |
 | [api.py](custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
 | [services.yaml](custom_components/hellofresh/services.yaml) | Service definitions |

@@ -883,7 +883,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // Per-week order/shipment summary shown above the recipe grid: order id, delivery status,
-  // carrier, tracking number (linked when a tracking URL is present) and box total price.
+  // carrier, tracking number (linked when a tracking URL is present), the delivered date on
+  // boxes that have arrived, and box total price.
   // Only renders fields that exist. When a week has no order, the Total still shows the
   // account's recurring plan price (matching the selected_plan_total_price sensor) so the
   // strip remains informative for weeks that aren't billed yet.
@@ -900,6 +901,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
           : num;
         items.push(this._orderItem("Tracking", value, true));
+      }
+      // For a box that has arrived, show WHEN: the order's delivery date (falling back to the
+      // week's). Only on delivered boxes — for upcoming weeks the header already shows the
+      // scheduled date, so repeating it here would be noise.
+      // "DELIVERED" exact word — a bare "DELIVER" needle would also match OUT_FOR_DELIVERY.
+      const isDelivered = String(status || week.status || "").toUpperCase().includes("DELIVERED");
+      const deliveredDate = order.delivery_date || week.delivery_date;
+      if (isDelivered && deliveredDate) {
+        items.push(this._orderItem("Delivered", this._fmtDate(deliveredDate)));
       }
     }
 
