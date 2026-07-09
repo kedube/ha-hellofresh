@@ -65,14 +65,11 @@ views:
     path: planning
     icon: mdi:calendar-month
     cards:
+      # The schedule card includes its own month calendar of delivery days (calendar: true by
+      # default), so no separate calendar.delivery_schedule widget is needed here.
       - type: custom:hellofresh-schedule-card
         title: Schedule
         logo: true
-      - type: calendar
-        title: Delivery schedule
-        initial_view: dayGridMonth
-        entities:
-          - calendar.hellofresh_us_delivery_schedule
       - type: entities
         title: Subscription details
         show_header_toggle: false
