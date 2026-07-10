@@ -99,38 +99,39 @@ views:
             name: Skipped weeks
           - entity: sensor.hellofresh_us_next_skipped_week
             name: Next skipped
+          - entity: switch.hellofresh_us_skip_next_modifiable_week
+            name: Skip next selectable week
+          # The Next box delivery date, deadline, status, box total, and meal/market counts
+          # are shown by the schedule card above — only what the card doesn't show is listed.
           - type: section
             label: Next box
           - entity: sensor.hellofresh_us_recent_order_id
             name: Order ID
-          - entity: sensor.hellofresh_us_next_order_status
-            name: Status
-          - entity: sensor.hellofresh_us_next_delivery_date
-            name: Delivery date
-          - entity: sensor.hellofresh_us_next_selection_deadline
-            name: Selection deadline
-          - entity: sensor.hellofresh_us_next_box_total_price
-            name: Box total price
-          - entity: sensor.hellofresh_us_selected_meal_count
-            name: Meal count
-          - entity: sensor.hellofresh_us_selected_market_count
-            name: Market item count
           - entity: sensor.hellofresh_us_next_box_coupon
             name: Coupon
           - entity: sensor.hellofresh_us_next_payment_date
             name: Payment date
-          - type: section
-            label: Next selectable box
-          - entity: sensor.hellofresh_us_next_selectable_delivery_date
-            name: Delivery date
-          - entity: sensor.hellofresh_us_next_selectable_delivery_selection_deadline
-            name: Selection deadline
-          - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
-            name: Meal count
-          - entity: sensor.hellofresh_us_next_selectable_delivery_market_count
-            name: Market item count
           - entity: sensor.hellofresh_us_next_selectable_delivery_preselected
-            name: Meals preselected
+            name: Next selectable box preselected
+      # Appears only while the current box has live tracking data (shipped → delivered).
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
+            state: "on"
+        card:
+          type: entities
+          title: Shipment tracking
+          show_header_toggle: false
+          state_color: true
+          entities:
+            - entity: sensor.hellofresh_us_shipment_tracking_status
+              name: Status
+            - entity: sensor.hellofresh_us_tracked_shipment_carrier
+              name: Carrier
+            - entity: sensor.hellofresh_us_shipment_tracking_number
+              name: Tracking number
+            - entity: sensor.hellofresh_us_next_delivery_tracking_url
+              name: Tracking link
       - type: conditional
         conditions:
           - entity: sensor.hellofresh_us_next_holiday_message

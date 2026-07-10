@@ -411,11 +411,16 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         # Account-level fallback fields the card can use when a week has no billed order yet —
         # e.g. the recurring plan total (matches the selected_plan_total_price sensor). Also
         # carries the configured menu grace window so the card's past-week gating matches the
-        # integration's (a just-delivered week keeps its browsable menu for this many weeks).
+        # integration's (a just-delivered week keeps its browsable menu for this many weeks),
+        # and the configured refresh interval so cards can auto-refetch on the same cadence
+        # the coordinator polls HelloFresh (fetching more often would return the same data).
         account = {
             "selected_plan_total_price": data.selected_plan_total_price,
             "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
             "menu_grace_weeks": coordinator.client.menu_grace_weeks,
+            "refresh_interval_minutes": coordinator.config_entry.options.get(
+                CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
+            ),
         }
 
         if service_call.data.get("include_debug"):

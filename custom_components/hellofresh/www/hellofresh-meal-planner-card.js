@@ -373,6 +373,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     );
   }
 
+  // Tell read-only sibling cards (the schedule card) that a write changed account data, so
+  // they re-pull immediately instead of waiting for their next interval refresh.
+  _broadcastDataChanged() {
+    window.dispatchEvent(
+      new CustomEvent("hellofresh-data-changed", {
+        detail: { accountKey: this._accountKey() },
+      })
+    );
+  }
+
   // Move to a synced week id if this card carries it. Returns true if it handled the id.
   _applySyncedWeekId(weekId) {
     if (!weekId || !this._weeks) return false;
@@ -744,6 +754,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       await this._hass.callService("hellofresh", "select_meals", data);
       delete this._pending[week.week_id]; // saved — drop the pending overlay
       this._busy = false;
+      this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       this._flash("Meal selection updated.");
     } catch (err) {
@@ -765,6 +776,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const data = { week_id: week.week_id };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", service, data);
+      this._broadcastDataChanged();
     } catch (err) {
       this._flash(`${service} failed: ${(err && err.message) || err}`, true);
     } finally {
