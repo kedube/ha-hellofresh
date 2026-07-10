@@ -65,8 +65,6 @@ views:
     path: planning
     icon: mdi:calendar-month
     cards:
-      # The schedule card includes its own month calendar of delivery days (calendar: true by
-      # default), so no separate calendar.delivery_schedule widget is needed here.
       - type: custom:hellofresh-schedule-card
         title: Schedule
         logo: true
@@ -103,16 +101,24 @@ views:
             name: Next skipped
           - type: section
             label: Next box
+          - entity: sensor.hellofresh_us_recent_order_id
+            name: Order ID
           - entity: sensor.hellofresh_us_next_order_status
             name: Status
+          - entity: sensor.hellofresh_us_next_delivery_date
+            name: Delivery date
+          - entity: sensor.hellofresh_us_next_selection_deadline
+            name: Selection deadline
           - entity: sensor.hellofresh_us_next_box_total_price
             name: Box total price
+          - entity: sensor.hellofresh_us_selected_meal_count
+            name: Meal count
+          - entity: sensor.hellofresh_us_selected_market_count
+            name: Market item count
           - entity: sensor.hellofresh_us_next_box_coupon
             name: Coupon
           - entity: sensor.hellofresh_us_next_payment_date
             name: Payment date
-          - entity: sensor.hellofresh_us_recent_order_id
-            name: Order ID
           - type: section
             label: Next selectable box
           - entity: sensor.hellofresh_us_next_selectable_delivery_date
@@ -121,6 +127,8 @@ views:
             name: Selection deadline
           - entity: sensor.hellofresh_us_next_selectable_delivery_meal_count
             name: Meal count
+          - entity: sensor.hellofresh_us_next_selectable_delivery_market_count
+            name: Market item count
           - entity: sensor.hellofresh_us_next_selectable_delivery_preselected
             name: Meals preselected
       - type: conditional
