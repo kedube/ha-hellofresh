@@ -314,6 +314,16 @@ class HelloFreshMarketCard extends HTMLElement {
     );
   }
 
+  // Tell read-only sibling cards (the schedule card) that a write changed account data, so
+  // they re-pull immediately instead of waiting for their next interval refresh.
+  _broadcastDataChanged() {
+    window.dispatchEvent(
+      new CustomEvent("hellofresh-data-changed", {
+        detail: { accountKey: this._accountKey() },
+      })
+    );
+  }
+
   // Move to a synced week id if this card carries it. Returns true if it handled the id.
   _applySyncedWeekId(weekId) {
     if (!weekId || !this._weeks) return false;
@@ -482,6 +492,7 @@ class HelloFreshMarketCard extends HTMLElement {
       await this._hass.callService("hellofresh", "select_market_items", data);
       delete this._pending[week.week_id];
       this._busy = false;
+      this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       this._flash("Market selection updated.");
     } catch (err) {
