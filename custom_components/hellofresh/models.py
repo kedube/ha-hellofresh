@@ -170,6 +170,12 @@ class HelloFreshWeek:
     display_name: str
     subscription_id: str | None = None
     delivery_date: date | None = None
+    # The moment the box was ACTUALLY delivered, from the deliveries payload's
+    # ``tracking.delivery_date`` — a real carrier timestamp, unlike ``delivery_date`` which is
+    # the scheduled day. Only set for DELIVERED weeks (before delivery the same field holds a
+    # scheduled-noon placeholder). Full datetime (with offset) so the frontend can render the
+    # date in the viewer's timezone — an evening ET delivery is already the next day in UTC.
+    delivered_at: datetime | None = None
     selection_deadline: datetime | None = None
     status: str | None = None
     meals_required: int | None = None
@@ -267,6 +273,7 @@ class HelloFreshWeek:
             "display_name": self.display_name,
             "subscription_id": self.subscription_id,
             "delivery_date": self.delivery_date.isoformat() if self.delivery_date else None,
+            "delivered_at": self.delivered_at.isoformat() if self.delivered_at else None,
             "selection_deadline": (
                 self.selection_deadline.isoformat() if self.selection_deadline else None
             ),

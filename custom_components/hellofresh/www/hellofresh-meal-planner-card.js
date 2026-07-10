@@ -917,7 +917,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // scheduled date, so repeating it here would be noise.
       // "DELIVERED" exact word — a bare "DELIVER" needle would also match OUT_FOR_DELIVERY.
       const isDelivered = String(status || week.status || "").toUpperCase().includes("DELIVERED");
-      const deliveredDate = order.delivery_date || week.delivery_date;
+      // Prefer the week's delivered_at — the ACTUAL carrier timestamp from the deliveries
+      // payload's tracking node — over the scheduled dates. The order's delivery_date is a
+      // billing-derived anchor and read a day early; delivered_at is when the box arrived,
+      // rendered in the viewer's timezone.
+      const deliveredDate = week.delivered_at || week.delivery_date;
       if (isDelivered && deliveredDate) {
         items.push(this._orderItem("Delivered", this._fmtDate(deliveredDate)));
       }

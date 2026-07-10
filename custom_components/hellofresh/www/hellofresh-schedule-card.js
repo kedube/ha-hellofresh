@@ -78,9 +78,10 @@ class HelloFreshScheduleCard extends HTMLElement {
       const result = await this._hass.callService("hellofresh", "get_weeks", data, undefined, false, true);
       const response = (result && result.response) || {};
       // Sort by delivery date so the timeline reads chronologically; undated weeks sink last.
-      this._weeks = (response.weeks || [])
+      const sorted = (response.weeks || [])
         .slice()
         .sort((a, b) => this._dateKey(a) - this._dateKey(b));
+      this._weeks = this._displayWeeks(sorted);
       this._account = response.account || null;
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -103,6 +104,33 @@ class HelloFreshScheduleCard extends HTMLElement {
   _dateKey(week) {
     const d = week && week.delivery_date ? this._parseLocalDate(week.delivery_date).getTime() : NaN;
     return Number.isNaN(d) ? Number.POSITIVE_INFINITY : d;
+  }
+
+  // The deliveries range extends further ahead than HelloFresh publishes menus, so the far
+  // future comes back as empty scheduling shells with no meal data. Mirror the meal-planner
+  // card: keep every past/current week, and future weeks only while they still carry meals —
+  // stop at the first empty one so later shells never resurface.
+  _displayWeeks(weeks) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const result = [];
+    let futureMenuEnded = false;
+    for (const week of weeks) {
+      const isFuture = week.delivery_date
+        ? this._parseLocalDate(week.delivery_date).getTime() >= today.getTime()
+        : true; // undated weeks can't be anchored to the past
+      if (!isFuture) {
+        result.push(week);
+        continue;
+      }
+      const hasMeals = (week.recipes || []).length > 0;
+      if (futureMenuEnded || !hasMeals) {
+        futureMenuEnded = true;
+        continue;
+      }
+      result.push(week);
+    }
+    return result;
   }
 
   // ---- week-state classification (mirrors the meal-planner card's conventions) ----
@@ -232,8 +260,11 @@ class HelloFreshScheduleCard extends HTMLElement {
     const month = shown.getMonth();
     const byDay = new Map();
     for (const week of this._weeks) {
-      if (!week.delivery_date) continue;
-      const d = this._parseLocalDate(week.delivery_date);
+      // Delivered weeks sit on the day the box ACTUALLY arrived (tracking timestamp);
+      // upcoming weeks on their scheduled date.
+      const when = week.delivered_at || week.delivery_date;
+      if (!when) continue;
+      const d = this._parseLocalDate(when);
       byDay.set(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(), week);
     }
     const today = new Date();
@@ -256,8 +287,7 @@ class HelloFreshScheduleCard extends HTMLElement {
         continue;
       }
       const state = this._weekState(week);
-      const meta = HelloFreshScheduleCard.STATE_META[state];
-      const title = `${week.display_name || week.week_id} — ${meta.label}`;
+      const title = `${week.display_name || week.week_id} — ${this._stateLabel(week, state)}`;
       cells.push(`
         <button class="cal-day has ${state}${isToday}" data-action="cal-week"
           data-week-id="${this._esc(week.week_id)}" title="${this._esc(title)}">
@@ -331,25 +361,42 @@ class HelloFreshScheduleCard extends HTMLElement {
     return Boolean(week.meals_preselected);
   }
 
+  // The badge/tooltip label for a week's state. When a week is in the "needs" state BECAUSE
+  // HelloFresh preselected its meals, showing both an amber "Needs picking" badge and an
+  // amber "Preselected" badge is redundant — collapse them into a single "Preselected" badge.
+  // A genuinely under-filled week (too few meals, not auto-picked) keeps "Needs picking".
+  _stateLabel(week, state) {
+    if (state === "needs" && this._isPreselected(week)) return "Preselected";
+    return HelloFreshScheduleCard.STATE_META[state].label;
+  }
+
   _renderRow(week, isCurrent, isPast) {
     const state = this._weekState(week);
     const meta = HelloFreshScheduleCard.STATE_META[state];
+    const label = this._stateLabel(week, state);
     const detail = this._rowDetail(week, state);
-    const preselected = this._isPreselected(week)
-      ? `<span class="badge preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
-      : "";
+    // Standalone Preselected badge only when the state badge doesn't already say it
+    // (e.g. a locked preselected week whose deadline passed).
+    const preselected =
+      this._isPreselected(week) && label !== "Preselected"
+        ? `<span class="badge preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
+        : "";
+    const badgeTitle =
+      label === "Preselected"
+        ? "HelloFresh auto-picked these meals — review and adjust before the deadline."
+        : label;
     return `
       <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}">
-        <span class="dot ${state}" title="${this._esc(meta.label)}">${meta.icon}</span>
+        <span class="dot ${state}" title="${this._esc(label)}">${meta.icon}</span>
         <div class="rowmain">
           <div class="rowtop">
-            <span class="rowdate">${this._esc(this._fmtDateShort(week.delivery_date))}</span>
+            <span class="rowdate">${this._esc(this._fmtDateShort(week.delivered_at || week.delivery_date))}</span>
             <span class="rowweek">${this._esc(week.display_name || week.week_id)}</span>
           </div>
           ${detail ? `<div class="rowsub">${detail}</div>` : ""}
         </div>
         ${preselected}
-        <span class="badge ${state}">${this._esc(meta.label)}</span>
+        <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
       </div>`;
   }
 
@@ -368,7 +415,15 @@ class HelloFreshScheduleCard extends HTMLElement {
     const selected = week.meals_selected || 0;
     if (state === "needs") {
       const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
-      return `Pick ${required || "your"} meals${deadline ? ` <span class="urgent">· ${this._esc(this._countdown(deadline))}</span>` : ""}`;
+      const deadlineSuffix = deadline
+        ? ` <span class="urgent">· ${this._esc(this._countdown(deadline))}</span>`
+        : "";
+      // A preselected week is already full — the action is reviewing HelloFresh's picks,
+      // not picking from scratch.
+      if (this._isPreselected(week)) {
+        return `Review meals${deadlineSuffix}`;
+      }
+      return `Pick ${required || "your"} meals${deadlineSuffix}`;
     }
     const status = this._rowStatus(week, HelloFreshScheduleCard.STATE_META[state].label);
     const statusSuffix = status ? ` <span class="muted">· ${this._esc(status)}</span>` : "";

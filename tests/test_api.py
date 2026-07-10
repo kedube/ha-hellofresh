@@ -852,6 +852,65 @@ def test_normalize_weeks_payload_extracts_tracking_and_meals() -> None:
     assert orders[0].subscription_id == "sub-1"
 
 
+def test_delivered_at_extracted_from_tracking_for_delivered_weeks_only() -> None:
+    """A DELIVERED week carries the ACTUAL carrier delivery timestamp; others carry None.
+
+    HAR-verified: the deliveries payload's ``tracking.delivery_date`` is a real timestamp
+    once the box arrived (e.g. ``2026-06-29T22:20:50+0000``), but a scheduled-noon
+    placeholder before then — so it must only be trusted on DELIVERED weeks. A stale
+    ``status="DELIVERED"`` with a live non-delivered ``state`` must not set it either.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", locale="en-US")
+    payload = {
+        "items": [
+            {
+                "id": "2026-W27",
+                "status": "DELIVERED",
+                "state": "DELIVERED",
+                "deliveryDate": "2026-06-29T12:00:00-0700",
+                "tracking": {
+                    "tracking_code": "HF01000041974678",
+                    "estimated_delivery_time": "2026-06-29T22:20:50+0000",
+                    "delivery_date": "2026-06-29T22:20:50+0000",
+                },
+            },
+            {
+                # Not yet delivered: tracking.delivery_date is a scheduled placeholder.
+                "id": "2026-W28",
+                "status": "RUNNING",
+                "state": "PREPARING",
+                "deliveryDate": "2026-07-06T12:00:00-0700",
+                "tracking": {
+                    "tracking_code": "HF01000042086164",
+                    "estimated_delivery_time": None,
+                    "delivery_date": "2026-07-06T12:00:00+0000",
+                },
+            },
+            {
+                # Stale top-level DELIVERED while the live state says otherwise.
+                "id": "2026-W29",
+                "status": "DELIVERED",
+                "state": "ON_THE_WAY",
+                "tracking": {"delivery_date": "2026-07-13T12:00:00+0000"},
+            },
+            {"id": "2026-W30", "status": "RUNNING", "state": "RUNNING", "tracking": None},
+        ]
+    }
+
+    weeks, _orders = client._normalize_weeks_payload(payload, subscription=subscription)
+    by_id = {week.week_id: week for week in weeks}
+
+    delivered_at = by_id["2026-W27"].delivered_at
+    assert delivered_at is not None
+    assert delivered_at.isoformat() == "2026-06-29T22:20:50+00:00"
+    # Serialized for the cards with the full offset-bearing timestamp.
+    assert by_id["2026-W27"].as_dict()["delivered_at"] == "2026-06-29T22:20:50+00:00"
+    assert by_id["2026-W28"].delivered_at is None
+    assert by_id["2026-W29"].delivered_at is None
+    assert by_id["2026-W30"].delivered_at is None
+
+
 def test_week_status_prefers_live_state_over_stale_status() -> None:
     """A box still in transit must not read as delivered from a stale top-level status.
 
