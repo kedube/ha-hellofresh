@@ -308,9 +308,11 @@ The integration also ships **`custom:hellofresh-schedule-card`**, a clean overvi
 type: custom:hellofresh-schedule-card
 # title: Schedule           # optional header
 # logo: true                # optional bundled HelloFresh logo in the header
-# max_weeks: 8              # optional cap on upcoming timeline rows (default 8)
-# past_weeks: 4             # optional recent past deliveries in the timeline (default 4; 0 hides)
-# calendar: true            # optional month calendar of delivery days (default true)
+# calendar: true            # optional month calendar of delivery days (default true);
+#                           # the timeline below follows the displayed month
+# max_weeks: 8              # timeline cap on upcoming rows (default 8; applies with calendar: false)
+# past_weeks: 4             # recent past deliveries in the timeline (default 4; 0 hides;
+#                           # applies with calendar: false)
 # config_entry_id: <id>     # required only with multiple HelloFresh accounts
 ```
 
@@ -318,7 +320,7 @@ What it does:
 
 - **Next-box summary** — the nearest upcoming delivery's date (with a relative "in 3 days"), the selection-deadline countdown (highlighted red when under 24h), and the order status with the box total.
 - **Delivery calendar** — a built-in month grid with every delivery day marked in its week's state colour (green delivered/set, amber needs picking, struck-through for skipped), with ‹ › month navigation and a Today button. It covers the full loaded range (your configured past history through the scheduled weeks ahead), so a separate `calendar.delivery_schedule` dashboard widget is no longer needed. Clicking a marked day jumps the [Meal planner](#meal-planner-card) and [Market](#market-card) cards to that week — even across dashboard views.
-- **Timeline** — a chronological row per week: recent **past deliveries** (dimmed, dated by when the box **actually arrived**, with the delivered meal count and box status) followed by the upcoming weeks — future weeks beyond HelloFresh's published menus (empty scheduling shells with no meal data) are not shown. Each row shows a status dot, date, week label, a one-line detail (the actual number of meals selected — with the plan count as context when the week is resized — the box/tracking status when it adds information, "Pick N meals"/"Review meals" with the time left, or "No box this week"), and a state badge. The current box is highlighted; **Editable** / **Needs picking** / **Skipped** / **Delivered** / **Locked** states are colour-coded. A week whose meals HelloFresh auto-picked shows a single amber **Preselected** badge in place of "Needs picking" (same signal as the meal-planner card, without the redundant double chip).
+- **Timeline** — a chronological row per week, **following the calendar's displayed month**: navigating months swaps the list to that month's delivery weeks, so the calendar and the rows below it always agree (with `calendar: false` it instead shows the last `past_weeks` deliveries plus up to `max_weeks` upcoming). Past deliveries are dimmed and dated by when the box **actually arrived**; future weeks beyond HelloFresh's published menus (empty scheduling shells with no meal data) are not shown, though skipped weeks always appear so the gap is visible. Each row shows a status dot, date, week label, a detail line — the actual number of meals selected (with the plan count as context when the week is resized), the **market add-on count**, the week's **billed box total**, and the box/tracking status when it adds information (or "Pick N meals"/"Review meals" with the time left, or "No box this week") — plus **carrier and tracking number** (linked) on shipped and delivered boxes, and a state badge. The current box is highlighted; **Editable** / **Needs picking** / **Skipped** / **Delivered** / **Locked** states are colour-coded. A week whose meals HelloFresh auto-picked shows a single amber **Preselected** badge in place of "Needs picking" (same signal as the meal-planner card, without the redundant double chip).
 - It's read-only; edit selections from the [Meal planner card](#meal-planner-card).
 
 ### Recorder attribute sizes
