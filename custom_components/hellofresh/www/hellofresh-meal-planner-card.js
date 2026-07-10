@@ -187,7 +187,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     let futureMenuEnded = false;
     for (const week of ordered) {
       const isFuture = week.delivery_date
-        ? Date.parse(week.delivery_date) >= today.getTime()
+        ? this._parseLocalDate(week.delivery_date).getTime() >= today.getTime()
         : true; // undated weeks are treated as future (can't anchor them to the past)
       const hasMenu = (week.recipes || []).length > 0;
       if (!isFuture) {
@@ -204,10 +204,20 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return result;
   }
 
+  // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
+  // serializes delivery dates) parses as UTC midnight per the JS spec, which reads as the
+  // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
+  // strings (selection deadlines) parse normally.
+  _parseLocalDate(value) {
+    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(value);
+  }
+
   // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
   // future weeks in _browsableWeeks).
   _weekSortKey(week) {
-    const ms = week && week.delivery_date ? Date.parse(week.delivery_date) : NaN;
+    const ms = week && week.delivery_date ? this._parseLocalDate(week.delivery_date).getTime() : NaN;
     return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
   }
 
@@ -256,7 +266,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const graceMs = this._menuGraceWeeks() * 7 * 24 * 60 * 60 * 1000;
-    return Date.parse(week.delivery_date) < today.getTime() - graceMs;
+    return this._parseLocalDate(week.delivery_date).getTime() < today.getTime() - graceMs;
   }
 
   // Move the cursor to an index, render, and (unless syncing FROM another card) broadcast the
@@ -287,7 +297,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     let bestDays = Infinity;
     this._weeks.forEach((w, i) => {
       if (!w.delivery_date) return;
-      const d = new Date(w.delivery_date);
+      const d = this._parseLocalDate(w.delivery_date);
       d.setHours(0, 0, 0, 0);
       const days = Math.round((d - today) / 86400000);
       const dist = Math.abs(days);
@@ -1322,7 +1332,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (!week.delivery_date) return "";
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const d = new Date(week.delivery_date);
+    const d = this._parseLocalDate(week.delivery_date);
     d.setHours(0, 0, 0, 0);
     const days = Math.round((d - today) / 86400000);
     if (days === 0) return "today";
@@ -1334,7 +1344,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   _fmtDate(iso) {
     try {
-      return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return this._parseLocalDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch (_e) {
       return iso;
     }

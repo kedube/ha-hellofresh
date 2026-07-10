@@ -188,7 +188,7 @@ class HelloFreshMarketCard extends HTMLElement {
     let futureMarketEnded = false;
     for (const week of ordered) {
       const isFuture = week.delivery_date
-        ? Date.parse(week.delivery_date) >= today.getTime()
+        ? this._parseLocalDate(week.delivery_date).getTime() >= today.getTime()
         : true; // undated weeks are treated as future (can't anchor them to the past)
       const hasMarket = (week.market_items || []).length > 0;
       if (!isFuture) {
@@ -205,10 +205,20 @@ class HelloFreshMarketCard extends HTMLElement {
     return result;
   }
 
+  // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
+  // serializes delivery dates) parses as UTC midnight per the JS spec, which reads as the
+  // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
+  // strings (selection deadlines) parse normally.
+  _parseLocalDate(value) {
+    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(value);
+  }
+
   // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
   // future weeks in _browsableWeeks).
   _weekSortKey(week) {
-    const ms = week && week.delivery_date ? Date.parse(week.delivery_date) : NaN;
+    const ms = week && week.delivery_date ? this._parseLocalDate(week.delivery_date).getTime() : NaN;
     return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
   }
 
@@ -240,7 +250,7 @@ class HelloFreshMarketCard extends HTMLElement {
     let bestDays = Infinity;
     this._weeks.forEach((w, i) => {
       if (!w.delivery_date) return;
-      const d = new Date(w.delivery_date);
+      const d = this._parseLocalDate(w.delivery_date);
       d.setHours(0, 0, 0, 0);
       const days = Math.round((d - today) / 86400000);
       const dist = Math.abs(days);
@@ -344,7 +354,7 @@ class HelloFreshMarketCard extends HTMLElement {
     if (!week || !week.delivery_date) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return Date.parse(week.delivery_date) < today.getTime();
+    return this._parseLocalDate(week.delivery_date).getTime() < today.getTime();
   }
 
   // Whether the user can change the cart right now: the week must be editable AND the grid must
@@ -759,7 +769,7 @@ class HelloFreshMarketCard extends HTMLElement {
     if (!week.delivery_date) return "";
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const d = new Date(week.delivery_date);
+    const d = this._parseLocalDate(week.delivery_date);
     d.setHours(0, 0, 0, 0);
     const days = Math.round((d - today) / 86400000);
     if (days === 0) return "today";
@@ -771,7 +781,7 @@ class HelloFreshMarketCard extends HTMLElement {
 
   _fmtDate(iso) {
     try {
-      return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return this._parseLocalDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch (_e) {
       return iso;
     }

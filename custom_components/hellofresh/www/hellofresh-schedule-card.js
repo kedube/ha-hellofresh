@@ -90,8 +90,18 @@ class HelloFreshScheduleCard extends HTMLElement {
     }
   }
 
+  // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
+  // serializes delivery dates) parses as UTC midnight per the JS spec, which reads as the
+  // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
+  // strings (selection deadlines) parse normally.
+  _parseLocalDate(value) {
+    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(value);
+  }
+
   _dateKey(week) {
-    const d = week && week.delivery_date ? Date.parse(week.delivery_date) : NaN;
+    const d = week && week.delivery_date ? this._parseLocalDate(week.delivery_date).getTime() : NaN;
     return Number.isNaN(d) ? Number.POSITIVE_INFINITY : d;
   }
 
@@ -130,7 +140,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (!week.delivery_date) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return Date.parse(week.delivery_date) >= today.getTime();
+    return this._parseLocalDate(week.delivery_date).getTime() >= today.getTime();
   }
 
   // ---- rendering -----------------------------------------------------------
@@ -223,7 +233,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     const byDay = new Map();
     for (const week of this._weeks) {
       if (!week.delivery_date) continue;
-      const d = new Date(week.delivery_date);
+      const d = this._parseLocalDate(week.delivery_date);
       byDay.set(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(), week);
     }
     const today = new Date();
@@ -399,7 +409,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (!week.delivery_date) return "";
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const d = new Date(week.delivery_date);
+    const d = this._parseLocalDate(week.delivery_date);
     d.setHours(0, 0, 0, 0);
     const days = Math.round((d - today) / 86400000);
     if (days === 0) return "today";
@@ -430,7 +440,7 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   _fmtDate(iso) {
     try {
-      return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return this._parseLocalDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch (_e) {
       return iso || "—";
     }
@@ -438,7 +448,7 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   _fmtDateShort(iso) {
     try {
-      return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return this._parseLocalDate(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     } catch (_e) {
       return iso || "—";
     }
