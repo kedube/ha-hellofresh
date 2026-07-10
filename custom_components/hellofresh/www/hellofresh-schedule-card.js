@@ -18,9 +18,11 @@
  *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
  *   title: Schedule               # optional card header
  *   logo: true                    # optional bundled HelloFresh logo in the header
- *   max_weeks: 8                  # optional cap on upcoming timeline rows (default 8)
- *   past_weeks: 4                 # optional recent past deliveries in the timeline (default 4, 0 hides)
- *   calendar: true                # optional month calendar section (default true)
+ *   calendar: true                # optional month calendar section (default true); the timeline
+ *                                 # below it follows the displayed month
+ *   max_weeks: 8                  # timeline cap on upcoming rows (default 8; calendar: false only)
+ *   past_weeks: 4                 # recent past deliveries in the timeline (default 4, 0 hides;
+ *                                 # calendar: false only)
  *
  * No build step: hand-written ES2020 served from the integration's www/ directory.
  */
@@ -121,6 +123,12 @@ class HelloFreshScheduleCard extends HTMLElement {
         : true; // undated weeks can't be anchored to the past
       if (!isFuture) {
         result.push(week);
+        continue;
+      }
+      // A skipped/paused future week legitimately has no meals — show it (the schedule must
+      // reflect the gap) and don't let it end the published-menu chain.
+      if (week.is_skipped) {
+        if (!futureMenuEnded) result.push(week);
         continue;
       }
       const hasMeals = (week.recipes || []).length > 0;
@@ -336,6 +344,41 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   _renderTimeline() {
+    const current = this._weeks.find((w) => this._isCurrent(w));
+    // With the calendar shown, the timeline mirrors the MONTH IN FOCUS: navigating months
+    // swaps the rows to that month's delivery weeks, so calendar and list always agree.
+    // Without the calendar there's no month cursor, so fall back to the fixed
+    // past_weeks + max_weeks window.
+    const rows =
+      this._config.calendar === false ? this._defaultTimelineRows() : this._monthTimelineRows();
+    if (!rows.length) {
+      const monthLabel = this._shownCalMonth().toLocaleDateString(undefined, {
+        month: "long",
+        year: "numeric",
+      });
+      return this._config.calendar === false
+        ? ""
+        : `<div class="timeline"><div class="state">No deliveries in ${this._esc(monthLabel)}.</div></div>`;
+    }
+    return `
+      <div class="timeline">
+        ${rows.map((w) => this._renderRow(w, w === current, !this._isCurrent(w))).join("")}
+      </div>`;
+  }
+
+  // The delivery weeks whose (actual or scheduled) delivery day falls in the calendar's
+  // displayed month.
+  _monthTimelineRows() {
+    const shown = this._shownCalMonth();
+    return this._weeks.filter((week) => {
+      const when = week.delivered_at || week.delivery_date;
+      if (!when) return false;
+      const d = this._parseLocalDate(when);
+      return d.getFullYear() === shown.getFullYear() && d.getMonth() === shown.getMonth();
+    });
+  }
+
+  _defaultTimelineRows() {
     const max = Number(this._config.max_weeks) || 8;
     const pastRaw = Number(this._config.past_weeks);
     const pastMax = Number.isFinite(pastRaw) ? Math.max(0, pastRaw) : 4;
@@ -344,13 +387,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     // Recent past deliveries lead (dimmed), then the upcoming weeks; if nothing is upcoming,
     // fall back to the most recent history so the card is never empty.
     const pastRows = upcoming.length ? past.slice(-pastMax) : past.slice(-max);
-    const rows = [...pastRows, ...upcoming.slice(0, max)];
-    if (!rows.length) return "";
-    const current = upcoming[0];
-    return `
-      <div class="timeline">
-        ${rows.map((w) => this._renderRow(w, w === current, !this._isCurrent(w))).join("")}
-      </div>`;
+    return [...pastRows, ...upcoming.slice(0, max)];
   }
 
   // Whether HelloFresh auto-picked (preselected) this week's meals rather than the customer
@@ -394,6 +431,7 @@ class HelloFreshScheduleCard extends HTMLElement {
             <span class="rowweek">${this._esc(week.display_name || week.week_id)}</span>
           </div>
           ${detail ? `<div class="rowsub">${detail}</div>` : ""}
+          ${state === "skipped" ? "" : this._rowTracking(week)}
         </div>
         ${preselected}
         <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
@@ -407,6 +445,44 @@ class HelloFreshScheduleCard extends HTMLElement {
     const status = this._titleCase(order.tracking_status || order.status || week.status || "");
     if (!status || status.toLowerCase() === badgeLabel.toLowerCase()) return "";
     return status;
+  }
+
+  // Distinct market add-ons selected for a week (mirrors the market card's selection test).
+  _marketCount(week) {
+    return (week.market_items || []).filter((item) => {
+      const q = Number(item.selected_quantity);
+      return Number.isFinite(q) ? q > 0 : item.is_selected === true;
+    }).length;
+  }
+
+  // The week's own billed/cart price — deliberately NOT the account plan-price fallback the
+  // summary uses, so an old week never shows today's plan price as if it were its bill.
+  _weekPrice(week) {
+    const order = week.order || {};
+    if (order.billed_total_price != null) {
+      return this._fmtPrice(order.billed_total_price, order.billed_total_currency || order.currency);
+    }
+    if (order.total_price != null) return this._fmtPrice(order.total_price, order.currency);
+    return "";
+  }
+
+  // Carrier + tracking number line (number linked when a tracking URL exists). Tracking data
+  // only appears once HelloFresh ships the box, so presence is the gate — this naturally
+  // covers shipping and delivered weeks and stays absent on unshipped/skipped ones.
+  _rowTracking(week) {
+    const order = week.order || {};
+    if (!order.carrier && !order.tracking_number) return "";
+    const parts = [];
+    if (order.carrier) parts.push(this._esc(order.carrier));
+    if (order.tracking_number) {
+      const num = this._esc(order.tracking_number);
+      parts.push(
+        order.tracking_url
+          ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
+          : num
+      );
+    }
+    return `<div class="rowtrack">${parts.join(" · ")}</div>`;
   }
 
   _rowDetail(week, state) {
@@ -425,25 +501,30 @@ class HelloFreshScheduleCard extends HTMLElement {
       }
       return `Pick ${required || "your"} meals${deadlineSuffix}`;
     }
-    const status = this._rowStatus(week, HelloFreshScheduleCard.STATE_META[state].label);
-    const statusSuffix = status ? ` <span class="muted">· ${this._esc(status)}</span>` : "";
+    const parts = [];
     // Show the ACTUAL selected count, not selected/required: a week can be resized to more
     // or fewer meals than the plan (the box SKU changes with it), so a plan-based "3/3" is
     // wrong for a 4-meal week. The plan count only appears when it differs, as context.
     // (Preselection is surfaced as a row badge, not here.)
     if (selected) {
       const plan =
-        required && required !== selected ? ` <span class="muted">· plan: ${required}</span>` : "";
-      return `${selected} meal${selected === 1 ? "" : "s"}${plan}${statusSuffix}`;
+        required && required !== selected ? ` <span class="muted">(plan: ${required})</span>` : "";
+      parts.push(`${selected} meal${selected === 1 ? "" : "s"}${plan}`);
+    } else if (required) {
+      parts.push(`<span class="muted">No meals selected</span>`);
     }
-    if (required) {
-      return `<span class="muted">No meals selected</span>${statusSuffix}`;
-    }
-    return status ? `<span class="muted">${this._esc(status)}</span>` : "";
+    const market = this._marketCount(week);
+    if (market) parts.push(`${market} market item${market === 1 ? "" : "s"}`);
+    const price = this._weekPrice(week);
+    if (price) parts.push(`<span class="muted">${this._esc(price)}</span>`);
+    const status = this._rowStatus(week, HelloFreshScheduleCard.STATE_META[state].label);
+    if (status) parts.push(`<span class="muted">${this._esc(status)}</span>`);
+    return parts.join(" · ");
   }
 
   _renderFooter() {
-    return `<div class="footer"><button class="refreshbtn" data-action="refresh">Refresh</button></div>`;
+    // Same compact ↻ pill the meal-planner and market cards use for their refresh action.
+    return `<div class="footer"><button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button></div>`;
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -643,6 +724,8 @@ class HelloFreshScheduleCard extends HTMLElement {
       .rowdate { font-weight: 700; font-size: 0.95em; }
       .rowweek { font-size: 0.82em; color: var(--secondary-text-color); }
       .rowsub { font-size: 0.82em; color: var(--primary-text-color); margin-top: 2px; }
+      .rowtrack { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
+      .rowtrack a { color: inherit; }
       .badge {
         flex: none; font-size: 0.72em; font-weight: 700; padding: 4px 10px; border-radius: 12px;
         background: var(--secondary-background-color); color: var(--secondary-text-color);
@@ -654,11 +737,13 @@ class HelloFreshScheduleCard extends HTMLElement {
       .badge.skipped { background: var(--secondary-background-color); color: var(--secondary-text-color); }
 
       .footer { margin-top: 12px; text-align: right; }
+      /* Matches the meal-planner/market cards' ↻ pill (their .skipbtn styling). */
       .refreshbtn {
         font: inherit; font-size: 0.85em; cursor: pointer;
-        padding: 6px 14px; border-radius: 10px; border: 1px solid var(--divider-color);
-        background: var(--secondary-background-color); color: var(--primary-text-color);
+        padding: 5px 12px; border-radius: 14px; border: 1px solid var(--divider-color);
+        background: var(--card-background-color); color: var(--primary-text-color);
       }
+      .refreshbtn:disabled { opacity: 0.5; cursor: default; }
       .actions { text-align: center; margin-top: 8px; }
       .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
     `;
