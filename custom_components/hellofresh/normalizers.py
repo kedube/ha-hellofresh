@@ -62,6 +62,25 @@ class HelloFreshPayloadNormalizer:
             return state
         return raw_week.get("status") or raw_week.get("deliveryStatus") or state or "scheduled"
 
+    @classmethod
+    def _delivered_at_from_raw(cls, raw_week: dict[str, Any]) -> datetime | None:
+        """Return the actual delivered timestamp for a DELIVERED week, else None.
+
+        The deliveries payload's ``tracking.delivery_date`` is a real carrier timestamp once
+        the box has arrived (e.g. ``2026-06-29T22:20:50+0000`` — HAR-verified), unlike the
+        week's ``deliveryDate`` which is a scheduled-noon anchor. Before delivery the same
+        tracking field holds a scheduled placeholder, so it is only meaningful once the
+        effective status says DELIVERED.
+        """
+        if str(cls._effective_week_status(raw_week)).strip().upper() != "DELIVERED":
+            return None
+        tracking = raw_week.get("tracking")
+        if not isinstance(tracking, dict):
+            return None
+        return parse_datetime(
+            tracking.get("delivery_date") or tracking.get("estimated_delivery_time")
+        )
+
     def _normalize_weeks_payload(
         self,
         payload: dict[str, Any],
@@ -146,6 +165,7 @@ class HelloFreshPayloadNormalizer:
                     or raw_week.get("shipmentDate")
                     or raw_week.get("expectedDeliveryDate")
                 ),
+                delivered_at=self._delivered_at_from_raw(raw_week),
                 selection_deadline=parse_datetime(
                     raw_week.get("selectionDeadline")
                     or raw_week.get("cutoffDate")
@@ -1051,6 +1071,7 @@ class HelloFreshPayloadNormalizer:
         menu_week.subscription_id = account_week.subscription_id
         menu_week.display_name = account_week.display_name or menu_week.display_name
         menu_week.delivery_date = account_week.delivery_date or menu_week.delivery_date
+        menu_week.delivered_at = account_week.delivered_at or menu_week.delivered_at
         menu_week.selection_deadline = (
             account_week.selection_deadline or menu_week.selection_deadline
         )
