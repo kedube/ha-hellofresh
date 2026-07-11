@@ -29,8 +29,9 @@
 #   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
 #   dashboards, add `/hellofresh/<card>.js` once under Settings → Dashboards → Resources
 #   as a JavaScript module. Every other view is 100% built-in Lovelace.
-# • The shipment-tracking card is conditional and renders only while a box has live tracking;
-#   the holiday-delivery notice is built into the subscription card the same way.
+# • The holiday-delivery notice is built into the subscription card and appears only while
+#   HelloFresh announces one; shipment tracking (carrier + linked tracking number) is shown
+#   per week inside the schedule card.
 ################################################################################
 
 title: HelloFresh
@@ -69,37 +70,9 @@ views:
       - type: custom:hellofresh-schedule-card
         title: Schedule
         logo: true
-      # Condensed account/subscription overview (plan, credit, upcoming counters, coupon,
-      # payment date, preselected flag) with the holiday-delivery notice built in — replaces
-      # the long "Subscription details" entities list and the separate holiday markdown card.
-      # Reads hellofresh.get_account_summary, so no entity-ID prefix fix-up is needed here.
       - type: custom:hellofresh-subscription-card
         title: Subscription
         logo: true
-      - type: entities
-        show_header_toggle: false
-        entities:
-          - entity: switch.hellofresh_us_skip_next_modifiable_week
-            name: Skip next selectable week
-      # Appears only while the current box has live tracking data (shipped → delivered).
-      - type: conditional
-        conditions:
-          - entity: binary_sensor.hellofresh_us_tracked_shipment_available
-            state: "on"
-        card:
-          type: entities
-          title: Shipment tracking
-          show_header_toggle: false
-          state_color: true
-          entities:
-            - entity: sensor.hellofresh_us_shipment_tracking_status
-              name: Status
-            - entity: sensor.hellofresh_us_tracked_shipment_carrier
-              name: Carrier
-            - entity: sensor.hellofresh_us_shipment_tracking_number
-              name: Tracking number
-            - entity: sensor.hellofresh_us_next_delivery_tracking_url
-              name: Tracking link
     type: masonry
   - title: Diagnostics
     path: diagnostics

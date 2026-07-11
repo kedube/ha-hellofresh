@@ -424,12 +424,21 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "refresh_interval_minutes": coordinator.config_entry.options.get(
                 CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
             ),
-            # Subscription-level next charge date (matches the next_payment_date sensor);
-            # shown in the schedule card's next-box summary.
+            # Subscription-level next charge date and coupon (matching the next_payment_date
+            # and next_box_coupon sensors); shown in the schedule card's next-box summary.
             "next_payment_date": (
                 primary_subscription.next_payment_date.isoformat()
                 if primary_subscription is not None
                 and primary_subscription.next_payment_date is not None
+                else None
+            ),
+            "next_box_coupon": (
+                primary_subscription.coupon_code if primary_subscription is not None else None
+            ),
+            # Courier delivery window for the next box (e.g. "08:00-18:00").
+            "next_delivery_time": (
+                primary_subscription.next_delivery_time
+                if primary_subscription is not None
                 else None
             ),
         }
@@ -489,6 +498,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         summary: dict[str, object] = {key: _value(key) for key in keys}
         summary["selected_plan_total_price_currency"] = data.selected_plan_total_price_currency
         summary["account_credit_currency"] = data.account_credit_currency
+        # Week ids behind the counters, so the card can make them clickable (the click
+        # broadcasts the cross-card week-sync event to jump the other cards there).
+        summary["weeks_needing_selection_ids"] = [
+            week.week_id for week in data.weeks_auto_picked
+        ]
+        summary["next_skipped_week_id"] = (
+            data.next_skipped_week.week_id if data.next_skipped_week else None
+        )
         # Same auto-refresh contract as get_weeks: the card re-pulls on the poll cadence.
         summary["refresh_interval_minutes"] = coordinator.config_entry.options.get(
             CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES

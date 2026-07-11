@@ -14,8 +14,9 @@
  * configured refresh interval (and when a sibling card saves a change), so a permanently open
  * dashboard stays current. Clicking a delivery day or timeline row broadcasts the week-sync
  * event so the meal-planner/market cards jump to that week, and the day/row the sibling cards
- * are showing is ring-highlighted. Timeline rows carry a Skip/Unskip action (same services and
- * eligibility as the meal-planner card); meal selection editing stays in the meal-planner card.
+ * are showing is ring-highlighted. Timeline rows carry Skip/Unskip and Change-day actions
+ * (skip_week/unskip_week/reschedule_week, editable weeks only); meal selection editing stays
+ * in the meal-planner card. Holiday-shifted weeks are marked 🎄 on the calendar and timeline.
  *
  * Config:
  *   type: custom:hellofresh-schedule-card
@@ -53,8 +54,9 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._tickTimer = null;
     // The week a sibling card (or a calendar click here) selected — highlighted on the calendar.
     this._selectedWeekId = null;
-    this._busy = false; // a skip/unskip write is in flight
-    this._actionError = null; // last failed skip/unskip, shown as an inline notice
+    this._busy = false; // a skip/unskip/reschedule write is in flight
+    this._actionError = null; // last failed skip/unskip/reschedule, shown as an inline notice
+    this._rescheduleWeekId = null; // week whose "Change day" options panel is open
     // Distinguishes our own data-changed broadcasts from siblings' so we don't re-fetch
     // in response to a change we just made (we already re-fetch ourselves).
     this._instanceId = Math.random().toString(36).slice(2);
@@ -297,6 +299,35 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (!this._actionError) this._broadcastDataChanged();
   }
 
+  // ---- reschedule (change delivery day) ---------------------------------------
+  // HelloFresh offers per-week alternate delivery days (available_one_off_options,
+  // {handle, delivery_date}); reschedule_week applies one. Editable weeks only — the same
+  // rule as Skip, since both go through the week-modification window.
+
+  _canReschedule(week) {
+    if (!this._isEditable(week)) return false;
+    return (week.available_one_off_options || []).some((o) => o.handle);
+  }
+
+  async _reschedule(weekId, handle) {
+    if (this._busy || !this._hass || !weekId || !handle) return;
+    this._busy = true;
+    this._actionError = null;
+    this._render();
+    try {
+      const data = { week_id: weekId, delivery_option: handle };
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      await this._hass.callService("hellofresh", "reschedule_week", data);
+      this._rescheduleWeekId = null; // done — close the options panel
+    } catch (err) {
+      this._actionError = `reschedule_week failed: ${(err && err.message) || err}`;
+    } finally {
+      this._busy = false;
+      await this._fetch();
+    }
+    if (!this._actionError) this._broadcastDataChanged();
+  }
+
   // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
   // serializes delivery dates) parses as UTC midnight per the JS spec, which reads as the
   // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
@@ -427,6 +458,15 @@ class HelloFreshScheduleCard extends HTMLElement {
         this._selectWeek(actionEl.getAttribute("data-week-id"));
       } else if (action === "skip-week") {
         this._toggleSkip(actionEl.getAttribute("data-week-id"));
+      } else if (action === "reschedule-open") {
+        const weekId = actionEl.getAttribute("data-week-id");
+        this._rescheduleWeekId = this._rescheduleWeekId === weekId ? null : weekId;
+        this._render();
+      } else if (action === "reschedule") {
+        this._reschedule(
+          actionEl.getAttribute("data-week-id"),
+          actionEl.getAttribute("data-handle")
+        );
       }
     });
   }
@@ -533,11 +573,15 @@ class HelloFreshScheduleCard extends HTMLElement {
       }
       const state = this._weekState(week);
       const isSelected = week.week_id === this._selectedWeekId ? " selected" : "";
-      const title = `${week.display_name || week.week_id} — ${this._stateLabel(week, state)}`;
+      const holiday = this._isHolidayShifted(week);
+      const title = `${week.display_name || week.week_id} — ${this._stateLabel(week, state)}${
+        holiday ? ` — ${week.holiday_message || "Holiday delivery change"}` : ""
+      }`;
       cells.push(`
         <button class="cal-day has ${state}${isToday}${isSelected}" data-action="cal-week"
           data-week-id="${this._esc(week.week_id)}" title="${this._esc(title)}">
-          <span class="cal-num">${day}</span><span class="cal-mark ${state}"></span>
+          <span class="cal-num">${day}${holiday ? `<span class="cal-holiday">🎄</span>` : ""}</span>
+          <span class="cal-mark ${state}"></span>
         </button>`);
     }
     const monthLabel = shown.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -576,14 +620,22 @@ class HelloFreshScheduleCard extends HTMLElement {
     const price = this._isSkipped(next) ? "" : this._orderPrice(next);
     const deadline = next.selection_deadline ? new Date(next.selection_deadline) : null;
     const rel = this._relativeWeek(next);
-    // Subscription-level next charge date — only meaningful alongside an upcoming box.
+    // Subscription-level next charge date, coupon, and courier window — only meaningful
+    // alongside an upcoming box.
     const paymentDate = upcoming && this._account ? this._account.next_payment_date : null;
+    const coupon = upcoming && this._account ? this._account.next_box_coupon : null;
+    const window = upcoming && this._account ? this._account.next_delivery_time : null;
     return `
       <div class="summary">
         <div class="sumrow">
           <span class="sumlabel">${upcoming ? "Next box" : "Last box"}</span>
           <span class="sumval">${this._esc(this._fmtDate(next.delivery_date))}${rel ? ` <span class="muted">· ${this._esc(rel)}</span>` : ""}</span>
         </div>
+        ${window ? `
+        <div class="sumrow">
+          <span class="sumlabel">Delivery window</span>
+          <span class="sumval">${this._esc(window)}</span>
+        </div>` : ""}
         ${deadline ? `
         <div class="sumrow">
           <span class="sumlabel">Selection deadline</span>
@@ -593,6 +645,11 @@ class HelloFreshScheduleCard extends HTMLElement {
         <div class="sumrow">
           <span class="sumlabel">Payment date</span>
           <span class="sumval">${this._esc(this._fmtDate(paymentDate))}</span>
+        </div>` : ""}
+        ${coupon ? `
+        <div class="sumrow">
+          <span class="sumlabel">Coupon</span>
+          <span class="sumval">${this._esc(coupon)}</span>
         </div>` : ""}
         <div class="sumrow">
           <span class="sumlabel">Status</span>
@@ -707,6 +764,9 @@ class HelloFreshScheduleCard extends HTMLElement {
         ? "HelloFresh auto-picked these meals — review and adjust before the deadline."
         : label;
     const isSelected = week.week_id === this._selectedWeekId;
+    const holiday = this._isHolidayShifted(week)
+      ? `<span class="holiday" title="${this._esc(week.holiday_message || "Holiday delivery change")}">🎄</span>`
+      : "";
     return `
       <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}${isSelected ? " selected" : ""}" data-action="cal-week"
         data-week-id="${this._esc(week.week_id)}"
@@ -715,17 +775,47 @@ class HelloFreshScheduleCard extends HTMLElement {
         <div class="rowmain">
           <div class="rowtop">
             <span class="rowdate">${this._esc(this._fmtDateShort(week.delivered_at || week.delivery_date))}</span>
+            ${holiday}
             <span class="rowweek">${this._esc(week.display_name || week.week_id)}</span>
           </div>
           ${detail ? `<div class="rowsub">${detail}</div>` : ""}
           ${state === "skipped" ? "" : this._rowTracking(week)}
+          ${this._rescheduleWeekId === week.week_id ? this._renderRescheduleOptions(week) : ""}
         </div>
         ${preselected}
         <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
+        ${this._canReschedule(week)
+          ? `<button class="skipbtn" data-action="reschedule-open" data-week-id="${this._esc(week.week_id)}"
+               title="Change this week's delivery day" ${this._busy ? "disabled" : ""}>Change day</button>`
+          : ""}
         ${this._canSkip(week)
           ? `<button class="skipbtn" data-action="skip-week" data-week-id="${this._esc(week.week_id)}"
                ${this._busy ? "disabled" : ""}>${this._isSkipped(week) ? "Unskip" : "Skip"}</button>`
           : ""}
+      </div>`;
+  }
+
+  // Whether HelloFresh has announced a holiday schedule change for this week.
+  _isHolidayShifted(week) {
+    return Boolean(week.holiday_message || week.holiday_delivery_date);
+  }
+
+  // The alternate delivery days HelloFresh offers for this specific week; picking one calls
+  // reschedule_week with that option's handle. The week's current day is shown but disabled.
+  _renderRescheduleOptions(week) {
+    const options = (week.available_one_off_options || []).filter((o) => o.handle);
+    if (!options.length) return "";
+    return `
+      <div class="dayopts">
+        ${options
+          .map((o) => {
+            const isCurrent = o.delivery_date && o.delivery_date === week.delivery_date;
+            const label = o.delivery_date ? this._fmtDate(o.delivery_date) : o.handle;
+            return `<button class="dayopt${isCurrent ? " current" : ""}" data-action="reschedule"
+              data-week-id="${this._esc(week.week_id)}" data-handle="${this._esc(o.handle)}"
+              ${isCurrent || this._busy ? "disabled" : ""}>${this._esc(label)}</button>`;
+          })
+          .join("")}
       </div>`;
   }
 
@@ -1012,6 +1102,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       .cal-mark.skipped {
         background: none; box-shadow: inset 0 0 0 1.5px var(--secondary-text-color);
       }
+      .cal-holiday { font-size: 0.8em; margin-left: 1px; }
       .cal-day.has.skipped .cal-num { text-decoration: line-through; color: var(--secondary-text-color); }
 
       .timeline { display: flex; flex-direction: column; }
@@ -1046,6 +1137,16 @@ class HelloFreshScheduleCard extends HTMLElement {
       .rowsub { font-size: 0.82em; color: var(--primary-text-color); margin-top: 2px; }
       .rowtrack { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
       .rowtrack a { color: inherit; }
+      .holiday { flex: none; font-size: 0.9em; cursor: help; }
+      .dayopts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .dayopt {
+        font-size: 0.78em; padding: 4px 10px; border-radius: 12px; cursor: pointer;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+      .dayopt.current { border-color: var(--hf-green); color: var(--hf-green); font-weight: 700; }
+      .dayopt:disabled { cursor: default; }
+      .dayopt:disabled:not(.current) { opacity: 0.5; }
       /* Same size/shape as the meal-planner card's status chips (.chip) — the two cards
          show the same words ("Preselected", "Editable") and should read identically. */
       .badge {
