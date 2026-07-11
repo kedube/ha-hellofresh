@@ -247,6 +247,24 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Boolean(week) && String(week.status || "").toUpperCase() === "PAUSED";
   }
 
+  // Same eligibility as the schedule card's Skip/Unskip pill: only weeks the action can
+  // still change. allowed_actions.mealSwap merely being PRESENT isn't enough — locked and
+  // past weeks carry it as false, which used to leave a dead Skip button on them.
+  _canSkip(week) {
+    if (this._isEditable(week)) return true; // editable ⇒ skippable
+    // A skipped/paused week can be restored (Unskip) while its deadline hasn't passed;
+    // once the deadline is gone — or the week is in the past — nothing brings the box back.
+    if (!week.is_skipped && !this._isPaused(week)) return false;
+    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
+    if (deadline) return deadline > Date.now();
+    if (!week.delivery_date) return false;
+    // No deadline info: fall back to "not in the past" (real date, NOT the browse grace
+    // window _isPast uses — a delivered-last-week box is browsable but not skippable).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return this._parseLocalDate(week.delivery_date).getTime() >= today.getTime();
+  }
+
   // The menu grace window in whole weeks: how long after its delivery date a week keeps its
   // full browsable menu. The integration reports its configured value (the "Full menu after
   // delivery" option, DEFAULT_MENU_GRACE_WEEKS in const.py) on the get_weeks account payload;
@@ -771,7 +789,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (this._busy) return;
     this._busy = true;
     this._render();
-    const service = week.is_skipped ? "unskip_week" : "skip_week";
+    const service = week.is_skipped || this._isPaused(week) ? "unskip_week" : "skip_week";
     try {
       const data = { week_id: week.week_id };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
@@ -1055,8 +1073,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Save selection</button>
              <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
           : ""}
-        ${week.allowed_actions && week.allowed_actions.mealSwap !== undefined
-          ? `<button class="skipbtn" data-action="skip" ${this._busy ? "disabled" : ""}>${week.is_skipped ? "Unskip week" : "Skip week"}</button>`
+        ${this._canSkip(week)
+          ? `<button class="skipbtn" data-action="skip" ${this._busy ? "disabled" : ""}>${week.is_skipped || this._isPaused(week) ? "Unskip week" : "Skip week"}</button>`
           : ""}
         <button class="skipbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
       </div>
