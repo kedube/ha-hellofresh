@@ -1434,7 +1434,7 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 | [normalizers.py](custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
 | [coordinator.py](custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
 | [config_flow.py](custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
-| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the four Lovelace cards, stamping each resource URL with the manifest release version (`?v=` cache-bust) and updating stale registrations |
+| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the five Lovelace cards, stamping each resource URL with the manifest release version (`?v=` cache-bust) and updating stale registrations |
 | [diagnostics.py](custom_components/hellofresh/diagnostics.py) | Config-entry diagnostics export with `TO_REDACT` key-name redaction (secrets, account IDs, PII) |
 | [tls_transport.py](custom_components/hellofresh/tls_transport.py) | `curl_cffi` Chrome-fingerprint transport for auth POSTs and data XHRs (with `verify=True`), `aiohttp` fallback |
 | [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals`, skip/unskip weeks |

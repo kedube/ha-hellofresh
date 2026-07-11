@@ -473,6 +473,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
         keys = (
             "subscription_status",
+            "account_id",
             "selected_plan",
             "selected_plan_total_price",
             "account_credit",
