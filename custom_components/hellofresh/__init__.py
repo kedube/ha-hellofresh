@@ -414,12 +414,21 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         # integration's (a just-delivered week keeps its browsable menu for this many weeks),
         # and the configured refresh interval so cards can auto-refetch on the same cadence
         # the coordinator polls HelloFresh (fetching more often would return the same data).
+        primary_subscription = data.primary_subscription
         account = {
             "selected_plan_total_price": data.selected_plan_total_price,
             "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
             "menu_grace_weeks": coordinator.client.menu_grace_weeks,
             "refresh_interval_minutes": coordinator.config_entry.options.get(
                 CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
+            ),
+            # Subscription-level next charge date (matches the next_payment_date sensor);
+            # shown in the schedule card's next-box summary.
+            "next_payment_date": (
+                primary_subscription.next_payment_date.isoformat()
+                if primary_subscription is not None
+                and primary_subscription.next_payment_date is not None
+                else None
             ),
         }
 

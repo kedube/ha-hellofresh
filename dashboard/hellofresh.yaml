@@ -101,16 +101,13 @@ views:
             name: Next skipped
           - entity: switch.hellofresh_us_skip_next_modifiable_week
             name: Skip next selectable week
-          # The Next box delivery date, deadline, status, box total, and meal/market counts
-          # are shown by the schedule card above — only what the card doesn't show is listed.
+          # The Next box delivery date, deadline, status, box total, meal/market counts,
+          # order ID, and payment date are shown by the schedule card above — only what it
+          # doesn't show is listed.
           - type: section
             label: Next box
-          - entity: sensor.hellofresh_us_recent_order_id
-            name: Order ID
           - entity: sensor.hellofresh_us_next_box_coupon
             name: Coupon
-          - entity: sensor.hellofresh_us_next_payment_date
-            name: Payment date
           - entity: sensor.hellofresh_us_next_selectable_delivery_preselected
             name: Next selectable box preselected
       # Appears only while the current box has live tracking data (shipped → delivered).
