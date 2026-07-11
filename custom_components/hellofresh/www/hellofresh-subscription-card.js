@@ -1,9 +1,10 @@
 /*
  * HelloFresh Subscription Card
  * ----------------------------
- * A condensed account/subscription overview: the plan, credit, servings and address, the
- * upcoming-delivery counters, and next-box extras (coupon, payment date, preselected flag) —
- * in a compact label-over-value grid instead of a long entities list. A holiday-delivery
+ * A condensed account/subscription overview: the plan, credit, servings and address, plus
+ * the upcoming-delivery counters — in a compact label-over-value grid instead of a long
+ * entities list. Deliberately shows nothing the schedule card already covers (payment date,
+ * coupon, preselected flag, per-box detail). A holiday-delivery
  * notice (message + shifted date), when HelloFresh announces one, renders as a banner at the
  * top, replacing the separate conditional markdown card the example dashboard used to need.
  *
@@ -145,6 +146,23 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     if (this._fetched && !this._loading) this._fetch();
   }
 
+  // Broadcast a week selection over the shared cross-card channel (localStorage key +
+  // window event, same scheme as the other cards): the schedule card ring-highlights the
+  // week and the meal-planner/market cards jump to it when mounted.
+  _gotoWeek(weekId) {
+    if (!weekId) return;
+    try {
+      window.localStorage.setItem(`hellofresh:selected-week:${this._accountKey()}`, weekId);
+    } catch (_e) {
+      /* storage unavailable (private mode) — the live event below still works */
+    }
+    window.dispatchEvent(
+      new CustomEvent("hellofresh-week-selected", {
+        detail: { weekId, accountKey: this._accountKey() },
+      })
+    );
+  }
+
   // ---- rendering -------------------------------------------------------------
 
   _render() {
@@ -165,7 +183,10 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     this._shell = { card, head: card.querySelector(".head"), body: card.querySelector(".body") };
     card.addEventListener("click", (ev) => {
       const actionEl = ev.target.closest("[data-action]");
-      if (actionEl && actionEl.getAttribute("data-action") === "refresh") this._fetch();
+      if (!actionEl) return;
+      const action = actionEl.getAttribute("data-action");
+      if (action === "refresh") this._fetch();
+      else if (action === "goto-week") this._gotoWeek(actionEl.getAttribute("data-week-id"));
     });
   }
 
@@ -210,7 +231,8 @@ class HelloFreshSubscriptionCard extends HTMLElement {
 
   _renderSections() {
     const s = this._summary;
-    const yesNo = (v) => (v == null ? null : v ? "Yes" : "No");
+    // No "Next box" section: payment date, coupon, and the preselected flag are already on
+    // the schedule card (summary rows / week badge), so repeating them here is noise.
     const sections = [
       ["Account", [
         ["Status", s.subscription_status],
@@ -223,14 +245,12 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       ]],
       ["Upcoming", [
         ["Deliveries", s.upcoming_delivery_count],
-        ["Need selecting", s.weeks_needing_selection],
+        // Counters with a week behind them are clickable: the click jumps the schedule /
+        // meal-planner cards to that week over the cross-card sync channel.
+        ["Need selecting", s.weeks_needing_selection,
+          false, (s.weeks_needing_selection_ids || [])[0]],
         ["Skipped", s.skipped_week_count],
-        ["Next skipped", s.next_skipped_week],
-      ]],
-      ["Next box", [
-        ["Coupon", s.next_box_coupon],
-        ["Payment date", s.next_payment_date ? this._fmtDate(s.next_payment_date) : null],
-        ["Preselected", yesNo(s.next_selectable_delivery_preselected)],
+        ["Next skipped", s.next_skipped_week, false, s.next_skipped_week_id],
       ]],
     ];
     return sections
@@ -238,13 +258,17 @@ class HelloFreshSubscriptionCard extends HTMLElement {
         // Absent values drop their cell entirely — that's what keeps the card condensed.
         const cells = items
           .filter(([, value]) => value !== null && value !== undefined && value !== "")
-          .map(
-            ([label, value, wide]) => `
-              <div class="item${wide ? " wide" : ""}">
+          .map(([label, value, wide, weekId]) => {
+            const click = weekId
+              ? ` data-action="goto-week" data-week-id="${this._esc(weekId)}"
+                  title="Show this week in the schedule and meal-planner cards"`
+              : "";
+            return `
+              <div class="item${wide ? " wide" : ""}${weekId ? " click" : ""}"${click}>
                 <span class="ilabel">${this._esc(label)}</span>
                 <span class="ival">${this._esc(value)}</span>
-              </div>`
-          )
+              </div>`;
+          })
           .join("");
         if (!cells) return "";
         return `<div class="section"><div class="stitle">${this._esc(title)}</div><div class="grid">${cells}</div></div>`;
@@ -336,6 +360,9 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       }
       .item { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
       .item.wide { grid-column: 1 / -1; }
+      .item.click { cursor: pointer; }
+      .item.click .ival { text-decoration: underline; text-decoration-color: var(--divider-color); text-underline-offset: 3px; }
+      .item.click:hover .ival { text-decoration-color: currentColor; }
       .ilabel {
         font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em;
         color: var(--secondary-text-color);
