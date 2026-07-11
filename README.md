@@ -215,13 +215,13 @@ Other useful triggers: the `calendar.delivery_schedule` entity for day-of-delive
 
 ## HelloFresh Dashboard
 
-A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml), organized around how you actually use HelloFresh. It is **100% built-in Lovelace plus the integration's packaged cards** — no HACS frontend add-ons required. Its four views:
+A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml), organized around how you actually use HelloFresh. It is **100% built-in Lovelace plus the integration's packaged cards** — no HACS frontend add-ons required (the Schedule and Diagnostics views use HA's built-in `sections` grid layout, so HA 2024.8+ is expected). Its five views:
 
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
 - **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](#subscription-card), a condensed account overview with the holiday-delivery notice built in.
-- **Diagnostics** — token-expiry and integration-health entities plus a refresh action, tucked out of the way.
+- **Diagnostics** — token-expiry and integration-health **tile cards** (state-colored, tap the Refresh tile to poll now) plus the long-form identifiers, tucked out of the way.
 
 ### Meal planner card
 
