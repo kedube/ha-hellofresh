@@ -22,6 +22,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
   - [Market card](#market-card)
   - [Food Profile card](#food-profile-card)
   - [Schedule card](#schedule-card)
+  - [Subscription card](#subscription-card)
   - [Recorder attribute sizes](#recorder-attribute-sizes)
 - [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
@@ -159,6 +160,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 - `hellofresh.unskip_week` — restore a previously skipped week
 - `hellofresh.reschedule_week` — move a single week's delivery to a different delivery option (one-off)
 - `hellofresh.change_delivery_weekday` — change the recurring delivery option/interval for a plan (affects all future deliveries)
+- `hellofresh.get_account_summary` — **returns a response**: the account/subscription headline values (status, plan and plan total, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report. Read-only. Powers the [Subscription card](#subscription-card).
 - `hellofresh.get_food_profile` — **returns a response**: the customer's food profile (the preferences HelloFresh uses to auto-preselect meals) plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](#food-profile-card).
 - `hellofresh.set_food_profile` — update the food profile; provide any of `taste`, `household`, or `goals` (only the supplied sections change). Weighted taste fields accept either a list of liked slugs or a `{slug: +100/-100}` map. Returns the saved profile.
 
@@ -218,7 +220,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
-- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, and selection state — plus a **skip next selectable week** switch, a shipment-tracking card (conditional — appears only while the current box has live tracking data), a holiday-delivery banner (conditional), and a "Subscription details" list trimmed to what the card doesn't already show (coupon, preselected flag).
+- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, and selection state — plus the packaged [Subscription card](#subscription-card) (a condensed account overview with the holiday-delivery notice built in), a **skip next selectable week** switch, and a shipment-tracking card (conditional — appears only while the current box has live tracking data).
 - **Diagnostics** — token-expiry and integration-health entities plus a refresh action, tucked out of the way.
 
 ### Meal planner card
@@ -249,7 +251,7 @@ What it does:
 
 > Meal-selection writes are confirmed on the US and UK sites; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
 
-> **YAML-mode dashboards only.** In storage-mode dashboards the card resource is registered automatically. If your dashboard is in **YAML mode** (you manage resources yourself), add it once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js?v=<integration version>` (e.g. `?v=2.06`). The same applies to the Market, Food Profile, and Schedule cards below — each has its own `/hellofresh/hellofresh-*-card.js` resource path. The `?v=` query is the cache-bust: it should match the installed integration version, and updating it after an upgrade makes browsers fetch the new card instead of a cached one (in storage mode the integration does this for you; the startup log prints the exact URLs).
+> **YAML-mode dashboards only.** In storage-mode dashboards the card resource is registered automatically. If your dashboard is in **YAML mode** (you manage resources yourself), add it once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js?v=<integration version>` (e.g. `?v=2.06`). The same applies to the Market, Food Profile, Schedule, and Subscription cards below — each has its own `/hellofresh/hellofresh-*-card.js` resource path. The `?v=` query is the cache-bust: it should match the installed integration version, and updating it after an upgrade makes browsers fetch the new card instead of a cached one (in storage mode the integration does this for you; the startup log prints the exact URLs).
 
 ### Market card
 
@@ -322,7 +324,25 @@ What it does:
 - **Delivery calendar** — a built-in month grid with every delivery day marked in its week's state colour (green delivered/set, amber needs picking, struck-through for skipped), with ‹ › month navigation and a Today button. Navigation stops at the edges of the loaded data (the arrows disable) instead of paging into empty months. It covers the full loaded range (your configured past history through the scheduled weeks ahead), so a separate `calendar.delivery_schedule` dashboard widget is no longer needed. Clicking a marked day — or a timeline row — jumps the [Meal planner](#meal-planner-card) and [Market](#market-card) cards to that week, even across dashboard views, and the week those cards are currently showing gets a green ring on the calendar.
 - **Timeline** — a chronological row per week, **following the calendar's displayed month**: navigating months swaps the list to that month's delivery weeks, so the calendar and the rows below it always agree (with `calendar: false` it instead shows the last `past_weeks` deliveries plus up to `max_weeks` upcoming). A month with more than one week opens with a **roll-up line** — boxes, skipped weeks, and the summed billed cost of the month's boxes. Past deliveries are dimmed and dated by when the box **actually arrived**; future weeks beyond HelloFresh's published menus (empty scheduling shells with no meal data) are not shown, though skipped weeks always appear so the gap is visible. Each row shows a status dot, date, week label, a detail line — the actual number of meals selected (with the plan count as context when the week is resized), the **market add-on count**, the week's **billed box total**, and the box/tracking status when it adds information (or "Pick N meals"/"Review meals" with the time left, or "No box this week") — plus a meta line with the week's **order ID** and, on shipped and delivered boxes, the **carrier and tracking number** (linked), and a state badge. The current box is highlighted; **Editable** / **Needs picking** / **Skipped** / **Delivered** / **Locked** states are colour-coded. A week whose meals HelloFresh auto-picked shows a single amber **Preselected** badge in place of "Needs picking" (same signal as the meal-planner card, without the redundant double chip).
 - **Stays current on its own** — the card re-fetches on the integration's configured **Refresh interval** (read from the `get_weeks` account payload, so the two always agree), when the browser tab becomes visible again after the data has aged past that interval, and immediately after you save a selection or skip a week in the meal-planner/market cards. Deadline countdowns and relative dates tick along once a minute in between. A refresh never blanks the card: the last good view stays on screen (dimmed while reloading), and a failed refresh shows an inline notice with a Retry button on top of it.
-- **Skip/Unskip per week** — modifiable weeks get a Skip (or Unskip) pill on their timeline row, calling the same `skip_week`/`unskip_week` services as the meal-planner card with the same eligibility rule; the card refetches afterward and a failure shows as an inline notice. Meal selection editing stays in the [Meal planner card](#meal-planner-card).
+- **Skip/Unskip per week** — a Skip pill appears on **editable** timeline rows only (and Unskip on skipped weeks whose deadline hasn't passed) — never on locked, delivered, or past weeks, where the action couldn't change anything. It calls the same `skip_week`/`unskip_week` services as the meal-planner card; the card refetches afterward and a failure shows as an inline notice. Meal selection editing stays in the [Meal planner card](#meal-planner-card).
+
+### Subscription card
+
+The integration also ships **`custom:hellofresh-subscription-card`**, a condensed account overview that replaces the example dashboard's long "Subscription details" entities list. It reads everything in one call from `hellofresh.get_account_summary` — the same values the corresponding sensors report (the service and the sensors share one value dispatcher, so they can never disagree) — and is auto-registered the same way. Because it doesn't reference entities, it needs no entity-ID prefix fix-up.
+
+```yaml
+type: custom:hellofresh-subscription-card
+# title: Subscription       # optional header
+# logo: true                # optional bundled HelloFresh logo in the header
+# config_entry_id: <id>     # required only with multiple HelloFresh accounts
+```
+
+What it does:
+
+- **Condensed label-over-value grid** in three sections — **Account** (status, plan, plan total, credit, servings, boxes received, address), **Upcoming** (delivery count, weeks needing selection, skipped count, next skipped week), and **Next box** (coupon, payment date, preselected flag). Empty values drop their cell entirely, so the card only spends space on what exists.
+- **Holiday-delivery notice built in** — when HelloFresh announces a holiday schedule change, an amber banner shows the message and the shifted delivery date at the top of the card (replacing the separate conditional markdown card the dashboard used to need), and disappears once the notice clears.
+- **Stays current on its own** — same contract as the schedule card: re-fetches on the integration's configured refresh interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view instead of blanking it.
+- It's read-only.
 
 ### Recorder attribute sizes
 
@@ -356,7 +376,7 @@ What works:
 - per-week order detail (tracking, status, carrier, billed total) surfaced alongside each week, with the billed total computed the same way as the `next_box_total_price` sensor
 - skipping/restoring the next modifiable delivery week from a switch, plus `skip_week` / `unskip_week` services that use the website's own write endpoints with conservative fallbacks
 - on-demand per-week recipe, market, selection, and order detail via the response-returning `hellofresh.get_weeks` service (kept out of entity attributes to respect the recorder size limit)
-- four packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), and [Schedule](#schedule-card) — for browsing weeks, editing selections/quantities, managing food preferences, and reviewing the delivery timeline, all auto-registered by the integration
+- five packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), [Schedule](#schedule-card), and [Subscription](#subscription-card) — for browsing weeks, editing selections/quantities, managing food preferences, reviewing the delivery timeline, and a condensed account overview, all auto-registered by the integration
 - Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
 
 What is not implemented yet:

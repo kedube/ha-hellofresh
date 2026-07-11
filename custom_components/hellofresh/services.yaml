@@ -23,6 +23,18 @@ get_weeks:
       selector:
         text:
 
+get_account_summary:
+  name: Get account summary
+  description: >-
+    Return the account and subscription headline values (plan, credit, upcoming
+    counts, coupon, payment date, holiday notice) in one call — the same values
+    the corresponding sensors report. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
 get_food_profile:
   name: Get food profile
   description: >-

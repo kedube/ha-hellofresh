@@ -259,12 +259,19 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   // ---- skip/unskip -----------------------------------------------------------
-  // Same service calls and eligibility rule as the meal-planner card's Skip week button:
-  // shown only when the week's allowed_actions advertises mealSwap (HelloFresh's own
-  // "this week is modifiable" signal).
+  // Same service calls as the meal-planner card's Skip week button, but shown ONLY on weeks
+  // the action can still change: a locked or delivered week can't be skipped, so a button
+  // there is dead weight (allowed_actions.mealSwap merely being PRESENT isn't enough — past
+  // weeks carry it as false).
 
   _canSkip(week) {
-    return Boolean(week.allowed_actions && week.allowed_actions.mealSwap !== undefined);
+    if (this._isEditable(week)) return true; // editable ⇒ skippable
+    // A skipped week can be restored (Unskip) while its deadline hasn't passed; once the
+    // deadline is gone — or the week is in the past — nothing can bring the box back.
+    if (!this._isSkipped(week)) return false;
+    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
+    if (deadline) return deadline > Date.now();
+    return this._isCurrent(week); // no deadline info: fall back to "not in the past"
   }
 
   async _toggleSkip(weekId) {

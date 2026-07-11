@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 import inspect
 import logging
 
@@ -49,6 +49,7 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
+    SERVICE_GET_ACCOUNT_SUMMARY,
     SERVICE_GET_FOOD_PROFILE,
     SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
@@ -63,6 +64,7 @@ from .coordinator import HelloFreshDataUpdateCoordinator
 from .frontend import async_register_meal_planner_card
 from .intent import async_register_intents
 from .issues import async_create_write_actions_issue
+from .sensor_helpers import sensor_native_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -442,6 +444,57 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             }
         return {"weeks": [_week_dict(week) for week in weeks], "account": account}
 
+    async def async_get_account_summary(service_call: ServiceCall) -> ServiceResponse:
+        """Return the account/subscription headline values for the subscription card.
+
+        Read-only. Every value comes from the same ``sensor_native_value`` dispatcher that
+        backs the corresponding sensor entity, so the card and the sensors can never
+        disagree. Dates are ISO strings; empty values are null (the sensors' literal
+        "None" placeholder text is normalized back to null for JSON consumers).
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        coordinator = coordinators[0]
+        data = coordinator.data
+
+        def _value(key: str) -> object:
+            value = sensor_native_value(key, data, coordinator.client.base_url)
+            if value == "None":  # NONE_WHEN_EMPTY_KEYS placeholder — null in a response
+                return None
+            if isinstance(value, (datetime, date)):
+                return value.isoformat()
+            return value
+
+        keys = (
+            "subscription_status",
+            "selected_plan",
+            "selected_plan_total_price",
+            "account_credit",
+            "number_of_people",
+            "boxes_received",
+            "delivery_address",
+            "upcoming_delivery_count",
+            "weeks_needing_selection",
+            "skipped_week_count",
+            "next_skipped_week",
+            "next_box_coupon",
+            "next_payment_date",
+            "next_selectable_delivery_preselected",
+            "next_holiday_message",
+            "next_holiday_delivery_date",
+        )
+        summary: dict[str, object] = {key: _value(key) for key in keys}
+        summary["selected_plan_total_price_currency"] = data.selected_plan_total_price_currency
+        summary["account_credit_currency"] = data.account_credit_currency
+        # Same auto-refresh contract as get_weeks: the card re-pulls on the poll cadence.
+        summary["refresh_interval_minutes"] = coordinator.config_entry.options.get(
+            CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
+        )
+        return summary
+
     async def async_get_food_profile(service_call: ServiceCall) -> ServiceResponse:
         """Return the customer's food profile plus the full catalog of selectable options.
 
@@ -581,6 +634,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional("include_debug"): bool,
             }
         ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_ACCOUNT_SUMMARY,
+        async_get_account_summary,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(

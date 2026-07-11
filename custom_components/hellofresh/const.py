@@ -76,6 +76,7 @@ SERVICE_RESCHEDULE_WEEK = "reschedule_week"
 SERVICE_CHANGE_DELIVERY_WEEKDAY = "change_delivery_weekday"
 SERVICE_GET_FOOD_PROFILE = "get_food_profile"
 SERVICE_SET_FOOD_PROFILE = "set_food_profile"
+SERVICE_GET_ACCOUNT_SUMMARY = "get_account_summary"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
