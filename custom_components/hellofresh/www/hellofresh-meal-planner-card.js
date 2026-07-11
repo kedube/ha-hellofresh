@@ -89,6 +89,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   disconnectedCallback() {
     window.removeEventListener(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, this._onSyncWeek);
+    // Drop the pending toast timer so a detached card isn't kept alive (holding the whole
+    // weeks payload) only to re-render into a shadow root nobody can see.
+    clearTimeout(this._toastTimer);
   }
 
   setConfig(config) {
@@ -130,7 +133,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // `keepWeekId`: after a write (e.g. save), stay on the week the user was on rather than
   // snapping back to the default cursor. Falls back to the default when that week is gone.
   async _fetchWeeks(keepWeekId = null) {
-    if (!this._hass) return;
+    // Reentry guard: a refresh tap racing the post-save/post-skip resync would otherwise run
+    // two concurrent get_weeks calls, and the slower response could clobber the newer state.
+    if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
     this._render();
@@ -937,8 +942,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       if (order.carrier) items.push(this._orderItem("Carrier", order.carrier));
       if (order.tracking_number) {
         const num = this._esc(order.tracking_number);
-        const value = order.tracking_url
-          ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
+        const href = this._safeUrl(order.tracking_url);
+        const value = href
+          ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>`
           : num;
         items.push(this._orderItem("Tracking", value, true));
       }
@@ -1413,11 +1419,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   _esc(value) {
     if (value === null || value === undefined) return "";
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return String(value).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[c]));
+  }
+
+  // Escape a value for use in an href/src. HTML-escaping alone does NOT neutralize a
+  // javascript:/data: scheme (a tracking_url from the API is untrusted), so allow only
+  // http(s) and return "" otherwise — an empty href renders a dead link, never executes.
+  _safeUrl(value) {
+    const raw = String(value ?? "").trim();
+    if (!/^https?:\/\//i.test(raw)) return "";
+    return this._esc(raw);
   }
 
   // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).

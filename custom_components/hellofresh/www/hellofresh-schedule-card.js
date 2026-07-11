@@ -728,7 +728,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     const pastMax = Number.isFinite(pastRaw) ? Math.max(0, pastRaw) : 4;
     const upcoming = this._weeks.filter((w) => this._isCurrent(w));
     const past = this._weeks.filter((w) => !this._isCurrent(w));
-    // Recent past deliveries lead (dimmed), then the upcoming weeks; if nothing is upcoming,
+    // Recent past deliveries lead, then the upcoming weeks; if nothing is upcoming,
     // fall back to the most recent history so the card is never empty.
     const pastRows = upcoming.length ? past.slice(-pastMax) : past.slice(-max);
     return [...pastRows, ...upcoming.slice(0, max)];
@@ -873,9 +873,10 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (order.carrier) parts.push(this._esc(order.carrier));
     if (order.tracking_number) {
       const num = this._esc(order.tracking_number);
+      const href = this._safeUrl(order.tracking_url);
       parts.push(
-        order.tracking_url
-          ? `<a href="${this._esc(order.tracking_url)}" target="_blank" rel="noopener">${num}</a>`
+        href
+          ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>`
           : num
       );
     }
@@ -1018,6 +1019,15 @@ class HelloFreshScheduleCard extends HTMLElement {
     }[c]));
   }
 
+  // Escape a value for use in an href/src. HTML-escaping alone does NOT neutralize a
+  // javascript:/data: scheme (a tracking_url from the API is untrusted), so allow only
+  // http(s) and return "" otherwise — an empty href renders a dead link, never executes.
+  _safeUrl(value) {
+    const raw = String(value ?? "").trim();
+    if (!/^https?:\/\//i.test(raw)) return "";
+    return this._esc(raw);
+  }
+
   static get STATE_META() {
     return {
       ready: { icon: "●", label: "Editable", cls: "ready" },
@@ -1122,7 +1132,6 @@ class HelloFreshScheduleCard extends HTMLElement {
       .row.current { background: color-mix(in srgb, var(--hf-green) 10%, transparent); border-radius: 10px; }
       /* Same green ring as the calendar's selected day — clicking either highlights both. */
       .row.selected { box-shadow: inset 0 0 0 1.5px var(--hf-green); border-radius: 10px; }
-      .row.past { opacity: 0.65; }
       .dot {
         flex: none; width: 26px; height: 26px; border-radius: 50%;
         display: flex; align-items: center; justify-content: center;

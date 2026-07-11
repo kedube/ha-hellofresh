@@ -110,6 +110,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     this._render();
   }
 
+  disconnectedCallback() {
+    // Drop the pending toast timer so a detached card isn't kept alive only to re-render
+    // into a shadow root nobody can see.
+    clearTimeout(this._toastTimer);
+  }
+
   set hass(hass) {
     this._hass = hass;
     if (hass && !this._fetched && !this._loading) {

@@ -202,7 +202,12 @@ class HelloFreshWeek:
     holiday_shift_visible: bool = False
     allowed_actions: dict[str, bool] = field(default_factory=dict)
     available_one_off_options: list[dict[str, str | None]] = field(default_factory=list)
-    raw: dict[str, Any] = field(default_factory=dict)
+    # Excluded from equality: the coordinator's always_update=False deep-compares each poll's
+    # HelloFreshAccountData against the last, and this dict holds the full raw delivery payload
+    # plus (for merged weeks) the entire menu payload under "_menu_payload" — MBs of nested
+    # dicts. Comparing them field-by-field every unchanged poll is pure cost; the normalized
+    # scalar fields above already capture every change that should notify listeners.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
     def needs_selection(self) -> bool:
@@ -389,7 +394,9 @@ class HelloFreshSubscription:
     coupon_code: str | None = None
     loyalty_boxes_received: int | None = None
     loyalty_boxes_until_next_freebie: int | None = None
-    raw: dict[str, Any] = field(default_factory=dict)
+    # Excluded from equality (see HelloFreshWeek.raw): holds the raw subscription payload,
+    # deep-compared each unchanged poll under the coordinator's always_update=False otherwise.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize subscription metadata for attributes and diagnostics."""

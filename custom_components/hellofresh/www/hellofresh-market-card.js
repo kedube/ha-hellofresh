@@ -75,6 +75,9 @@ class HelloFreshMarketCard extends HTMLElement {
 
   disconnectedCallback() {
     window.removeEventListener(HelloFreshMarketCard.WEEK_SYNC_EVENT, this._onSyncWeek);
+    // Drop the pending toast timer so a detached card isn't kept alive (holding the whole
+    // weeks payload) only to re-render into a shadow root nobody can see.
+    clearTimeout(this._toastTimer);
   }
 
   setConfig(config) {
@@ -135,7 +138,9 @@ class HelloFreshMarketCard extends HTMLElement {
   // `keepWeekId`: after a write (e.g. save), stay on the week the user was on rather than
   // snapping back to the first week. Falls back to the first week when that week is gone.
   async _fetchWeeks(keepWeekId = null) {
-    if (!this._hass) return;
+    // Reentry guard: a refresh tap racing the post-save resync would otherwise run two
+    // concurrent get_weeks calls, and the slower response could clobber the newer state.
+    if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
     this._render();
@@ -808,11 +813,13 @@ class HelloFreshMarketCard extends HTMLElement {
 
   _esc(value) {
     if (value === null || value === undefined) return "";
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return String(value).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[c]));
   }
 
   // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).
