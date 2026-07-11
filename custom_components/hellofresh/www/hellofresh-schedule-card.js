@@ -620,11 +620,14 @@ class HelloFreshScheduleCard extends HTMLElement {
     const price = this._isSkipped(next) ? "" : this._orderPrice(next);
     const deadline = next.selection_deadline ? new Date(next.selection_deadline) : null;
     const rel = this._relativeWeek(next);
-    // Subscription-level next charge date, coupon, and courier window — only meaningful
-    // alongside an upcoming box.
+    // Subscription-level next charge date and coupon — only meaningful alongside an
+    // upcoming box.
     const paymentDate = upcoming && this._account ? this._account.next_payment_date : null;
     const coupon = upcoming && this._account ? this._account.next_box_coupon : null;
-    const window = upcoming && this._account ? this._account.next_delivery_time : null;
+    // The human-readable courier window ("Mondays: 8AM - 8PM") — the week/order slot_label,
+    // the same value the "Delivery Window" (next_delivery_slot) sensor reports. NOT the raw
+    // subscription next_delivery_time, which is a machine string.
+    const window = upcoming ? next.slot_label || order.slot_label : null;
     return `
       <div class="summary">
         <div class="sumrow">

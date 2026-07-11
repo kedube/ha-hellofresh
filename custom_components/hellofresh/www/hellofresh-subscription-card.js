@@ -240,6 +240,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
         ["Plan total", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
         ["Credit", this._fmtPrice(s.account_credit, s.account_credit_currency)],
         ["Servings", s.number_of_people],
+        ["Meals per box", s.required_meal_count],
         ["Boxes received", s.boxes_received],
         ["Address", s.delivery_address, true],
       ]],
