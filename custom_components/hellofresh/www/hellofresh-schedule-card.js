@@ -276,7 +276,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       }
       // A skipped/paused future week legitimately has no meals — show it (the schedule must
       // reflect the gap) and don't let it end the published-menu chain.
-      if (week.is_skipped) {
+      if (this._isSkipped(week)) {
         if (!futureMenuEnded) result.push(week);
         continue;
       }
@@ -292,11 +292,18 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   // ---- week-state classification (mirrors the meal-planner card's conventions) ----
 
+  // Skipped OR paused: the integration treats both as "no box ships this week" (a paused
+  // week carries status PAUSED without is_skipped in some payload shapes), so the card must
+  // too — otherwise a paused week renders as a normal box, price included.
+  _isSkipped(week) {
+    return Boolean(week.is_skipped) || String(week.status || "").toUpperCase() === "PAUSED";
+  }
+
   _isEditable(week) {
     if (!week) return false;
     const actions = week.allowed_actions || {};
     if (actions.mealSwap === false) return false;
-    if (week.is_skipped) return false;
+    if (this._isSkipped(week)) return false;
     const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
     if (deadline && deadline < Date.now()) return false;
     return Boolean(actions.mealSwap);
@@ -312,7 +319,7 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   // One of: skipped | needs | ready | delivered | locked — drives the icon, colour and label.
   _weekState(week) {
-    if (week.is_skipped) return "skipped";
+    if (this._isSkipped(week)) return "skipped";
     const status = String(week.status || "").toUpperCase();
     if (status === "DELIVERED") return "delivered";
     if (this._needsSelection(week)) return "needs";
@@ -495,17 +502,23 @@ class HelloFreshScheduleCard extends HTMLElement {
       </div>`;
   }
 
-  // The "next box" summary: the nearest upcoming delivery — or, when nothing is upcoming
-  // (paused subscription, end of data), the most recent box labelled honestly as "Last box".
+  // The "next box" summary: the nearest upcoming delivery that will actually ship (paused/
+  // skipped weeks aren't a "box"; fall back to them only when every upcoming week is skipped)
+  // — or, when nothing is upcoming at all (end of data), the most recent box as "Last box".
   _renderSummary() {
-    const upcoming = this._weeks.find((w) => this._isCurrent(w));
+    const upcoming =
+      this._weeks.find((w) => this._isCurrent(w) && !this._isSkipped(w)) ||
+      this._weeks.find((w) => this._isCurrent(w));
     const next = upcoming || this._weeks[this._weeks.length - 1];
     if (!next) return "";
     const order = next.order || {};
     const status = order.tracking_status || order.status || next.status || "—";
-    const price = this._orderPrice(next);
+    // No price on a skipped/paused week — nothing ships, nothing is charged.
+    const price = this._isSkipped(next) ? "" : this._orderPrice(next);
     const deadline = next.selection_deadline ? new Date(next.selection_deadline) : null;
     const rel = this._relativeWeek(next);
+    // Subscription-level next charge date — only meaningful alongside an upcoming box.
+    const paymentDate = upcoming && this._account ? this._account.next_payment_date : null;
     return `
       <div class="summary">
         <div class="sumrow">
@@ -516,6 +529,11 @@ class HelloFreshScheduleCard extends HTMLElement {
         <div class="sumrow">
           <span class="sumlabel">Selection deadline</span>
           <span class="sumval">${this._esc(this._fmtDateTime(deadline))} <span class="${this._deadlineClass(deadline)}">· ${this._esc(this._countdown(deadline))}</span></span>
+        </div>` : ""}
+        ${paymentDate ? `
+        <div class="sumrow">
+          <span class="sumlabel">Payment date</span>
+          <span class="sumval">${this._esc(this._fmtDate(paymentDate))}</span>
         </div>` : ""}
         <div class="sumrow">
           <span class="sumlabel">Status</span>
@@ -601,7 +619,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // choosing them. Mirrors the meal-planner card: a skipped/paused week's preselection never
   // ships, so it doesn't count.
   _isPreselected(week) {
-    if (week.is_skipped || String(week.status || "").toUpperCase() === "PAUSED") return false;
+    if (this._isSkipped(week)) return false;
     return Boolean(week.meals_preselected);
   }
 
@@ -629,8 +647,9 @@ class HelloFreshScheduleCard extends HTMLElement {
       label === "Preselected"
         ? "HelloFresh auto-picked these meals — review and adjust before the deadline."
         : label;
+    const isSelected = week.week_id === this._selectedWeekId;
     return `
-      <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}" data-action="cal-week"
+      <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}${isSelected ? " selected" : ""}" data-action="cal-week"
         data-week-id="${this._esc(week.week_id)}"
         title="Show ${this._esc(week.display_name || week.week_id)} in the meal planner and market cards">
         <span class="dot ${state}" title="${this._esc(label)}">${meta.icon}</span>
@@ -666,7 +685,10 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   // The week's own billed/cart price — deliberately NOT the account plan-price fallback the
   // summary uses, so an old week never shows today's plan price as if it were its bill.
+  // A skipped/paused week's order price is the cart estimate of a box that never ships —
+  // no money moved, so it has no price here and never counts toward the month total.
   _weekPriceParts(week) {
+    if (this._isSkipped(week)) return null;
     const order = week.order || {};
     if (order.billed_total_price != null) {
       const amount = Number(order.billed_total_price);
@@ -686,12 +708,11 @@ class HelloFreshScheduleCard extends HTMLElement {
     return parts ? this._fmtPrice(parts.amount, parts.currency) : "";
   }
 
-  // Carrier + tracking number line (number linked when a tracking URL exists). Tracking data
-  // only appears once HelloFresh ships the box, so presence is the gate — this naturally
-  // covers shipping and delivered weeks and stays absent on unshipped/skipped ones.
+  // Order/shipping meta line: the week's order ID, plus carrier + tracking number (number
+  // linked when a tracking URL exists). Tracking data only appears once HelloFresh ships the
+  // box, so upcoming weeks show just the order ID and shipped/delivered weeks the full line.
   _rowTracking(week) {
     const order = week.order || {};
-    if (!order.carrier && !order.tracking_number) return "";
     const parts = [];
     if (order.carrier) parts.push(this._esc(order.carrier));
     if (order.tracking_number) {
@@ -702,6 +723,8 @@ class HelloFreshScheduleCard extends HTMLElement {
           : num
       );
     }
+    if (order.order_id) parts.push(`Order ${this._esc(order.order_id)}`);
+    if (!parts.length) return "";
     return `<div class="rowtrack">${parts.join(" · ")}</div>`;
   }
 
@@ -940,6 +963,8 @@ class HelloFreshScheduleCard extends HTMLElement {
       .row:last-child { border-bottom: none; }
       .row:hover { background: var(--secondary-background-color); border-radius: 10px; }
       .row.current { background: color-mix(in srgb, var(--hf-green) 10%, transparent); border-radius: 10px; }
+      /* Same green ring as the calendar's selected day — clicking either highlights both. */
+      .row.selected { box-shadow: inset 0 0 0 1.5px var(--hf-green); border-radius: 10px; }
       .row.past { opacity: 0.65; }
       .dot {
         flex: none; width: 26px; height: 26px; border-radius: 50%;
@@ -970,12 +995,13 @@ class HelloFreshScheduleCard extends HTMLElement {
       .badge.needs { background: var(--warning-color, #ff9800); color: #fff; }
       .badge.skipped { background: var(--secondary-background-color); color: var(--secondary-text-color); }
 
-      /* Matches the meal-planner/market cards' ↻ pill (their .skipbtn styling). */
+      /* Identical to the meal-planner/market cards' ↻ pill (their .skipbtn) — same default
+         button font (no font: inherit), so the ↻ glyph renders the same in all three cards. */
       .refreshbtn {
         margin-left: auto; flex: none;
-        font: inherit; font-size: 0.85em; cursor: pointer;
-        padding: 5px 12px; border-radius: 14px; border: 1px solid var(--divider-color);
-        background: var(--card-background-color); color: var(--primary-text-color);
+        font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color); cursor: pointer;
       }
       .refreshbtn:disabled { opacity: 0.5; cursor: default; }
       .actions { text-align: center; margin-top: 8px; }
