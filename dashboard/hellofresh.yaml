@@ -4,11 +4,13 @@
 # A ready-to-use dashboard built entirely from entities and cards this integration
 # provides. No HACS frontend add-ons required.
 #
-# Four views:
-#   • My Menu    — browse & edit each week's meal selection (meal-planner card)
-#   • Market     — browse & order HelloFresh Market add-ons (market card)
-#   • Schedule   — delivery calendar, subscription summary, selection deadlines
-#   • Diagnostics — token expiry & integration-health entities, manual refresh
+# Five views:
+#   • My Menu      — browse & edit each week's meal selection (meal-planner card)
+#   • Market       — browse & order HelloFresh Market add-ons (market card)
+#   • Food Profile — view & edit meal-preselection preferences (food-profile card)
+#   • Schedule     — delivery calendar + timeline and account overview (schedule +
+#                    subscription cards, sections grid layout)
+#   • Diagnostics  — token expiry & integration health as tile cards, manual refresh
 #
 # ── Setup ─────────────────────────────────────────────────────────────────────
 # 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new YAML-mode dashboard),
@@ -63,46 +65,67 @@ views:
         title: Food Profile
         logo: true
     type: panel
+  # Sections (grid) layout: the schedule card gets a two-column-wide slot with the
+  # subscription card beside it, instead of masonry's take-it-or-leave-it stacking.
+  # Requires HA 2024.8+ (sections view with column_span / grid_options).
   - title: Schedule
     path: planning
     icon: mdi:calendar-month
-    cards:
-      - type: custom:hellofresh-schedule-card
-        title: Schedule
-        logo: true
-      - type: custom:hellofresh-subscription-card
-        title: Subscription
-        logo: true
-    type: masonry
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          - type: custom:hellofresh-schedule-card
+            title: Schedule
+            logo: true
+            grid_options:
+              columns: full
+      - type: grid
+        cards:
+          - type: custom:hellofresh-subscription-card
+            title: Subscription
+            logo: true
+            grid_options:
+              columns: full
+  # Tile cards under section headings replace the three separate entities cards (each of
+  # which paid a card header for 1-4 rows). Tapping the Refresh tile presses the button.
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
-    cards:
-      - type: entities
-        title: Token health
-        show_header_toggle: false
-        entities:
-          - entity: sensor.hellofresh_us_access_token_minutes_remaining
-            name: Access token expires in
-          - entity: sensor.hellofresh_us_refresh_token_days_remaining
-            name: Refresh token expires in
-      - type: entities
-        title: Actions
-        show_header_toggle: false
-        entities:
-          - entity: button.hellofresh_us_refresh_data
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Token health
+          - type: tile
+            entity: sensor.hellofresh_us_access_token_minutes_remaining
+            name: Access token
+          - type: tile
+            entity: sensor.hellofresh_us_refresh_token_days_remaining
+            name: Refresh token
+          - type: tile
+            entity: button.hellofresh_us_refresh_data
             name: Refresh now
-      - type: entities
-        title: Integration health
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: sensor.hellofresh_us_next_delivery_subscription
-            name: Delivery subscription ID
-          - entity: sensor.hellofresh_us_api_base_url
-            name: API base URL
-          - entity: binary_sensor.hellofresh_us_payload_shape_changed
+            tap_action:
+              action: toggle
+      - type: grid
+        cards:
+          - type: heading
+            heading: Integration health
+          - type: tile
+            entity: binary_sensor.hellofresh_us_payload_shape_changed
             name: Payload shape changed
-          - entity: binary_sensor.hellofresh_us_write_actions_available
-            name: Write actions available
-    type: masonry
+          - type: tile
+            entity: binary_sensor.hellofresh_us_write_actions_available
+            name: Write actions
+          - type: entities
+            show_header_toggle: false
+            entities:
+              - entity: sensor.hellofresh_us_next_delivery_subscription
+                name: Delivery subscription ID
+              - entity: sensor.hellofresh_us_api_base_url
+                name: API base URL
