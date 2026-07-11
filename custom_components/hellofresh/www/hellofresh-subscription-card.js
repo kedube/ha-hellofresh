@@ -242,6 +242,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
         ["Servings", s.number_of_people],
         ["Meals per box", s.required_meal_count],
         ["Boxes received", s.boxes_received],
+        ["Account ID", s.account_id],
         ["Address", s.delivery_address, true],
       ]],
       ["Upcoming", [
