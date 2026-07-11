@@ -435,12 +435,6 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "next_box_coupon": (
                 primary_subscription.coupon_code if primary_subscription is not None else None
             ),
-            # Courier delivery window for the next box (e.g. "08:00-18:00").
-            "next_delivery_time": (
-                primary_subscription.next_delivery_time
-                if primary_subscription is not None
-                else None
-            ),
         }
 
         if service_call.data.get("include_debug"):
@@ -483,6 +477,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "selected_plan_total_price",
             "account_credit",
             "number_of_people",
+            "required_meal_count",
             "boxes_received",
             "delivery_address",
             "upcoming_delivery_count",
