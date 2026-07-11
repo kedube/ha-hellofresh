@@ -2401,6 +2401,64 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     assert weeks[0].recipes[0].is_selected is False
 
 
+def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> None:
+    """A past week older than the grace window must not trigger a (wasted) menu fetch.
+
+    Its recipes are unconditionally replaced by the delivered-only set later, so downloading
+    its menu is pure waste; only current/future/in-grace weeks should hit /gw/my-deliveries/menu.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "shippingAddress": {"postcode": "01930"},
+            "product": {"sku": "US-CBU-3-2-0"},
+            "productType": {"specs": {"size": 2}},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+        },
+    )
+    today = datetime.now(UTC).date()
+    # menu_grace_weeks default is 2; a week delivered 10 weeks ago is well past the floor.
+    old_week = HelloFreshWeek(
+        week_id="2026-old",
+        display_name="Old",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(weeks=10),
+        raw={"deliveryOption": {"handle": "US-1-0800-2000"}},
+    )
+    # A future week must still be fetched.
+    future_week = HelloFreshWeek(
+        week_id="2026-future",
+        display_name="Future",
+        subscription_id="6959884",
+        delivery_date=today + timedelta(weeks=1),
+        raw={"deliveryOption": {"handle": "US-1-0800-2000"}},
+    )
+
+    fetched_weeks: list[str] = []
+
+    async def fake_fetch(subscription, account_week):  # noqa: ARG001
+        fetched_weeks.append(account_week.week_id)
+        return []
+
+    client._async_get_delivery_menu_week_data = fake_fetch  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_get_account_menu_data([subscription], [old_week, future_week])
+    )
+
+    assert "2026-future" in fetched_weeks
+    assert "2026-old" not in fetched_weeks
+
+
 def test_delivery_menu_rejects_substitute_menu_for_mismatched_week() -> None:
     """A menu payload for a different week than requested must not be stamped onto the week.
 
@@ -6764,3 +6822,67 @@ def test_async_update_food_profile_rejects_empty_changes() -> None:
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshError, match="No food-profile changes"):
         loop.run_until_complete(client.async_update_food_profile({}))
+
+
+def test_week_equality_ignores_raw_payload() -> None:
+    """raw is excluded from __eq__ so the coordinator's per-poll deep-compare stays cheap.
+
+    Two weeks identical in every normalized field but differing only in their (potentially
+    multi-MB) raw payload must compare equal — otherwise always_update=False walks the whole
+    raw dict graph every unchanged poll.
+    """
+    common = {
+        "week_id": "2026-W25",
+        "display_name": "Jun 15 - Jun 21",
+        "subscription_id": "6959884",
+        "meals_required": 3,
+        "meals_selected": 3,
+    }
+    week_a = HelloFreshWeek(**common, raw={"huge": ["payload"] * 1000})
+    week_b = HelloFreshWeek(**common, raw={})
+    assert week_a == week_b
+    # A change to a NORMALIZED field must still register as unequal (listeners should notify).
+    week_c = HelloFreshWeek(**{**common, "meals_selected": 2}, raw={})
+    assert week_a != week_c
+
+
+def test_subscription_equality_ignores_raw_payload() -> None:
+    """raw is excluded from HelloFreshSubscription equality for the same poll-compare reason."""
+    common = {"subscription_id": "6959884", "account_id": "acct-1", "locale": "en-US"}
+    sub_a = HelloFreshSubscription(**common, raw={"big": ["x"] * 1000})
+    sub_b = HelloFreshSubscription(**common, raw={})
+    assert sub_a == sub_b
+
+
+def test_get_weeks_response_caches_per_data_generation() -> None:
+    """get_weeks serialization is built once per coordinator data object and reused.
+
+    Multiple cards calling get_weeks within one poll cycle must not each rebuild the multi-MB
+    response; a new poll (new data object) invalidates the cache.
+    """
+    from custom_components.hellofresh.coordinator import HelloFreshDataUpdateCoordinator
+
+    # Bypass __init__ (needs a real hass); exercise only the caching method + its one attribute.
+    coordinator = object.__new__(HelloFreshDataUpdateCoordinator)
+    coordinator._weeks_response_cache = None
+
+    data_v1 = object()
+    coordinator.data = data_v1
+    builds = 0
+
+    def build():
+        nonlocal builds
+        builds += 1
+        return {"weeks": [], "account": {"gen": builds}}
+
+    first = coordinator.get_weeks_response(build)
+    second = coordinator.get_weeks_response(build)
+    # Same data object → built once, second call is a cache hit returning the same object.
+    assert builds == 1
+    assert first is second
+
+    # New poll assigns a fresh data object → cache miss → rebuild.
+    coordinator.data = object()
+    third = coordinator.get_weeks_response(build)
+    assert builds == 2
+    assert third is not first

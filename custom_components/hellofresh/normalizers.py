@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+import re
 from typing import Any
 
 from .const import DEFAULT_MENU_GRACE_WEEKS
@@ -42,6 +43,29 @@ _COUNTRY_CURRENCIES = {
     "de": "EUR",
     "nl": "EUR",
 }
+
+# Path segments that carry a per-account identifier the diagnostics export must not leak.
+# Each pattern captures the fixed segment before an id and replaces the id with a placeholder,
+# so ``/gw/api/subscriptions/12345/oneoff`` becomes ``/gw/api/subscriptions/{id}/oneoff``.
+# Key-name redaction in diagnostics.py can't reach these because the value is *in* the path
+# string, not a dict key — see _record_debug_attempt.
+_DEBUG_PATH_REDACTIONS = (
+    # /gw/api/subscriptions/<id>/… and /gw/api/customers/me/subscriptions/<id>/…
+    (re.compile(r"(/subscriptions/)[^/]+"), r"\1{id}"),
+    # /gw/api/plans/<customerPlanId>/…
+    (re.compile(r"(/plans/)[^/]+"), r"\1{id}"),
+    # /gw/payments/customers/<customerUUID>/…
+    (re.compile(r"(/customers/)[^/]+(/balance)"), r"\1{id}\2"),
+    # /gw/scm/tracking-ids/track/public-id/<uuid>
+    (re.compile(r"(/public-id/)[^/?]+"), r"\1{id}"),
+)
+
+
+def _template_debug_path(path: str) -> str:
+    """Replace per-account id segments in a diagnostics path with ``{id}`` placeholders."""
+    for pattern, replacement in _DEBUG_PATH_REDACTIONS:
+        path = pattern.sub(replacement, path)
+    return path
 
 
 class HelloFreshPayloadNormalizer:
@@ -1366,6 +1390,11 @@ class HelloFreshPayloadNormalizer:
             account_week.meals_required = (
                 past_week.meals_required or account_week.meals_required
             )
+            # The browsable catalog was replaced by the delivered set, so the (possibly
+            # multi-MB aggregate) menu payload stashed on this week is now dead weight kept
+            # alive for the whole poll interval. Drop it — nothing reads it back for an old
+            # week (writes/pricing only touch editable current/future weeks).
+            account_week.raw.pop("_menu_payload", None)
 
         return list(account_weeks)
 
@@ -1767,9 +1796,19 @@ class HelloFreshPayloadNormalizer:
         )
 
     def _record_debug_attempt(self, category: str, details: dict[str, Any]) -> None:
-        """Append a sanitized debug event for diagnostics."""
+        """Append a sanitized debug event for diagnostics.
+
+        The diagnostics export redacts sensitive values by *key name*, which cannot reach an
+        identifier baked into a path string (e.g. ``/gw/api/subscriptions/12345/oneoff``). So
+        before storing, any recorded ``path`` has its known-identifier segments templated out
+        here — this is the single choke point every debug attempt flows through, so it covers
+        current and future call sites without per-site care.
+        """
         if category not in self._debug_trace:
             self._debug_trace[category] = []
+        path = details.get("path")
+        if isinstance(path, str):
+            details = {**details, "path": _template_debug_path(path)}
         self._debug_trace[category].append(details)
 
     def _summarize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

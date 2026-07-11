@@ -1923,6 +1923,43 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
         return [], []
 
+    # Cap on concurrent per-week menu fetches. Bounded so a many-week account doesn't open
+    # dozens of simultaneous connections against HelloFresh (each its own impersonated TLS
+    # session); ~6 keeps the poll fast without looking like a burst.
+    _MENU_FETCH_CONCURRENCY = 6
+
+    async def _async_gather_bounded(
+        self,
+        coros: Sequence[Any],
+        limit: int | None = None,
+    ) -> list[Any]:
+        """Await coroutines concurrently with a concurrency cap, preserving input order.
+
+        A coroutine that raises a non-auth ``HelloFreshError`` resolves to ``[]`` in its slot
+        rather than cancelling the whole batch — one week's failed menu fetch must not sink the
+        rest of the poll (the per-week fetch already returns ``[]`` on its own errors; this
+        guards unexpected ones). A ``HelloFreshAuthError`` still propagates so the coordinator
+        can trigger reauth, as does any other unexpected exception (genuine bugs shouldn't be
+        masked as an empty week list).
+        """
+        if not coros:
+            return []
+        semaphore = asyncio.Semaphore(limit or self._MENU_FETCH_CONCURRENCY)
+
+        async def _run(coro: Any) -> Any:
+            async with semaphore:
+                try:
+                    return await coro
+                except HelloFreshAuthError:
+                    # A real auth failure must surface so the coordinator can reauth — never
+                    # swallow it into an empty week list.
+                    raise
+                except HelloFreshError as err:
+                    _LOGGER.debug("Bounded menu fetch failed for one week: %s", err)
+                    return []
+
+        return await asyncio.gather(*(_run(coro) for coro in coros))
+
     async def _async_get_account_menu_data(
         self,
         subscriptions: Sequence[HelloFreshSubscription],
@@ -1937,16 +1974,38 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 continue
             weeks_by_subscription.setdefault(account_week.subscription_id, []).append(account_week)
 
+        # Skip the per-week menu fetch for weeks older than the menu grace window: their
+        # recipes are unconditionally replaced by the delivered-only set in
+        # _merge_past_delivery_recipes_into_account_weeks, so downloading their (often multi-MB
+        # aggregate) menu only to discard it is pure waste. Weeks with no date, or dated within
+        # the grace window, still fetch — the grace-window branch keeps and overlays the catalog.
+        grace_floor = datetime.now(UTC).date() - timedelta(weeks=self.menu_grace_weeks)
+
+        def _needs_menu_fetch(account_week: HelloFreshWeek) -> bool:
+            return account_week.delivery_date is None or account_week.delivery_date >= grace_floor
+
         for subscription in subscriptions:
             subscription_id = subscription.subscription_id
             subscription_weeks: list[HelloFreshWeek] = []
             seen_week_ids: set[str] = set()
 
-            for account_week in weeks_by_subscription.get(subscription_id, []):
-                delivery_menu_weeks = await self._async_get_delivery_menu_week_data(
-                    subscription=subscription,
-                    account_week=account_week,
-                )
+            fetch_weeks = [
+                account_week
+                for account_week in weeks_by_subscription.get(subscription_id, [])
+                if _needs_menu_fetch(account_week)
+            ]
+            # Fetch the eligible weeks concurrently (bounded) instead of one round-trip at a
+            # time — the poll's critical path was ~N sequential TLS round-trips per subscription.
+            menu_week_lists = await self._async_gather_bounded(
+                [
+                    self._async_get_delivery_menu_week_data(
+                        subscription=subscription,
+                        account_week=account_week,
+                    )
+                    for account_week in fetch_weeks
+                ]
+            )
+            for delivery_menu_weeks in menu_week_lists:
                 for delivery_menu_week in delivery_menu_weeks:
                     if delivery_menu_week.week_id in seen_week_ids:
                         continue

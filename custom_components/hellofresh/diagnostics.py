@@ -39,6 +39,12 @@ TO_REDACT = {
     "customerPlanId",  # stable per-account plan UUID
     "customerId",
     "customer_id",
+    "customerUUID",  # stable customer UUID in the balance-transactions params
+    "public_id",  # tracking public id — reconstructs the unauthenticated tracking page
+    # Active voucher/credit code on the subscription — a single-use code could be burned by
+    # anyone who reads a shared export. Redact both the model field and any camelCase param.
+    "coupon_code",
+    "couponCode",
     # Defensive: street/region fields if a raw address ever rides along in a param or payload.
     "region",
     "address1",

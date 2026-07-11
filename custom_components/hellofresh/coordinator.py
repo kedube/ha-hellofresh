@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 import logging
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceResponse, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -77,6 +78,28 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         self.client = client
         self.config_entry = config_entry
         self._cancel_token_refresh = None
+        # Memoized get_weeks serialization, keyed by the identity of the data object it was
+        # built from. Each poll assigns a fresh HelloFreshAccountData, so a new object is a
+        # cache miss; multiple cards calling get_weeks within one poll cycle reuse one build.
+        self._weeks_response_cache: tuple[int, ServiceResponse] | None = None
+
+    def get_weeks_response(
+        self,
+        build: Callable[[], ServiceResponse],
+    ) -> ServiceResponse:
+        """Return the cached full get_weeks response for the current data, or build it once.
+
+        ``build`` produces the response for ``self.data``; it is only invoked on a cache miss.
+        The cache is invalidated automatically when the coordinator swaps in new data (the
+        key is ``id(self.data)``), so a card fetching after a poll always gets fresh content.
+        """
+        data = self.data
+        key = id(data)
+        if self._weeks_response_cache is not None and self._weeks_response_cache[0] == key:
+            return self._weeks_response_cache[1]
+        response = build()
+        self._weeks_response_cache = (key, response)
+        return response
 
     @callback
     def async_start_token_refresh(self) -> None:

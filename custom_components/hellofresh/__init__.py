@@ -445,6 +445,17 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                     _variation_join_debug(week) for week in weeks
                 ],
             }
+
+        # The common case — no week filter, no debug — is what the dashboard cards call, often
+        # several at once per poll cycle for identical data. Serialize the full weeks list once
+        # per coordinator update and reuse it; the cache self-invalidates on the next poll.
+        if week_id is None:
+            return coordinator.get_weeks_response(
+                lambda: {
+                    "weeks": [_week_dict(week) for week in weeks],
+                    "account": account,
+                }
+            )
         return {"weeks": [_week_dict(week) for week in weeks], "account": account}
 
     async def async_get_account_summary(service_call: ServiceCall) -> ServiceResponse:
