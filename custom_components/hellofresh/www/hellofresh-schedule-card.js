@@ -12,9 +12,10 @@
  * builds the whole view — including the calendar, which replaces a separate
  * `calendar.delivery_schedule` dashboard widget. It re-pulls automatically on the integration's
  * configured refresh interval (and when a sibling card saves a change), so a permanently open
- * dashboard stays current. Read-only; clicking a delivery day or timeline row broadcasts the
- * week-sync event so the meal-planner/market cards jump to that week, and the day the sibling
- * cards are showing is ring-highlighted on the calendar.
+ * dashboard stays current. Clicking a delivery day or timeline row broadcasts the week-sync
+ * event so the meal-planner/market cards jump to that week, and the day/row the sibling cards
+ * are showing is ring-highlighted. Timeline rows carry a Skip/Unskip action (same services and
+ * eligibility as the meal-planner card); meal selection editing stays in the meal-planner card.
  *
  * Config:
  *   type: custom:hellofresh-schedule-card
@@ -52,6 +53,11 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._tickTimer = null;
     // The week a sibling card (or a calendar click here) selected — highlighted on the calendar.
     this._selectedWeekId = null;
+    this._busy = false; // a skip/unskip write is in flight
+    this._actionError = null; // last failed skip/unskip, shown as an inline notice
+    // Distinguishes our own data-changed broadcasts from siblings' so we don't re-fetch
+    // in response to a change we just made (we already re-fetch ourselves).
+    this._instanceId = Math.random().toString(36).slice(2);
     this._onSyncWeek = (ev) => this._receiveSyncedWeek(ev);
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
     this._onVisibility = () => this._onBecameVisible();
@@ -112,7 +118,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // ---- data ----------------------------------------------------------------
 
   async _fetch() {
-    if (!this._hass) return;
+    if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
     this._render();
@@ -128,6 +134,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       this._weeks = this._displayWeeks(sorted);
       this._account = response.account || null;
       this._selectedWeekId = this._loadSyncedWeekId();
+      this._actionError = null; // fresh data on screen — clear any stale skip-failure notice
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -238,8 +245,49 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   _receiveDataChanged(ev) {
     const detail = (ev && ev.detail) || {};
+    if (detail.source === this._instanceId) return; // our own write — already re-fetched
     if ((detail.accountKey || "default") !== this._accountKey()) return;
     if (this._fetched && !this._loading) this._fetch();
+  }
+
+  _broadcastDataChanged() {
+    window.dispatchEvent(
+      new CustomEvent(HelloFreshScheduleCard.DATA_CHANGED_EVENT, {
+        detail: { accountKey: this._accountKey(), source: this._instanceId },
+      })
+    );
+  }
+
+  // ---- skip/unskip -----------------------------------------------------------
+  // Same service calls and eligibility rule as the meal-planner card's Skip week button:
+  // shown only when the week's allowed_actions advertises mealSwap (HelloFresh's own
+  // "this week is modifiable" signal).
+
+  _canSkip(week) {
+    return Boolean(week.allowed_actions && week.allowed_actions.mealSwap !== undefined);
+  }
+
+  async _toggleSkip(weekId) {
+    if (this._busy || !this._hass) return;
+    const week = (this._weeks || []).find((w) => w.week_id === weekId);
+    if (!week) return;
+    const service = this._isSkipped(week) ? "unskip_week" : "skip_week";
+    this._busy = true;
+    this._actionError = null;
+    this._render();
+    try {
+      const data = { week_id: weekId };
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      await this._hass.callService("hellofresh", service, data);
+    } catch (err) {
+      this._actionError = `${service} failed: ${(err && err.message) || err}`;
+    } finally {
+      this._busy = false;
+      await this._fetch(); // resync from the source of truth either way
+    }
+    // Announce after our own refetch so any other listening card (e.g. a second schedule
+    // card on another view) re-pulls; the source tag stops us re-fetching a second time.
+    if (!this._actionError) this._broadcastDataChanged();
   }
 
   // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
@@ -370,6 +418,8 @@ class HelloFreshScheduleCard extends HTMLElement {
         // to that week — the same window event those cards use to stay in step, plus the
         // same localStorage key so cards on other dashboard tabs pick the week up later.
         this._selectWeek(actionEl.getAttribute("data-week-id"));
+      } else if (action === "skip-week") {
+        this._toggleSkip(actionEl.getAttribute("data-week-id"));
       }
     });
   }
@@ -432,7 +482,9 @@ class HelloFreshScheduleCard extends HTMLElement {
     const notice = this._error
       ? `<div class="notice">Refresh failed: ${this._esc(this._error)}
            <button class="refreshbtn" data-action="refresh">Retry</button></div>`
-      : "";
+      : this._actionError
+        ? `<div class="notice">${this._esc(this._actionError)}</div>`
+        : "";
     return `<div class="${this._loading ? "reloading" : ""}">${notice}${this._renderSummary()}${this._renderCalendar()}${this._renderTimeline()}</div>`;
   }
 
@@ -663,6 +715,10 @@ class HelloFreshScheduleCard extends HTMLElement {
         </div>
         ${preselected}
         <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
+        ${this._canSkip(week)
+          ? `<button class="skipbtn" data-action="skip-week" data-week-id="${this._esc(week.week_id)}"
+               ${this._busy ? "disabled" : ""}>${this._isSkipped(week) ? "Unskip" : "Skip"}</button>`
+          : ""}
       </div>`;
   }
 
@@ -1004,6 +1060,13 @@ class HelloFreshScheduleCard extends HTMLElement {
         color: var(--primary-text-color); cursor: pointer;
       }
       .refreshbtn:disabled { opacity: 0.5; cursor: default; }
+      /* Same pill as the meal-planner card's Skip week button. */
+      .skipbtn {
+        flex: none; font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color); cursor: pointer;
+      }
+      .skipbtn:disabled { opacity: 0.5; cursor: default; }
       .actions { text-align: center; margin-top: 8px; }
       .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
     `;
