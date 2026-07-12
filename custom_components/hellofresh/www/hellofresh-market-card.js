@@ -58,6 +58,10 @@ class HelloFreshMarketCard extends HTMLElement {
     this._hass = null;
     // Pending (unsaved) edit per week: week_id -> Map(item_id -> quantity). Absent = show saved.
     this._pending = {};
+    // Week id whose last save triggered a HelloFresh seamless downgrade (box silently shrunk to
+    // fit). Drives a persistent, dismissable banner — the "your box was downsized" warning
+    // shouldn't vanish before it's read. Cleared on dismiss or when the user changes weeks.
+    this._downgradeNotice = null;
     // Persisted "show selected only" view preference (shared across weeks, survives reloads).
     this._showSelectedOnly = this._loadShowSelectedOnly();
     // Cross-card week sync: follow a sibling HelloFresh card (e.g. the Meal Planner) to the same
@@ -234,6 +238,7 @@ class HelloFreshMarketCard extends HTMLElement {
     const clamped = Math.max(0, Math.min(index, this._weeks.length - 1));
     if (clamped === this._cursor) return;
     this._cursor = clamped;
+    this._downgradeNotice = null; // a downgrade warning is about the week you just saved
     this._render();
     if (broadcast) this._broadcastWeek();
   }
@@ -494,12 +499,18 @@ class HelloFreshMarketCard extends HTMLElement {
     try {
       const data = { week_id: week.week_id, quantities };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
-      await this._hass.callService("hellofresh", "select_market_items", data);
+      // return_response=true so we can see HelloFresh's seamless-downgrade flag: the write may
+      // succeed but silently shrink the box to fit, saving fewer items than requested.
+      const result = await this._hass.callService(
+        "hellofresh", "select_market_items", data, undefined, false, true
+      );
+      const downgraded = !!((result && result.response) || {}).downgraded;
       delete this._pending[week.week_id];
       this._busy = false;
       this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
-      this._flash("Market selection updated.");
+      if (downgraded) this._noteDowngrade(week.week_id);
+      else this._flash("Market selection updated.");
     } catch (err) {
       this._busy = false;
       await this._fetchWeeks(week.week_id); // resync from the source of truth
@@ -518,6 +529,20 @@ class HelloFreshMarketCard extends HTMLElement {
       this._toast = null;
       this._render();
     }, 4000);
+  }
+
+  // Record that HelloFresh downsized the box on the last save for `weekId`, showing a
+  // persistent banner (rendered by `_renderDowngradeNotice`) until dismissed or the user
+  // navigates to another week.
+  _noteDowngrade(weekId) {
+    this._downgradeNotice = weekId;
+    this._render();
+  }
+
+  _dismissDowngrade() {
+    if (this._downgradeNotice === null) return;
+    this._downgradeNotice = null;
+    this._render();
   }
 
   // ---- render --------------------------------------------------------------
@@ -576,7 +601,22 @@ class HelloFreshMarketCard extends HTMLElement {
       return `<div class="state">No market items available for any week yet.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderHeader(week)}${this._renderGroups(week)}`;
+    return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderGroups(week)}`;
+  }
+
+  // Inline banner shown on the week whose last save triggered a HelloFresh seamless downgrade:
+  // the write succeeded but the box was silently shrunk to fit, so fewer items were saved than
+  // chosen. Surfaced right where the edit happened (the persistent HA notification is easy to
+  // miss). Dismissable; also cleared automatically when the user navigates to another week.
+  _renderDowngradeNotice(week) {
+    if (!week || this._downgradeNotice !== week.week_id) return "";
+    return `
+      <div class="downgrade-notice" role="alert">
+        <span class="downgrade-icon" aria-hidden="true">⚠</span>
+        <span class="downgrade-text">HelloFresh <strong>downsized this box</strong> to fit your
+          plan — fewer items were saved than you selected. Review the saved selection below.</span>
+        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Dismiss">✕</button>
+      </div>`;
   }
 
   _renderHeader(week) {
@@ -757,6 +797,7 @@ class HelloFreshMarketCard extends HTMLElement {
       else if (action === "save" && week) this._saveSelection(week);
       else if (action === "cancel" && week) this._cancelEdit(week);
       else if (action === "toggle-filter") this._toggleShowSelectedOnly();
+      else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });
   }
 
@@ -935,6 +976,18 @@ class HelloFreshMarketCard extends HTMLElement {
         background: var(--secondary-background-color); font-size: 0.85em; text-align: center;
       }
       .toast.error { background: var(--error-color, #db4437); color: #fff; }
+      .downgrade-notice {
+        display: flex; align-items: flex-start; gap: 10px;
+        margin: 8px 0 0; padding: 10px 14px; border-radius: 10px;
+        background: var(--warning-color, #ff9800); color: #fff;
+      }
+      .downgrade-icon { font-size: 1.2em; flex: none; line-height: 1.3; }
+      .downgrade-text { font-size: 0.9em; flex: 1; line-height: 1.35; }
+      .downgrade-dismiss {
+        flex: none; background: transparent; border: none; color: inherit;
+        font-size: 1em; cursor: pointer; padding: 0 2px; opacity: 0.85;
+      }
+      .downgrade-dismiss:hover { opacity: 1; }
       /* Pin the "please wait while saving" banner to the top of the viewport so it's visible the
          instant Save is pressed, rather than sitting below a tall grid where it only scrolls into
          view once the reload shrinks the content (looking like it never appeared). */

@@ -165,6 +165,10 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
         else None
     ),
     "number_of_people": _sub_value("servings"),
+    # The active plan preference driving HelloFresh's meal auto-preselection (e.g. "quick",
+    # "veggie"). Resolved by the client and normalized onto the subscription; falls back to the
+    # subscription's preset. Card-only value (no dedicated sensor entity).
+    "plan_preference": _sub_value("plan_preference"),
     "delivery_address": _sub_value("delivery_address"),
     "recent_payment_date": _sub_value("recent_payment_date"),
     "next_payment_date": _sub_value("next_payment_date"),

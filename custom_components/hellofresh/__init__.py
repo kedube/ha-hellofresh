@@ -79,6 +79,16 @@ INTENTS_REGISTERED_KEY = f"{DOMAIN}_intents_registered"
 TOKEN_ONLY_UPDATE_KEY = f"{DOMAIN}_token_only_update"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+
+class _DowngradeFlag:
+    """Mutable box shared with a per-coordinator select mutation so the outer service can
+    surface whether *any* target coordinator's write triggered a seamless box downgrade."""
+
+    __slots__ = ("value",)
+
+    def __init__(self) -> None:
+        self.value = False
+
 # Credential keys belong in entry.data only. Older entries stored some of these in
 # entry.options (the source of the data/options split-brain that broke refresh); this set
 # drives a one-time, idempotent heal on load.
@@ -490,6 +500,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "subscription_status",
             "account_id",
             "selected_plan",
+            "plan_preference",
             "selected_plan_total_price",
             "account_credit",
             "number_of_people",
@@ -589,32 +600,47 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """Return the region's menu presets (Chef's Choice, Veggie, …). Read-only."""
         return {"presets": await _single_client(service_call).async_get_presets()}
 
-    async def async_select_meals(service_call: ServiceCall) -> None:
-        """Submit meal selections."""
+    async def async_select_meals(service_call: ServiceCall) -> ServiceResponse:
+        """Submit meal selections.
+
+        Returns ``{"downgraded": bool}`` — ``True`` when HelloFresh accepted the write but
+        silently shrank the box to fit (a seamless downgrade). A card can read this via
+        ``return_response=true`` to show an inline warning right where the edit happened; the
+        server also raises a persistent notification so the surfacing works either way.
+        """
         week_id = service_call.data[ATTR_WEEK_ID]
         recipe_ids = list(service_call.data[ATTR_RECIPE_IDS])
         quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
+        downgraded = _DowngradeFlag()
         await _for_each_coordinator(
             service_call,
             lambda coordinator, _: _async_select_mutation(
                 coordinator,
                 coordinator.client.async_select_meals(week_id, recipe_ids, quantities),
                 week_id,
+                downgraded,
             ),
         )
+        return {"downgraded": downgraded.value}
 
-    async def async_select_market_items(service_call: ServiceCall) -> None:
-        """Submit HelloFresh Market add-on (extras) selections for a week."""
+    async def async_select_market_items(service_call: ServiceCall) -> ServiceResponse:
+        """Submit HelloFresh Market add-on (extras) selections for a week.
+
+        Returns ``{"downgraded": bool}`` (see :func:`async_select_meals`).
+        """
         week_id = service_call.data[ATTR_WEEK_ID]
         quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
+        downgraded = _DowngradeFlag()
         await _for_each_coordinator(
             service_call,
             lambda coordinator, _: _async_select_mutation(
                 coordinator,
                 coordinator.client.async_select_market_items(week_id, quantities),
                 week_id,
+                downgraded,
             ),
         )
+        return {"downgraded": downgraded.value}
 
     async def async_skip_week(service_call: ServiceCall) -> None:
         """Skip a delivery week."""
@@ -700,10 +726,16 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         coordinator: HelloFreshDataUpdateCoordinator,
         coro,
         week_id: str,
+        downgraded_flag: _DowngradeFlag,
     ) -> None:
-        """Run a meal/market select write and notify if it triggered a seamless downgrade."""
+        """Run a meal/market select write and notify if it triggered a seamless downgrade.
+
+        Records the downgrade on ``downgraded_flag`` so the service can return it to a caller
+        (e.g. a card) in addition to raising the persistent notification.
+        """
         downgraded = await _async_mutation(coordinator, coro)
         if downgraded:
+            downgraded_flag.value = True
             _notify_seamless_downgrade(coordinator, week_id)
 
     hass.services.async_register(
@@ -790,6 +822,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
             }
         ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
@@ -804,6 +837,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Required(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=0))},
             }
         ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,

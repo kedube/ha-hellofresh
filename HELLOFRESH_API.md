@@ -522,28 +522,34 @@ Those values can be sourced from the authenticated subscription and delivery pay
 
 ### Plan preference
 
-The plan preference (e.g. `"quick"`) that fills the `/gw/my-deliveries/menu` `preference` param is read from the **profile-service** payload:
+The plan preference (e.g. `"quick"`) that fills the `/gw/my-deliveries/menu` `preference` param is resolved in order from these sources:
 
-| Purpose | Method | Path | Params |
-| --- | --- | --- | --- |
-| Resolve current plan preference | `GET` | `/gw/profile-service/v2/customers/me/profile` | `brand=BRAND_HELLOFRESH&exclusion=v2&regionCode=<CC>` |
+| Priority | Purpose | Method | Path | Params |
+| --- | --- | --- | --- | --- |
+| 1 | Canonical preference | `GET` | `/gw/v1/profile/me/unified-preferences` | none |
+| 2 | Fallback preference | `GET` | `/gw/profile-service/v2/customers/me/profile` | `brand=BRAND_HELLOFRESH&exclusion=v2&regionCode=<CC>` |
 
-Observed payload fragment (the preference lives under `taste`):
+The dedicated **unified-preferences** endpoint (priority 1) returns the preference under `unifiedPreferences.plans[customerPlanId].planPreference`:
 
 ```json
 {
-  "taste": {
-    "plans": {
-      "<customerPlanId>": { "planPreference": "quick" }
-    },
-    "legacySinglePreference": "quick"
+  "unifiedPreferences": {
+    "plans": { "<customerPlanId>": { "planPreference": "quick" } },
+    "cuisines": { "italian": 100, "thai": -100 },
+    "primaryProteins": { "beef": 100, "plant_based_proteins": -100 }
   }
 }
 ```
 
-`taste.plans[customerPlanId].planPreference` is preferred, with `taste.legacySinglePreference` as a single-value fallback and the subscription `preset` as the last resort. This value is more reliable than the `preset` field when building the menu request.
+If that endpoint doesn't carry the plan, the **profile-service** payload (priority 2) is consulted at `taste.plans[customerPlanId].planPreference`, with `taste.legacySinglePreference` as a single-value fallback:
 
-> **Migrated from `product_options`.** An earlier version read the preference from `GET /gw/api/subscriptions/{subscription_id}/product_options` at `unifiedPreferences.plans[customerPlanId].planPreference`. The current site's `product_options` no longer returns `unifiedPreferences` at all — with `all=1` it serves the full **product catalog** (`{count, items[]}` of box variants and specs) — so that call always fell through to `preset`. It was dropped (one fewer HTTP round-trip per poll) in favor of the profile-service source above (HAR-confirmed across all captures).
+```json
+{ "taste": { "plans": { "<customerPlanId>": { "planPreference": "quick" } }, "legacySinglePreference": "quick" } }
+```
+
+The subscription `preset` is the last resort. Both API sources are more reliable than `preset`, which is a distinct field that can diverge from the active preference.
+
+> **Endpoint history.** The very first version read this from `GET /gw/api/subscriptions/{subscription_id}/product_options` at `unifiedPreferences.plans[...]`; the site later stopped returning `unifiedPreferences` there (with `all=1` it now serves the product catalog `{count, items[]}`), so that call was dropped. It was replaced by the profile-service `taste.plans` source, and then the dedicated `/gw/v1/profile/me/unified-preferences` endpoint was adopted as the canonical priority-1 source (with profile-service kept as the fallback). All HAR-confirmed.
 
 ### Reference catalogs (read-only)
 
@@ -551,9 +557,9 @@ Three additional read endpoints the web app uses are exposed as optional read-on
 
 | Service | Method | Path | Params | Returns |
 | --- | --- | --- | --- | --- |
-| `hellofresh.get_delivery_options` | `GET` | `/gw/api/delivery_dates_options` | `country=<CC>&locale=<locale>&family=<planFamily>&numDeliveries=<n>&zip=<postcode>` | `{delivery_options: [...]}` |
+| `hellofresh.get_delivery_options` | `GET` | `/gw/api/delivery_dates_options` | `country=<CC>&locale=<locale>&family=<planFamily>&numDeliveries=<n>&zip=<postcode>&customerPriority=active_subscription&customerJourney=account_setting` | `{delivery_options: [...]}` |
 | `hellofresh.get_plans` | `GET` | `/gw/api/plans` | `includeCanceled=false` | `{plans: [...]}` |
-| `hellofresh.get_presets` | `GET` | `/gw/menus-service/presets` | `country=<CC>&locale=<locale>&take=<n>` | `{presets: [...]}` |
+| `hellofresh.get_presets` | `GET` | `/gw/api/presets` (fallback `/gw/menus-service/presets`) | `country=<cc>&locale=<locale>&sort=-weight` | `{presets: [...]}` |
 
 - **`get_delivery_options`** is the richer delivery-day picker — a **superset** of a week's `availableOneOffOptions` (which carries only `{handle, delivery_date}`). Each option carries the weekday name/number, price, and default flag, normalized into `HelloFreshDeliveryOption`. The `family` (`productType.family.handle`, e.g. `classic-box-unified`) and `zip` (`shippingAddress.postcode`) come from the primary subscription; options are deduped across items by `handle` and sorted by weekday. Returns `[]` (no request) when either is missing.
 
@@ -564,7 +570,7 @@ Three additional read endpoints the web app uses are exposed as optional read-on
   ```
 
 - **`get_plans`** returns the account's plans (a bare JSON list) with `planItems[].productHandle`, `legacyContractPrice`, `planType`, and status.
-- **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`.
+- **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`. Two paths serve the identical catalog (HAR-confirmed); the account-context `/gw/api/presets` (sorted by weight) is tried first, with `/gw/menus-service/presets` as the fallback.
 
 `get_plans` / `get_presets` are returned as decoded dicts (reference data, not normalized into account models).
 

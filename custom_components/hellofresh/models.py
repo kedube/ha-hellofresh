@@ -381,6 +381,10 @@ class HelloFreshSubscription:
     shipping_method: str | None = None
     delivery_weekday: int | None = None
     preset: str | None = None
+    # The active plan preference (e.g. "quick", "veggie") HelloFresh uses to auto-preselect
+    # meals — resolved from unified-preferences/profile-service and written back onto the raw
+    # payload by the client, falling back to ``preset`` when the resolved value isn't available.
+    plan_preference: str | None = None
     next_delivery: date | None = None
     next_delivery_week: str | None = None
     next_cutoff_date: datetime | None = None
@@ -414,6 +418,7 @@ class HelloFreshSubscription:
             "shipping_method": self.shipping_method,
             "delivery_weekday": self.delivery_weekday,
             "preset": self.preset,
+            "plan_preference": self.plan_preference,
             "next_delivery": self.next_delivery.isoformat() if self.next_delivery else None,
             "next_delivery_week": self.next_delivery_week,
             "next_cutoff_date": (

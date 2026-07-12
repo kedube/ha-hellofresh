@@ -78,7 +78,10 @@ set_food_profile:
 
 select_meals:
   name: Select meals
-  description: Submit meal selections for a delivery week.
+  description: >-
+    Submit meal selections for a delivery week. Optionally returns a response
+    ({"downgraded": bool}); downgraded is true when HelloFresh accepted the
+    write but silently shrank the box to fit (a seamless downgrade).
   fields:
     config_entry_id:
       required: false
@@ -104,7 +107,10 @@ select_meals:
 
 select_market_items:
   name: Select market items
-  description: Set the HelloFresh Market add-on (extras) selection for a delivery week.
+  description: >-
+    Set the HelloFresh Market add-on (extras) selection for a delivery week.
+    Optionally returns a response ({"downgraded": bool}); downgraded is true
+    when HelloFresh accepted the write but silently shrank the box to fit.
   fields:
     config_entry_id:
       required: false

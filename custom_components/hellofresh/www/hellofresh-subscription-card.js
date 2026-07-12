@@ -39,6 +39,11 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     this._fetched = false;
     this._lastFetched = 0;
     this._tickTimer = null;
+    // Region preset catalog (get_presets). Lazily fetched the first time the user expands the
+    // "Meal presets" reference section; null = not yet fetched, [] = fetched/unavailable.
+    this._presets = null;
+    this._presetsExpanded = false;
+    this._presetsLoading = false;
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
     this._onVisibility = () => this._onBecameVisible();
   }
@@ -96,6 +101,36 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     } finally {
       this._lastFetched = Date.now();
       this._loading = false;
+      this._render();
+    }
+  }
+
+  // Toggle the "Meal presets" reference section, lazily fetching the catalog on first expand.
+  _togglePresets() {
+    this._presetsExpanded = !this._presetsExpanded;
+    this._render();
+    if (this._presetsExpanded && this._presets === null && !this._presetsLoading) {
+      this._fetchPresets();
+    }
+  }
+
+  async _fetchPresets() {
+    if (!this._hass || this._presetsLoading) return;
+    this._presetsLoading = true;
+    this._render();
+    try {
+      const data = {};
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      const result = await this._hass.callService(
+        "hellofresh", "get_presets", data, undefined, false, true
+      );
+      const presets = ((result && result.response) || {}).presets;
+      this._presets = Array.isArray(presets) ? presets : [];
+    } catch (_err) {
+      // A reference list is non-essential; on failure show an empty list rather than an error.
+      this._presets = [];
+    } finally {
+      this._presetsLoading = false;
       this._render();
     }
   }
@@ -187,6 +222,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       const action = actionEl.getAttribute("data-action");
       if (action === "refresh") this._fetch();
       else if (action === "goto-week") this._gotoWeek(actionEl.getAttribute("data-week-id"));
+      else if (action === "toggle-presets") this._togglePresets();
     });
   }
 
@@ -211,7 +247,48 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       ${notice}
       ${this._renderHolidayBanner()}
       ${this._renderSections()}
+      ${this._renderPresets()}
     </div>`;
+  }
+
+  // Collapsible reference list of the region's meal presets (get_presets): the human-readable
+  // names + descriptions behind the plan preference slugs. Read-only — HelloFresh exposes no
+  // API to change a plan's preset, so this is a "what do these mean / which is mine" reference.
+  // The user's active preference is highlighted. Fetched lazily on first expand.
+  _renderPresets() {
+    if (!this._summary) return "";
+    const active = String(this._summary.plan_preference || "").toLowerCase();
+    const header = `
+      <button class="preset-toggle" data-action="toggle-presets"
+              aria-expanded="${this._presetsExpanded ? "true" : "false"}">
+        <span class="preset-caret">${this._presetsExpanded ? "▾" : "▸"}</span>
+        <span>Meal presets</span>
+      </button>`;
+    if (!this._presetsExpanded) return `<div class="section presets">${header}</div>`;
+
+    let list;
+    if (this._presetsLoading && this._presets === null) {
+      list = `<div class="preset-empty">Loading presets…</div>`;
+    } else if (!this._presets || this._presets.length === 0) {
+      list = `<div class="preset-empty">No presets available.</div>`;
+    } else {
+      list = this._presets
+        .map((p) => {
+          const handle = String((p && p.handle) || "").toLowerCase();
+          const isActive = handle && handle === active;
+          const name = (p && (p.name || p.handle)) || "";
+          const desc = (p && p.description) || "";
+          return `
+            <div class="preset-item${isActive ? " active" : ""}">
+              <span class="preset-name">${this._esc(name)}${
+                isActive ? ` <span class="preset-badge">Yours</span>` : ""
+              }</span>
+              ${desc ? `<span class="preset-desc">${this._esc(desc)}</span>` : ""}
+            </div>`;
+        })
+        .join("");
+    }
+    return `<div class="section presets">${header}<div class="preset-list">${list}</div></div>`;
   }
 
   // Holiday delivery notice: HelloFresh's message plus the shifted delivery date, shown only
@@ -237,6 +314,9 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       ["Account", [
         ["Status", s.subscription_status],
         ["Plan", s.selected_plan],
+        // The active meal-preference preset HelloFresh uses to auto-preselect meals (e.g.
+        // "quick" -> "Quick"). Distinct from the plan itself.
+        ["Preference", this._fmtPreference(s.plan_preference)],
         ["Plan total", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
         ["Credit", this._fmtPrice(s.account_credit, s.account_credit_currency)],
         ["Servings", s.number_of_people],
@@ -296,6 +376,15 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     } catch (_e) {
       return iso || "—";
     }
+  }
+
+  // Humanize a plan-preference slug for display: "quick" -> "Quick", "quick-and-easy" ->
+  // "Quick And Easy". Returns null for empty values so the row drops out entirely.
+  _fmtPreference(slug) {
+    if (!slug) return null;
+    return String(slug)
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   _fmtPrice(amount, currency) {
@@ -380,6 +469,29 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       .refreshbtn:disabled { opacity: 0.5; cursor: default; }
       .actions { text-align: center; margin-top: 8px; }
       .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
+      .section.presets { margin-top: 12px; border-top: 1px solid var(--divider-color); padding-top: 8px; }
+      .preset-toggle {
+        display: flex; align-items: center; gap: 6px; width: 100%;
+        background: none; border: none; padding: 2px 0; cursor: pointer;
+        color: var(--secondary-text-color); font: inherit;
+        font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+      }
+      .preset-toggle:hover { color: var(--primary-text-color); }
+      .preset-caret { font-size: 0.9em; }
+      .preset-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+      .preset-item {
+        display: flex; flex-direction: column; gap: 1px;
+        padding: 6px 8px; border-radius: 8px; background: var(--secondary-background-color);
+      }
+      .preset-item.active { outline: 2px solid var(--primary-color); }
+      .preset-name { font-size: 0.9em; font-weight: 600; }
+      .preset-badge {
+        font-size: 0.7em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+        color: var(--text-primary-color, #fff); background: var(--primary-color);
+        padding: 1px 6px; border-radius: 8px; vertical-align: middle;
+      }
+      .preset-desc { font-size: 0.8em; color: var(--secondary-text-color); }
+      .preset-empty { font-size: 0.85em; color: var(--secondary-text-color); padding: 6px 2px; }
     `;
   }
 }

@@ -22,7 +22,10 @@ from custom_components.hellofresh.api import (
     HelloFreshSubscription,
     HelloFreshWeek,
 )
-from custom_components.hellofresh.sensor_helpers import sensor_extra_state_attributes
+from custom_components.hellofresh.sensor_helpers import (
+    sensor_extra_state_attributes,
+    sensor_native_value,
+)
 
 
 def _menu_weeks(result: dict[str, list[HelloFreshWeek] | list[str]]) -> list[HelloFreshWeek]:
@@ -1507,6 +1510,8 @@ def test_subscription_normalization_preserves_settings_metadata() -> None:
     )
 
     assert subscription.preset == "quick"
+    # No resolved planPreference on the raw payload yet, so plan_preference falls back to preset.
+    assert subscription.plan_preference == "quick"
     assert subscription.delivery_weekday == 1
     assert subscription.next_delivery == date(2026, 6, 15)
     assert subscription.next_delivery_week == "2026-W25"
@@ -1515,6 +1520,39 @@ def test_subscription_normalization_preserves_settings_metadata() -> None:
     assert subscription.payment_gateway == "Braintree"
     assert subscription.loyalty_boxes_received == 335
     assert subscription.loyalty_boxes_until_next_freebie == 2
+
+
+def test_subscription_plan_preference_prefers_resolved_over_preset() -> None:
+    """A resolved planPreference on the raw payload wins over the preset fallback."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    subscription = client._subscription_from_raw_subscription(
+        {
+            "id": "sub-1",
+            "customer": {"id": "acct-1", "locale": "en-US"},
+            "preset": "quick",
+            # The client writes the resolved active preference back onto the raw payload.
+            "planPreference": "veggie",
+        }
+    )
+
+    assert subscription.preset == "quick"
+    assert subscription.plan_preference == "veggie"
+
+
+def test_plan_preference_sensor_value_reads_from_primary_subscription() -> None:
+    """sensor_native_value('plan_preference') surfaces the subscription's resolved preference."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = client._subscription_from_raw_subscription(
+        {
+            "id": "sub-1",
+            "customer": {"id": "acct-1", "locale": "en-US"},
+            "planPreference": "veggie",
+        }
+    )
+    data = HelloFreshAccountData(subscriptions=[subscription]).finalize()
+
+    assert sensor_native_value("plan_preference", data, "https://example.test") == "veggie"
 
 
 def test_enrich_subscription_payment_dates_from_orders() -> None:
@@ -2336,22 +2374,17 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
 
     async def fake_api_get(path: str, params=None):
         requests.append({"path": path, "params": params})
-        if path == "/gw/profile-service/v2/customers/me/profile":
+        if path == "/gw/v1/profile/me/unified-preferences":
             return DummyResponse()
         if path != "/gw/my-deliveries/menu":
             raise HelloFreshError("unexpected endpoint")
         return DummyResponse()
 
     async def fake_response_json(_response):
-        if requests[-1]["path"] == "/gw/profile-service/v2/customers/me/profile":
-            # planPreference now lives under taste.plans[customerPlanId] (HAR-confirmed), not
-            # the retired product_options.unifiedPreferences shape.
-            return {
-                "taste": {
-                    "plans": {"plan-123": {"planPreference": "quick"}},
-                    "legacySinglePreference": "quick",
-                }
-            }
+        if requests[-1]["path"] == "/gw/v1/profile/me/unified-preferences":
+            # planPreference is read from the dedicated unified-preferences endpoint
+            # (unifiedPreferences.plans[customerPlanId]) — the canonical current source.
+            return {"unifiedPreferences": {"plans": {"plan-123": {"planPreference": "quick"}}}}
         return {
             "id": "menu-id",
             "week": "2026-W25",
@@ -2378,7 +2411,7 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     )
 
     assert result is not None
-    assert requests[0]["path"] == "/gw/profile-service/v2/customers/me/profile"
+    assert requests[0]["path"] == "/gw/v1/profile/me/unified-preferences"
     assert requests[1]["path"] == "/gw/my-deliveries/menu"
     assert requests[1]["params"] == {
         "customerPlanId": "plan-123",
@@ -3082,7 +3115,7 @@ def test_merge_past_delivery_does_not_leak_market_items_into_meals() -> None:
 
 
 def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:
-    """Missing product-options data should not block the authenticated menu request."""
+    """Missing preference data should not block the authenticated menu request (uses preset)."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     subscription = HelloFreshSubscription(
         subscription_id="6959884",
@@ -3117,7 +3150,11 @@ def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:
 
     async def fake_api_get(path: str, params=None):
         requests.append({"path": path, "params": params})
-        if path == "/gw/api/subscriptions/6959884/product_options":
+        # Both preference sources are unavailable, so the menu request must use the preset.
+        if path in (
+            "/gw/v1/profile/me/unified-preferences",
+            "/gw/profile-service/v2/customers/me/profile",
+        ):
             raise HelloFreshError("not available")
         return DummyResponse()
 
@@ -3131,8 +3168,8 @@ def test_delivery_menu_preference_falls_back_to_subscription_preset() -> None:
     asyncio.set_event_loop(loop)
     loop.run_until_complete(client._async_get_delivery_menu_week_data(subscription, account_week))
 
-    assert requests[1]["path"] == "/gw/my-deliveries/menu"
-    assert requests[1]["params"]["preference"] == "chefschoice"  # type: ignore[index]
+    menu_request = next(r for r in requests if r["path"] == "/gw/my-deliveries/menu")
+    assert menu_request["params"]["preference"] == "chefschoice"  # type: ignore[index]
 
 
 def test_account_menu_candidate_detection_accepts_wrapped_recipe_collections() -> None:
@@ -6978,9 +7015,10 @@ def test_get_weeks_response_caches_per_data_generation() -> None:
 def test_plan_preference_read_from_profile_service_taste_plans() -> None:
     """planPreference now comes from profile-service taste.plans[planId], not product_options.
 
-    The retired /gw/api/subscriptions/{id}/product_options no longer returns
-    unifiedPreferences (it now serves the product catalog), so the integration must read the
-    preference from the profile-service payload the current site uses (HAR-confirmed).
+    The preference is read from the dedicated /gw/v1/profile/me/unified-preferences endpoint
+    (unifiedPreferences.plans[planId].planPreference) — the canonical current source. The
+    profile-service is only consulted as a fallback, and the retired product_options is never
+    hit.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     subscription = HelloFreshSubscription(
@@ -7000,11 +7038,9 @@ def test_plan_preference_read_from_profile_service_taste_plans() -> None:
         return DummyResponse()
 
     async def fake_response_json(_resp):
+        # The unified-preferences endpoint carries the plan preference directly.
         return {
-            "taste": {
-                "plans": {"plan-abc": {"planPreference": "quick"}},
-                "legacySinglePreference": "quick",
-            }
+            "unifiedPreferences": {"plans": {"plan-abc": {"planPreference": "quick"}}}
         }
 
     client._async_api_get = fake_api_get  # type: ignore[method-assign]
@@ -7017,9 +7053,50 @@ def test_plan_preference_read_from_profile_service_taste_plans() -> None:
     )
 
     assert pref == "quick"  # NOT the "chefschoice" preset fallback
-    assert calls == ["/gw/profile-service/v2/customers/me/profile"]
-    # The dead product_options endpoint is no longer hit.
+    # Only the unified endpoint is hit — the plan was found there, so no profile-service fallback.
+    assert calls == ["/gw/v1/profile/me/unified-preferences"]
     assert not any("product_options" in c for c in calls)
+
+
+def test_plan_preference_falls_back_to_profile_service_when_unified_empty() -> None:
+    """When unified-preferences lacks the plan, the profile-service taste.plans is consulted."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        raw={"customerPlanId": "plan-abc", "preset": "chefschoice"},
+    )
+
+    class DummyResponse:
+        status = 200
+
+    calls: list[str] = []
+
+    async def fake_api_get(path, params=None):
+        calls.append(path)
+        return DummyResponse()
+
+    async def fake_response_json(_resp):
+        # Body depends on which path was just requested.
+        if calls[-1] == "/gw/v1/profile/me/unified-preferences":
+            return {"unifiedPreferences": {"plans": {}}}  # no matching plan
+        return {"taste": {"plans": {"plan-abc": {"planPreference": "veggie"}}}}
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    pref = loop.run_until_complete(
+        client._async_get_subscription_plan_preference(subscription)
+    )
+
+    assert pref == "veggie"
+    assert calls == [
+        "/gw/v1/profile/me/unified-preferences",
+        "/gw/profile-service/v2/customers/me/profile",
+    ]
 
 
 def test_plan_preference_falls_back_to_preset_without_profile_match() -> None:
@@ -7114,6 +7191,9 @@ def test_get_delivery_options_parses_and_dedupes_by_handle() -> None:
     assert captured["path"] == "/gw/api/delivery_dates_options"
     assert captured["params"]["family"] == "classic-box-unified"
     assert captured["params"]["zip"] == "01930"
+    # Account-settings context hints the web app always sends (HAR-confirmed).
+    assert captured["params"]["customerPriority"] == "active_subscription"
+    assert captured["params"]["customerJourney"] == "account_setting"
     # Deduped to 3 unique handles, sorted by weekday.
     handles = [o.handle for o in options]
     assert handles == ["US-1-0800-2000", "US-2-0800-2000", "US-3-0800-2000"]
@@ -7147,8 +7227,8 @@ def test_get_plans_returns_list_shape() -> None:
     assert plans == body
 
 
-def test_get_presets_returns_items() -> None:
-    """/gw/menus-service/presets returns {items:[...]} of preset dicts."""
+def test_get_presets_prefers_api_presets_endpoint() -> None:
+    """get_presets returns {items:[...]}; the account-context /gw/api/presets is tried first."""
     body = {"items": [
         {"handle": "quick", "name": "Quick & Easy", "description": "Fast recipes"},
         {"handle": "veggie", "name": "Veggie", "description": "Vegetarian"},
@@ -7157,6 +7237,37 @@ def test_get_presets_returns_items() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     presets = loop.run_until_complete(client.async_get_presets())
-    assert captured["path"] == "/gw/menus-service/presets"
-    assert captured["params"]["take"] == "150"
+    # The first candidate (/gw/api/presets) answered, so it's the one captured.
+    assert captured["path"] == "/gw/api/presets"
+    assert captured["params"]["sort"] == "-weight"
     assert [p["handle"] for p in presets] == ["quick", "veggie"]
+
+
+def test_get_presets_falls_back_to_menus_service() -> None:
+    """When /gw/api/presets 404s, get_presets falls back to /gw/menus-service/presets."""
+    client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
+    body = {"items": [{"handle": "fit", "name": "Fit & Wholesome"}]}
+    calls: list[str] = []
+
+    class Resp:
+        def __init__(self, status):
+            self.status = status
+
+        async def json(self, content_type=None):
+            return body
+
+        async def text(self):
+            return ""
+
+    async def fake_get(path, params=None, extra_headers=None):
+        calls.append(path)
+        # First candidate is unavailable; the fallback succeeds.
+        return Resp(404 if path == "/gw/api/presets" else 200)
+
+    client._async_api_get = fake_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    presets = loop.run_until_complete(client.async_get_presets())
+    assert calls == ["/gw/api/presets", "/gw/menus-service/presets"]
+    assert [p["handle"] for p in presets] == ["fit"]

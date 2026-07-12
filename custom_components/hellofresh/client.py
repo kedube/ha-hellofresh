@@ -756,6 +756,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "family": str(family_handle),
             "numDeliveries": str(num_deliveries),
             "zip": str(postcode),
+            # The web app's account-settings reschedule flow sends these two context hints on
+            # every call (HAR-confirmed). They don't change the returned option set for an active
+            # subscriber, but we match the browser so a stricter path can't reject the request.
+            "customerPriority": "active_subscription",
+            "customerJourney": "account_setting",
         }
         response = await self._async_api_get("/gw/api/delivery_dates_options", params=params)
         if response.status >= _HTTP_BAD_REQUEST:
@@ -803,22 +808,31 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         return [p for p in (items or []) if isinstance(p, dict)]
 
     async def async_get_presets(self, take: int = 150) -> list[dict[str, Any]]:
-        """Return the region's menu presets (``GET /gw/menus-service/presets``).
+        """Return the region's menu presets (Chef's Choice, Veggie, Quick & Easy, …).
 
-        The selectable plan presets (Chef's Choice, Veggie, Quick & Easy, …) with their handle,
-        display name, and description — the human-readable names behind a plan's ``preset`` slug.
+        Each preset carries its handle, display name, and description — the human-readable names
+        behind a plan's ``preset`` slug. Two paths serve the identical ``{items:[…]}`` catalog
+        (HAR-confirmed): the account-context ``/gw/api/presets`` (sorted by weight) is tried
+        first, with the menus-service catalog as a fallback if it isn't available.
         """
-        params = {
-            "country": api_country_code(self._country),
-            "locale": self._locale_for_country(),
-            "take": str(take),
-        }
-        response = await self._async_api_get("/gw/menus-service/presets", params=params)
-        if response.status >= _HTTP_BAD_REQUEST:
-            raise HelloFreshError(f"HelloFresh presets request failed (HTTP {response.status})")
-        payload = await self._async_response_json(response)
-        items = payload.get("items") if isinstance(payload, dict) else None
-        return [p for p in (items or []) if isinstance(p, dict)]
+        locale = self._locale_for_country()
+        cc = api_country_code(self._country)
+        # (path, params) candidates in preference order.
+        candidates = (
+            ("/gw/api/presets", {"country": cc.lower(), "locale": locale, "sort": "-weight"}),
+            ("/gw/menus-service/presets", {"country": cc, "locale": locale, "take": str(take)}),
+        )
+        last_status: int | None = None
+        for path, params in candidates:
+            response = await self._async_api_get(path, params=params)
+            last_status = response.status
+            if response.status >= _HTTP_BAD_REQUEST:
+                continue
+            payload = await self._async_response_json(response)
+            items = payload.get("items") if isinstance(payload, dict) else None
+            if items is not None:
+                return [p for p in items if isinstance(p, dict)]
+        raise HelloFreshError(f"HelloFresh presets request failed (HTTP {last_status})")
 
     @staticmethod
     def _existing_recipe_quantity(recipe: HelloFreshRecipe) -> int:
@@ -2462,20 +2476,31 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "week": account_week.week_id,
         }
 
+    # Canonical source for the plan preference (e.g. "quick"). No params; returns
+    # ``{unifiedPreferences: {plans: {customerPlanId: {planPreference}}}}`` — HAR-confirmed.
+    _UNIFIED_PREFERENCES_PATH = "/gw/v1/profile/me/unified-preferences"
+
     async def _async_get_subscription_plan_preference(
         self,
         subscription: HelloFreshSubscription,
     ) -> str | None:
         """Return the current plan preference for a subscription when available.
 
-        The preference (e.g. ``"quick"``) feeds the ``/gw/my-deliveries/menu`` request. As of
-        the current site it lives on the **profile-service** payload at
-        ``taste.plans[customerPlanId].planPreference`` (with ``taste.legacySinglePreference`` as
-        a single-value fallback) — HAR-confirmed. The older ``/gw/api/subscriptions/{id}/
-        product_options`` no longer carries ``unifiedPreferences`` at all (it now returns the
-        product catalog `{count, items[]}`), so that call was dropped: it cost one HTTP round-trip
-        per poll and always fell through to ``preset``. ``preset`` remains the final fallback and
-        usually matches, but is a distinct field that can diverge from the active preference.
+        The preference (e.g. ``"quick"``) feeds the ``/gw/my-deliveries/menu`` request. Resolved
+        in order:
+
+        1. **``GET /gw/v1/profile/me/unified-preferences``** —
+           ``unifiedPreferences.plans[customerPlanId].planPreference``. The dedicated, canonical
+           source the current web app uses (HAR-confirmed).
+        2. **``GET /gw/profile-service/v2/customers/me/profile``** —
+           ``taste.plans[customerPlanId].planPreference`` (with ``taste.legacySinglePreference``),
+           a fallback for accounts/regions where the unified endpoint isn't served.
+        3. The subscription ``preset`` — the last resort; usually matches but is a distinct
+           field that can diverge from the active preference.
+
+        (An even older path, ``/gw/api/subscriptions/{id}/product_options``
+        ``unifiedPreferences.plans[...]``, was dropped when the site stopped returning that
+        structure there — it now serves the product catalog instead.)
         """
         subscription_id = subscription.subscription_id
         if subscription_id in self._subscription_preferences:
@@ -2485,50 +2510,87 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
 
         if customer_plan_id:
-            try:
-                response = await self._async_api_get(
-                    self._PROFILE_PATH, params=self._profile_params()
-                )
-                payload = await self._async_response_json(response)
-            except HelloFreshError as err:
-                self._record_debug_attempt(
-                    "preference_attempts",
-                    {
-                        "subscription_id": subscription_id,
-                        "path": self._PROFILE_PATH,
-                        "error": str(err),
-                    },
-                )
-                self._subscription_preferences[subscription_id] = preference
-                return preference
-
-            taste = payload.get("taste") if isinstance(payload, dict) else None
-            taste = taste if isinstance(taste, dict) else {}
-            plans = taste.get("plans") if isinstance(taste.get("plans"), dict) else {}
-            plan_pref = (
-                (plans.get(customer_plan_id) or {}).get("planPreference")
-                if isinstance(plans.get(customer_plan_id), dict)
-                else None
+            resolved = await self._async_resolve_plan_preference(
+                subscription_id, customer_plan_id
             )
-            preference = (
-                plan_pref
-                or taste.get("legacySinglePreference")
-                or preference
-            )
-            self._record_debug_attempt(
-                "preference_attempts",
-                {
-                    "subscription_id": subscription_id,
-                    "path": self._PROFILE_PATH,
-                    "status": self._response_status(response),
-                    "plan_preference": preference,
-                },
-            )
+            if resolved:
+                preference = resolved
 
         if preference:
             subscription.raw["planPreference"] = preference
         self._subscription_preferences[subscription_id] = preference
         return preference
+
+    async def _async_resolve_plan_preference(
+        self,
+        subscription_id: str | None,
+        customer_plan_id: str,
+    ) -> str | None:
+        """Fetch the plan preference from the unified endpoint, falling back to profile-service."""
+        # 1) Dedicated unified-preferences endpoint (no params).
+        try:
+            response = await self._async_api_get(self._UNIFIED_PREFERENCES_PATH)
+            payload = await self._async_response_json(response)
+            unified = payload.get("unifiedPreferences") if isinstance(payload, dict) else None
+            pref = self._plan_pref_from_plans(
+                unified.get("plans") if isinstance(unified, dict) else None,
+                customer_plan_id,
+            )
+            self._record_debug_attempt(
+                "preference_attempts",
+                {
+                    "subscription_id": subscription_id,
+                    "path": self._UNIFIED_PREFERENCES_PATH,
+                    "status": self._response_status(response),
+                    "plan_preference": pref,
+                },
+            )
+            if pref:
+                return pref
+        except HelloFreshError as err:
+            self._record_debug_attempt(
+                "preference_attempts",
+                {
+                    "subscription_id": subscription_id,
+                    "path": self._UNIFIED_PREFERENCES_PATH,
+                    "error": str(err),
+                },
+            )
+
+        # 2) Fallback: profile-service taste.plans / legacySinglePreference.
+        try:
+            response = await self._async_api_get(self._PROFILE_PATH, params=self._profile_params())
+            payload = await self._async_response_json(response)
+        except HelloFreshError as err:
+            self._record_debug_attempt(
+                "preference_attempts",
+                {"subscription_id": subscription_id, "path": self._PROFILE_PATH, "error": str(err)},
+            )
+            return None
+
+        taste = payload.get("taste") if isinstance(payload, dict) else None
+        taste = taste if isinstance(taste, dict) else {}
+        pref = self._plan_pref_from_plans(taste.get("plans"), customer_plan_id) or taste.get(
+            "legacySinglePreference"
+        )
+        self._record_debug_attempt(
+            "preference_attempts",
+            {
+                "subscription_id": subscription_id,
+                "path": self._PROFILE_PATH,
+                "status": self._response_status(response),
+                "plan_preference": pref,
+            },
+        )
+        return pref
+
+    @staticmethod
+    def _plan_pref_from_plans(plans: Any, customer_plan_id: str) -> str | None:
+        """Extract ``plans[customerPlanId].planPreference`` when present."""
+        if not isinstance(plans, dict):
+            return None
+        entry = plans.get(customer_plan_id)
+        return entry.get("planPreference") if isinstance(entry, dict) else None
 
     async def _async_enrich_order_prices(
         self,
