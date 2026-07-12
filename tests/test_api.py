@@ -1566,7 +1566,9 @@ def test_enrich_subscription_payment_dates_from_orders() -> None:
     assert requests == [
         {
             "path": "/gw/api/customers/me/orders",
-            "params": {"country": "us", "locale": "en-US", "limit": 200},
+            # Uppercase country, matching the live site's HAR (country=US) and every other
+            # /gw call — the earlier lowercase value worked only on the lenient US property.
+            "params": {"country": "US", "locale": "en-US", "limit": 200},
             "extra_headers": None,
         }
     ]
@@ -2334,21 +2336,20 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
 
     async def fake_api_get(path: str, params=None):
         requests.append({"path": path, "params": params})
-        if path == "/gw/api/subscriptions/6959884/product_options":
+        if path == "/gw/profile-service/v2/customers/me/profile":
             return DummyResponse()
         if path != "/gw/my-deliveries/menu":
             raise HelloFreshError("unexpected endpoint")
         return DummyResponse()
 
     async def fake_response_json(_response):
-        if requests[-1]["path"] == "/gw/api/subscriptions/6959884/product_options":
+        if requests[-1]["path"] == "/gw/profile-service/v2/customers/me/profile":
+            # planPreference now lives under taste.plans[customerPlanId] (HAR-confirmed), not
+            # the retired product_options.unifiedPreferences shape.
             return {
-                "unifiedPreferences": {
-                    "plans": {
-                        "plan-123": {
-                            "planPreference": "quick",
-                        }
-                    }
+                "taste": {
+                    "plans": {"plan-123": {"planPreference": "quick"}},
+                    "legacySinglePreference": "quick",
                 }
             }
         return {
@@ -2377,7 +2378,7 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     )
 
     assert result is not None
-    assert requests[0]["path"] == "/gw/api/subscriptions/6959884/product_options"
+    assert requests[0]["path"] == "/gw/profile-service/v2/customers/me/profile"
     assert requests[1]["path"] == "/gw/my-deliveries/menu"
     assert requests[1]["params"] == {
         "customerPlanId": "plan-123",
@@ -4203,6 +4204,92 @@ def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> Non
             "extra_headers": {"x-requested-by": "shopping-experience-web"},
         }
     ]
+
+
+def _select_meals_client_with_cart_response(cart_body):
+    """Build a select-meals client whose cart PUT returns ``cart_body`` as JSON."""
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        access_token="token",
+        enable_public_menu_fallback=False,
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="15259216",
+        locale="en-US",
+        servings=2,
+        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W26",
+        display_name="Week 26",
+        subscription_id="6959884",
+        selection_deadline=datetime(2026, 6, 17, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
+        meals_required=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="recipe-11", name="Meal 11", is_selected=False),
+            HelloFreshRecipe(recipe_id="recipe-18", name="Meal 18", is_selected=False),
+            HelloFreshRecipe(recipe_id="recipe-20", name="Meal 20", is_selected=False),
+        ],
+        raw={
+            "product": {"handle": "US-CBU-3-2-0"},
+            "_menu_payload": {
+                "week": "2026-W26",
+                "meals": [
+                    {"index": 11, "selection": {"limit": 2},
+                     "recipe": {"id": "recipe-11", "name": "Meal 11"}},
+                    {"index": 18, "selection": {"limit": 2},
+                     "recipe": {"id": "recipe-18", "name": "Meal 18"}},
+                    {"index": 20, "selection": {"limit": 2},
+                     "recipe": {"id": "recipe-20", "name": "Meal 20"}},
+                ],
+            },
+        },
+    )
+    client._last_account_data = HelloFreshAccountData(weeks=[week]).finalize()
+
+    async def fake_get_subscriptions():
+        return [subscription]
+
+    async def fake_pref(_s):
+        return "quick"
+
+    class CartResponse:
+        status = 200
+
+        async def json(self, content_type=None):
+            return cart_body
+
+    async def fake_api_request(method, path, params=None, json_payload=None,
+                               extra_headers=None, _allow_refresh_retry=True):
+        return CartResponse()
+
+    client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
+    client._async_get_subscription_plan_preference = fake_pref  # type: ignore[method-assign]
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    return client
+
+
+def test_async_select_meals_returns_true_on_seamless_downgrade() -> None:
+    """A cart response of hasSeamlessDowngraded=true propagates as a True return."""
+    client = _select_meals_client_with_cart_response({"hasSeamlessDowngraded": True})
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    downgraded = loop.run_until_complete(
+        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18", "recipe-20"])
+    )
+    assert downgraded is True
+
+
+def test_async_select_meals_returns_false_when_not_downgraded() -> None:
+    """The normal cart response (hasSeamlessDowngraded=false) returns False."""
+    client = _select_meals_client_with_cart_response({"hasSeamlessDowngraded": False})
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    downgraded = loop.run_until_complete(
+        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18", "recipe-20"])
+    )
+    assert downgraded is False
 
 
 def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
@@ -6886,3 +6973,190 @@ def test_get_weeks_response_caches_per_data_generation() -> None:
     third = coordinator.get_weeks_response(build)
     assert builds == 2
     assert third is not first
+
+
+def test_plan_preference_read_from_profile_service_taste_plans() -> None:
+    """planPreference now comes from profile-service taste.plans[planId], not product_options.
+
+    The retired /gw/api/subscriptions/{id}/product_options no longer returns
+    unifiedPreferences (it now serves the product catalog), so the integration must read the
+    preference from the profile-service payload the current site uses (HAR-confirmed).
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        raw={"customerPlanId": "plan-abc", "preset": "chefschoice"},
+    )
+
+    class DummyResponse:
+        status = 200
+
+    calls: list[str] = []
+
+    async def fake_api_get(path, params=None):
+        calls.append(path)
+        return DummyResponse()
+
+    async def fake_response_json(_resp):
+        return {
+            "taste": {
+                "plans": {"plan-abc": {"planPreference": "quick"}},
+                "legacySinglePreference": "quick",
+            }
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    pref = loop.run_until_complete(
+        client._async_get_subscription_plan_preference(subscription)
+    )
+
+    assert pref == "quick"  # NOT the "chefschoice" preset fallback
+    assert calls == ["/gw/profile-service/v2/customers/me/profile"]
+    # The dead product_options endpoint is no longer hit.
+    assert not any("product_options" in c for c in calls)
+
+
+def test_plan_preference_falls_back_to_preset_without_profile_match() -> None:
+    """With no plans entry and no legacy single preference, preset is the final fallback."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct-1",
+        locale="en-US",
+        raw={"customerPlanId": "plan-abc", "preset": "chefschoice"},
+    )
+
+    class DummyResponse:
+        status = 200
+
+    async def fake_api_get(path, params=None):
+        return DummyResponse()
+
+    async def fake_response_json(_resp):
+        return {"taste": {"plans": {}}}  # no matching plan, no legacySinglePreference
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    pref = loop.run_until_complete(
+        client._async_get_subscription_plan_preference(subscription)
+    )
+    assert pref == "chefschoice"
+
+
+def _catalog_client(response_body, status=200):
+    """Build a client whose next _async_api_get returns response_body as JSON."""
+    client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
+
+    class Resp:
+        def __init__(self):
+            self.status = status
+
+        async def json(self, content_type=None):
+            return response_body
+
+        async def text(self):
+            return ""
+
+    captured = {}
+
+    async def fake_get(path, params=None, extra_headers=None):
+        captured["path"] = path
+        captured["params"] = params
+        return Resp()
+
+    client._async_api_get = fake_get  # type: ignore[method-assign]
+    return client, captured
+
+
+def test_get_delivery_options_parses_and_dedupes_by_handle() -> None:
+    """delivery_dates_options items are flattened, deduped by handle, and sorted by weekday."""
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884",
+        account_id="acct",
+        locale="en-US",
+        raw={
+            "productType": {"family": {"handle": "classic-box-unified"}},
+            "shippingAddress": {"postcode": "01930"},
+        },
+    )
+    # Two items repeat the same handles (as the real payload does across weeks).
+    body = {
+        "items": [
+            {"deliveryOptions": [
+                {"handle": "US-1-0800-2000", "deliveryDay": 1,
+                 "deliveryName": "Mondays: 8AM - 8PM", "priceInCents": 0, "isDefault": True},
+                {"handle": "US-3-0800-2000", "deliveryDay": 3,
+                 "deliveryName": "Wednesdays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
+            ]},
+            {"deliveryOptions": [
+                {"handle": "US-1-0800-2000", "deliveryDay": 1,
+                 "deliveryName": "Mondays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
+                {"handle": "US-2-0800-2000", "deliveryDay": 2,
+                 "deliveryName": "Tuesdays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
+            ]},
+        ]
+    }
+    client, captured = _catalog_client(body)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    options = loop.run_until_complete(client.async_get_delivery_options(subscription))
+
+    assert captured["path"] == "/gw/api/delivery_dates_options"
+    assert captured["params"]["family"] == "classic-box-unified"
+    assert captured["params"]["zip"] == "01930"
+    # Deduped to 3 unique handles, sorted by weekday.
+    handles = [o.handle for o in options]
+    assert handles == ["US-1-0800-2000", "US-2-0800-2000", "US-3-0800-2000"]
+    # Default flag survives dedup even though the second occurrence wasn't default.
+    assert options[0].is_default is True
+    assert options[0].delivery_name == "Mondays: 8AM - 8PM"
+
+
+def test_get_delivery_options_returns_empty_without_family_or_zip() -> None:
+    """No family handle or postcode → no request, empty list (nothing to query with)."""
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884", account_id="acct", locale="en-US", raw={}
+    )
+    client, captured = _catalog_client({"items": []})
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    options = loop.run_until_complete(client.async_get_delivery_options(subscription))
+    assert options == []
+    assert captured == {}  # never issued a request
+
+
+def test_get_plans_returns_list_shape() -> None:
+    """/gw/api/plans returns a bare list of plan dicts."""
+    body = [{"id": "plan-1", "planItems": [{"productHandle": "US-CBU-3-2-0"}]}]
+    client, captured = _catalog_client(body)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    plans = loop.run_until_complete(client.async_get_plans())
+    assert captured["path"] == "/gw/api/plans"
+    assert captured["params"] == {"includeCanceled": "false"}
+    assert plans == body
+
+
+def test_get_presets_returns_items() -> None:
+    """/gw/menus-service/presets returns {items:[...]} of preset dicts."""
+    body = {"items": [
+        {"handle": "quick", "name": "Quick & Easy", "description": "Fast recipes"},
+        {"handle": "veggie", "name": "Veggie", "description": "Vegetarian"},
+    ]}
+    client, captured = _catalog_client(body)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    presets = loop.run_until_complete(client.async_get_presets())
+    assert captured["path"] == "/gw/menus-service/presets"
+    assert captured["params"]["take"] == "150"
+    assert [p["handle"] for p in presets] == ["quick", "veggie"]

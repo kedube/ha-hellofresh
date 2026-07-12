@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import inspect
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -50,7 +51,10 @@ from .const import (
     PLATFORMS,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
     SERVICE_GET_ACCOUNT_SUMMARY,
+    SERVICE_GET_DELIVERY_OPTIONS,
     SERVICE_GET_FOOD_PROFILE,
+    SERVICE_GET_PLANS,
+    SERVICE_GET_PRESETS,
     SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
     SERVICE_RESCHEDULE_WEEK,
@@ -559,6 +563,32 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         saved = await coordinators[0].client.async_update_food_profile(changes)
         return {"profile": saved.as_dict()}
 
+    def _single_client(service_call: ServiceCall):
+        """Resolve the one target coordinator's client, or raise if ambiguous."""
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        return coordinators[0].client
+
+    async def async_get_delivery_options(service_call: ServiceCall) -> ServiceResponse:
+        """Return the plan's selectable delivery days (weekday, name, price, default).
+
+        Read-only. Richer than a week's ``availableOneOffOptions`` — the full delivery-day
+        picker the web app uses. Fetched live; not part of the sensor poll.
+        """
+        options = await _single_client(service_call).async_get_delivery_options()
+        return {"delivery_options": [option.as_dict() for option in options]}
+
+    async def async_get_plans(service_call: ServiceCall) -> ServiceResponse:
+        """Return the account's plan catalog (product handle, price, status). Read-only."""
+        return {"plans": await _single_client(service_call).async_get_plans()}
+
+    async def async_get_presets(service_call: ServiceCall) -> ServiceResponse:
+        """Return the region's menu presets (Chef's Choice, Veggie, …). Read-only."""
+        return {"presets": await _single_client(service_call).async_get_presets()}
+
     async def async_select_meals(service_call: ServiceCall) -> None:
         """Submit meal selections."""
         week_id = service_call.data[ATTR_WEEK_ID]
@@ -566,9 +596,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
         await _for_each_coordinator(
             service_call,
-            lambda coordinator, _: _async_mutation(
+            lambda coordinator, _: _async_select_mutation(
                 coordinator,
                 coordinator.client.async_select_meals(week_id, recipe_ids, quantities),
+                week_id,
             ),
         )
 
@@ -578,9 +609,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
         await _for_each_coordinator(
             service_call,
-            lambda coordinator, _: _async_mutation(
+            lambda coordinator, _: _async_select_mutation(
                 coordinator,
                 coordinator.client.async_select_market_items(week_id, quantities),
+                week_id,
             ),
         )
 
@@ -636,10 +668,43 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def _async_mutation(
         coordinator: HelloFreshDataUpdateCoordinator,
         coro,
-    ) -> None:
-        """Run a state-changing action and refresh after success."""
-        await coro
+    ) -> object:
+        """Run a state-changing action and refresh after success.
+
+        Returns whatever the action returned (e.g. the select services' seamless-downgrade
+        flag) so a caller can react to it.
+        """
+        result = await coro
         await coordinator.async_request_refresh()
+        return result
+
+    def _notify_seamless_downgrade(coordinator: HelloFreshDataUpdateCoordinator, week_id: str) -> None:
+        """Warn the user that HelloFresh silently shrank the box to fit the new selection.
+
+        The cart write succeeded but HelloFresh applied a seamless downgrade, so fewer meals
+        were saved than requested. A persistent notification is the surfacing that works no
+        matter which path (service call or dashboard card) triggered the write.
+        """
+        persistent_notification.async_create(
+            hass,
+            (
+                f"HelloFresh accepted your meal change for week {week_id} but **downsized the "
+                "box** to fit — fewer meals were saved than you selected. Open the meal planner "
+                "to review the saved selection and re-pick if needed."
+            ),
+            title="HelloFresh box downsized",
+            notification_id=f"{DOMAIN}_seamless_downgrade_{coordinator.config_entry.entry_id}_{week_id}",
+        )
+
+    async def _async_select_mutation(
+        coordinator: HelloFreshDataUpdateCoordinator,
+        coro,
+        week_id: str,
+    ) -> None:
+        """Run a meal/market select write and notify if it triggered a seamless downgrade."""
+        downgraded = await _async_mutation(coordinator, coro)
+        if downgraded:
+            _notify_seamless_downgrade(coordinator, week_id)
 
     hass.services.async_register(
         DOMAIN,
@@ -671,6 +736,27 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_GET_FOOD_PROFILE,
         async_get_food_profile,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_DELIVERY_OPTIONS,
+        async_get_delivery_options,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_PLANS,
+        async_get_plans,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_PRESETS,
+        async_get_presets,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
         supports_response=SupportsResponse.ONLY,
     )

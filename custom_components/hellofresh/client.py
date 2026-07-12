@@ -19,6 +19,7 @@ from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY, api_country_code, api_loc
 from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
+    HelloFreshDeliveryOption,
     HelloFreshError,
     HelloFreshFoodProfile,
     HelloFreshFoodProfileOptions,
@@ -446,7 +447,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         week_id: str,
         recipe_ids: list[str],
         quantities: dict[str, int] | None = None,
-    ) -> None:
+    ) -> bool:
         """Submit meal choices for a week.
 
         ``recipe_ids`` is the set of chosen recipes. ``quantities`` optionally maps a recipe id
@@ -454,6 +455,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         stepper); recipes absent from the map default to a quantity of 1. The included-meal
         minimum is checked against TOTAL servings (sum of quantities), mirroring HelloFresh's
         box math where a meal at quantity 2 fills two of the box's slots.
+
+        Returns ``True`` when HelloFresh applied a **seamless downgrade** — it accepted the
+        write but silently shrank the box to fit (the cart response's ``hasSeamlessDowngraded``
+        flag), so the saved selection is smaller than requested. Returns ``False`` otherwise
+        (including when the selection was already up to date or a fallback path was used).
         """
         week = self._get_known_week_or_raise(week_id)
         deduplicated_recipe_ids = list(dict.fromkeys(recipe_ids))
@@ -490,7 +496,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         requested = {recipe_id: _qty(recipe_id) for recipe_id in deduplicated_recipe_ids}
         if selected and selected == requested:
             _LOGGER.info("HelloFresh meal selection for week %s is already up to date", week_id)
-            return
+            return False
 
         if week.subscription_id is None:
             raise HelloFreshNotImplementedError(
@@ -505,7 +511,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             quantities=requested,
         )
         if cart_update is not None:
-            await self._async_api_request(
+            response = await self._async_api_request(
                 "PUT",
                 cart_update["path"],
                 params=cart_update["params"],
@@ -513,7 +519,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 extra_headers={"x-requested-by": "shopping-experience-web"},
             )
             _LOGGER.info("HelloFresh meal selection succeeded using %s", cart_update["path"])
-            return
+            return await self._cart_response_downgraded(response, week_id)
 
         payload_variants = [
             {"weekId": week_id, "recipes": deduplicated_recipe_ids},
@@ -533,17 +539,52 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         await self._async_try_mutation_candidates(
             path_templates, week, payload_variants, category="select"
         )
+        # Fallback paths don't return the cart's downgrade flag; assume no downgrade.
+        return False
+
+    async def _cart_response_downgraded(
+        self,
+        response: ClientResponse | AuthResponse,
+        week_id: str,
+    ) -> bool:
+        """Return True when a cart write response signals a seamless (silent) box downgrade.
+
+        The ``PUT /gw/v1/carts/{week}`` response is ``{"hasSeamlessDowngraded": bool}``: when
+        ``true``, HelloFresh accepted the write but shrank the box to fit rather than rejecting
+        it, so the saved selection is smaller than requested. Best-effort — an unreadable or
+        unexpected body is treated as no downgrade rather than raising on a successful write.
+        """
+        json_method = getattr(response, "json", None)
+        if not callable(json_method):
+            # A transport (or test double) that doesn't expose a readable JSON body — a
+            # successful write shouldn't be treated as a downgrade just because we can't read it.
+            return False
+        try:
+            payload = await self._async_response_json(response)
+        except HelloFreshError:
+            return False
+        downgraded = bool(isinstance(payload, dict) and payload.get("hasSeamlessDowngraded"))
+        if downgraded:
+            _LOGGER.warning(
+                "HelloFresh seamlessly downgraded the box for week %s: the saved selection is "
+                "smaller than requested",
+                week_id,
+            )
+        return downgraded
 
     async def async_select_market_items(
         self,
         week_id: str,
         quantities: dict[str, int],
-    ) -> None:
+    ) -> bool:
         """Set the week's HelloFresh Market add-on (extras) selection.
 
         ``quantities`` maps a market item's id/sku/index (as returned by get_weeks) to the
         desired quantity; a quantity of 0 (or omitting an item) removes it. The week's meal
         selection is preserved. Writes the cart's ``extras`` array via PUT /gw/v1/carts/{week}.
+
+        Returns ``True`` if the cart response signals a seamless box downgrade (see
+        :meth:`async_select_meals`); market writes preserve the meal count, so this is rare.
         """
         week = self._get_known_week_or_raise(week_id)
         if not week.market_items:
@@ -589,7 +630,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             raise HelloFreshNotImplementedError(
                 f"Week {week_id} is missing the cart metadata needed to submit market selections."
             )
-        await self._async_api_request(
+        response = await self._async_api_request(
             "PUT",
             cart_update["path"],
             params=cart_update["params"],
@@ -597,6 +638,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             extra_headers={"x-requested-by": "shopping-experience-web"},
         )
         _LOGGER.info("HelloFresh market selection succeeded using %s", cart_update["path"])
+        return await self._cart_response_downgraded(response, week_id)
 
     # ---- Food profile (auto-preselection preferences) ------------------------
     #
@@ -673,6 +715,110 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         payload = await self._async_response_json(response)
         _LOGGER.info("HelloFresh food-profile update succeeded")
         return HelloFreshFoodProfile.from_api(payload)
+
+    # ---- Reference catalogs (read-only) --------------------------------------
+    #
+    # These back optional read-only services. None are needed for the core poll; they expose
+    # richer detail the web app fetches on demand.
+
+    async def async_get_delivery_options(
+        self,
+        subscription: HelloFreshSubscription | None = None,
+        num_deliveries: int = 7,
+    ) -> list[HelloFreshDeliveryOption]:
+        """Return the plan's selectable delivery days (``/gw/api/delivery_dates_options``).
+
+        Richer than a week's ``availableOneOffOptions``: each option carries the weekday name,
+        number, price, and default flag — enough for a full delivery-day picker. The plan
+        ``family`` and delivery ``zip`` are read from the (primary) subscription payload.
+        """
+        if subscription is None:
+            subscriptions = self._cached_subscriptions or await self._async_get_subscriptions()
+            subscription = subscriptions[0] if subscriptions else None
+        if subscription is None:
+            return []
+
+        family = self._find_first_nested_value(
+            subscription.raw.get("productType"), ("family",)
+        )
+        family_handle = (
+            family.get("handle") if isinstance(family, dict) else None
+        ) or self._find_first_nested_value(subscription.raw, ("family",))
+        postcode = self._find_first_nested_value(
+            subscription.raw.get("shippingAddress"), ("postcode",)
+        )
+        if not family_handle or not postcode:
+            return []
+
+        params = {
+            "country": api_country_code(self._country),
+            "locale": subscription.locale or self._locale_for_country(),
+            "family": str(family_handle),
+            "numDeliveries": str(num_deliveries),
+            "zip": str(postcode),
+        }
+        response = await self._async_api_get("/gw/api/delivery_dates_options", params=params)
+        if response.status >= _HTTP_BAD_REQUEST:
+            raise HelloFreshError(
+                f"HelloFresh delivery-options request failed (HTTP {response.status})"
+            )
+        payload = await self._async_response_json(response)
+        return self._parse_delivery_options(payload)
+
+    @staticmethod
+    def _parse_delivery_options(payload: Any) -> list[HelloFreshDeliveryOption]:
+        """Dedupe the delivery-day options across items by handle, keeping the richest entry."""
+        items = payload.get("items") if isinstance(payload, dict) else None
+        by_handle: dict[str, HelloFreshDeliveryOption] = {}
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            for raw_option in item.get("deliveryOptions") or []:
+                option = HelloFreshDeliveryOption.from_api(raw_option)
+                if option is None:
+                    continue
+                # First occurrence wins, but a later one flagged default upgrades the flag.
+                existing = by_handle.get(option.handle)
+                if existing is None:
+                    by_handle[option.handle] = option
+                elif option.is_default and not existing.is_default:
+                    existing.is_default = True
+        return sorted(by_handle.values(), key=lambda o: (o.delivery_day or 99, o.handle))
+
+    async def async_get_plans(self) -> list[dict[str, Any]]:
+        """Return the customer's plan catalog (``GET /gw/api/plans``).
+
+        The list of the account's plans with their product handle, price, and status. Returned
+        as decoded dicts — this is reference data, not part of the normalized account model.
+        """
+        response = await self._async_api_get(
+            "/gw/api/plans", params={"includeCanceled": "false"}
+        )
+        if response.status >= _HTTP_BAD_REQUEST:
+            raise HelloFreshError(f"HelloFresh plans request failed (HTTP {response.status})")
+        payload = await self._async_response_json(response)
+        if isinstance(payload, list):
+            return [p for p in payload if isinstance(p, dict)]
+        items = payload.get("items") if isinstance(payload, dict) else None
+        return [p for p in (items or []) if isinstance(p, dict)]
+
+    async def async_get_presets(self, take: int = 150) -> list[dict[str, Any]]:
+        """Return the region's menu presets (``GET /gw/menus-service/presets``).
+
+        The selectable plan presets (Chef's Choice, Veggie, Quick & Easy, …) with their handle,
+        display name, and description — the human-readable names behind a plan's ``preset`` slug.
+        """
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+            "take": str(take),
+        }
+        response = await self._async_api_get("/gw/menus-service/presets", params=params)
+        if response.status >= _HTTP_BAD_REQUEST:
+            raise HelloFreshError(f"HelloFresh presets request failed (HTTP {response.status})")
+        payload = await self._async_response_json(response)
+        items = payload.get("items") if isinstance(payload, dict) else None
+        return [p for p in (items or []) if isinstance(p, dict)]
 
     @staticmethod
     def _existing_recipe_quantity(recipe: HelloFreshRecipe) -> int:
@@ -1377,7 +1523,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             response = await self._async_api_get(
                 "/gw/api/customers/me/orders",
                 params={
-                    "country": api_country_code(self._country).lower(),
+                    # The live site sends UPPERCASE country here (HAR: country=US), matching
+                    # every other /gw call. An earlier lowercase guess worked only because the
+                    # US property is lenient; a stricter region (see uk→GB) can reject country=us.
+                    "country": api_country_code(self._country),
                     "locale": subscriptions[0].locale or api_locale(self._country),
                     "limit": 200,
                 },
@@ -2317,66 +2466,68 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self,
         subscription: HelloFreshSubscription,
     ) -> str | None:
-        """Return the current plan preference for a subscription when available."""
+        """Return the current plan preference for a subscription when available.
+
+        The preference (e.g. ``"quick"``) feeds the ``/gw/my-deliveries/menu`` request. As of
+        the current site it lives on the **profile-service** payload at
+        ``taste.plans[customerPlanId].planPreference`` (with ``taste.legacySinglePreference`` as
+        a single-value fallback) — HAR-confirmed. The older ``/gw/api/subscriptions/{id}/
+        product_options`` no longer carries ``unifiedPreferences`` at all (it now returns the
+        product catalog `{count, items[]}`), so that call was dropped: it cost one HTTP round-trip
+        per poll and always fell through to ``preset``. ``preset`` remains the final fallback and
+        usually matches, but is a distinct field that can diverge from the active preference.
+        """
         subscription_id = subscription.subscription_id
         if subscription_id in self._subscription_preferences:
             return self._subscription_preferences[subscription_id]
 
         customer_plan_id = subscription.raw.get("customerPlanId")
-        if not customer_plan_id:
-            preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
-            self._subscription_preferences[subscription_id] = preference
-            return preference
+        preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
 
-        locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
-        params = {
-            "country": api_country_code(self._country),
-            "locale": locale,
-        }
+        if customer_plan_id:
+            try:
+                response = await self._async_api_get(
+                    self._PROFILE_PATH, params=self._profile_params()
+                )
+                payload = await self._async_response_json(response)
+            except HelloFreshError as err:
+                self._record_debug_attempt(
+                    "preference_attempts",
+                    {
+                        "subscription_id": subscription_id,
+                        "path": self._PROFILE_PATH,
+                        "error": str(err),
+                    },
+                )
+                self._subscription_preferences[subscription_id] = preference
+                return preference
 
-        try:
-            response = await self._async_api_get(
-                f"/gw/api/subscriptions/{subscription_id}/product_options",
-                params=params,
+            taste = payload.get("taste") if isinstance(payload, dict) else None
+            taste = taste if isinstance(taste, dict) else {}
+            plans = taste.get("plans") if isinstance(taste.get("plans"), dict) else {}
+            plan_pref = (
+                (plans.get(customer_plan_id) or {}).get("planPreference")
+                if isinstance(plans.get(customer_plan_id), dict)
+                else None
             )
-            payload = await self._async_response_json(response)
-        except HelloFreshError as err:
+            preference = (
+                plan_pref
+                or taste.get("legacySinglePreference")
+                or preference
+            )
             self._record_debug_attempt(
                 "preference_attempts",
                 {
                     "subscription_id": subscription_id,
-                    "path": f"/gw/api/subscriptions/{subscription_id}/product_options",
-                    "params": params,
-                    "error": str(err),
+                    "path": self._PROFILE_PATH,
+                    "status": self._response_status(response),
+                    "plan_preference": preference,
                 },
             )
-            preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
-            self._subscription_preferences[subscription_id] = preference
-            return preference
 
-        preference = (
-            (
-                payload.get("unifiedPreferences", {})
-                .get("plans", {})
-                .get(customer_plan_id, {})
-                .get("planPreference")
-            )
-            or subscription.raw.get("planPreference")
-            or subscription.raw.get("preset")
-        )
         if preference:
             subscription.raw["planPreference"] = preference
         self._subscription_preferences[subscription_id] = preference
-        self._record_debug_attempt(
-            "preference_attempts",
-            {
-                "subscription_id": subscription_id,
-                "path": f"/gw/api/subscriptions/{subscription_id}/product_options",
-                "params": params,
-                "status": self._response_status(response),
-                "plan_preference": preference,
-            },
-        )
         return preference
 
     async def _async_enrich_order_prices(

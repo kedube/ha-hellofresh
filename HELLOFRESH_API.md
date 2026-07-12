@@ -354,7 +354,7 @@ The logged-in US site also calls a separate order-history endpoint:
 Observed request example:
 
 ```text
-/gw/api/customers/me/orders?country=us&locale=en-US&limit=200
+/gw/api/customers/me/orders?country=US&locale=en-US&limit=200
 ```
 
 Observed response shape:
@@ -514,35 +514,59 @@ Those values can be sourced from the authenticated subscription and delivery pay
 - `customerPlanId` from the subscription object
 - `delivery-option` from `deliveryOption.handle`
 - `postcode` from `shippingAddress.postcode`
-- `preference` from `GET /gw/api/subscriptions/{subscription_id}/product_options`, specifically `unifiedPreferences.plans[customerPlanId].planPreference`
+- `preference` from `GET /gw/profile-service/v2/customers/me/profile`, specifically `taste.plans[customerPlanId].planPreference` (see [Plan preference](#plan-preference))
 - `product-sku` from `product.sku`
 - `servings` from `productType.specs.size` or the normalized subscription servings
 - `subscription` from the subscription id
 - `week` from the normalized delivery week id
 
-### Product options / plan preference
+### Plan preference
 
-The current US account UI also calls:
+The plan preference (e.g. `"quick"`) that fills the `/gw/my-deliveries/menu` `preference` param is read from the **profile-service** payload:
 
 | Purpose | Method | Path | Params |
 | --- | --- | --- | --- |
-| Resolve current plan preference | `GET` | `/gw/api/subscriptions/{subscription_id}/product_options` | `country=<CC>&locale=<locale>` |
+| Resolve current plan preference | `GET` | `/gw/profile-service/v2/customers/me/profile` | `brand=BRAND_HELLOFRESH&exclusion=v2&regionCode=<CC>` |
 
-Observed payload fragment:
+Observed payload fragment (the preference lives under `taste`):
 
 ```json
 {
-  "unifiedPreferences": {
+  "taste": {
     "plans": {
-      "<customerPlanId>": {
-        "planPreference": "quick"
-      }
-    }
+      "<customerPlanId>": { "planPreference": "quick" }
+    },
+    "legacySinglePreference": "quick"
   }
 }
 ```
 
-This value is more reliable than the older subscription `preset` field when building the `/gw/my-deliveries/menu` request.
+`taste.plans[customerPlanId].planPreference` is preferred, with `taste.legacySinglePreference` as a single-value fallback and the subscription `preset` as the last resort. This value is more reliable than the `preset` field when building the menu request.
+
+> **Migrated from `product_options`.** An earlier version read the preference from `GET /gw/api/subscriptions/{subscription_id}/product_options` at `unifiedPreferences.plans[customerPlanId].planPreference`. The current site's `product_options` no longer returns `unifiedPreferences` at all — with `all=1` it serves the full **product catalog** (`{count, items[]}` of box variants and specs) — so that call always fell through to `preset`. It was dropped (one fewer HTTP round-trip per poll) in favor of the profile-service source above (HAR-confirmed across all captures).
+
+### Reference catalogs (read-only)
+
+Three additional read endpoints the web app uses are exposed as optional read-only, response-returning services (`SupportsResponse.ONLY`). None are part of the sensor poll — they are fetched on demand:
+
+| Service | Method | Path | Params | Returns |
+| --- | --- | --- | --- | --- |
+| `hellofresh.get_delivery_options` | `GET` | `/gw/api/delivery_dates_options` | `country=<CC>&locale=<locale>&family=<planFamily>&numDeliveries=<n>&zip=<postcode>` | `{delivery_options: [...]}` |
+| `hellofresh.get_plans` | `GET` | `/gw/api/plans` | `includeCanceled=false` | `{plans: [...]}` |
+| `hellofresh.get_presets` | `GET` | `/gw/menus-service/presets` | `country=<CC>&locale=<locale>&take=<n>` | `{presets: [...]}` |
+
+- **`get_delivery_options`** is the richer delivery-day picker — a **superset** of a week's `availableOneOffOptions` (which carries only `{handle, delivery_date}`). Each option carries the weekday name/number, price, and default flag, normalized into `HelloFreshDeliveryOption`. The `family` (`productType.family.handle`, e.g. `classic-box-unified`) and `zip` (`shippingAddress.postcode`) come from the primary subscription; options are deduped across items by `handle` and sorted by weekday. Returns `[]` (no request) when either is missing.
+
+  ```jsonc
+  // items[].deliveryOptions[] entry (relevant fields)
+  {"handle": "US-1-0800-2000", "deliveryDay": 1, "deliveryName": "Mondays: 8AM - 8PM",
+   "deliveryFrom": "08:00", "deliveryTo": "20:00", "priceInCents": 0, "isDefault": true}
+  ```
+
+- **`get_plans`** returns the account's plans (a bare JSON list) with `planItems[].productHandle`, `legacyContractPrice`, `planType`, and status.
+- **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`.
+
+`get_plans` / `get_presets` are returned as decoded dicts (reference data, not normalized into account models).
 
 ### Exact cart pricing
 
@@ -1209,6 +1233,8 @@ Observed success response:
 ```
 
 The integration now uses this `PUT /gw/v1/carts/{week}` request as the primary meal-selection write path when the authenticated menu payload includes stable meal `index` values.
+
+**Seamless downgrade signal.** When the response is `{"hasSeamlessDowngraded": true}`, HelloFresh *accepted* the write but **silently shrank the box** to fit rather than rejecting it — the saved selection is smaller than requested. `async_select_meals` / `async_select_market_items` return this flag (`_cart_response_downgraded`), and the `select_meals` / `select_market_items` service handlers raise a **persistent notification** ("HelloFresh box downsized") so the user knows to review the saved selection. Best-effort: an unreadable response body is treated as no downgrade rather than failing an otherwise-successful write. (Market writes preserve the meal count, so a downgrade there is rare.)
 
 #### Box resizing via `product-sku`
 

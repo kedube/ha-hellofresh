@@ -57,6 +57,10 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._busy = false; // a skip/unskip/reschedule write is in flight
     this._actionError = null; // last failed skip/unskip/reschedule, shown as an inline notice
     this._rescheduleWeekId = null; // week whose "Change day" options panel is open
+    // handle -> {name, price, day} from get_delivery_options; lazily fetched the first time a
+    // "Change day" panel opens, so it enriches the per-week option labels with weekday names
+    // and prices. null = not fetched yet; {} = fetched but empty/unavailable.
+    this._deliveryOptions = null;
     // Distinguishes our own data-changed broadcasts from siblings' so we don't re-fetch
     // in response to a change we just made (we already re-fetch ourselves).
     this._instanceId = Math.random().toString(36).slice(2);
@@ -328,6 +332,32 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (!this._actionError) this._broadcastDataChanged();
   }
 
+  // Lazily fetch the plan's delivery-day catalog (weekday names + prices) the first time a
+  // "Change day" panel opens. It's plan-level (not per-week), so one fetch serves every week;
+  // most users never reschedule, so we avoid the extra service call until it's needed. Failure
+  // is non-fatal — the picker falls back to date-only labels from the per-week options.
+  async _ensureDeliveryOptions() {
+    if (this._deliveryOptions !== null || !this._hass) return;
+    this._deliveryOptions = {}; // mark as attempted so a failure doesn't refetch on every open
+    try {
+      const data = {};
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      const result = await this._hass.callService(
+        "hellofresh", "get_delivery_options", data, undefined, false, true
+      );
+      const options = ((result && result.response) || {}).delivery_options || [];
+      const byHandle = {};
+      for (const o of options) {
+        if (o && o.handle) byHandle[o.handle] = o;
+      }
+      this._deliveryOptions = byHandle;
+    } catch (_err) {
+      // Keep the empty map — date-only labels still work.
+      this._deliveryOptions = {};
+    }
+    this._render();
+  }
+
   // Parse a date anchored to LOCAL midnight. A bare "YYYY-MM-DD" (how the integration
   // serializes delivery dates) parses as UTC midnight per the JS spec, which reads as the
   // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
@@ -460,8 +490,11 @@ class HelloFreshScheduleCard extends HTMLElement {
         this._toggleSkip(actionEl.getAttribute("data-week-id"));
       } else if (action === "reschedule-open") {
         const weekId = actionEl.getAttribute("data-week-id");
-        this._rescheduleWeekId = this._rescheduleWeekId === weekId ? null : weekId;
+        const opening = this._rescheduleWeekId !== weekId;
+        this._rescheduleWeekId = opening ? weekId : null;
         this._render();
+        // Enrich the picker with weekday names/prices; re-renders when it lands.
+        if (opening) this._ensureDeliveryOptions();
       } else if (action === "reschedule") {
         this._reschedule(
           actionEl.getAttribute("data-week-id"),
@@ -803,20 +836,29 @@ class HelloFreshScheduleCard extends HTMLElement {
     return Boolean(week.holiday_message || week.holiday_delivery_date);
   }
 
-  // The alternate delivery days HelloFresh offers for this specific week; picking one calls
-  // reschedule_week with that option's handle. The week's current day is shown but disabled.
+  // The alternate delivery days HelloFresh offers for THIS week (per-week availability comes
+  // from available_one_off_options); picking one calls reschedule_week with its handle. When the
+  // plan's delivery-day catalog (get_delivery_options) has loaded, each option is labelled with
+  // its weekday name and any surcharge — otherwise it falls back to the option's date.
   _renderRescheduleOptions(week) {
     const options = (week.available_one_off_options || []).filter((o) => o.handle);
     if (!options.length) return "";
+    const catalog = this._deliveryOptions || {};
     return `
       <div class="dayopts">
         ${options
           .map((o) => {
             const isCurrent = o.delivery_date && o.delivery_date === week.delivery_date;
-            const label = o.delivery_date ? this._fmtDate(o.delivery_date) : o.handle;
+            const meta = catalog[o.handle];
+            // Prefer the catalog's weekday name; fall back to the option's own date.
+            const base = (meta && meta.delivery_name)
+              || (o.delivery_date ? this._fmtDate(o.delivery_date) : o.handle);
+            const price = meta && Number(meta.price) > 0
+              ? ` (+${this._fmtPrice(meta.price, this._priceCurrency())})`
+              : "";
             return `<button class="dayopt${isCurrent ? " current" : ""}" data-action="reschedule"
               data-week-id="${this._esc(week.week_id)}" data-handle="${this._esc(o.handle)}"
-              ${isCurrent || this._busy ? "disabled" : ""}>${this._esc(label)}</button>`;
+              ${isCurrent || this._busy ? "disabled" : ""}>${this._esc(base + price)}</button>`;
           })
           .join("")}
       </div>`;
@@ -991,6 +1033,12 @@ class HelloFreshScheduleCard extends HTMLElement {
     } catch (_e) {
       return String(d);
     }
+  }
+
+  // Best-guess currency for prices not carrying their own (e.g. delivery-option surcharges):
+  // the account's plan-price currency, else _fmtPrice's USD default.
+  _priceCurrency() {
+    return (this._account && this._account.selected_plan_total_price_currency) || null;
   }
 
   _fmtPrice(amount, currency) {
