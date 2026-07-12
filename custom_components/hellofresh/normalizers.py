@@ -989,6 +989,11 @@ class HelloFreshPayloadNormalizer:
             or raw_subscription.get("deliveryType"),
             delivery_weekday=coerce_int(raw_subscription.get("deliveryWeekday")),
             preset=raw_subscription.get("preset"),
+            # planPreference is the resolved active preference (written back onto the raw payload
+            # by the client's preference resolution); fall back to preset when not yet resolved.
+            plan_preference=(
+                raw_subscription.get("planPreference") or raw_subscription.get("preset")
+            ),
             next_delivery=parse_date(raw_subscription.get("nextDelivery")),
             next_delivery_week=raw_subscription.get("nextDeliveryWeek"),
             next_cutoff_date=parse_datetime(raw_subscription.get("nextCutoffDate")),

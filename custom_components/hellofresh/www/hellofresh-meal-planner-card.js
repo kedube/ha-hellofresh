@@ -73,6 +73,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // seeded from the server's is_selected on first edit, then mutated freely until the user
     // saves (submitting once) or it is discarded on refresh.
     this._pending = {};
+    // Week id whose last save triggered a HelloFresh seamless downgrade (box silently shrunk
+    // to fit). Drives a persistent, dismissable banner — unlike the 4s toast, a "your box was
+    // downsized" warning shouldn't vanish before it's read. Cleared on dismiss or week change.
+    this._downgradeNotice = null;
     // Cross-card week sync: a sibling HelloFresh card (e.g. the Market card) broadcasts the week
     // it navigates to; we follow it to the same week. If the event arrives before this card has
     // loaded its weeks, remember the id and apply it once the fetch completes.
@@ -299,6 +303,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const clamped = Math.max(0, Math.min(index, this._weeks.length - 1));
     if (clamped === this._cursor) return;
     this._cursor = clamped;
+    this._downgradeNotice = null; // a downgrade warning is about the week you just saved
     this._render();
     if (broadcast) this._broadcastWeek();
   }
@@ -774,12 +779,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const data = { week_id: week.week_id, recipe_ids: recipeIds };
       if (Object.keys(quantities).length) data.quantities = quantities;
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
-      await this._hass.callService("hellofresh", "select_meals", data);
+      // return_response=true so we can see HelloFresh's seamless-downgrade flag: the write
+      // may succeed but silently shrink the box to fit, saving fewer meals than requested.
+      const result = await this._hass.callService(
+        "hellofresh", "select_meals", data, undefined, false, true
+      );
+      const downgraded = !!((result && result.response) || {}).downgraded;
       delete this._pending[week.week_id]; // saved — drop the pending overlay
       this._busy = false;
       this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
-      this._flash("Meal selection updated.");
+      if (downgraded) this._noteDowngrade(week.week_id);
+      else this._flash("Meal selection updated.");
     } catch (err) {
       this._busy = false;
       await this._fetchWeeks(week.week_id); // resync from the source of truth
@@ -816,6 +827,20 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._toast = null;
       this._render();
     }, 4000);
+  }
+
+  // Record that HelloFresh downsized the box on the last save for `weekId`, showing a
+  // persistent banner (rendered by `_renderDowngradeNotice`) until dismissed or the user
+  // navigates to another week.
+  _noteDowngrade(weekId) {
+    this._downgradeNotice = weekId;
+    this._render();
+  }
+
+  _dismissDowngrade() {
+    if (this._downgradeNotice === null) return;
+    this._downgradeNotice = null;
+    this._render();
   }
 
   // The card header: an optional logo image plus the title. `logo: true` uses the bundled
@@ -924,7 +949,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return `<div class="state">No delivery weeks found.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderHeader(week)}${this._renderOrder(week)}${this._renderFilterBar(week)}${this._renderGrid(week)}`;
+    return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderOrder(week)}${this._renderFilterBar(week)}${this._renderGrid(week)}`;
+  }
+
+  // Inline banner shown on the week whose last save triggered a HelloFresh seamless downgrade:
+  // the write succeeded but the box was silently shrunk to fit, so fewer meals were saved than
+  // chosen. Surfaced right where the edit happened (the persistent HA notification is easy to
+  // miss). Dismissable; also cleared automatically when the user navigates to another week.
+  _renderDowngradeNotice(week) {
+    if (!week || this._downgradeNotice !== week.week_id) return "";
+    return `
+      <div class="downgrade-notice" role="alert">
+        <span class="downgrade-icon" aria-hidden="true">⚠</span>
+        <span class="downgrade-text">HelloFresh <strong>downsized this box</strong> to fit your
+          plan — fewer meals were saved than you selected. Review the saved selection below.</span>
+        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Dismiss">✕</button>
+      </div>`;
   }
 
   // Per-week order/shipment summary shown above the recipe grid: order id, delivery status,
@@ -1350,6 +1390,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         this._toggleProteinFilter(actionEl.getAttribute("data-protein"));
       else if (action === "filter-protein-all") this._clearProteinFilter();
       else if (action === "toggle-variants") this._toggleShowVariants();
+      else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });
   }
 
@@ -1464,6 +1505,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .banner:hover { filter: brightness(1.05); }
       .banner-icon { font-size: 1.2em; flex: none; }
       .banner-text { font-size: 0.92em; }
+      .downgrade-notice {
+        display: flex; align-items: flex-start; gap: 10px;
+        margin: 12px 0 0; padding: 10px 14px; border-radius: 10px;
+        background: var(--warning-color, #ff9800); color: #fff;
+      }
+      .downgrade-icon { font-size: 1.2em; flex: none; line-height: 1.3; }
+      .downgrade-text { font-size: 0.9em; flex: 1; line-height: 1.35; }
+      .downgrade-dismiss {
+        flex: none; background: transparent; border: none; color: inherit;
+        font-size: 1em; cursor: pointer; padding: 0 2px; opacity: 0.85;
+      }
+      .downgrade-dismiss:hover { opacity: 1; }
       .content { padding: 8px 16px 16px; }
       .state { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
       .state.error, .toast.error { color: var(--error-color); }
