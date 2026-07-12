@@ -545,6 +545,53 @@ class HelloFreshFoodProfileOptions:
 
 
 @dataclass(slots=True)
+class HelloFreshDeliveryOption:
+    """One selectable delivery day/slot for a plan (from ``/gw/api/delivery_dates_options``).
+
+    Richer than the per-week ``availableOneOffOptions`` (which carries only ``{handle,
+    delivery_date}``): this includes the human-readable weekday name, weekday number, price, and
+    whether it is the plan's current default — enough to render a full delivery-day picker.
+    """
+
+    handle: str
+    delivery_name: str | None = None
+    delivery_day: int | None = None
+    delivery_from: str | None = None
+    delivery_to: str | None = None
+    price_cents: int | None = None
+    is_default: bool = False
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> HelloFreshDeliveryOption | None:
+        if not isinstance(raw, dict):
+            return None
+        handle = raw.get("handle")
+        if not handle:
+            return None
+        return cls(
+            handle=str(handle),
+            delivery_name=raw.get("deliveryName"),
+            delivery_day=raw.get("deliveryDay"),
+            delivery_from=raw.get("deliveryFrom"),
+            delivery_to=raw.get("deliveryTo"),
+            price_cents=raw.get("priceInCents"),
+            is_default=bool(raw.get("isDefault")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "handle": self.handle,
+            "delivery_name": self.delivery_name,
+            "delivery_day": self.delivery_day,
+            "delivery_from": self.delivery_from,
+            "delivery_to": self.delivery_to,
+            "price_cents": self.price_cents,
+            "price": (self.price_cents / 100) if self.price_cents is not None else None,
+            "is_default": self.is_default,
+        }
+
+
+@dataclass(slots=True)
 class HelloFreshFoodProfile:
     """A customer's food profile — the preferences HelloFresh uses to auto-pick future meals.
 

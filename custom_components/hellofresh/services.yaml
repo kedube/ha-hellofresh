@@ -193,3 +193,37 @@ change_delivery_weekday:
       required: false
       selector:
         text:
+
+get_delivery_options:
+  name: Get delivery options
+  description: >-
+    Return the plan's selectable delivery days (weekday, name, price, and which
+    is the current default) — the full delivery-day picker the website uses.
+    Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+get_plans:
+  name: Get plans
+  description: >-
+    Return the account's plan catalog (product handle, price, status).
+    Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+get_presets:
+  name: Get presets
+  description: >-
+    Return the region's menu presets (Chef's Choice, Veggie, Quick & Easy, …)
+    with their handle, name, and description. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
