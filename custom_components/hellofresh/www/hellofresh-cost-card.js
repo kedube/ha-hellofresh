@@ -237,10 +237,11 @@ class HelloFreshCostCard extends HTMLElement {
       </div>`;
   }
 
-  // A bar-chart graphic of monthly box cost over the last year (config.chart_months slots,
-  // default 12). Rendered as a self-contained inline SVG — no external chart library, so it
-  // works inside the CSP-restricted card sandbox. Months with no delivery show an empty slot
-  // so gaps (paused/skipped months) read correctly on the timeline rather than vanishing.
+  // A histogram of monthly box cost over the last year (config.chart_months slots, default 12),
+  // with a dollar amount printed above each priced bar and a trend line connecting the bar tops.
+  // Rendered as a self-contained inline SVG — no external chart library, so it works inside the
+  // CSP-restricted card sandbox. Months with no delivery show an empty slot so gaps
+  // (paused/skipped months) read correctly on the timeline rather than vanishing.
   _renderChart(months) {
     if (this._config.chart === false || !months.length) return "";
     const span = Math.max(1, Math.min(24, Number(this._config.chart_months) || 12));
@@ -249,12 +250,13 @@ class HelloFreshCostCard extends HTMLElement {
     const currency = series.find((m) => m.currency)?.currency || null;
     const max = series.reduce((m, x) => Math.max(m, x.amount), 0);
 
-    // Geometry (viewBox units; the SVG scales responsively to the card width).
+    // Geometry (viewBox units; the SVG scales responsively to the card width). The top padding
+    // leaves room for the vertical value labels standing above the tallest bar.
     const W = 320;
-    const H = 140;
+    const H = 168;
     const padL = 4;
     const padR = 4;
-    const padTop = 10;
+    const padTop = 34; // headroom for the "$" value labels above the bars
     const axisH = 22; // room for the month labels under the baseline
     const plotH = H - padTop - axisH;
     const baseY = padTop + plotH;
@@ -262,33 +264,58 @@ class HelloFreshCostCard extends HTMLElement {
     const slot = (W - padL - padR) / n;
     const barW = Math.max(3, slot * 0.6);
 
-    const bars = series
-      .map((m, i) => {
-        const x = padL + i * slot + (slot - barW) / 2;
-        const h = max > 0 ? (m.amount / max) * plotH : 0;
-        const y = baseY - h;
+    // Precompute each slot's bar top-center; priced months feed the trend line.
+    const points = series.map((m, i) => {
+      const cx = padL + i * slot + slot / 2;
+      const h = max > 0 ? (m.amount / max) * plotH : 0;
+      return { cx, top: baseY - h, h, m };
+    });
+
+    const bars = points
+      .map(({ cx, top, h, m }, i) => {
+        const x = cx - barW / 2;
         const cls = m.amount <= 0 ? "cbar empty" : m.upcoming ? "cbar upcoming" : "cbar";
         const title = `${this._fmtMonth(m.month)}: ${
           m.amount > 0 ? this._fmtPrice(m.amount, m.currency || currency) : "no box"
         }`;
-        // Show a short month initial under every bar, but only label the year on Januarys (or
-        // the first slot) so a 12-month axis stays readable.
         const [yr, mo] = m.month.split("-");
-        const label = this._monthInitial(Number(mo));
+        const monthLabel = this._monthInitial(Number(mo));
         const yearLabel = mo === "01" || i === 0 ? yr.slice(2) : "";
+        // Dollar amount standing vertically above the bar (compact, no cents). Skipped for
+        // empty months. Rotated -90° so it fits above a narrow 12-bar column.
+        const valueLabel =
+          m.amount > 0
+            ? `<text class="cvalue" x="${cx.toFixed(1)}" y="${(top - 3).toFixed(1)}"
+                     transform="rotate(-90 ${cx.toFixed(1)} ${(top - 3).toFixed(1)})">${this._esc(
+                       this._fmtPriceCompact(m.amount, m.currency || currency)
+                     )}</text>`
+            : "";
         return `
-          <rect class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}"
+          <rect class="${cls}" x="${x.toFixed(1)}" y="${top.toFixed(1)}"
                 width="${barW.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="1.5">
             <title>${this._esc(title)}</title>
           </rect>
-          <text class="clabel" x="${(x + barW / 2).toFixed(1)}" y="${baseY + 12}">${this._esc(label)}</text>
+          ${valueLabel}
+          <text class="clabel" x="${cx.toFixed(1)}" y="${baseY + 12}">${this._esc(monthLabel)}</text>
           ${
             yearLabel
-              ? `<text class="cyear" x="${(x + barW / 2).toFixed(1)}" y="${baseY + 20}">${this._esc(yearLabel)}</text>`
+              ? `<text class="cyear" x="${cx.toFixed(1)}" y="${baseY + 20}">${this._esc(yearLabel)}</text>`
               : ""
           }`;
       })
       .join("");
+
+    // Trend line across priced months only (an empty month has no meaningful cost to plot, so
+    // the line bridges the gap rather than dipping to zero). Needs at least two priced points.
+    const priced = points.filter((p) => p.m.amount > 0);
+    const trend =
+      priced.length >= 2
+        ? `<polyline class="ctrend"
+             points="${priced.map((p) => `${p.cx.toFixed(1)},${p.top.toFixed(1)}`).join(" ")}" />
+           ${priced
+             .map((p) => `<circle class="cdot" cx="${p.cx.toFixed(1)}" cy="${p.top.toFixed(1)}" r="2" />`)
+             .join("")}`
+        : "";
 
     const maxLabel = max > 0 ? this._fmtPrice(max, currency) : "";
     return `<div class="section">
@@ -297,6 +324,7 @@ class HelloFreshCostCard extends HTMLElement {
            role="img" aria-label="Monthly HelloFresh box cost over the last year">
         <line class="cbaseline" x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" />
         ${bars}
+        ${trend}
       </svg>
     </div>`;
   }
@@ -432,6 +460,22 @@ class HelloFreshCostCard extends HTMLElement {
     }
   }
 
+  // Compact whole-dollar price for on-bar chart labels (e.g. "$183") — drops the cents so the
+  // vertical label stays short above a narrow bar.
+  _fmtPriceCompact(amount, currency) {
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return "";
+    try {
+      return num.toLocaleString(undefined, {
+        style: "currency",
+        currency: currency || "USD",
+        maximumFractionDigits: 0,
+      });
+    } catch (_e) {
+      return `${Math.round(num)}`;
+    }
+  }
+
   _esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, (c) => ({
       "&": "&amp;",
@@ -500,6 +544,15 @@ class HelloFreshCostCard extends HTMLElement {
       .cbar.empty { fill: var(--divider-color); opacity: 0.5; }
       .clabel { fill: var(--secondary-text-color); font-size: 8px; text-anchor: middle; }
       .cyear { fill: var(--secondary-text-color); font-size: 7px; text-anchor: middle; opacity: 0.8; }
+      .cvalue {
+        fill: var(--primary-text-color); font-size: 8px; font-weight: 600;
+        text-anchor: start; /* rotated -90°, so start = bottom, growing upward from the bar top */
+      }
+      .ctrend {
+        fill: none; stroke: var(--accent-color, #ff9800); stroke-width: 1.5;
+        stroke-linejoin: round; stroke-linecap: round;
+      }
+      .cdot { fill: var(--accent-color, #ff9800); }
 
       .months { display: flex; flex-direction: column; gap: 6px; }
       .mrow { display: grid; grid-template-columns: 4.5em 1fr auto; align-items: center; gap: 8px; }
