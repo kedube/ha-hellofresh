@@ -103,6 +103,18 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       this._loading = false;
       this._render();
     }
+    // Resolve the preset catalog once so the Preference row can show the full name ("Quick &
+    // Easy") rather than the bare slug — but only when there's a preference to name and the
+    // catalog isn't already loaded. _fetchPresets guards against a double-fetch if the user
+    // also expands the "Meal presets" section. A failure is silent (the slug fallback stands).
+    if (
+      this._summary &&
+      this._summary.plan_preference &&
+      this._presets === null &&
+      !this._presetsLoading
+    ) {
+      this._fetchPresets();
+    }
   }
 
   // Toggle the "Meal presets" reference section, lazily fetching the catalog on first expand.
@@ -312,17 +324,18 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     // the schedule card (summary rows / week badge), so repeating them here is noise.
     const sections = [
       ["Account", [
+        ["Account ID", s.account_id],
         ["Status", s.subscription_status],
         ["Plan", s.selected_plan],
-        // The active meal-preference preset HelloFresh uses to auto-preselect meals (e.g.
-        // "quick" -> "Quick"). Distinct from the plan itself.
-        ["Preference", this._fmtPreference(s.plan_preference)],
+        // The active meal-preference preset HelloFresh uses to auto-preselect meals. Shown as its
+        // full catalog name ("Quick & Easy") once the preset catalog is loaded, humanized slug
+        // ("Quick") otherwise. Distinct from the plan itself.
+        ["Preference", this._preferenceName(s.plan_preference)],
         ["Plan total", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
         ["Credit", this._fmtPrice(s.account_credit, s.account_credit_currency)],
         ["Servings", s.number_of_people],
         ["Meals per box", s.required_meal_count],
         ["Boxes received", s.boxes_received],
-        ["Account ID", s.account_id],
         ["Address", s.delivery_address, true],
       ]],
       ["Upcoming", [
@@ -376,6 +389,23 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     } catch (_e) {
       return iso || "—";
     }
+  }
+
+  // Display name for the active plan preference. Prefers the preset catalog's human-readable
+  // name (e.g. "quick" -> "Quick & Easy") when it's already been fetched for the "Meal presets"
+  // section; falls back to the humanized slug ("Quick") otherwise, so it's never blank and never
+  // triggers an eager catalog fetch just for this one label. Returns null for empty values so
+  // the row drops out entirely.
+  _preferenceName(slug) {
+    if (!slug) return null;
+    const target = String(slug).toLowerCase();
+    if (Array.isArray(this._presets)) {
+      const match = this._presets.find(
+        (p) => p && String(p.handle || "").toLowerCase() === target
+      );
+      if (match && match.name) return match.name;
+    }
+    return this._fmtPreference(slug);
   }
 
   // Humanize a plan-preference slug for display: "quick" -> "Quick", "quick-and-easy" ->
