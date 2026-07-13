@@ -55,6 +55,7 @@ from .const import (
     SERVICE_GET_FOOD_PROFILE,
     SERVICE_GET_PLANS,
     SERVICE_GET_PRESETS,
+    SERVICE_GET_SPENDING,
     SERVICE_GET_WEEKS,
     SERVICE_REFRESH_DATA,
     SERVICE_RESCHEDULE_WEEK,
@@ -600,6 +601,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """Return the region's menu presets (Chef's Choice, Veggie, …). Read-only."""
         return {"presets": await _single_client(service_call).async_get_presets()}
 
+    async def async_get_spending(service_call: ServiceCall) -> ServiceResponse:
+        """Return the customer's spending ledger (weeks, monthly rollup, running total).
+
+        Read-only. Built from the full billing history so the running total reflects lifetime
+        HelloFresh spend, not just the schedule window. Powers the cost card.
+        """
+        return await _single_client(service_call).async_get_spending()
+
     async def async_select_meals(service_call: ServiceCall) -> ServiceResponse:
         """Submit meal selections.
 
@@ -789,6 +798,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_GET_PRESETS,
         async_get_presets,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_SPENDING,
+        async_get_spending,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
         supports_response=SupportsResponse.ONLY,
     )

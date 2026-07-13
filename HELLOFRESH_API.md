@@ -553,13 +553,14 @@ The subscription `preset` is the last resort. Both API sources are more reliable
 
 ### Reference catalogs (read-only)
 
-Three additional read endpoints the web app uses are exposed as optional read-only, response-returning services (`SupportsResponse.ONLY`). None are part of the sensor poll — they are fetched on demand:
+These additional read endpoints the web app uses are exposed as optional read-only, response-returning services (`SupportsResponse.ONLY`). None are part of the sensor poll — they are fetched on demand:
 
 | Service | Method | Path | Params | Returns |
 | --- | --- | --- | --- | --- |
 | `hellofresh.get_delivery_options` | `GET` | `/gw/api/delivery_dates_options` | `country=<CC>&locale=<locale>&family=<planFamily>&numDeliveries=<n>&zip=<postcode>&customerPriority=active_subscription&customerJourney=account_setting` | `{delivery_options: [...]}` |
 | `hellofresh.get_plans` | `GET` | `/gw/api/plans` | `includeCanceled=false` | `{plans: [...]}` |
 | `hellofresh.get_presets` | `GET` | `/gw/api/presets` (fallback `/gw/menus-service/presets`) | `country=<cc>&locale=<locale>&sort=-weight` | `{presets: [...]}` |
+| `hellofresh.get_spending` | `GET` | `/gw/api/customers/me/orders` | `country=<CC>&locale=<locale>&limit=200` | `{weeks: [...], months: [...], total: {...}}` |
 
 - **`get_delivery_options`** is the richer delivery-day picker — a **superset** of a week's `availableOneOffOptions` (which carries only `{handle, delivery_date}`). Each option carries the weekday name/number, price, and default flag, normalized into `HelloFreshDeliveryOption`. The `family` (`productType.family.handle`, e.g. `classic-box-unified`) and `zip` (`shippingAddress.postcode`) come from the primary subscription; options are deduped across items by `handle` and sorted by weekday. Returns `[]` (no request) when either is missing.
 
@@ -573,6 +574,18 @@ Three additional read endpoints the web app uses are exposed as optional read-on
 - **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`. Two paths serve the identical catalog (HAR-confirmed); the account-context `/gw/api/presets` (sorted by weight) is tried first, with `/gw/menus-service/presets` as the fallback.
 
 `get_plans` / `get_presets` are returned as decoded dicts (reference data, not normalized into account models).
+
+- **`get_spending`** aggregates the **billing history** (`/gw/api/customers/me/orders`, `limit=200`) into a running-cost ledger. It reuses the same per-`(subscription, deliveryDate)` `grandTotal` accumulation that backs the payment sensors (so the figures agree with them), then collapses charges to one amount per delivery date (summing across subscriptions) and rolls them up three ways:
+
+  ```jsonc
+  {
+    "weeks":  [{"delivery_date": "2026-06-08", "amount": 100.0, "currency": "USD", "upcoming": false}, …],  // newest first
+    "months": [{"month": "2026-06", "amount": 182.5, "currency": "USD", "box_count": 2, "upcoming": false}, …],
+    "total":  {"amount": 262.5, "currency": "USD", "box_count": 3}   // lifetime spend, PAST deliveries only
+  }
+  ```
+
+  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](README.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
 
 ### Exact cart pricing
 

@@ -7243,6 +7243,125 @@ def test_get_presets_prefers_api_presets_endpoint() -> None:
     assert [p["handle"] for p in presets] == ["quick", "veggie"]
 
 
+def test_build_spending_dataset_aggregates_ledger() -> None:
+    """The ledger collapses per-(sub, date) charges into weeks, months, and a running total."""
+    past_a = date(2026, 5, 25)
+    past_b = date(2026, 6, 1)
+    past_c = date(2026, 6, 8)  # same month as past_b
+    price_by_key = {
+        ("sub-1", past_a): (80.0, "USD"),
+        ("sub-1", past_b): (82.5, "USD"),
+        # Two subscriptions delivering the same day sum into one week.
+        ("sub-1", past_c): (82.5, "USD"),
+        ("sub-2", past_c): (17.5, "USD"),
+    }
+    dataset = HelloFreshClient._build_spending_dataset(price_by_key)
+
+    # Weeks are newest-first, with the same-day charges summed.
+    assert [w["delivery_date"] for w in dataset["weeks"]] == [
+        "2026-06-08",
+        "2026-06-01",
+        "2026-05-25",
+    ]
+    assert dataset["weeks"][0]["amount"] == 100.0  # 82.5 + 17.5
+    assert all(w["upcoming"] is False for w in dataset["weeks"])
+
+    # Monthly rollup: June has two boxes summed, May one.
+    months = {m["month"]: m for m in dataset["months"]}
+    assert months["2026-06"]["amount"] == 182.5  # 82.5 + 100.0
+    assert months["2026-06"]["box_count"] == 2
+    assert months["2026-05"]["amount"] == 80.0
+
+    # Running total is the lifetime spend across all past deliveries.
+    assert dataset["total"] == {"amount": 262.5, "currency": "USD", "box_count": 3}
+
+
+def test_build_spending_dataset_excludes_upcoming_from_running_total() -> None:
+    """A not-yet-delivered box appears flagged upcoming but is not counted in the running total."""
+    today = datetime.now(timezone.utc).date()
+    past = today - timedelta(days=7)
+    future = today + timedelta(days=7)
+    price_by_key = {
+        ("sub-1", past): (90.0, "USD"),
+        ("sub-1", future): (95.0, "USD"),
+    }
+    dataset = HelloFreshClient._build_spending_dataset(price_by_key)
+
+    by_date = {w["delivery_date"]: w for w in dataset["weeks"]}
+    assert by_date[future.isoformat()]["upcoming"] is True
+    assert by_date[past.isoformat()]["upcoming"] is False
+    # Only the past box counts toward the running total.
+    assert dataset["total"] == {"amount": 90.0, "currency": "USD", "box_count": 1}
+
+
+def test_get_spending_fetches_orders_and_returns_ledger() -> None:
+    """async_get_spending fetches the billing history and returns the aggregated dataset."""
+    client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
+    client._cached_subscriptions = [
+        HelloFreshSubscription(subscription_id="6959884", locale="en-US", raw={})
+    ]
+    captured: dict[str, object] = {}
+
+    class Resp:
+        status = 200
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        captured["path"] = path
+        captured["params"] = params
+        return Resp()
+
+    async def fake_response_json(_response):
+        return {
+            "items": [
+                {
+                    "createdAt": "2026-05-20T00:00:00-0700",
+                    "grandTotal": "80.00",
+                    "currencyCode": "USD",
+                    "orderLines": [
+                        {
+                            "deliveryDate": "2026-05-25T00:00:00-0700",
+                            "subscription": {"id": "6959884"},
+                        }
+                    ],
+                },
+                {
+                    "createdAt": "2026-05-27T00:00:00-0700",
+                    "grandTotal": "82.50",
+                    "currencyCode": "USD",
+                    "orderLines": [
+                        {
+                            "deliveryDate": "2026-06-01T00:00:00-0700",
+                            "subscription": {"id": "6959884"},
+                        }
+                    ],
+                },
+            ]
+        }
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    dataset = loop.run_until_complete(client.async_get_spending())
+
+    assert captured["path"] == "/gw/api/customers/me/orders"
+    assert captured["params"]["limit"] == 200
+    assert [w["delivery_date"] for w in dataset["weeks"]] == ["2026-06-01", "2026-05-25"]
+    assert dataset["total"] == {"amount": 162.5, "currency": "USD", "box_count": 2}
+
+
+def test_get_spending_returns_empty_when_no_subscriptions() -> None:
+    """With no subscriptions, get_spending returns empty structures rather than erroring."""
+    client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
+    client._cached_subscriptions = []
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    dataset = loop.run_until_complete(client.async_get_spending())
+    assert dataset == {"weeks": [], "months": [], "total": None}
+
+
 def test_get_presets_falls_back_to_menus_service() -> None:
     """When /gw/api/presets 404s, get_presets falls back to /gw/menus-service/presets."""
     client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]

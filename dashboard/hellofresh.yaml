@@ -8,8 +8,8 @@
 #   • My Menu      — browse & edit each week's meal selection (meal-planner card)
 #   • Market       — browse & order HelloFresh Market add-ons (market card)
 #   • Food Profile — view & edit meal-preselection preferences (food-profile card)
-#   • Schedule     — delivery calendar + timeline and account overview (schedule +
-#                    subscription cards, sections grid layout)
+#   • Schedule     — delivery calendar + timeline, account overview, and running cost
+#                    (schedule + subscription + cost cards, sections grid layout)
 #   • Diagnostics  — token expiry & integration health as tile cards, manual refresh
 #
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -25,8 +25,8 @@
 #
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # • The custom cards — `custom:hellofresh-meal-planner-card`, `custom:hellofresh-market-card`,
-#   `custom:hellofresh-food-profile-card`, `custom:hellofresh-schedule-card`, and
-#   `custom:hellofresh-subscription-card` — are served and
+#   `custom:hellofresh-food-profile-card`, `custom:hellofresh-schedule-card`,
+#   `custom:hellofresh-subscription-card`, and `custom:hellofresh-cost-card` — are served and
 #   registered automatically when the
 #   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
 #   dashboards, add `/hellofresh/<card>.js` once under Settings → Dashboards → Resources
@@ -83,6 +83,11 @@ views:
         cards:
           - type: custom:hellofresh-subscription-card
             title: Subscription
+            logo: true
+            grid_options:
+              columns: full
+          - type: custom:hellofresh-cost-card
+            title: HelloFresh Cost
             logo: true
             grid_options:
               columns: full

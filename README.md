@@ -23,6 +23,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
   - [Food Profile card](#food-profile-card)
   - [Schedule card](#schedule-card)
   - [Subscription card](#subscription-card)
+  - [Cost card](#cost-card)
   - [Recorder attribute sizes](#recorder-attribute-sizes)
 - [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
@@ -166,6 +167,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 - `hellofresh.get_delivery_options` — **returns a response**: the plan's selectable delivery days (weekday, name, price, and which is the current default) — the full delivery-day picker the website uses, a richer superset of the per-week reschedule options. Read-only.
 - `hellofresh.get_plans` — **returns a response**: the account's plan catalog (product handle, price, status). Read-only.
 - `hellofresh.get_presets` — **returns a response**: the region's menu presets (Chef's Choice, Veggie, Quick & Easy, …) with their handle, name, and description — the human-readable names behind a plan's preset. Read-only.
+- `hellofresh.get_spending` — **returns a response**: your HelloFresh spending ledger built from the full billing history — `weeks` (per-box delivery date + amount, newest first), `months` (per-month rollup with box count and total), and a running `total` (lifetime spend across past deliveries, with box count). Upcoming boxes are flagged and excluded from the running total. Read-only. Powers the [Cost card](#cost-card).
 
 When multiple HelloFresh accounts are configured, service calls can target a specific entry with `config_entry_id`.
 
@@ -225,7 +227,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
-- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](#subscription-card), a condensed account overview with the holiday-delivery notice built in.
+- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](#subscription-card), a condensed account overview with the holiday-delivery notice built in, and the [Cost card](#cost-card), a running total of your HelloFresh spend with a monthly roll-up.
 - **Diagnostics** — token-expiry and integration-health **tile cards** (state-colored) plus the long-form identifiers, tucked out of the way.
 
 ### Meal planner card
@@ -353,6 +355,29 @@ What it does:
 - **Stays current on its own** — same contract as the schedule card: re-fetches on the integration's configured refresh interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view instead of blanking it.
 - It's read-only.
 
+### Cost card
+
+The integration also ships **`custom:hellofresh-cost-card`**, a running-cost view of what HelloFresh actually costs you over time. It reads one call from `hellofresh.get_spending`, which aggregates the **full billing history** (up to ~200 past + upcoming charges) — so the running total is your **lifetime** spend, not just the handful of weeks the schedule card shows. The same billing totals back the payment sensors, so the figures agree with them.
+
+```yaml
+type: custom:hellofresh-cost-card
+# title: HelloFresh Cost    # optional header
+# logo: true                # optional bundled HelloFresh logo in the header
+# months: 6                 # months in the roll-up (default 6, 0 hides the section)
+# weeks: 6                  # recent boxes to list (default 6, 0 hides the section)
+# config_entry_id: <id>     # required only with multiple HelloFresh accounts
+```
+
+What it does:
+
+- **Running total headline** — the lifetime amount spent across all delivered boxes, its box count, and a derived per-box average.
+- **By-month roll-up** — each month's total with a bar scaled to the largest month in view, so the trend is scannable at a glance (newest first, capped by `months`).
+- **Recent boxes** — a per-box list of delivery date + amount (newest first, capped by `weeks`).
+- **Upcoming boxes** — a box that's been scheduled/charged but not yet delivered is shown with an "upcoming" tag and **excluded from the running total** (a running cost is money already spent).
+- **Stays current on its own** — re-fetches on a periodic interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view. Read-only.
+
+Place it on the Schedule tab alongside the subscription card (the example dashboard does this).
+
 ### Recorder attribute sizes
 
 Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required. When you do need per-week recipes (names, selection state, images), call the read-only `hellofresh.get_weeks` service, which returns them on demand without touching the recorder.
@@ -385,7 +410,7 @@ What works:
 - per-week order detail (tracking, status, carrier, billed total) surfaced alongside each week, with the billed total computed the same way as the `next_box_total_price` sensor
 - skipping/restoring the next modifiable delivery week from a switch, plus `skip_week` / `unskip_week` services that use the website's own write endpoints with conservative fallbacks
 - on-demand per-week recipe, market, selection, and order detail via the response-returning `hellofresh.get_weeks` service (kept out of entity attributes to respect the recorder size limit)
-- five packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), [Schedule](#schedule-card), and [Subscription](#subscription-card) — for browsing weeks, editing selections/quantities, managing food preferences, reviewing the delivery timeline, and a condensed account overview, all auto-registered by the integration
+- six packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), [Schedule](#schedule-card), [Subscription](#subscription-card), and [Cost](#cost-card) — for browsing weeks, editing selections/quantities, managing food preferences, reviewing the delivery timeline, a condensed account overview, and a running spend total, all auto-registered by the integration
 - Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
 
 What is not implemented yet:
