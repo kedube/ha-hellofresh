@@ -361,7 +361,7 @@ The integration also ships **`custom:hellofresh-cost-card`**, a running-cost vie
 
 ```yaml
 type: custom:hellofresh-cost-card
-# title: HelloFresh Cost    # optional header
+# title: Cost              # optional header
 # logo: true                # optional bundled HelloFresh logo in the header
 # months: 6                 # months in the roll-up (default 6, 0 hides the section)
 # weeks: 6                  # recent boxes to list (default 6, 0 hides the section)

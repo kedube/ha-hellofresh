@@ -87,7 +87,7 @@ views:
             grid_options:
               columns: full
           - type: custom:hellofresh-cost-card
-            title: HelloFresh Cost
+            title: Cost
             logo: true
             grid_options:
               columns: full
