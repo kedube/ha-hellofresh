@@ -227,7 +227,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 - **My Menu** — the packaged [Meal planner card](#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **Food Profile** — the packaged [Food Profile card](#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
-- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](#subscription-card), a condensed account overview with the holiday-delivery notice built in, and the [Cost card](#cost-card), a running total of your HelloFresh spend with a monthly roll-up.
+- **Schedule** — the packaged [Schedule card](#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](#subscription-card), a condensed account overview with the holiday-delivery notice built in, and the [Cost card](#cost-card), a running total of your HelloFresh spend with a monthly-cost chart and roll-up.
 - **Diagnostics** — token-expiry and integration-health **tile cards** (state-colored) plus the long-form identifiers, tucked out of the way.
 
 ### Meal planner card
@@ -361,9 +361,11 @@ The integration also ships **`custom:hellofresh-cost-card`**, a running-cost vie
 
 ```yaml
 type: custom:hellofresh-cost-card
-# title: Cost              # optional header
+# title: Cost               # optional header
 # logo: true                # optional bundled HelloFresh logo in the header
-# months: 6                 # months in the roll-up (default 6, 0 hides the section)
+# chart: true               # monthly-cost bar chart (default true; set false to hide)
+# chart_months: 12          # months spanned by the chart (default 12 — the last year; 1–24)
+# months: 6                 # months in the roll-up list (default 6, 0 hides the section)
 # weeks: 6                  # recent boxes to list (default 6, 0 hides the section)
 # config_entry_id: <id>     # required only with multiple HelloFresh accounts
 ```
@@ -371,7 +373,8 @@ type: custom:hellofresh-cost-card
 What it does:
 
 - **Running total headline** — the lifetime amount spent across all delivered boxes, its box count, and a derived per-box average.
-- **By-month roll-up** — each month's total with a bar scaled to the largest month in view, so the trend is scannable at a glance (newest first, capped by `months`).
+- **Monthly cost chart** — a self-contained SVG histogram of the last year's monthly box cost (`chart_months` slots), with the dollar amount printed above each bar and a trend line connecting the bar tops. Months with no delivery (paused/skipped) render as empty slots so the timeline stays unbroken, and the trend line bridges them rather than dipping to zero. No external chart library — it draws inside the card's sandbox and scales to the card width.
+- **By-month roll-up** — below the chart, a list giving each month's exact total and box count with a bar scaled to the largest month in view (newest first, capped by `months`).
 - **Recent boxes** — a per-box list of delivery date + amount (newest first, capped by `weeks`).
 - **Upcoming boxes** — a box that's been scheduled/charged but not yet delivered is shown with an "upcoming" tag and **excluded from the running total** (a running cost is money already spent).
 - **Stays current on its own** — re-fetches on a periodic interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view. Read-only.
