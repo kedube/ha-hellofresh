@@ -18,7 +18,7 @@
  * Config:
  *   type: custom:hellofresh-cost-card
  *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
- *   title: HelloFresh Cost        # optional card header
+ *   title: Cost                   # optional card header
  *   logo: true                    # optional bundled HelloFresh logo in the header
  *   chart: true                   # monthly-cost bar chart (default true; set false to hide)
  *   chart_months: 12              # months spanned by the chart (default 12 — the last year)
@@ -63,7 +63,7 @@ class HelloFreshCostCard extends HTMLElement {
 
   setConfig(config) {
     this._config = {
-      title: "HelloFresh Cost",
+      title: "Cost",
       chart: true,
       chart_months: 12,
       months: 6,
@@ -167,7 +167,7 @@ class HelloFreshCostCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "HelloFresh Cost")}</span>
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Cost")}</span>
       <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
