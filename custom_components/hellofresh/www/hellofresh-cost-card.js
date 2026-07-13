@@ -256,7 +256,7 @@ class HelloFreshCostCard extends HTMLElement {
     const H = 150;
     const padL = 4;
     const padR = 4;
-    const padTop = 14; // headroom for the "$" value labels above the bars
+    const padTop = 18; // headroom for the "$" value labels sitting above the bars + trend line
     const axisH = 22; // room for the month labels under the baseline
     const plotH = H - padTop - axisH;
     const baseY = padTop + plotH;
@@ -281,20 +281,11 @@ class HelloFreshCostCard extends HTMLElement {
         const [yr, mo] = m.month.split("-");
         const monthLabel = this._monthInitial(Number(mo));
         const yearLabel = mo === "01" || i === 0 ? yr.slice(2) : "";
-        // Dollar amount printed horizontally above the bar (compact, no cents). Skipped for
-        // empty months. The font is sized down (see .cvalue) so 12 labels fit side by side.
-        const valueLabel =
-          m.amount > 0
-            ? `<text class="cvalue" x="${cx.toFixed(1)}" y="${(top - 4).toFixed(1)}">${this._esc(
-                this._fmtPriceCompact(m.amount, m.currency || currency)
-              )}</text>`
-            : "";
         return `
           <rect class="${cls}" x="${x.toFixed(1)}" y="${top.toFixed(1)}"
                 width="${barW.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="1.5">
             <title>${this._esc(title)}</title>
           </rect>
-          ${valueLabel}
           <text class="clabel" x="${cx.toFixed(1)}" y="${baseY + 12}">${this._esc(monthLabel)}</text>
           ${
             yearLabel
@@ -316,6 +307,17 @@ class HelloFreshCostCard extends HTMLElement {
              .join("")}`
         : "";
 
+    // Dollar amounts, drawn LAST so they sit on top of the trend line/dots (not under them), and
+    // lifted clear above each bar top + line. Horizontal and font-shrunk so 12 fit side by side.
+    const valueLabels = priced
+      .map(
+        (p) =>
+          `<text class="cvalue" x="${p.cx.toFixed(1)}" y="${(p.top - 8).toFixed(1)}">${this._esc(
+            this._fmtPriceCompact(p.m.amount, p.m.currency || currency)
+          )}</text>`
+      )
+      .join("");
+
     const maxLabel = max > 0 ? this._fmtPrice(max, currency) : "";
     return `<div class="section">
       <div class="stitle">Monthly box cost${maxLabel ? ` · peak ${this._esc(maxLabel)}` : ""}</div>
@@ -324,6 +326,7 @@ class HelloFreshCostCard extends HTMLElement {
         <line class="cbaseline" x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" />
         ${bars}
         ${trend}
+        ${valueLabels}
       </svg>
     </div>`;
   }
