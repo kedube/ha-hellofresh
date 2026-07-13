@@ -251,12 +251,12 @@ class HelloFreshCostCard extends HTMLElement {
     const max = series.reduce((m, x) => Math.max(m, x.amount), 0);
 
     // Geometry (viewBox units; the SVG scales responsively to the card width). The top padding
-    // leaves room for the vertical value labels standing above the tallest bar.
+    // leaves room for the horizontal value labels sitting above the tallest bar.
     const W = 320;
-    const H = 168;
+    const H = 150;
     const padL = 4;
     const padR = 4;
-    const padTop = 34; // headroom for the "$" value labels above the bars
+    const padTop = 14; // headroom for the "$" value labels above the bars
     const axisH = 22; // room for the month labels under the baseline
     const plotH = H - padTop - axisH;
     const baseY = padTop + plotH;
@@ -281,14 +281,13 @@ class HelloFreshCostCard extends HTMLElement {
         const [yr, mo] = m.month.split("-");
         const monthLabel = this._monthInitial(Number(mo));
         const yearLabel = mo === "01" || i === 0 ? yr.slice(2) : "";
-        // Dollar amount standing vertically above the bar (compact, no cents). Skipped for
-        // empty months. Rotated -90° so it fits above a narrow 12-bar column.
+        // Dollar amount printed horizontally above the bar (compact, no cents). Skipped for
+        // empty months. The font is sized down (see .cvalue) so 12 labels fit side by side.
         const valueLabel =
           m.amount > 0
-            ? `<text class="cvalue" x="${cx.toFixed(1)}" y="${(top - 3).toFixed(1)}"
-                     transform="rotate(-90 ${cx.toFixed(1)} ${(top - 3).toFixed(1)})">${this._esc(
-                       this._fmtPriceCompact(m.amount, m.currency || currency)
-                     )}</text>`
+            ? `<text class="cvalue" x="${cx.toFixed(1)}" y="${(top - 4).toFixed(1)}">${this._esc(
+                this._fmtPriceCompact(m.amount, m.currency || currency)
+              )}</text>`
             : "";
         return `
           <rect class="${cls}" x="${x.toFixed(1)}" y="${top.toFixed(1)}"
@@ -545,8 +544,8 @@ class HelloFreshCostCard extends HTMLElement {
       .clabel { fill: var(--secondary-text-color); font-size: 8px; text-anchor: middle; }
       .cyear { fill: var(--secondary-text-color); font-size: 7px; text-anchor: middle; opacity: 0.8; }
       .cvalue {
-        fill: var(--primary-text-color); font-size: 8px; font-weight: 600;
-        text-anchor: start; /* rotated -90°, so start = bottom, growing upward from the bar top */
+        fill: var(--primary-text-color); font-size: 6.5px; font-weight: 600;
+        text-anchor: middle; /* horizontal, centered above its bar */
       }
       .ctrend {
         fill: none; stroke: var(--accent-color, #ff9800); stroke-width: 1.5;
