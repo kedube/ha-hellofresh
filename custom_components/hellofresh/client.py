@@ -790,6 +790,124 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                     existing.is_default = True
         return sorted(by_handle.values(), key=lambda o: (o.delivery_day or 99, o.handle))
 
+    async def async_get_spending(self) -> dict[str, Any]:
+        """Return the customer's HelloFresh spending ledger from the billing history.
+
+        Fetches ``/gw/api/customers/me/orders`` (up to ~200 past+upcoming charges) and reuses the
+        same per-delivery total accumulation that backs the payment sensors, so the numbers agree
+        with what those sensors report. Aggregates into three views for a running-cost card:
+
+        * ``weeks``   — one entry per delivered/charged box (delivery date, amount, currency),
+          newest first, spanning the full available history rather than the schedule window.
+        * ``months``  — per-calendar-month rollup (``month`` = ``YYYY-MM``, box count, total).
+        * ``total``   — the running total across all *past* deliveries (the lifetime spend),
+          plus ``currency`` and ``box_count``.
+
+        Upcoming (not-yet-delivered) deliveries are reported in ``weeks``/``months`` flagged
+        ``upcoming: true`` but are EXCLUDED from the running ``total`` — a running cost is money
+        already spent. Returns empty structures (not an error) when the billing endpoint is
+        unavailable, so the card degrades gracefully.
+        """
+        subscriptions = self._cached_subscriptions or await self._async_get_subscriptions()
+        if not subscriptions:
+            return {"weeks": [], "months": [], "total": None}
+
+        try:
+            response = await self._async_api_get(
+                "/gw/api/customers/me/orders",
+                params={
+                    "country": api_country_code(self._country),
+                    "locale": subscriptions[0].locale or api_locale(self._country),
+                    "limit": 200,
+                },
+            )
+        except HelloFreshError:
+            return {"weeks": [], "months": [], "total": None}
+        if response.status >= _HTTP_BAD_REQUEST:
+            return {"weeks": [], "months": [], "total": None}
+
+        payload = await self._async_response_json(response)
+        items = payload.get("items") if isinstance(payload, dict) else None
+        _, _, _, price_by_key = self._accumulate_order_prices(items or [])
+        return self._build_spending_dataset(price_by_key)
+
+    @staticmethod
+    def _build_spending_dataset(
+        price_by_key: dict[tuple[str, date], tuple[float, str | None]],
+    ) -> dict[str, Any]:
+        """Aggregate the per-(subscription, delivery date) billing totals into the spending views.
+
+        Charges are summed across subscriptions per delivery date (a household with two plans that
+        deliver the same day spends the combined amount that week). The running ``total`` counts
+        only deliveries on or before today.
+        """
+        today = datetime.now(UTC).date()
+
+        # Collapse to one amount per delivery DATE (summing across subscriptions), preferring the
+        # first non-null currency seen — a single account never mixes currencies.
+        by_date: dict[date, tuple[float, str | None]] = {}
+        for (_subscription_id, delivery_date), (amount, currency) in price_by_key.items():
+            if delivery_date is None or amount is None:
+                continue
+            existing = by_date.get(delivery_date)
+            if existing is None:
+                by_date[delivery_date] = (amount, currency)
+            else:
+                by_date[delivery_date] = (existing[0] + amount, existing[1] or currency)
+
+        weeks: list[dict[str, Any]] = []
+        months: dict[str, dict[str, Any]] = {}
+        running_total = 0.0
+        running_currency: str | None = None
+        running_box_count = 0
+
+        for delivery_date in sorted(by_date, reverse=True):
+            amount, currency = by_date[delivery_date]
+            rounded = round(amount, 2)
+            upcoming = delivery_date > today
+            weeks.append(
+                {
+                    "delivery_date": delivery_date.isoformat(),
+                    "amount": rounded,
+                    "currency": currency,
+                    "upcoming": upcoming,
+                }
+            )
+            month_key = delivery_date.strftime("%Y-%m")
+            bucket = months.get(month_key)
+            if bucket is None:
+                bucket = {
+                    "month": month_key,
+                    "amount": 0.0,
+                    "currency": currency,
+                    "box_count": 0,
+                    "upcoming": True,
+                }
+                months[month_key] = bucket
+            bucket["amount"] = round(bucket["amount"] + rounded, 2)
+            bucket["currency"] = bucket["currency"] or currency
+            bucket["box_count"] += 1
+            # A month counts as fully in the past only once none of its boxes are upcoming.
+            if not upcoming:
+                bucket["upcoming"] = False
+
+            if not upcoming:
+                running_total += rounded
+                running_currency = running_currency or currency
+                running_box_count += 1
+
+        months_list = [months[key] for key in sorted(months, reverse=True)]
+        total = (
+            {
+                "amount": round(running_total, 2),
+                "currency": running_currency,
+                "box_count": running_box_count,
+            }
+            if running_box_count
+            else None
+        )
+        return {"weeks": weeks, "months": months_list, "total": total}
+
     async def async_get_plans(self) -> list[dict[str, Any]]:
         """Return the customer's plan catalog (``GET /gw/api/plans``).
 

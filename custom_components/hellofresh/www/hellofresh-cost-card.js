@@ -1,0 +1,430 @@
+/*
+ * HelloFresh Cost Card
+ * --------------------
+ * A running-cost view of your HelloFresh spending: a headline lifetime total, a per-month
+ * roll-up (with a simple bar chart), and a recent per-box weekly list — so you can see what
+ * HelloFresh actually costs you over time.
+ *
+ * Reads everything in one call from the response-returning `hellofresh.get_spending` service,
+ * which aggregates the full billing history (up to ~200 past + upcoming charges) — so the
+ * running total is your lifetime spend, not just the weeks the schedule card happens to show.
+ * The same billing totals back the payment sensors, so the figures agree with them. Re-pulls
+ * automatically on the integration's configured refresh interval and when a sibling card saves
+ * a change. Read-only.
+ *
+ * Upcoming (not-yet-delivered) boxes are shown but marked "upcoming" and are excluded from the
+ * running total — a running cost is money already spent.
+ *
+ * Config:
+ *   type: custom:hellofresh-cost-card
+ *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
+ *   title: HelloFresh Cost        # optional card header
+ *   logo: true                    # optional bundled HelloFresh logo in the header
+ *   months: 6                     # months to show in the roll-up (default 6, 0 hides the section)
+ *   weeks: 6                      # recent boxes to list (default 6, 0 hides the section)
+ *
+ * No build step: hand-written ES2020 served from the integration's www/ directory.
+ */
+
+// The integration stamps its release version onto the resource URL as ?v= (cache-bust), so the
+// banner reports exactly which build the browser actually loaded.
+const COST_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
+
+class HelloFreshCostCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this.shadowRoot.adoptedStyleSheets = [HelloFreshCostCard._sheet()];
+    this._hass = null;
+    this._spending = null; // { weeks, months, total } from get_spending
+    this._loading = false;
+    this._error = null;
+    this._fetched = false;
+    this._lastFetched = 0;
+    this._tickTimer = null;
+    this._onDataChanged = (ev) => this._receiveDataChanged(ev);
+    this._onVisibility = () => this._onBecameVisible();
+  }
+
+  connectedCallback() {
+    window.addEventListener(HelloFreshCostCard.DATA_CHANGED_EVENT, this._onDataChanged);
+    document.addEventListener("visibilitychange", this._onVisibility);
+    this._startTick();
+    if (this._spending) this._refreshIfStale();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener(HelloFreshCostCard.DATA_CHANGED_EVENT, this._onDataChanged);
+    document.removeEventListener("visibilitychange", this._onVisibility);
+    this._stopTick();
+  }
+
+  setConfig(config) {
+    this._config = { title: "HelloFresh Cost", months: 6, weeks: 6, ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (hass && !this._fetched && !this._loading) {
+      this._fetched = true;
+      this._fetch();
+    }
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  static getStubConfig() {
+    return { type: "custom:hellofresh-cost-card" };
+  }
+
+  // ---- data ----------------------------------------------------------------
+
+  async _fetch() {
+    if (!this._hass || this._loading) return;
+    this._loading = true;
+    this._error = null;
+    this._render();
+    try {
+      const data = {};
+      if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
+      const result = await this._hass.callService(
+        "hellofresh", "get_spending", data, undefined, false, true
+      );
+      this._spending = (result && result.response) || { weeks: [], months: [], total: null };
+    } catch (err) {
+      this._error = (err && err.message) || String(err);
+    } finally {
+      this._lastFetched = Date.now();
+      this._loading = false;
+      this._render();
+    }
+  }
+
+  // ---- auto-refresh (same contract as the schedule/subscription cards) -------
+  // The spending ledger changes at most once a week (a new box is billed), so there's no need
+  // for a per-account refresh_interval read here — the shared 3h default plus the data-changed
+  // event and visibility re-check keep it fresh without hammering the billing endpoint.
+
+  _refetchIntervalMs() {
+    return 180 * 60000;
+  }
+
+  _refreshIfStale() {
+    if (!this._hass || !this._fetched || this._loading) return false;
+    if (Date.now() - this._lastFetched < this._refetchIntervalMs()) return false;
+    this._fetch();
+    return true;
+  }
+
+  _startTick() {
+    if (this._tickTimer) return;
+    this._tickTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      this._refreshIfStale();
+    }, 60000);
+  }
+
+  _stopTick() {
+    clearInterval(this._tickTimer);
+    this._tickTimer = null;
+  }
+
+  _onBecameVisible() {
+    if (document.visibilityState !== "visible") return;
+    this._refreshIfStale();
+  }
+
+  static get DATA_CHANGED_EVENT() {
+    return "hellofresh-data-changed";
+  }
+
+  _accountKey() {
+    return (this._config && this._config.config_entry_id) || "default";
+  }
+
+  _receiveDataChanged(ev) {
+    const detail = (ev && ev.detail) || {};
+    if ((detail.accountKey || "default") !== this._accountKey()) return;
+    if (this._fetched && !this._loading) this._fetch();
+  }
+
+  // ---- rendering -------------------------------------------------------------
+
+  _render() {
+    if (!this.shadowRoot) return;
+    this._ensureShell();
+    this._shell.head.innerHTML = `
+      ${this._renderLogo()}
+      <span class="title-text">${this._esc(this._config ? this._config.title : "HelloFresh Cost")}</span>
+      <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
+    this._shell.body.innerHTML = this._renderBody();
+  }
+
+  _ensureShell() {
+    if (this._shell) return;
+    const card = document.createElement("ha-card");
+    card.innerHTML = `<div class="head"></div><div class="body"></div>`;
+    this.shadowRoot.appendChild(card);
+    this._shell = { card, head: card.querySelector(".head"), body: card.querySelector(".body") };
+    card.addEventListener("click", (ev) => {
+      const actionEl = ev.target.closest("[data-action]");
+      if (!actionEl) return;
+      if (actionEl.getAttribute("data-action") === "refresh") this._fetch();
+    });
+  }
+
+  _renderLogo() {
+    const logo = this._config && this._config.logo;
+    if (!logo) return "";
+    const logoUrl = logo === true ? "/hellofresh/hellofresh-logo.png" : logo;
+    return `<img class="logo" src="${this._esc(logoUrl)}" alt="HelloFresh">`;
+  }
+
+  _renderBody() {
+    if (!this._spending) {
+      if (this._loading || !this._fetched) return `<div class="state">Loading spending…</div>`;
+      return `<div class="state error">Could not load spending: ${this._esc(this._error || "no data")}</div>
+        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+    }
+    const s = this._spending;
+    const weeks = Array.isArray(s.weeks) ? s.weeks : [];
+    const months = Array.isArray(s.months) ? s.months : [];
+    if (!weeks.length && !months.length && !s.total) {
+      return `<div class="state">No spending history yet.</div>`;
+    }
+    const notice = this._error
+      ? `<div class="notice">Refresh failed: ${this._esc(this._error)}
+           <button class="refreshbtn" data-action="refresh">Retry</button></div>`
+      : "";
+    return `<div class="${this._loading ? "reloading" : ""}">
+      ${notice}
+      ${this._renderTotal(s.total)}
+      ${this._renderMonths(months)}
+      ${this._renderWeeks(weeks)}
+    </div>`;
+  }
+
+  // The headline: the running lifetime total (past deliveries only) and its box count, plus a
+  // derived per-box average — the single "what has HelloFresh cost me" figure.
+  _renderTotal(total) {
+    if (!total || total.amount == null) return "";
+    const boxes = Number(total.box_count) || 0;
+    const avg = boxes > 0 ? total.amount / boxes : null;
+    return `
+      <div class="total">
+        <div class="total-main">
+          <span class="total-label">Total spent</span>
+          <span class="total-amount">${this._esc(this._fmtPrice(total.amount, total.currency))}</span>
+        </div>
+        <div class="total-sub">
+          ${boxes} box${boxes === 1 ? "" : "es"}${
+            avg != null ? ` · ${this._esc(this._fmtPrice(avg, total.currency))} avg` : ""
+          }
+        </div>
+      </div>`;
+  }
+
+  // Per-month roll-up (newest first, capped by config.months): each month's total with a bar
+  // scaled to the largest month in view, so the trend is scannable at a glance.
+  _renderMonths(months) {
+    const cap = Number(this._config.months);
+    if (!(cap > 0) || !months.length) return "";
+    const shown = months.slice(0, cap);
+    const max = shown.reduce((m, x) => Math.max(m, Number(x.amount) || 0), 0) || 1;
+    const rows = shown
+      .map((m) => {
+        const amount = Number(m.amount) || 0;
+        const pct = Math.max(2, Math.round((amount / max) * 100));
+        const boxes = Number(m.box_count) || 0;
+        return `
+          <div class="mrow${m.upcoming ? " upcoming" : ""}">
+            <span class="mlabel">${this._esc(this._fmtMonth(m.month))}</span>
+            <span class="mbar"><span class="mfill" style="width:${pct}%"></span></span>
+            <span class="mval">${this._esc(this._fmtPrice(amount, m.currency))}
+              <span class="mcount">${boxes} box${boxes === 1 ? "" : "es"}</span></span>
+          </div>`;
+      })
+      .join("");
+    return `<div class="section">
+      <div class="stitle">By month</div>
+      <div class="months">${rows}</div>
+    </div>`;
+  }
+
+  // Recent per-box list (newest first, capped by config.weeks): delivery date + amount, with an
+  // "upcoming" tag on boxes that haven't been delivered/charged as spent yet.
+  _renderWeeks(weeks) {
+    const cap = Number(this._config.weeks);
+    if (!(cap > 0) || !weeks.length) return "";
+    const rows = weeks
+      .slice(0, cap)
+      .map(
+        (w) => `
+          <div class="wrow${w.upcoming ? " upcoming" : ""}">
+            <span class="wdate">${this._esc(this._fmtDate(w.delivery_date))}${
+              w.upcoming ? ` <span class="tag">upcoming</span>` : ""
+            }</span>
+            <span class="wval">${this._esc(this._fmtPrice(w.amount, w.currency))}</span>
+          </div>`
+      )
+      .join("");
+    return `<div class="section">
+      <div class="stitle">Recent boxes</div>
+      <div class="weeks">${rows}</div>
+    </div>`;
+  }
+
+  // ---- helpers ---------------------------------------------------------------
+
+  // Parse a date anchored to LOCAL midnight — bare "YYYY-MM-DD" strings otherwise parse as UTC
+  // midnight and render as the previous day west of UTC.
+  _parseLocalDate(value) {
+    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(value);
+  }
+
+  _fmtDate(iso) {
+    try {
+      return this._parseLocalDate(iso).toLocaleDateString(undefined, {
+        month: "short", day: "numeric", year: "numeric",
+      });
+    } catch (_e) {
+      return iso || "—";
+    }
+  }
+
+  // "2026-06" -> "Jun 2026".
+  _fmtMonth(key) {
+    const m = typeof key === "string" && /^(\d{4})-(\d{2})$/.exec(key);
+    if (!m) return key || "—";
+    try {
+      return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString(undefined, {
+        month: "short", year: "numeric",
+      });
+    } catch (_e) {
+      return key;
+    }
+  }
+
+  _fmtPrice(amount, currency) {
+    if (amount == null) return "—";
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return String(amount);
+    try {
+      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
+    } catch (_e) {
+      return `${num.toFixed(2)} ${currency || ""}`.trim();
+    }
+  }
+
+  _esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[c]));
+  }
+
+  static _sheet() {
+    if (!HelloFreshCostCard.__sheet) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(HelloFreshCostCard._styles());
+      HelloFreshCostCard.__sheet = sheet;
+    }
+    return HelloFreshCostCard.__sheet;
+  }
+
+  static _styles() {
+    return `
+      :host { display: block; }
+      ha-card { padding: 16px; }
+      .head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+      .logo { height: 28px; width: 28px; border-radius: 6px; object-fit: cover; flex: none; }
+      .title-text { font-size: 1.1em; font-weight: 600; }
+      .state { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
+      .state.error { color: var(--error-color, #db4437); }
+      .reloading { opacity: 0.6; transition: opacity 0.2s; }
+      .notice {
+        margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 0.85em;
+        background: var(--secondary-background-color);
+      }
+      .actions { text-align: center; margin-top: 8px; }
+      .actions button { padding: 6px 16px; border-radius: 8px; cursor: pointer; }
+      .refreshbtn {
+        margin-left: auto; flex: none;
+        font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color); cursor: pointer;
+      }
+      .refreshbtn:disabled { opacity: 0.5; cursor: default; }
+
+      .total {
+        margin: 8px 0 4px; padding: 12px 14px; border-radius: 12px;
+        background: var(--secondary-background-color);
+      }
+      .total-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .total-label {
+        font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--secondary-text-color);
+      }
+      .total-amount { font-size: 1.6em; font-weight: 700; color: var(--primary-color); }
+      .total-sub { font-size: 0.82em; color: var(--secondary-text-color); margin-top: 2px; }
+
+      .section { margin-top: 14px; }
+      .stitle {
+        font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+        color: var(--secondary-text-color); margin-bottom: 6px;
+      }
+
+      .months { display: flex; flex-direction: column; gap: 6px; }
+      .mrow { display: grid; grid-template-columns: 4.5em 1fr auto; align-items: center; gap: 8px; }
+      .mrow.upcoming { opacity: 0.65; }
+      .mlabel { font-size: 0.82em; color: var(--secondary-text-color); }
+      .mbar {
+        height: 8px; border-radius: 4px; overflow: hidden;
+        background: var(--divider-color); min-width: 20px;
+      }
+      .mfill { display: block; height: 100%; background: var(--primary-color); border-radius: 4px; }
+      .mval { font-size: 0.88em; font-weight: 600; text-align: right; white-space: nowrap; }
+      .mcount {
+        display: block; font-size: 0.72em; font-weight: 400; color: var(--secondary-text-color);
+      }
+
+      .weeks { display: flex; flex-direction: column; }
+      .wrow {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 6px 0; border-bottom: 1px solid var(--divider-color);
+      }
+      .wrow:last-child { border-bottom: none; }
+      .wrow.upcoming { opacity: 0.7; }
+      .wdate { font-size: 0.88em; color: var(--primary-text-color); }
+      .wval { font-size: 0.9em; font-weight: 600; white-space: nowrap; }
+      .tag {
+        font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.03em;
+        color: var(--secondary-text-color); border: 1px solid var(--divider-color);
+        border-radius: 8px; padding: 0 5px; margin-left: 4px; vertical-align: middle;
+      }
+    `;
+  }
+}
+
+customElements.define("hellofresh-cost-card", HelloFreshCostCard);
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "hellofresh-cost-card",
+  name: "HelloFresh Cost Card",
+  description: "Running HelloFresh cost: lifetime total, monthly roll-up, and recent boxes.",
+});
+
+console.info(
+  `%c HELLOFRESH-COST-CARD %c v${COST_CARD_VERSION} `,
+  "color: #fff; background: #91c11e; font-weight: 700;",
+  "color: #91c11e; background: #333; font-weight: 700;"
+);

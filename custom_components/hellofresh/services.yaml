@@ -233,3 +233,15 @@ get_presets:
       required: false
       selector:
         text:
+
+get_spending:
+  name: Get spending
+  description: >-
+    Return the customer's HelloFresh spending ledger from the full billing
+    history: per-box weeks, a per-month rollup, and a running lifetime total
+    of past deliveries. Read-only; returns a response. Powers the cost card.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:

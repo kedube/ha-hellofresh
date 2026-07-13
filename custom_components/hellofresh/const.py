@@ -80,6 +80,7 @@ SERVICE_GET_ACCOUNT_SUMMARY = "get_account_summary"
 SERVICE_GET_DELIVERY_OPTIONS = "get_delivery_options"
 SERVICE_GET_PLANS = "get_plans"
 SERVICE_GET_PRESETS = "get_presets"
+SERVICE_GET_SPENDING = "get_spending"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
