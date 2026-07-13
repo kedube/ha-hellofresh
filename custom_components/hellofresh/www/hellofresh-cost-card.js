@@ -20,7 +20,9 @@
  *   config_entry_id: <optional>   # required only when multiple HelloFresh accounts exist
  *   title: HelloFresh Cost        # optional card header
  *   logo: true                    # optional bundled HelloFresh logo in the header
- *   months: 6                     # months to show in the roll-up (default 6, 0 hides the section)
+ *   chart: true                   # monthly-cost bar chart (default true; set false to hide)
+ *   chart_months: 12              # months spanned by the chart (default 12 — the last year)
+ *   months: 6                     # months to show in the roll-up list (default 6, 0 hides it)
  *   weeks: 6                      # recent boxes to list (default 6, 0 hides the section)
  *
  * No build step: hand-written ES2020 served from the integration's www/ directory.
@@ -60,7 +62,14 @@ class HelloFreshCostCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { title: "HelloFresh Cost", months: 6, weeks: 6, ...config };
+    this._config = {
+      title: "HelloFresh Cost",
+      chart: true,
+      chart_months: 12,
+      months: 6,
+      weeks: 6,
+      ...config,
+    };
     this._render();
   }
 
@@ -202,6 +211,7 @@ class HelloFreshCostCard extends HTMLElement {
     return `<div class="${this._loading ? "reloading" : ""}">
       ${notice}
       ${this._renderTotal(s.total)}
+      ${this._renderChart(months)}
       ${this._renderMonths(months)}
       ${this._renderWeeks(weeks)}
     </div>`;
@@ -225,6 +235,102 @@ class HelloFreshCostCard extends HTMLElement {
           }
         </div>
       </div>`;
+  }
+
+  // A bar-chart graphic of monthly box cost over the last year (config.chart_months slots,
+  // default 12). Rendered as a self-contained inline SVG — no external chart library, so it
+  // works inside the CSP-restricted card sandbox. Months with no delivery show an empty slot
+  // so gaps (paused/skipped months) read correctly on the timeline rather than vanishing.
+  _renderChart(months) {
+    if (this._config.chart === false || !months.length) return "";
+    const span = Math.max(1, Math.min(24, Number(this._config.chart_months) || 12));
+    const series = this._denseMonths(months, span);
+    if (!series.length) return "";
+    const currency = series.find((m) => m.currency)?.currency || null;
+    const max = series.reduce((m, x) => Math.max(m, x.amount), 0);
+
+    // Geometry (viewBox units; the SVG scales responsively to the card width).
+    const W = 320;
+    const H = 140;
+    const padL = 4;
+    const padR = 4;
+    const padTop = 10;
+    const axisH = 22; // room for the month labels under the baseline
+    const plotH = H - padTop - axisH;
+    const baseY = padTop + plotH;
+    const n = series.length;
+    const slot = (W - padL - padR) / n;
+    const barW = Math.max(3, slot * 0.6);
+
+    const bars = series
+      .map((m, i) => {
+        const x = padL + i * slot + (slot - barW) / 2;
+        const h = max > 0 ? (m.amount / max) * plotH : 0;
+        const y = baseY - h;
+        const cls = m.amount <= 0 ? "cbar empty" : m.upcoming ? "cbar upcoming" : "cbar";
+        const title = `${this._fmtMonth(m.month)}: ${
+          m.amount > 0 ? this._fmtPrice(m.amount, m.currency || currency) : "no box"
+        }`;
+        // Show a short month initial under every bar, but only label the year on Januarys (or
+        // the first slot) so a 12-month axis stays readable.
+        const [yr, mo] = m.month.split("-");
+        const label = this._monthInitial(Number(mo));
+        const yearLabel = mo === "01" || i === 0 ? yr.slice(2) : "";
+        return `
+          <rect class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}"
+                width="${barW.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="1.5">
+            <title>${this._esc(title)}</title>
+          </rect>
+          <text class="clabel" x="${(x + barW / 2).toFixed(1)}" y="${baseY + 12}">${this._esc(label)}</text>
+          ${
+            yearLabel
+              ? `<text class="cyear" x="${(x + barW / 2).toFixed(1)}" y="${baseY + 20}">${this._esc(yearLabel)}</text>`
+              : ""
+          }`;
+      })
+      .join("");
+
+    const maxLabel = max > 0 ? this._fmtPrice(max, currency) : "";
+    return `<div class="section">
+      <div class="stitle">Monthly box cost${maxLabel ? ` · peak ${this._esc(maxLabel)}` : ""}</div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}"
+           role="img" aria-label="Monthly HelloFresh box cost over the last year">
+        <line class="cbaseline" x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" />
+        ${bars}
+      </svg>
+    </div>`;
+  }
+
+  // Expand the sparse month list (delivery months only) into a CONTIGUOUS run of `span` months
+  // ending at the most recent month present, filling absent months with a zero-cost slot so the
+  // chart's x-axis is an unbroken timeline. Anchored on the newest data month (not "today")
+  // because the card has no clock of its own.
+  _denseMonths(months, span) {
+    const byKey = new Map();
+    let newest = null;
+    for (const m of months) {
+      if (typeof m.month !== "string" || !/^\d{4}-\d{2}$/.test(m.month)) continue;
+      byKey.set(m.month, m);
+      if (newest === null || m.month > newest) newest = m.month;
+    }
+    if (newest === null) return [];
+    let year = Number(newest.slice(0, 4));
+    let mon = Number(newest.slice(5, 7)); // 1-12
+    const out = [];
+    for (let i = 0; i < span; i += 1) {
+      const key = `${year}-${String(mon).padStart(2, "0")}`;
+      const existing = byKey.get(key);
+      out.push(
+        existing || { month: key, amount: 0, currency: null, box_count: 0, upcoming: false }
+      );
+      mon -= 1;
+      if (mon === 0) {
+        mon = 12;
+        year -= 1;
+      }
+    }
+    // Built newest-first above; the chart reads left-to-right oldest-to-newest.
+    return out.reverse().map((m) => ({ ...m, amount: Number(m.amount) || 0 }));
   }
 
   // Per-month roll-up (newest first, capped by config.months): each month's total with a bar
@@ -310,6 +416,11 @@ class HelloFreshCostCard extends HTMLElement {
     }
   }
 
+  // Single-letter month label for the chart axis (J F M A M J J A S O N D), 1-indexed.
+  _monthInitial(mon) {
+    return "JFMAMJJASOND"[(Number(mon) - 1) % 12] || "";
+  }
+
   _fmtPrice(amount, currency) {
     if (amount == null) return "—";
     const num = Number(amount);
@@ -344,9 +455,9 @@ class HelloFreshCostCard extends HTMLElement {
     return `
       :host { display: block; }
       ha-card { padding: 16px; }
-      .head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-      .logo { height: 28px; width: 28px; border-radius: 6px; object-fit: cover; flex: none; }
-      .title-text { font-size: 1.1em; font-weight: 600; }
+      .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+      .logo { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none; }
+      .title-text { font-size: 1.5em; font-weight: 500; }
       .state { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
       .state.error { color: var(--error-color, #db4437); }
       .reloading { opacity: 0.6; transition: opacity 0.2s; }
@@ -381,6 +492,14 @@ class HelloFreshCostCard extends HTMLElement {
         font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
         color: var(--secondary-text-color); margin-bottom: 6px;
       }
+
+      .chart { display: block; width: 100%; height: auto; overflow: visible; }
+      .cbaseline { stroke: var(--divider-color); stroke-width: 1; }
+      .cbar { fill: var(--primary-color); }
+      .cbar.upcoming { fill: var(--primary-color); opacity: 0.45; }
+      .cbar.empty { fill: var(--divider-color); opacity: 0.5; }
+      .clabel { fill: var(--secondary-text-color); font-size: 8px; text-anchor: middle; }
+      .cyear { fill: var(--secondary-text-color); font-size: 7px; text-anchor: middle; opacity: 0.8; }
 
       .months { display: flex; flex-direction: column; gap: 6px; }
       .mrow { display: grid; grid-template-columns: 4.5em 1fr auto; align-items: center; gap: 8px; }
