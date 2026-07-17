@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 # Smallest valid box HelloFresh sells: a week with fewer distinct meals than this has no valid
@@ -210,10 +210,47 @@ class HelloFreshWeek:
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
+    def is_paused(self) -> bool:
+        """Return True when the week's subscription is paused — its box never ships.
+
+        A paused week can still carry HelloFresh's auto-fill picks in the payload, but those
+        are phantom selections (nothing ships), so paused weeks are excluded from the
+        "needs selection" / "preselected" signals, matching the meal-planner card's
+        ``_isPaused`` treatment.
+        """
+        return (self.status or "").strip().upper() == "PAUSED"
+
+    @property
+    def selection_deadline_passed(self) -> bool:
+        """Return True when the week's selection deadline is known and already behind us."""
+        if self.selection_deadline is None:
+            return False
+        deadline = self.selection_deadline
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+        return deadline <= datetime.now(UTC)
+
+    @property
+    def is_editable(self) -> bool:
+        """Return True while the customer can still change this week's meal selection.
+
+        Mirrors the meal-planner card's ``_isEditable`` exactly: the API must allow meal
+        swaps (``allowed_actions.mealSwap``), the week must not be skipped, and the
+        selection deadline (when known) must not have passed. Keeping the two in lockstep
+        is what guarantees the "Weeks preselected by HelloFresh" sensor and the card's
+        "still need a meal selection" banner agree.
+        """
+        if self.is_skipped:
+            return False
+        if not self.allowed_actions.get("mealSwap"):
+            return False
+        return not self.selection_deadline_passed
+
+    @property
     def needs_selection(self) -> bool:
         """Return True when the week still needs the customer's attention for meal choices.
 
-        A week needs attention when either:
+        A week needs attention when it is still EDITABLE (see ``is_editable``) and either:
           * HelloFresh AUTO-PICKED the meals (``meals_preselected``) and the customer hasn't
             overridden them — the app's "we picked these, review them" state; or
           * the selection is below the smallest valid box (< ``MIN_MEALS_PER_WEEK``), e.g. an
@@ -224,12 +261,14 @@ class HelloFreshWeek:
         3-meal plan). That is a complete, valid choice — flagging it would be a false "needs
         selection" (it wrongly kept ``binary_sensor.needs_meal_selection`` on).
 
-        Past weeks are never counted (an already-shipped box can't be changed), mirroring
-        ``auto_picked`` — otherwise a past preselected/empty week (e.g. a skipped-then-unpaused old
-        week with 0 meals) would keep this sensor on while "Weeks preselected by HelloFresh" shows
-        0, since that count already excludes past weeks.
+        Once the week is locked (selection deadline passed, or the API disallows meal swaps)
+        there is nothing actionable left — the box ships with whatever is on it — so it no
+        longer "needs" anything. This keeps ``binary_sensor.needs_meal_selection`` and the
+        meal-planner card's banner (which only prompts for editable weeks) in agreement.
+        Past and paused weeks are never counted for the same reason: a shipped box can't be
+        changed and a paused box never ships.
         """
-        if self.is_skipped:
+        if not self.is_editable or self.is_paused:
             return False
         if self.delivery_date is not None and self.delivery_date < date.today():
             return False
@@ -241,13 +280,17 @@ class HelloFreshWeek:
 
     @property
     def auto_picked(self) -> bool:
-        """Return True when HelloFresh auto-picked this week's meals (vs. the customer choosing).
+        """Return True when HelloFresh auto-picked this week's meals AND that is still fixable.
 
-        Driven by the menu's week-level ``mealsPreselected`` flag. A skipped week (no box ships)
-        and a past week (delivery date before today) are never counted — only the next delivery
-        week and later are considered, since a customer can no longer change an already-shipped box.
+        Driven by the menu's week-level ``mealsPreselected`` flag, gated on ``is_editable``:
+        once the selection deadline passes the box ships with the auto-picks regardless, so
+        the week stops counting toward "Weeks preselected by HelloFresh" — the sensor is a
+        call to action, and matches the card's banner (which only prompts for editable
+        weeks). The per-week informational flag remains available as ``meals_preselected``
+        (and the "Next delivery preselected" sensor). Skipped, paused, and past weeks are
+        never counted — no box ships (or it already shipped), so there is nothing to act on.
         """
-        if self.is_skipped or not self.meals_preselected:
+        if not self.meals_preselected or self.is_paused or not self.is_editable:
             return False
         return not (self.delivery_date is not None and self.delivery_date < date.today())
 
@@ -290,6 +333,7 @@ class HelloFreshWeek:
             "needs_selection": self.needs_selection,
             "meals_preselected": self.meals_preselected,
             "auto_picked": self.auto_picked,
+            "is_editable": self.is_editable,
             "source": self.source,
             "menu_title": self.menu_title,
             "slot_label": self.slot_label,

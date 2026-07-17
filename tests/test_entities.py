@@ -730,16 +730,25 @@ def test_market_count_sensors_zero_without_resolved_week() -> None:
 
 
 def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
-    """The sensor counts auto-picked (menu mealsPreselected) weeks from next delivery onward."""
+    """The sensor counts auto-picked (menu mealsPreselected) weeks that are still EDITABLE.
+
+    Editable mirrors the meal-planner card's banner: meal swaps allowed and the selection
+    deadline (when known) still ahead. A locked week ships with its auto-picks no matter
+    what, so it stops counting — the sensor is a call to action.
+    """
     today = date.today()
+    editable = {"mealSwap": True}
+    open_deadline = datetime.now(UTC) + timedelta(days=3)
     data = HelloFreshAccountData(
         weeks=[
-            # Auto-picked by HelloFresh, upcoming (counts).
+            # Auto-picked by HelloFresh, upcoming, still editable (counts).
             HelloFreshWeek(
                 week_id="next",
                 display_name="Next week",
                 subscription_id="sub-1",
                 delivery_date=today + timedelta(days=7),
+                selection_deadline=open_deadline,
+                allowed_actions=editable,
                 meals_required=3,
                 meals_selected=3,
                 meals_preselected=True,
@@ -750,6 +759,8 @@ def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
                 display_name="Week after",
                 subscription_id="sub-1",
                 delivery_date=today + timedelta(days=14),
+                selection_deadline=open_deadline,
+                allowed_actions=editable,
                 meals_required=3,
                 meals_selected=3,
                 meals_preselected=False,
@@ -760,6 +771,8 @@ def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
                 display_name="Skipped week",
                 subscription_id="sub-1",
                 delivery_date=today + timedelta(days=21),
+                selection_deadline=open_deadline,
+                allowed_actions=editable,
                 meals_preselected=True,
                 is_skipped=True,
             ),
@@ -769,6 +782,33 @@ def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
                 display_name="Past week",
                 subscription_id="sub-1",
                 delivery_date=today - timedelta(days=7),
+                allowed_actions=editable,
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=True,
+            ),
+            # Auto-picked but LOCKED (deadline passed — excluded even though it hasn't
+            # delivered yet: nothing is actionable, matching the card's banner).
+            HelloFreshWeek(
+                week_id="locked",
+                display_name="Locked week",
+                subscription_id="sub-1",
+                delivery_date=today + timedelta(days=2),
+                selection_deadline=datetime.now(UTC) - timedelta(hours=2),
+                allowed_actions=editable,
+                meals_required=3,
+                meals_selected=3,
+                meals_preselected=True,
+            ),
+            # Auto-picked but PAUSED (excluded — the box never ships).
+            HelloFreshWeek(
+                week_id="paused",
+                display_name="Paused week",
+                subscription_id="sub-1",
+                status="PAUSED",
+                delivery_date=today + timedelta(days=28),
+                selection_deadline=open_deadline,
+                allowed_actions=editable,
                 meals_required=3,
                 meals_selected=3,
                 meals_preselected=True,

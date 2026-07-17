@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import cast
 
 import pytest
@@ -37,11 +37,16 @@ _RECORDER_ATTR_CAP_BYTES = 16384
 
 
 def test_week_needs_selection_respects_skip_and_counts() -> None:
-    """A week needs selection when HelloFresh auto-picked it OR it's below the minimum box.
+    """A week needs selection when it is still editable AND HelloFresh auto-picked it OR it's
+    below the minimum box.
 
     It must NOT fire merely because meals_selected < meals_required: a deliberate resize to fewer
-    meals than the base plan (e.g. 2 on a 3-meal plan) is a complete, valid choice.
+    meals than the base plan (e.g. 2 on a 3-meal plan) is a complete, valid choice. And once the
+    week is locked (deadline passed / meal swaps disallowed) nothing is actionable, so it must
+    not fire either — mirroring the meal-planner card's editable-only banner.
     """
+    editable = {"mealSwap": True}
+    future_deadline = datetime.now(UTC) + timedelta(days=2)
     # Deliberate resize (2 selected, not preselected) — a complete choice, not "needs selection".
     assert (
         HelloFreshWeek(
@@ -49,6 +54,8 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             display_name="Resized",
             meals_required=3,
             meals_selected=2,
+            selection_deadline=future_deadline,
+            allowed_actions=editable,
         ).needs_selection
         is False
     )
@@ -60,6 +67,8 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             meals_required=3,
             meals_selected=3,
             meals_preselected=True,
+            selection_deadline=future_deadline,
+            allowed_actions=editable,
         ).needs_selection
         is True
     )
@@ -70,6 +79,8 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             display_name="Empty",
             meals_required=3,
             meals_selected=0,
+            selection_deadline=future_deadline,
+            allowed_actions=editable,
         ).needs_selection
         is True
     )
@@ -82,6 +93,8 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             meals_selected=0,
             meals_preselected=True,
             is_skipped=True,
+            selection_deadline=future_deadline,
+            allowed_actions=editable,
         ).needs_selection
         is False
     )
@@ -96,6 +109,52 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             meals_required=3,
             meals_selected=0,
             meals_preselected=True,
+            allowed_actions=editable,
+        ).needs_selection
+        is False
+    )
+    # A LOCKED week (deadline passed) never needs selection: the box ships with whatever is on
+    # it, so prompting is pointless. Matches the card's banner, which only counts editable weeks.
+    assert (
+        HelloFreshWeek(
+            week_id="week-locked",
+            display_name="Locked",
+            delivery_date=date.today() + timedelta(days=3),
+            selection_deadline=datetime.now(UTC) - timedelta(hours=1),
+            meals_required=3,
+            meals_selected=3,
+            meals_preselected=True,
+            allowed_actions=editable,
+        ).needs_selection
+        is False
+    )
+    # Same when the API disallows meal swaps (or omits allowedActions entirely) — the card
+    # treats those weeks as read-only, so the sensor must too.
+    assert (
+        HelloFreshWeek(
+            week_id="week-no-swap",
+            display_name="No swap",
+            delivery_date=date.today() + timedelta(days=3),
+            selection_deadline=future_deadline,
+            meals_required=3,
+            meals_selected=3,
+            meals_preselected=True,
+            allowed_actions={"mealSwap": False},
+        ).needs_selection
+        is False
+    )
+    # A PAUSED week's box never ships; its auto-fill picks are phantom selections.
+    assert (
+        HelloFreshWeek(
+            week_id="week-paused",
+            display_name="Paused",
+            status="PAUSED",
+            delivery_date=date.today() + timedelta(days=3),
+            selection_deadline=future_deadline,
+            meals_required=3,
+            meals_selected=3,
+            meals_preselected=True,
+            allowed_actions=editable,
         ).needs_selection
         is False
     )
@@ -209,7 +268,9 @@ def test_account_data_finalize_builds_serialized_views() -> None:
         display_name="Jun 10 - Jun 16",
         subscription_id="sub-1",
         delivery_date=today,
-        selection_deadline=datetime.combine(today, datetime.min.time()).replace(hour=18),
+        # Deadline still ahead and swaps allowed: needs_selection now requires editability.
+        selection_deadline=datetime.now(UTC) + timedelta(days=1),
+        allowed_actions={"mealSwap": True},
         meals_required=3,
         meals_selected=1,
         recipes=[
@@ -1072,16 +1133,18 @@ def test_normalize_weeks_payload_extracts_nested_delivery_recipes_and_counts() -
         account_id="acct-1",
         locale="en-US",
     )
-    # A FUTURE week (dated after today) so the needs_selection assertion is meaningful — a past
-    # week can never need selection regardless of its counts.
+    # A FUTURE week (dated after today) with an OPEN deadline and swaps allowed, so the
+    # needs_selection assertion is meaningful — a past or locked week can never need selection
+    # regardless of its counts.
     future = date.today() + timedelta(days=10)
     payload = {
         "items": [
             {
                 "deliveryWeek": future.strftime("%G-W%V"),
                 "deliveryDate": future.isoformat(),
-                "deadline": "2026-06-10T23:59:59-07:00",
+                "deadline": (future - timedelta(days=5)).strftime("%Y-%m-%dT23:59:59-07:00"),
                 "deliveryStatus": "RUNNING",
+                "allowedActions": {"mealSwap": True},
                 "selection": {
                     "requiredMealCount": 2,
                     "selectedMealCount": 1,
@@ -1386,6 +1449,12 @@ def test_normalize_menu_weeks_reads_meals_preselected_flag() -> None:
         subscription=subscription,
     )
     assert auto[0].meals_preselected is True
+    # A bare menu week carries no allowedActions/deadline, so it is not editable and therefore
+    # not auto_picked (the sensor is a call to action now). In the real pipeline the flag is
+    # merged onto the account week, whose editability decides — simulate that here.
+    assert auto[0].auto_picked is False
+    auto[0].allowed_actions = {"mealSwap": True}
+    auto[0].selection_deadline = datetime.now(UTC) + timedelta(days=2)
     assert auto[0].auto_picked is True
     assert customer[0].meals_preselected is False
     assert customer[0].auto_picked is False
@@ -3890,6 +3959,9 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
     future = date.today() + timedelta(days=10)
     future_week = future.strftime("%G-W%V")
     future_iso = future.strftime("%Y-%m-%dT00:00:00-0700")
+    # Cutoff still ahead: the week must count as editable/needing selection. A PAST cutoff
+    # would (correctly) exclude it now that needs_selection is gated on editability.
+    future_cutoff = (future - timedelta(days=5)).strftime("%Y-%m-%dT23:59:59-0700")
     subscription = HelloFreshSubscription(
         subscription_id="6959884",
         account_id="acct-1",
@@ -3902,7 +3974,7 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
             "nextDeliveryWeek": future_week,
             "nextModifiableDeliveryDate": future_iso,
             "nextModifiableDeliveryWeek": future_week,
-            "nextCutoffDate": "2026-06-10T23:59:59-0700",
+            "nextCutoffDate": future_cutoff,
             "nextDeliveryOption": {
                 "deliveryName": "Mondays: 8AM - 8PM",
                 "type": "PLAN",

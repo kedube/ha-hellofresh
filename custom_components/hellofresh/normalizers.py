@@ -607,8 +607,7 @@ class HelloFreshPayloadNormalizer:
         today = datetime.now(UTC).date()
         grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for week in weeks:
-            is_paused = (week.status or "").strip().upper() == "PAUSED"
-            if not (is_paused or week.is_skipped):
+            if not (week.is_paused or week.is_skipped):
                 continue
             is_past = week.delivery_date is not None and week.delivery_date < grace_floor
             if is_past:
@@ -1223,6 +1222,16 @@ class HelloFreshPayloadNormalizer:
             slot_label=delivery_option.get("deliveryName"),
             shipping_method=delivery_option.get("type") or subscription.shipping_method,
             box_size=subscription.box_size,
+            # The subscriptions payload has no allowedActions dict, but a week surfaced via
+            # nextModifiableDeliveryWeek is by definition still changeable — mark meal swaps
+            # allowed so models.is_editable (which requires the flag, mirroring the card)
+            # doesn't silently drop these fallback weeks from the needs-selection sensors.
+            # The cutoff-date gate still applies via selection_deadline.
+            allowed_actions=(
+                {"mealSwap": True}
+                if raw_subscription.get("nextModifiableDeliveryWeek") == week_id
+                else {}
+            ),
             raw={
                 **raw_subscription,
                 "deliveryOption": delivery_option,
