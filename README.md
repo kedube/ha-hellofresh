@@ -1,4 +1,4 @@
-# HelloFresh Integration for Home Assistant
+# (Unofficial) HelloFresh Integration for Home Assistant
 
 A custom Home Assistant integration that reads your HelloFresh account and menu data so you can track upcoming deliveries, shipment status, recipe selection deadlines, and week-by-week meal planning — and browse and edit your meals and HelloFresh Market add-ons — directly from Home Assistant.
 
