@@ -125,7 +125,7 @@ Choose the matching country during setup. **Status** reflects real-world testing
 | Canada | `ca` | https://www.hellofresh.ca | Untested |
 | Australia | `au` | https://www.hellofresh.com.au | Untested |
 | Germany | `de` | https://www.hellofresh.de | Untested |
-| Netherlands | `nl` | https://www.hellofresh.nl | Untested |
+| Netherlands | `nl` | https://www.hellofresh.nl | ✅ Verified |
 
 ## What It Provides
 
