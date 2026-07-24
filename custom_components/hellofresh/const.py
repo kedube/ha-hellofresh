@@ -103,6 +103,7 @@ COUNTRY_BASE_URLS: dict[str, str] = {
     "uk": "https://www.hellofresh.co.uk",
     "au": "https://www.hellofresh.com.au",
     "de": "https://www.hellofresh.de",
+    "dk": "https://www.hellofresh.dk",
     "nl": "https://www.hellofresh.nl",
 }
 
@@ -124,6 +125,7 @@ COUNTRY_API_LOCALES: dict[str, str] = {
     "uk": "en-GB",
     "au": "en-AU",
     "de": "de-DE",
+    "dk": "da-DK",
     "nl": "nl-NL",
 }
 

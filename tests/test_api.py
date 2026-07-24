@@ -6810,6 +6810,8 @@ def test_uk_uses_gb_country_code_and_locale() -> None:
     assert api_country_code("de") == "DE"
     assert api_locale("de") == "de-DE"
     assert api_locale("nl") == "nl-NL"
+    assert api_country_code("dk") == "DK"
+    assert api_locale("dk") == "da-DK"
 
 
 def test_auth_query_sends_api_country_code_for_uk() -> None:

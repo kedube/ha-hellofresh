@@ -41,6 +41,7 @@ _COUNTRY_CURRENCIES = {
     "uk": "GBP",
     "au": "AUD",
     "de": "EUR",
+    "dk": "DKK",
     "nl": "EUR",
 }
 
