@@ -721,13 +721,15 @@ class HelloFreshMarketCard extends HTMLElement {
       }
       byGroup.get(key).push(item);
     }
+    // the individual items .currency property are sometimes null, fallback to the order's currency, or USD if that is also null
+    const fallbackCurrency = week?.order?.currency || "USD";
 
     return order
       .map((key) => {
         const label = GROUP_LABELS[key] || this._titleCase(key);
         const tiles = byGroup
           .get(key)
-          .map((item) => this._renderTile(week, item, editable, qtyOf(item)))
+          .map((item) => this._renderTile(week, item, editable, qtyOf(item), fallbackCurrency))
           .join("");
         return `<div class="group">
           <div class="grouptitle">${this._esc(label)}</div>
@@ -737,7 +739,7 @@ class HelloFreshMarketCard extends HTMLElement {
       .join("");
   }
 
-  _renderTile(week, item, editable, qty) {
+  _renderTile(week, item, editable, qty, fallbackCurrency) {
     const idAttr = this._esc(item.item_id);
     const cap = Math.min(
       item.max_quantity != null ? item.max_quantity : HelloFreshMarketCard.MAX_QUANTITY,
@@ -755,7 +757,7 @@ class HelloFreshMarketCard extends HTMLElement {
             : `<div class="noimg"></div>`}
           ${qty > 0 ? `<div class="qtybadge">${qty}×</div>` : ""}
           ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
-          ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency))}</div>` : ""}
+          ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency || fallbackCurrency))}</div>` : ""}
         </div>
         <div class="meta">
           <div class="name">${this._esc(item.name)}</div>
