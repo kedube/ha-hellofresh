@@ -661,7 +661,7 @@ class HelloFreshMarketCard extends HTMLElement {
     const dirty = this._isDirty(week);
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const totalCents = this._cartTotalCents(week);
-    const currency = (week.market_items.find((i) => i.currency) || {}).currency;
+    const currency = (week.market_items.find((i) => i.currency) || week.order || {}).currency;
     return `
       <div class="statusrow">
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
