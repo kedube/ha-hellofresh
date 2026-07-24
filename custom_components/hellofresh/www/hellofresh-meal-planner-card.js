@@ -1312,6 +1312,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const qty = isSelected ? this._displayedQuantity(week, r) : 0;
     const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
     const idxAttr = this._esc(String(r.course_index));
+    const currency = this._account.selected_plan_total_price_currency;
     return `
       <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
            data-index="${idxAttr}">
@@ -1321,7 +1322,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             : `<div class="noimg"></div>`}
           ${isSelected ? `<div class="check">✓</div>` : ""}
           ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
-          ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
+          ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label, currency))}</div>` : ""}
           ${variantTitle ? `<div class="variant-flag">${this._esc(variantTitle)}</div>` : ""}
         </div>
         <div class="meta">
@@ -1404,9 +1405,20 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // Normalize HelloFresh's surcharge label ("+7.99/serving") to a compact "+$7.99". Leaves
   // unrecognized formats unchanged.
-  _fmtSurcharge(label) {
-    const m = String(label).match(/\+?\s*([\d.]+)/);
-    return m ? `+$${m[1]}` : String(label);
+  _fmtSurcharge(label, currency) {
+    // replace , with . for international formats that use , as a decimal seperator
+    const m = String(label).replace(/,/g, ".").match(/\+?\s*([\d.]+)/);
+    if (!m) return String(label);
+    const amount = Number.parseFloat(m[1]);
+    if (isNaN(amount)) return String(label);
+    return amount.toLocaleString(undefined, {
+      style: "currency",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+      currency: currency || "USD",
+      signDisplay: "always", // add + symbol
+      currencyDisplay: "narrowSymbol", // only show $ instead of US$ or CA$
+    });
   }
 
   _relativeWeek(week) {
