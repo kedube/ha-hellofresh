@@ -116,16 +116,30 @@ The available options are:
 
 ### Supported regions
 
-Choose the matching country during setup. **Status** reflects real-world testing: ✅ = verified end to end (including write actions); *Untested* = the region is wired up and should work for reading, but no one has confirmed it — reports welcome.
+Choose the matching country during setup. All 16 markets HelloFresh currently operates in are supported. Prices are reported in each region's local currency, taken from your account data where HelloFresh provides it and falling back to the currency listed below.
 
-| Region | Code | Website | Status |
-| --- | --- | --- | --- |
-| United States | `us` | https://www.hellofresh.com | ✅ Verified |
-| United Kingdom | `uk` | https://www.hellofresh.co.uk | ✅ Verified |
-| Canada | `ca` | https://www.hellofresh.ca | Untested |
-| Australia | `au` | https://www.hellofresh.com.au | Untested |
-| Germany | `de` | https://www.hellofresh.de | Untested |
-| Netherlands | `nl` | https://www.hellofresh.nl | ✅ Verified |
+**Status** reflects real-world testing: ✅ = verified end to end (including write actions); *Untested* = the region is wired up and should work for reading, but no one has confirmed it — reports welcome.
+
+| Region | Code | Website | Currency | Status |
+| --- | --- | --- | --- | --- |
+| United States | `us` | https://www.hellofresh.com | USD | ✅ Verified |
+| United Kingdom | `uk` | https://www.hellofresh.co.uk | GBP | ✅ Verified |
+| Canada | `ca` | https://www.hellofresh.ca | CAD | Untested |
+| Australia | `au` | https://www.hellofresh.com.au | AUD | Untested |
+| New Zealand | `nz` | https://www.hellofresh.co.nz | NZD | Untested |
+| Germany | `de` | https://www.hellofresh.de | EUR | Untested |
+| Austria | `at` | https://www.hellofresh.at | EUR | Untested |
+| Switzerland | `ch` | https://www.hellofresh.ch | CHF | Untested |
+| Netherlands | `nl` | https://www.hellofresh.nl | EUR | ✅ Verified |
+| Belgium | `be` | https://www.hellofresh.be | EUR | Untested |
+| Luxembourg | `lu` | https://www.hellofresh.lu | EUR | Untested |
+| France | `fr` | https://www.hellofresh.fr | EUR | Untested |
+| Ireland | `ie` | https://www.hellofresh.ie | EUR | Untested |
+| Denmark | `dk` | https://www.hellofresh.dk | DKK | ✅ Verified |
+| Norway | `no` | https://www.hellofresh.no | NOK | Untested |
+| Sweden | `se` | https://www.hellofresh.se | SEK | Untested |
+
+**Not supported:** HelloFresh has exited Spain and Italy (both wound down in early 2026) and Japan (2022), so accounts in those markets can no longer be used.
 
 ## What It Provides
 

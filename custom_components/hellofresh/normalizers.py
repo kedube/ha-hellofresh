@@ -35,13 +35,28 @@ from .parsers import (
     slugify,
 )
 
+# Fallback billing currency per config-flow country key, used only when a payload carries no
+# currency of its own (see _extract_currency_code). Keys must stay in sync with
+# COUNTRY_BASE_URLS in const.py. The Nordic markets each use their own krone/krona -- DKK, NOK
+# and SEK are distinct currencies despite sharing the "kr" symbol -- and Switzerland bills in
+# CHF, not EUR.
 _COUNTRY_CURRENCIES = {
     "us": "USD",
     "ca": "CAD",
     "uk": "GBP",
     "au": "AUD",
+    "nz": "NZD",
     "de": "EUR",
+    "at": "EUR",
+    "ch": "CHF",
     "nl": "EUR",
+    "be": "EUR",
+    "lu": "EUR",
+    "fr": "EUR",
+    "ie": "EUR",
+    "dk": "DKK",
+    "no": "NOK",
+    "se": "SEK",
 }
 
 # Path segments that carry a per-account identifier the diagnostics export must not leak.

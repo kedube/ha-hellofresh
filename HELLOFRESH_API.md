@@ -32,18 +32,39 @@ It is derived from the integration source and its normalization tests:
 
 ## Regional Base URLs
 
-The integration supports these regions:
+The integration supports these regions. `API country` is the ISO 3166 code posted to the `/gw`
+auth endpoints, which is **not** always the config key — `uk` maps to `GB`. `API locale` is the
+default locale for pre-subscription calls; a subscription's own `locale` from the account payload
+overrides it once loaded. `Currency` is the fallback used only when a payload carries no currency
+of its own. All three maps live in `const.py` / `normalizers.py` and must stay in sync.
 
-| Country code | Base URL |
-| --- | --- |
-| `us` | `https://www.hellofresh.com` |
-| `ca` | `https://www.hellofresh.ca` |
-| `uk` | `https://www.hellofresh.co.uk` |
-| `au` | `https://www.hellofresh.com.au` |
-| `de` | `https://www.hellofresh.de` |
-| `nl` | `https://www.hellofresh.nl` |
+| Country code | Base URL | API country | API locale | Currency |
+| --- | --- | --- | --- | --- |
+| `us` | `https://www.hellofresh.com` | `US` | `en-US` | USD |
+| `ca` | `https://www.hellofresh.ca` | `CA` | `en-CA` | CAD |
+| `uk` | `https://www.hellofresh.co.uk` | `GB` | `en-GB` | GBP |
+| `au` | `https://www.hellofresh.com.au` | `AU` | `en-AU` | AUD |
+| `nz` | `https://www.hellofresh.co.nz` | `NZ` | `en-NZ` | NZD |
+| `de` | `https://www.hellofresh.de` | `DE` | `de-DE` | EUR |
+| `at` | `https://www.hellofresh.at` | `AT` | `de-AT` | EUR |
+| `ch` | `https://www.hellofresh.ch` | `CH` | `de-CH` | CHF |
+| `nl` | `https://www.hellofresh.nl` | `NL` | `nl-NL` | EUR |
+| `be` | `https://www.hellofresh.be` | `BE` | `nl-BE` | EUR |
+| `lu` | `https://www.hellofresh.lu` | `LU` | `fr-LU` | EUR |
+| `fr` | `https://www.hellofresh.fr` | `FR` | `fr-FR` | EUR |
+| `ie` | `https://www.hellofresh.ie` | `IE` | `en-IE` | EUR |
+| `dk` | `https://www.hellofresh.dk` | `DK` | `da-DK` | DKK |
+| `no` | `https://www.hellofresh.no` | `NO` | `nb-NO` | NOK |
+| `se` | `https://www.hellofresh.se` | `SE` | `sv-SE` | SEK |
 
 Default region: `us`.
+
+**Exited markets (intentionally absent).** Spain (`hellofresh.es`) and Italy (`hellofresh.it`)
+wound down in early 2026; both domains still serve a full marketing site and still answer
+`/gw/auth/email/status` with `200 {"registered":false}`, so neither a homepage `200` nor that auth
+probe is a valid liveness test. The reliable signal is `/plans`, which redirects to
+`/pages/closure` in both markets while every supported market serves a real plans page. Japan
+exited in 2022 and `hellofresh.jp` no longer resolves.
 
 ## Authentication
 
