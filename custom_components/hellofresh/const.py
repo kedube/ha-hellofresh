@@ -97,13 +97,27 @@ INTENT_GET_NEXT_DELIVERY = "HelloFreshGetNextDeliveryIntent"
 INTENT_GET_MEAL_SELECTION = "HelloFreshGetMealSelectionIntent"
 INTENT_REFRESH = "HelloFreshRefreshDataIntent"
 
+# One entry per market HelloFresh actively operates in. Spain (`hellofresh.es`) and Italy
+# (`hellofresh.it`) are deliberately absent: both wound down in early 2026 and their sites now
+# redirect `/plans` to `/pages/closure`, so an account there can no longer be served. Japan
+# (2022) exited earlier and its domain no longer resolves.
 COUNTRY_BASE_URLS: dict[str, str] = {
     "us": "https://www.hellofresh.com",
     "ca": "https://www.hellofresh.ca",
     "uk": "https://www.hellofresh.co.uk",
     "au": "https://www.hellofresh.com.au",
+    "nz": "https://www.hellofresh.co.nz",
     "de": "https://www.hellofresh.de",
+    "at": "https://www.hellofresh.at",
+    "ch": "https://www.hellofresh.ch",
     "nl": "https://www.hellofresh.nl",
+    "be": "https://www.hellofresh.be",
+    "lu": "https://www.hellofresh.lu",
+    "fr": "https://www.hellofresh.fr",
+    "ie": "https://www.hellofresh.ie",
+    "dk": "https://www.hellofresh.dk",
+    "no": "https://www.hellofresh.no",
+    "se": "https://www.hellofresh.se",
 }
 
 # The config-flow key is not always the ISO 3166 country code HelloFresh's API expects.
@@ -118,13 +132,26 @@ COUNTRY_API_CODES: dict[str, str] = {
 # Default API locale per config key. The frontends use the native locale (e.g. `de-DE`).
 # A subscription's own `locale` from the account payload overrides this once loaded; this
 # is only the value used for the initial pre-subscription calls (including login/refresh).
+# Non-English locales were read from each market's own site rather than assumed, so the
+# multilingual markets use what HelloFresh actually serves: Belgium is `nl-BE` (not fr-BE),
+# Luxembourg `fr-LU`, Switzerland `de-CH`, and Norway the Bokmål tag `nb-NO` (not `no-NO`).
 COUNTRY_API_LOCALES: dict[str, str] = {
     "us": "en-US",
     "ca": "en-CA",
     "uk": "en-GB",
     "au": "en-AU",
+    "nz": "en-NZ",
     "de": "de-DE",
+    "at": "de-AT",
+    "ch": "de-CH",
     "nl": "nl-NL",
+    "be": "nl-BE",
+    "lu": "fr-LU",
+    "fr": "fr-FR",
+    "ie": "en-IE",
+    "dk": "da-DK",
+    "no": "nb-NO",
+    "se": "sv-SE",
 }
 
 

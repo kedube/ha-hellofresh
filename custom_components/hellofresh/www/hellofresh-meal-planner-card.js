@@ -1312,6 +1312,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const qty = isSelected ? this._displayedQuantity(week, r) : 0;
     const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
     const idxAttr = this._esc(String(r.course_index));
+    const currency = this._account?.selected_plan_total_price_currency;
     return `
       <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
            data-index="${idxAttr}">
@@ -1321,7 +1322,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             : `<div class="noimg"></div>`}
           ${isSelected ? `<div class="check">✓</div>` : ""}
           ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
-          ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label))}</div>` : ""}
+          ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label, currency))}</div>` : ""}
           ${variantTitle ? `<div class="variant-flag">${this._esc(variantTitle)}</div>` : ""}
         </div>
         <div class="meta">
@@ -1402,11 +1403,32 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // ---- small helpers -------------------------------------------------------
 
-  // Normalize HelloFresh's surcharge label ("+7.99/serving") to a compact "+$7.99". Leaves
-  // unrecognized formats unchanged.
-  _fmtSurcharge(label) {
-    const m = String(label).match(/\+?\s*([\d.]+)/);
-    return m ? `+$${m[1]}` : String(label);
+  // Normalize HelloFresh's surcharge label ("+7.99/serving") to a compact "+$7.99" in the
+  // account's own currency. Leaves unrecognized formats unchanged.
+  //
+  // The label is HelloFresh's raw localized string, so non-English markets send a decimal
+  // COMMA ("+7,99/portion"). Matching digits-and-dots against that stops at the comma and
+  // yields "7", so the old hardcoded `+$${m[1]}` rendered "+7,99" as "+$7" -- both the wrong
+  // symbol and a silently truncated amount. Normalize the comma before parsing, then let
+  // toLocaleString apply the right symbol.
+  _fmtSurcharge(label, currency) {
+    const m = String(label).replace(/,/g, ".").match(/\+?\s*([\d.]+)/);
+    if (!m) return String(label);
+    const amount = Number.parseFloat(m[1]);
+    if (!Number.isFinite(amount)) return String(label);
+    try {
+      return amount.toLocaleString(undefined, {
+        style: "currency",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        currency: currency || "USD",
+        signDisplay: "always",
+        // "narrowSymbol" keeps "$7.99" rather than "US$7.99"/"CA$7.99" in the tight tile badge.
+        currencyDisplay: "narrowSymbol",
+      });
+    } catch (_e) {
+      return String(label);
+    }
   }
 
   _relativeWeek(week) {

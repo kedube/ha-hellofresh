@@ -661,7 +661,7 @@ class HelloFreshMarketCard extends HTMLElement {
     const dirty = this._isDirty(week);
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const totalCents = this._cartTotalCents(week);
-    const currency = (week.market_items.find((i) => i.currency) || {}).currency;
+    const currency = (week.market_items.find((i) => i.currency) || week.order || {}).currency;
     return `
       <div class="statusrow">
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
@@ -722,12 +722,16 @@ class HelloFreshMarketCard extends HTMLElement {
       byGroup.get(key).push(item);
     }
 
+    // A market item's own `currency` is often null; fall back to the week's order currency so a
+    // non-USD account doesn't get every tile silently priced with a "$" by _fmtPrice's default.
+    const fallbackCurrency = week?.order?.currency;
+
     return order
       .map((key) => {
         const label = GROUP_LABELS[key] || this._titleCase(key);
         const tiles = byGroup
           .get(key)
-          .map((item) => this._renderTile(week, item, editable, qtyOf(item)))
+          .map((item) => this._renderTile(week, item, editable, qtyOf(item), fallbackCurrency))
           .join("");
         return `<div class="group">
           <div class="grouptitle">${this._esc(label)}</div>
@@ -737,7 +741,7 @@ class HelloFreshMarketCard extends HTMLElement {
       .join("");
   }
 
-  _renderTile(week, item, editable, qty) {
+  _renderTile(week, item, editable, qty, fallbackCurrency) {
     const idAttr = this._esc(item.item_id);
     const cap = Math.min(
       item.max_quantity != null ? item.max_quantity : HelloFreshMarketCard.MAX_QUANTITY,
@@ -755,7 +759,7 @@ class HelloFreshMarketCard extends HTMLElement {
             : `<div class="noimg"></div>`}
           ${qty > 0 ? `<div class="qtybadge">${qty}×</div>` : ""}
           ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
-          ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency))}</div>` : ""}
+          ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency || fallbackCurrency))}</div>` : ""}
         </div>
         <div class="meta">
           <div class="name">${this._esc(item.name)}</div>
