@@ -118,6 +118,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Follow HA's theme dark-mode flag (not prefers-color-scheme: the two can differ
+    // when the user pins a theme) so the brand palette can adapt via :host([dark]).
+    this.toggleAttribute("dark", Boolean(hass?.themes?.darkMode));
     if (hass && !this._fetched && !this._loading) {
       this._fetched = true;
       this._fetch();
@@ -620,9 +623,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   static _styles() {
-    // HelloFresh palette: lime-green accent on white, with light cream panels. Pulled toward
-    // HA theme vars where it reads well, but the brand green pills/accents are fixed so the card
-    // matches hellofresh.com across themes.
+    // HelloFresh palette: lime-green accent, with panels/tiles on HA theme vars. The brand
+    // pill colors flip between a light and dark lime pairing via the host [dark] attribute
+    // (set from hass.themes.darkMode) so tiles don't glow light-lime on dark themes.
     return `
       :host {
         --hf-green: #91c11e;
@@ -630,6 +633,14 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         --hf-pill-fg: #1d2b08;
         --hf-panel-bg: var(--ha-card-background, #fbfaf5);
         --hf-card-bg: var(--card-background-color, #fff);
+        --hf-hover-brightness: 0.96;
+      }
+      :host([dark]) {
+        --hf-pill-bg: #3a4d10;
+        --hf-pill-fg: #c9ec6a;
+        --hf-panel-bg: var(--ha-card-background, #1c1c1c);
+        --hf-card-bg: var(--card-background-color, #262626);
+        --hf-hover-brightness: 1.25;
       }
       ha-card { padding: 16px 16px 16px; background: transparent; }
       .head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -714,7 +725,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         padding: 6px 12px; border-radius: 8px; border: 1px solid var(--divider-color);
         background: var(--secondary-background-color); color: var(--primary-text-color);
       }
-      .chip:hover { filter: brightness(0.97); }
+      .chip:hover { filter: brightness(var(--hf-hover-brightness)); }
       .chip.on { background: var(--hf-pill-bg); color: var(--hf-pill-fg); border-color: var(--hf-pill-bg); }
 
       /* Weighted items: responsive grid of tiles, each with a Like/Dislike segmented control. */
@@ -740,7 +751,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       }
       .segbtn + .segbtn { border-left: 1px solid var(--divider-color); }
       .segbtn ha-icon { --mdc-icon-size: 16px; flex: none; }
-      .segbtn:hover { filter: brightness(0.96); }
+      .segbtn:hover { filter: brightness(var(--hf-hover-brightness)); }
       .segbtn.like.on { background: var(--hf-green); color: #fff; }
       .segbtn.dislike.on { background: var(--error-color, #db4437); color: #fff; }
 
