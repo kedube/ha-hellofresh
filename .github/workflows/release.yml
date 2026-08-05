@@ -100,12 +100,35 @@ jobs:
         if: steps.head_check.outputs.release_action == 'bump'
         run: git push origin HEAD:main
 
+      # GitHub's auto-generated notes only list merged PRs, so direct-to-main releases came out
+      # empty. Build a "Changes" body from the commit log since the previous release tag; the
+      # generated PR/contributor notes are appended after it when both are present.
+      - name: Build release notes
+        if: steps.head_check.outputs.release_action != 'skip'
+        id: notes
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version || steps.current_version.outputs.new_version }}
+          RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target || steps.head_check.outputs.release_target }}
+        run: |
+          # --exclude keeps a pre-existing tag for this same version (e.g. a re-run after a
+          # failed release) from matching, so we always diff against the *previous* release.
+          prev_tag="$(git describe --tags --abbrev=0 --exclude "$NEW_VERSION" "$RELEASE_TARGET" 2>/dev/null || true)"
+          range="${prev_tag:+$prev_tag..}$RELEASE_TARGET"
+          {
+            echo "body<<NOTES_EOF"
+            echo "## Changes"
+            git log --no-merges --format='- %s (%h)' "$range" \
+              | grep -v '^- chore(release):' || echo "- No code changes."
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         if: steps.head_check.outputs.release_action != 'skip'
         uses: actions/github-script@v9
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version || steps.current_version.outputs.new_version }}
           RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target || steps.head_check.outputs.release_target }}
+          RELEASE_BODY: ${{ steps.notes.outputs.body }}
         with:
           script: |
             const tag = process.env.NEW_VERSION
@@ -132,5 +155,6 @@ jobs:
               tag_name: tag,
               target_commitish: target,
               name: tag,
+              body: process.env.RELEASE_BODY,
               generate_release_notes: true,
             })

@@ -1724,6 +1724,76 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
 customElements.define("hellofresh-meal-planner-card", HelloFreshMealPlannerCard);
 
+// ---- visual config editor ---------------------------------------------------
+// ha-form-based editor backing getConfigElement() above (previously referenced but never
+// defined, which left the UI editor blank). `logo` is a boolean toggle here; a custom logo
+// path set via YAML is preserved as long as the toggle stays on.
+
+const EDITOR_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "logo", selector: { boolean: {} } },
+  { name: "image_width", selector: { number: { min: 100, max: 1200, step: 50, mode: "box" } } },
+  { name: "config_entry_id", selector: { text: {} } },
+];
+const EDITOR_LABELS = {
+  title: "Title",
+  logo: "Show HelloFresh logo",
+  image_width: "Recipe image width (px)",
+  config_entry_id: "Config entry ID",
+};
+const EDITOR_HELPERS = {
+  image_width: "Cloudinary resize width for recipe images.",
+  config_entry_id: "Only needed when multiple HelloFresh accounts are configured.",
+};
+
+class HelloFreshMealPlannerCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...(config || {}) };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+  }
+
+  _render() {
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = EDITOR_SCHEMA;
+      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
+      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name] || "";
+      this._form.addEventListener("value-changed", (ev) => this._onFormChanged(ev));
+      this.appendChild(this._form);
+    }
+    if (this._hass) this._form.hass = this._hass;
+    this._form.data = {
+      title: this._config.title != null ? this._config.title : "HelloFresh Meal Planner",
+      logo: Boolean(this._config.logo),
+      image_width: Number(this._config.image_width) || 400,
+      config_entry_id: this._config.config_entry_id || "",
+    };
+  }
+
+  _onFormChanged(ev) {
+    ev.stopPropagation();
+    const value = (ev.detail && ev.detail.value) || {};
+    const config = { ...this._config, title: value.title || "HelloFresh Meal Planner" };
+    if (value.logo) config.logo = typeof this._config.logo === "string" ? this._config.logo : true;
+    else delete config.logo;
+    if (Number(value.image_width) > 0) config.image_width = Number(value.image_width);
+    else delete config.image_width;
+    if (value.config_entry_id) config.config_entry_id = value.config_entry_id;
+    else delete config.config_entry_id;
+    this._config = config;
+    this.dispatchEvent(
+      new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
+    );
+  }
+}
+
+customElements.define("hellofresh-meal-planner-card-editor", HelloFreshMealPlannerCardEditor);
+
 // Register with Lovelace's card picker.
 window.customCards = window.customCards || [];
 window.customCards.push({
