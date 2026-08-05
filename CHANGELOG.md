@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.43 — 2026-08-05
 - Release notes are now curated: Highlights come from this changelog's Unreleased
   section (rotated at release time), followed by the commit list and a compare link.
 
