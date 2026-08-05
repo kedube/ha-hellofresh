@@ -103,6 +103,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     this._draft = null; // working copy the user edits
     this._toast = null;
     this._expanded = new Set(); // sub-cards currently expanded for editing (by "section.field")
+    this._onDataChanged = (ev) => this._receiveDataChanged(ev);
   }
 
   setConfig(config) {
@@ -110,10 +111,42 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     this._render();
   }
 
+  connectedCallback() {
+    window.addEventListener(HelloFreshFoodProfileCard.DATA_CHANGED_EVENT, this._onDataChanged);
+  }
+
   disconnectedCallback() {
+    window.removeEventListener(HelloFreshFoodProfileCard.DATA_CHANGED_EVENT, this._onDataChanged);
     // Drop the pending toast timer so a detached card isn't kept alive only to re-render
     // into a shadow root nobody can see.
     clearTimeout(this._toastTimer);
+  }
+
+  static get DATA_CHANGED_EVENT() {
+    return "hellofresh-data-changed";
+  }
+
+  _accountKey() {
+    return (this._config && this._config.config_entry_id) || "default";
+  }
+
+  // Another HelloFresh card wrote account data. Re-pull the profile so this card stays
+  // current — but never clobber unsaved edits, our own save (busy), or an in-flight fetch.
+  _receiveDataChanged(ev) {
+    const detail = (ev && ev.detail) || {};
+    if ((detail.accountKey || "default") !== this._accountKey()) return;
+    if (!this._fetched || this._loading || this._busy || this._isDirty()) return;
+    this._fetch();
+  }
+
+  // Tell sibling cards a write changed account data, so they re-pull immediately instead of
+  // waiting for their next interval refresh (same contract as the planner/market cards).
+  _broadcastDataChanged() {
+    window.dispatchEvent(
+      new CustomEvent(HelloFreshFoodProfileCard.DATA_CHANGED_EVENT, {
+        detail: { accountKey: this._accountKey() },
+      })
+    );
   }
 
   set hass(hass) {
@@ -131,6 +164,10 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return 14;
   }
 
+  static getConfigElement() {
+    return document.createElement("hellofresh-food-profile-card-editor");
+  }
+
   static getStubConfig() {
     return { type: "custom:hellofresh-food-profile-card" };
   }
@@ -138,7 +175,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   // ---- data ----------------------------------------------------------------
 
   async _fetch() {
-    if (!this._hass) return;
+    // Reentry guard: a refresh tap racing a data-changed refetch would otherwise run two
+    // concurrent service calls, and the slower response could clobber the newer state.
+    if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
     this._render();
@@ -188,6 +227,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         // No response payload returned: treat the current draft as the new baseline.
         this._saved = this._cloneProfile(this._draft);
       }
+      this._broadcastDataChanged();
       this._flash("Food profile saved.");
     } catch (err) {
       this._flash(`Save failed: ${(err && err.message) || err}`, true);
@@ -221,12 +261,35 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   _cloneProfile(p) {
-    return JSON.parse(JSON.stringify(p || { taste: {}, household: {}, goals: {} }));
+    return structuredClone(p || { taste: {}, household: {}, goals: {} });
   }
 
   _isDirty() {
     if (!this._saved || !this._draft) return false;
-    return JSON.stringify(this._saved) !== JSON.stringify(this._draft);
+    return this._fingerprint(this._saved) !== this._fingerprint(this._draft);
+  }
+
+  // Semantic fingerprint for the dirty check. Raw JSON comparison sticks "dirty" after edits
+  // are undone: un-liking the only liked cuisine leaves taste.cuisines = {} where the saved
+  // profile had no key at all, and removing + re-adding a chip reorders its list. Normalize
+  // both sides — drop empty containers, sort lists (they're sets) and object keys.
+  _fingerprint(value) {
+    const norm = (v) => {
+      if (Array.isArray(v)) {
+        const arr = v.map(norm).filter((x) => x !== undefined);
+        return arr.length ? arr.sort() : undefined;
+      }
+      if (v && typeof v === "object") {
+        const out = {};
+        for (const k of Object.keys(v).sort()) {
+          const nv = norm(v[k]);
+          if (nv !== undefined) out[k] = nv;
+        }
+        return Object.keys(out).length ? out : undefined;
+      }
+      return v;
+    };
+    return JSON.stringify(norm(value) ?? {});
   }
 
   // ---- edit operations (mutate the draft, then re-render) -------------------
@@ -272,6 +335,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot) return;
     this._ensureShell();
+    const focus = this._captureFocus();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
       <span class="title-text">${this._esc(this._config ? this._config.title : "Food Profile")}</span>`;
@@ -279,6 +343,33 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     this._shell.toast.innerHTML = this._toast
       ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
       : "";
+    this._restoreFocus(focus);
+  }
+
+  // innerHTML re-renders destroy the focused element, dumping keyboard users back to the
+  // document after every toggle. Remember the focused control by its data-* identity and
+  // re-focus its replacement after the render.
+  static get FOCUS_ATTRS() {
+    return ["data-expand", "data-step", "data-weight", "data-none", "data-list", "data-action", "data-single-select"];
+  }
+
+  _captureFocus() {
+    const active = this.shadowRoot.activeElement;
+    if (!active) return null;
+    const attrs = HelloFreshFoodProfileCard.FOCUS_ATTRS;
+    const host = active.closest(attrs.map((a) => `[${a}]`).join(","));
+    if (!host) return null;
+    for (const attr of attrs) {
+      const value = host.getAttribute(attr);
+      if (value != null) return { attr, value };
+    }
+    return null;
+  }
+
+  _restoreFocus(target) {
+    if (!target) return;
+    const el = this._shell.card.querySelector(`[${target.attr}="${CSS.escape(target.value)}"]`);
+    if (el && !el.disabled) el.focus();
   }
 
   _ensureShell() {
@@ -346,8 +437,8 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       <section class="panel">
         <h2 class="paneltitle">${this._icon("mdi:sprout-outline")}Your diet</h2>
         <div class="dietfield">
-          <label class="dietlabel">Diet type</label>
-          <select class="dietselect" data-single-select="taste|dietaryPreferences">${options}</select>
+          <label class="dietlabel" for="hf-diet-select">Diet type</label>
+          <select class="dietselect" id="hf-diet-select" data-single-select="taste|dietaryPreferences">${options}</select>
         </div>
         ${desc ? `<p class="dietdesc">${this._esc(desc)}</p>` : ""}
       </section>`;
@@ -447,7 +538,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   _renderList(section, field, values, allowNone) {
     const selected = this._draftList(section, field);
     const noneChip = allowNone
-      ? `<button class="chip ${selected.length === 0 ? "on" : ""}"
+      ? `<button class="chip ${selected.length === 0 ? "on" : ""}" aria-pressed="${selected.length === 0 ? "true" : "false"}"
            data-none="${this._esc(section)}|${this._esc(field)}">None</button>`
       : "";
     return `<div class="editor"><div class="chips">${noneChip}${this._chips(section, field, values, selected)}</div></div>`;
@@ -457,7 +548,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return values
       .map((v) => {
         const on = selected.includes(v);
-        return `<button class="chip ${on ? "on" : ""}"
+        return `<button class="chip ${on ? "on" : ""}" aria-pressed="${on ? "true" : "false"}"
           data-list="${this._esc(section)}|${this._esc(field)}|${this._esc(v)}">${this._esc(
           this._label(v)
         )}</button>`;
@@ -506,7 +597,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         <button class="resetbtn" data-action="reset" ${!dirty || this._busy ? "disabled" : ""}>
           Reset
         </button>
-        <button class="resetbtn iconbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>${this._icon("mdi:refresh")}</button>
+        <button class="resetbtn iconbtn" data-action="refresh" aria-label="Refresh" title="Refresh" ${this._busy ? "disabled" : ""}>${this._icon("mdi:refresh")}</button>
       </div>`;
   }
 
@@ -552,7 +643,11 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const action = actionEl.getAttribute("data-action");
     if (action === "save") this._save();
     else if (action === "reset") this._resetDraft();
-    else if (action === "refresh") this._fetch();
+    else if (action === "refresh") {
+      // Refetching rebuilds the draft from the server; don't silently throw away edits.
+      if (this._isDirty() && !window.confirm("Discard unsaved changes and reload the profile?")) return;
+      this._fetch();
+    }
   }
 
   _onChange(ev) {
@@ -752,14 +847,15 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       .segbtn + .segbtn { border-left: 1px solid var(--divider-color); }
       .segbtn ha-icon { --mdc-icon-size: 16px; flex: none; }
       .segbtn:hover { filter: brightness(var(--hf-hover-brightness)); }
-      .segbtn.like.on { background: var(--hf-green); color: #fff; }
+      /* Dark olive on brand green: white text on #91c11e is ~2:1 contrast, olive passes AA. */
+      .segbtn.like.on { background: var(--hf-green); color: #1d2b08; }
       .segbtn.dislike.on { background: var(--error-color, #db4437); color: #fff; }
 
       .footer { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
       .savebtn {
         font: inherit; font-size: 0.9em; font-weight: 700; cursor: pointer;
         padding: 9px 20px; border-radius: 10px; border: none;
-        background: var(--hf-green); color: #fff;
+        background: var(--hf-green); color: #1d2b08;
       }
       .savebtn:disabled { opacity: 0.5; cursor: default; }
       .resetbtn {
@@ -783,6 +879,70 @@ class HelloFreshFoodProfileCard extends HTMLElement {
 }
 
 customElements.define("hellofresh-food-profile-card", HelloFreshFoodProfileCard);
+
+// ---- visual config editor ---------------------------------------------------
+// Minimal ha-form-based editor so the card is configurable from the dashboard UI, not just
+// YAML. `logo` is a boolean toggle here; a custom logo path set via YAML is preserved as
+// long as the toggle stays on.
+
+const EDITOR_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "logo", selector: { boolean: {} } },
+  { name: "config_entry_id", selector: { text: {} } },
+];
+const EDITOR_LABELS = {
+  title: "Title",
+  logo: "Show HelloFresh logo",
+  config_entry_id: "Config entry ID",
+};
+const EDITOR_HELPERS = {
+  config_entry_id: "Only needed when multiple HelloFresh accounts are configured.",
+};
+
+class HelloFreshFoodProfileCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...(config || {}) };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+  }
+
+  _render() {
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = EDITOR_SCHEMA;
+      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
+      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name] || "";
+      this._form.addEventListener("value-changed", (ev) => this._onFormChanged(ev));
+      this.appendChild(this._form);
+    }
+    if (this._hass) this._form.hass = this._hass;
+    this._form.data = {
+      title: this._config.title != null ? this._config.title : "Food Profile",
+      logo: Boolean(this._config.logo),
+      config_entry_id: this._config.config_entry_id || "",
+    };
+  }
+
+  _onFormChanged(ev) {
+    ev.stopPropagation();
+    const value = (ev.detail && ev.detail.value) || {};
+    const config = { ...this._config, title: value.title || "Food Profile" };
+    if (value.logo) config.logo = typeof this._config.logo === "string" ? this._config.logo : true;
+    else delete config.logo;
+    if (value.config_entry_id) config.config_entry_id = value.config_entry_id;
+    else delete config.config_entry_id;
+    this._config = config;
+    this.dispatchEvent(
+      new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
+    );
+  }
+}
+
+customElements.define("hellofresh-food-profile-card-editor", HelloFreshFoodProfileCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
