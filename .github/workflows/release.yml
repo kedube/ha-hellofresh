@@ -2,6 +2,16 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (none = re-release current manifest version)"
+        required: true
+        default: "none"
+        type: choice
+        options:
+          - none
+          - minor
+          - major
   workflow_run:
     workflows:
       - CI
@@ -39,10 +49,15 @@ jobs:
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
           EVENT_NAME: ${{ github.event_name }}
+          BUMP_INPUT: ${{ inputs.bump || 'none' }}
         run: |
           current_sha="$(git rev-parse origin/main)"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            if [ "$BUMP_INPUT" = "none" ]; then
+              echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            else
+              echo "release_action=bump" >> "$GITHUB_OUTPUT"
+            fi
             echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -73,8 +88,10 @@ jobs:
       - name: Bump manifest version and rotate changelog
         if: steps.head_check.outputs.release_action == 'bump'
         id: bump
+        env:
+          BUMP_TYPE: ${{ inputs.bump || 'minor' }}
         run: |
-          new_version="$(python .github/scripts/bump_manifest_version.py)"
+          new_version="$(python .github/scripts/bump_manifest_version.py --bump "$BUMP_TYPE")"
           python .github/scripts/update_changelog.py "$new_version"
           echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
 
