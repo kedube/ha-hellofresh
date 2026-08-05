@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import re
-import sys
 
 
 def _bump_minor(version: str) -> str:
@@ -30,13 +30,43 @@ def _bump_minor(version: str) -> str:
     return f"{major}.{minor:02d}"
 
 
+def _bump_major(version: str) -> str:
+    """Return the next major version with the minor reset to ``00``.
+
+    Used for deliberate breaking-change releases via the release workflow's
+    manual dispatch (``bump: major``); the automatic release-on-green path
+    always bumps minor.
+    """
+    parts = version.split(".")
+    if not parts or not parts[0].isdigit():
+        raise ValueError(
+            f"Expected semantic version with at least major.minor parts, got: {version}"
+        )
+    return f"{int(parts[0]) + 1}.00"
+
+
 def main() -> int:
     """Update the manifest file in place and print the new version."""
-    manifest_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("custom_components/hellofresh/manifest.json")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "manifest",
+        nargs="?",
+        type=Path,
+        default=Path("custom_components/hellofresh/manifest.json"),
+    )
+    parser.add_argument(
+        "--bump",
+        choices=("minor", "major"),
+        default="minor",
+        help="Bump type: minor (default, the automatic release path) or major",
+    )
+    args = parser.parse_args()
+    manifest_path = args.manifest
     manifest_text = manifest_path.read_text(encoding="utf-8")
     manifest = json.loads(manifest_text)
     current_version = manifest["version"]
-    next_version = _bump_minor(current_version)
+    bump = _bump_major if args.bump == "major" else _bump_minor
+    next_version = bump(current_version)
     updated_text, replacements = re.subn(
         r'("version"\s*:\s*")([^"]+)(")',
         rf'\g<1>{next_version}\g<3>',
