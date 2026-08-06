@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.45 — 2026-08-06
 - Fixed the account credit sensor reporting 100× the real balance (e.g. $8992.00
   instead of $89.92): the payments balance endpoint returns cents, now converted
   to major units.
