@@ -1832,7 +1832,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         amount = coerce_float(payload.get("amount"))
         if amount is None:
             return
-        data.account_credit = amount
+        # The payments gateway reports amounts in minor units (cents), like priceInCents
+        # elsewhere; convert to major units for the sensor (8992 -> 89.92).
+        data.account_credit = amount / 100
         currency = payload.get("currencyCode")
         data.account_credit_currency = currency if isinstance(currency, str) and currency else None
 
@@ -1841,7 +1843,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             {
                 "path": "/gw/payments/customers/{uuid}/balance",
                 "status": self._response_status(response),
-                "account_credit": amount,
+                "account_credit": data.account_credit,
+                "amount_raw": amount,
                 "currency": data.account_credit_currency,
             },
         )

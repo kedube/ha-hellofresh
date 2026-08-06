@@ -236,10 +236,43 @@ def coerce_int(value: Any) -> int | None:
         return None
 
 
+def _normalize_localized_number(text: str) -> str | None:
+    """Reduce a localized amount string to plain ``float()`` syntax.
+
+    Comma-decimal HelloFresh markets (DE, NL, FR, ...) send amounts like ``"89,92"``,
+    ``"1.234,56"``, or symbol-laden labels like ``"€ 8,99"``; dot-decimal markets may
+    send ``"1,234.56"``. Strip everything but digits, sign, and separators, then decide
+    which separator is the decimal point: when both appear, the rightmost one wins;
+    a lone comma is a decimal comma unless it is followed by exactly three digits
+    (a thousands group like ``"1,234"``).
+    """
+    cleaned = re.sub(r"[^\d,.\-+]", "", text)
+    if not re.search(r"\d", cleaned):
+        return None
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+    if last_comma >= 0 and last_dot >= 0:
+        if last_comma > last_dot:
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif last_comma >= 0:
+        head, _, tail = cleaned.rpartition(",")
+        if "," not in head and len(tail) != 3:
+            cleaned = f"{head}.{tail}"
+        else:
+            cleaned = cleaned.replace(",", "")
+    return cleaned
+
+
 def coerce_float(value: Any) -> float | None:
-    """Coerce a float-ish value."""
+    """Coerce a float-ish value, including localized decimal-comma strings."""
     if value is None:
         return None
+    if isinstance(value, str):
+        value = _normalize_localized_number(value)
+        if value is None:
+            return None
     try:
         return float(value)
     except (TypeError, ValueError):
