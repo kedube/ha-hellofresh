@@ -5,6 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- Fixed the account credit sensor reporting 100× the real balance (e.g. $8992.00
+  instead of $89.92): the payments balance endpoint returns cents, now converted
+  to major units.
+- Comma-decimal markets (DE, NL, FR, ...): localized amount strings like "89,92",
+  "1.234,56", or "€ 8,99" now parse correctly everywhere prices are read, so cost,
+  credit, and price sensors (and the dashboard cards fed by them) no longer come up
+  empty or wrong in those countries.
+
 ## 2.43 — 2026-08-05
 - Release notes are now curated: Highlights come from this changelog's Unreleased
   section (rotated at release time), followed by the commit list and a compare link.

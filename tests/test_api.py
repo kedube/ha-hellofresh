@@ -6699,7 +6699,7 @@ def test_recent_payment_date_none_when_charge_is_still_in_the_future() -> None:
 
 
 def test_enrich_account_credit_reads_balance_amount_and_currency() -> None:
-    """The credit balance endpoint populates account_credit and its currency."""
+    """The credit balance endpoint populates account_credit (cents -> major units)."""
     client = _make_client()
     captured: dict[str, object] = {}
 
@@ -6710,8 +6710,8 @@ def test_enrich_account_credit_reads_balance_amount_and_currency() -> None:
 
     async def fake_response_json(_response):
         return {
-            "amount": 12.5,
-            "cash": 12.5,
+            "amount": 8992,
+            "cash": 8992,
             "bonus": 0,
             "currencyCode": "USD",
             "restrictedAmount": 0,
@@ -6727,7 +6727,7 @@ def test_enrich_account_credit_reads_balance_amount_and_currency() -> None:
     asyncio.set_event_loop(loop)
     loop.run_until_complete(client._async_enrich_account_credit(data, [subscription]))
 
-    assert data.account_credit == 12.5
+    assert data.account_credit == 89.92
     assert data.account_credit_currency == "USD"
     assert captured["path"] == "/gw/payments/customers/cust-uuid-1/balance"
     assert captured["params"] == {"business_unit": "US", "country": "US"}

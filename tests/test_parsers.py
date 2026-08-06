@@ -117,6 +117,25 @@ def test_coerce_int_and_float() -> None:
     assert coerce_float("x") is None
 
 
+def test_coerce_float_handles_localized_decimal_strings() -> None:
+    """Comma-decimal markets (DE/NL/FR/...) send amounts like "89,92" and "1.234,56"."""
+    assert coerce_float("89,92") == 89.92
+    assert coerce_float("0,5") == 0.5
+    assert coerce_float("1.234,56") == 1234.56
+    assert coerce_float("-7,99") == -7.99
+    # Dot-decimal markets with thousands separators still parse correctly.
+    assert coerce_float("1,234.56") == 1234.56
+    assert coerce_float("1,234") == 1234
+    assert coerce_float("1,234,567") == 1234567
+    # Currency symbols and units are stripped before parsing.
+    assert coerce_float("€ 8,99") == 8.99
+    assert coerce_float("$12.50") == 12.5
+    assert coerce_float("8,99 €") == 8.99
+    # Garbage still coerces to None rather than raising.
+    assert coerce_float("€") is None
+    assert coerce_float("2026-08-06") is None
+
+
 # ---------------------------------------------------------------------------
 # Text utilities
 # ---------------------------------------------------------------------------
