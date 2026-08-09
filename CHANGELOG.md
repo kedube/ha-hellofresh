@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.46 — 2026-08-09
 - New "Show data-quality repair warnings" option (on by default): turn it off to
   suppress the advisory Repairs warnings (public menu fallback, unrecognized
   payloads, account data unavailable, blocked write actions) and clear any that are
