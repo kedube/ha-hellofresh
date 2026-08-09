@@ -41,12 +41,14 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_REFRESH_TOKEN_ISSUED_AT,
     CONF_SCAN_INTERVAL_MINUTES,
+    CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
+    DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DOMAIN,
     PLATFORMS,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
@@ -68,7 +70,11 @@ from .const import (
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .frontend import async_register_meal_planner_card
 from .intent import async_register_intents
-from .issues import async_create_write_actions_issue
+from .issues import (
+    async_cleanup_stale_issues,
+    async_create_write_actions_issue,
+    async_delete_data_quality_issues,
+)
 from .sensor_helpers import sensor_native_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -219,6 +225,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Heal any legacy credentials-in-options before reading them (data-only from here on).
     _heal_credential_storage(hass, entry)
 
+    # Clear repair issues that polling alone can never clear: issues orphaned by removed
+    # config entries, and — when the warnings option is off — this entry's own issues.
+    # Done at setup (not just in the coordinator) so the cleanup happens even when the
+    # first refresh fails, e.g. during an auth outage.
+    async_cleanup_stale_issues(
+        hass,
+        {existing.entry_id for existing in hass.config_entries.async_entries(DOMAIN)},
+    )
+    if not entry.options.get(CONF_SHOW_DATA_QUALITY_ISSUES, DEFAULT_SHOW_DATA_QUALITY_ISSUES):
+        async_delete_data_quality_issues(hass, entry.entry_id)
+
     # An entry must be able to authenticate by *some* means: either credentials (to log in
     # and self-heal across token expiry) or a token (the deliberate token-only backup path).
     # Only when BOTH are absent is the entry unusable -- that's a stale legacy entry, so
@@ -334,6 +351,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if token_only is not None:
             token_only.discard(entry.entry_id)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Purge the entry's persistent repair issues when it is removed.
+
+    Without this, issues keyed to the removed entry id survive in the registry
+    forever with no owner left to delete them.
+    """
+    async_delete_data_quality_issues(hass, entry.entry_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

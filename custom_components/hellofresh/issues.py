@@ -15,10 +15,44 @@ ISSUE_ACCOUNT_MENU_FALLBACK = "account_menu_fallback"
 ISSUE_PAYLOAD_SHAPE_CHANGED = "payload_shape_changed"
 ISSUE_WRITE_ACTIONS_UNAVAILABLE = "write_actions_unavailable"
 
+_ALL_ISSUE_KEYS = (
+    ISSUE_ACCOUNT_DATA_UNAVAILABLE,
+    ISSUE_ACCOUNT_MENU_FALLBACK,
+    ISSUE_PAYLOAD_SHAPE_CHANGED,
+    ISSUE_WRITE_ACTIONS_UNAVAILABLE,
+)
+
 
 def _issue_id(issue_key: str, entry_id: str) -> str:
     """Build a stable issue id for a config entry."""
     return f"{issue_key}_{entry_id}"
+
+
+def async_delete_data_quality_issues(hass, entry_id: str) -> None:
+    """Delete every data-quality issue belonging to one config entry."""
+    for issue_key in _ALL_ISSUE_KEYS:
+        ir.async_delete_issue(hass, DOMAIN, _issue_id(issue_key, entry_id))
+
+
+def async_cleanup_stale_issues(hass, valid_entry_ids: set[str]) -> None:
+    """Delete issues left behind by config entries that no longer exist.
+
+    These issues are persistent and keyed to an entry id. When an entry is removed
+    (or the integration deleted and re-added), its issues survive in the registry
+    with no owner to ever clear them — no reboot, reload, or option could remove
+    them. Entry ids never contain underscores, so the id's last segment is the entry.
+    """
+    registry = ir.async_get(hass)
+    prefixes = tuple(f"{key}_" for key in _ALL_ISSUE_KEYS)
+    stale = [
+        issue_id
+        for domain, issue_id in registry.issues
+        if domain == DOMAIN
+        and issue_id.startswith(prefixes)
+        and issue_id.rsplit("_", 1)[-1] not in valid_entry_ids
+    ]
+    for issue_id in stale:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 def async_create_account_data_issue(hass, entry_id: str, entry_title: str) -> None:
