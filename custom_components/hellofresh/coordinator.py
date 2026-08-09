@@ -17,7 +17,11 @@ from .api import (
     HelloFreshClient,
     HelloFreshError,
 )
-from .const import DOMAIN
+from .const import (
+    CONF_SHOW_DATA_QUALITY_ISSUES,
+    DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+    DOMAIN,
+)
 from .issues import (
     async_create_account_data_issue,
     async_create_account_menu_fallback_issue,
@@ -25,6 +29,7 @@ from .issues import (
     async_delete_account_data_issue,
     async_delete_account_menu_fallback_issue,
     async_delete_payload_shape_changed_issue,
+    async_delete_write_actions_issue,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -142,16 +147,23 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         except HelloFreshError as err:
             raise UpdateFailed(str(err)) from err
 
-        if data.account_data_available:
-            async_delete_account_data_issue(self.hass, self.config_entry.entry_id)
-        else:
+        # Data-quality Repairs warnings are advisory and user-suppressible: with the
+        # option off, nothing is created and anything already raised is cleared, giving
+        # users a way to dismiss warnings that would otherwise persist between polls.
+        show_issues = self.config_entry.options.get(
+            CONF_SHOW_DATA_QUALITY_ISSUES, DEFAULT_SHOW_DATA_QUALITY_ISSUES
+        )
+
+        if show_issues and not data.account_data_available:
             async_create_account_data_issue(
                 self.hass,
                 self.config_entry.entry_id,
                 self.config_entry.title,
             )
+        else:
+            async_delete_account_data_issue(self.hass, self.config_entry.entry_id)
 
-        if data.capabilities.using_public_menu_fallback:
+        if show_issues and data.capabilities.using_public_menu_fallback:
             async_create_account_menu_fallback_issue(
                 self.hass,
                 self.config_entry.entry_id,
@@ -160,7 +172,7 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         else:
             async_delete_account_menu_fallback_issue(self.hass, self.config_entry.entry_id)
 
-        if data.capabilities.payload_shape_changed:
+        if show_issues and data.capabilities.payload_shape_changed:
             async_create_payload_shape_changed_issue(
                 self.hass,
                 self.config_entry.entry_id,
@@ -168,5 +180,10 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
             )
         else:
             async_delete_payload_shape_changed_issue(self.hass, self.config_entry.entry_id)
+
+        if not show_issues:
+            # The write-actions warning is raised outside the coordinator (service and
+            # switch handlers) and has no self-clearing condition, so sweep it here too.
+            async_delete_write_actions_issue(self.hass, self.config_entry.entry_id)
 
         return data

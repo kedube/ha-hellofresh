@@ -61,13 +61,15 @@
           "scan_interval_minutes": "Refresh interval (minutes)",
           "history_weeks": "Past delivery history (weeks)",
           "menu_grace_weeks": "Full menu history (weeks)",
-          "enable_public_menu_fallback": "Use public menu fallback"
+          "enable_public_menu_fallback": "Use public menu fallback",
+          "show_data_quality_issues": "Show data-quality repair warnings"
         },
         "data_description": {
           "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
           "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
           "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 2 (the last couple of boxes stay browsable). 0 turns the grace window off. HelloFresh stops publishing the menu for older weeks, so weeks past what it still serves just fall back to delivered-only. Changing this reloads the integration.",
-          "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data."
+          "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data.",
+          "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing."
         }
       }
     }
@@ -253,7 +255,7 @@
     },
     "account_menu_fallback": {
       "title": "HelloFresh menu fallback is active for {entry_title}",
-      "description": "HelloFresh could not load structured menu data for **{entry_title}** from authenticated API responses, so the integration is currently using the public menu page as a fallback. Delivery tracking may still work, but recipe details can be less complete until the API payload is recognized again."
+      "description": "HelloFresh could not load structured menu data for **{entry_title}** from authenticated API responses, so the integration is currently using the public menu page as a fallback. Delivery tracking may still work, but recipe details can be less complete until the API payload is recognized again. This clears on its own once authenticated menu data loads again; to silence it, use Ignore in this repair's menu, or turn off \"Show data-quality repair warnings\" in the integration's options."
     },
     "payload_shape_changed": {
       "title": "HelloFresh account payloads changed for {entry_title}",

@@ -23,6 +23,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_MINUTES,
+    CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN,
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
+    DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DOMAIN,
     MAX_HISTORY_WEEKS,
     MAX_MENU_GRACE_WEEKS,
@@ -360,6 +362,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
+                    CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
                     # NumberSelector yields a float; store a clean int (whole weeks/days).
                     CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
                     CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
@@ -420,6 +423,13 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                         default=self.config_entry.options.get(
                             CONF_ENABLE_PUBLIC_MENU_FALLBACK,
                             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+                        ),
+                    ): cv.boolean,
+                    vol.Required(
+                        CONF_SHOW_DATA_QUALITY_ISSUES,
+                        default=self.config_entry.options.get(
+                            CONF_SHOW_DATA_QUALITY_ISSUES,
+                            DEFAULT_SHOW_DATA_QUALITY_ISSUES,
                         ),
                     ): cv.boolean,
                 }
