@@ -58,6 +58,14 @@ DEFAULT_MENU_GRACE_WEEKS = 2
 MIN_MENU_GRACE_WEEKS = 0
 MAX_MENU_GRACE_WEEKS = 3
 
+# Whether to raise Home Assistant Repairs warnings when HelloFresh data quality degrades
+# (public-menu fallback active, unrecognized payload shape, account data unavailable,
+# blocked write actions). These are advisory — data keeps flowing either way — so users
+# who find them noisy can turn them off; any existing warnings are cleared on the next
+# refresh. A single warning can also be silenced with "Ignore" on the Repairs screen.
+CONF_SHOW_DATA_QUALITY_ISSUES = "show_data_quality_issues"
+DEFAULT_SHOW_DATA_QUALITY_ISSUES = True
+
 PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,

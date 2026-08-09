@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN
+from .const import (
+    CONF_SHOW_DATA_QUALITY_ISSUES,
+    DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+    DOMAIN,
+)
 
 ISSUE_ACCOUNT_DATA_UNAVAILABLE = "account_data_unavailable"
 ISSUE_ACCOUNT_MENU_FALLBACK = "account_menu_fallback"
@@ -78,7 +82,17 @@ def async_delete_payload_shape_changed_issue(hass, entry_id: str) -> None:
 
 
 def async_create_write_actions_issue(hass, entry_id: str, entry_title: str) -> None:
-    """Create a warning when a user triggers unsupported write actions."""
+    """Create a warning when a user triggers unsupported write actions.
+
+    Unlike the coordinator-managed issues, this one is raised from service and switch
+    handlers with no self-clearing condition, so the suppression option is honored
+    here rather than at each call site.
+    """
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is not None and not entry.options.get(
+        CONF_SHOW_DATA_QUALITY_ISSUES, DEFAULT_SHOW_DATA_QUALITY_ISSUES
+    ):
+        return
     ir.async_create_issue(
         hass,
         DOMAIN,
@@ -90,3 +104,8 @@ def async_create_write_actions_issue(hass, entry_id: str, entry_title: str) -> N
         translation_placeholders={"entry_title": entry_title},
         learn_more_url="https://github.com/kedube/ha-hellofresh#current-scope",
     )
+
+
+def async_delete_write_actions_issue(hass, entry_id: str) -> None:
+    """Delete the write-actions issue."""
+    ir.async_delete_issue(hass, DOMAIN, _issue_id(ISSUE_WRITE_ACTIONS_UNAVAILABLE, entry_id))
