@@ -2227,7 +2227,7 @@ def test_history_range_covers_a_full_year_past_the_boundary() -> None:
     outside the range and get_weeks returned [] for it. A user who wants a full year sets ~56
     weeks; that must reach at least 53 weeks back so the boundary box stays browsable.
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     client = HelloFreshClient(session=None, history_weeks=56)  # type: ignore[arg-type]
     range_ = client._build_delivery_history_range()
@@ -2245,7 +2245,7 @@ def test_history_range_covers_a_full_year_past_the_boundary() -> None:
 
 def test_history_range_honors_configured_lookback() -> None:
     """A custom history_weeks shrinks the fetch window; default falls back to the class default."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     short = HelloFreshClient(session=None, history_weeks=8)  # type: ignore[arg-type]
     default = HelloFreshClient(session=None)  # type: ignore[arg-type]
@@ -2268,7 +2268,7 @@ def test_history_range_honors_configured_lookback() -> None:
 def test_history_range_reaches_far_enough_into_the_future() -> None:
     """The future bound must reach past HelloFresh's menu-publish horizon so no upcoming week
     with a published menu is clipped (regression: a fixed 6-week reach dropped the last weeks)."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     range_end = client._build_delivery_history_range()["range_end"]
@@ -2516,7 +2516,7 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
     Its recipes are unconditionally replaced by the delivered-only set later, so downloading
     its menu is pure waste; only current/future/in-grace weeks should hit /gw/my-deliveries/menu.
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     subscription = HelloFreshSubscription(
