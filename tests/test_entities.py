@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, date, datetime, timedelta
 import json
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,6 +25,7 @@ from custom_components.hellofresh.binary_sensor import (
 )
 from custom_components.hellofresh.sensor import SENSORS as SENSOR_DESCRIPTIONS
 from custom_components.hellofresh.sensor import HelloFreshSensor
+from custom_components.hellofresh import switch as switch_module
 from custom_components.hellofresh.switch import SWITCHES, HelloFreshSwitch
 
 
@@ -477,8 +479,9 @@ def test_delivery_sensors_read_subscription_api_fields() -> None:
     assert _value("next_selectable_delivery_date") == date(2026, 6, 26)
     assert _value("next_selectable_delivery_week") == "2026-W26"
     # No resolved modifiable week here (no week with id 2026-W26), so the deadline falls
-    # back to the subscription's nextCutoffDate.
-    assert _value("next_selection_deadline") == datetime(2026, 6, 17, 23, 59)
+    # back to the subscription's nextCutoffDate. Offset-less deadlines are normalized to
+    # UTC-aware so HA's TIMESTAMP state write doesn't reject them.
+    assert _value("next_selection_deadline") == datetime(2026, 6, 17, 23, 59, tzinfo=UTC)
 
 
 def test_required_meal_count_falls_back_to_subscription_plan() -> None:
@@ -570,8 +573,11 @@ def test_delivery_deadlines_track_their_respective_weeks() -> None:
         desc = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
         return HelloFreshSensor(coordinator, desc).native_value
 
-    assert _value("next_selection_deadline") == delivery_cutoff
-    assert _value("next_selectable_delivery_selection_deadline") == modifiable_cutoff
+    # Naive per-week cutoffs surface as UTC-aware timestamps (HA requires tz-aware).
+    assert _value("next_selection_deadline") == delivery_cutoff.replace(tzinfo=UTC)
+    assert _value("next_selectable_delivery_selection_deadline") == modifiable_cutoff.replace(
+        tzinfo=UTC
+    )
 
 
 def test_next_selection_deadline_falls_back_to_subscription_cutoff() -> None:
@@ -595,7 +601,9 @@ def test_next_selection_deadline_falls_back_to_subscription_cutoff() -> None:
         item for item in SENSOR_DESCRIPTIONS if item.key == "next_selection_deadline"
     )
 
-    assert HelloFreshSensor(coordinator, description).native_value == fallback
+    assert HelloFreshSensor(coordinator, description).native_value == fallback.replace(
+        tzinfo=UTC
+    )
 
 
 def test_next_selectable_delivery_meal_count_reads_modifiable_week() -> None:
@@ -935,6 +943,38 @@ def _modifiable_week_data(*, skipped: bool, has_handle: bool = True) -> HelloFre
     ).finalize()
 
 
+def test_week_id_lookup_prefers_primary_subscription_on_collision() -> None:
+    """Two subscriptions sharing an ISO week id must resolve to the PRIMARY's week.
+
+    Keyed by week_id alone the last-sorted week silently won, so the skip switch and
+    service writes could act on the other subscription's box.
+    """
+    primary_week = HelloFreshWeek(
+        week_id="2026-W33",
+        display_name="Primary",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 8, 12),
+    )
+    other_week = HelloFreshWeek(
+        week_id="2026-W33",
+        display_name="Other",
+        subscription_id="sub-2",
+        # Sorts after the primary week, so "last write wins" would have picked it.
+        delivery_date=date(2026, 8, 14),
+    )
+    data = HelloFreshAccountData(
+        weeks=[primary_week, other_week],
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1"),
+            HelloFreshSubscription(subscription_id="sub-2"),
+        ],
+    ).finalize()
+
+    resolved = data.get_week("2026-W33")
+    assert resolved is not None
+    assert resolved.subscription_id == "sub-1"
+
+
 def test_next_modifiable_week_resolves_from_subscription_handle() -> None:
     """The model anchors on the subscription handle, not the next undelivered week."""
     data = _modifiable_week_data(skipped=False)
@@ -953,6 +993,7 @@ def _switch(data: HelloFreshAccountData) -> HelloFreshSwitch:
     """Return the skip switch backed by the given account data."""
     coordinator = SimpleNamespace(
         data=data,
+        hass=None,
         config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
         client=SimpleNamespace(skipped=[], unskipped=[]),
         last_update_success=True,
@@ -997,19 +1038,23 @@ def test_skip_switch_unavailable_without_modifiable_week() -> None:
 
 
 def test_skip_switch_turn_on_skips_the_modifiable_week() -> None:
-    """Turning on calls skip for the modifiable week's id."""
+    """Turning on calls skip for the modifiable week's id and clears the write warning."""
     switch = _switch(_modifiable_week_data(skipped=False))
-    _run(switch.async_turn_on())
+    with mock.patch.object(switch_module, "async_delete_write_actions_issue") as clear:
+        _run(switch.async_turn_on())
     assert switch.coordinator.client.skipped == ["2026-W26"]
     assert switch.coordinator.client.unskipped == []
+    assert clear.call_count == 1
 
 
 def test_skip_switch_turn_off_restores_the_modifiable_week() -> None:
-    """Turning off calls unskip for the modifiable week's id."""
+    """Turning off calls unskip for the modifiable week's id and clears the write warning."""
     switch = _switch(_modifiable_week_data(skipped=True))
-    _run(switch.async_turn_off())
+    with mock.patch.object(switch_module, "async_delete_write_actions_issue") as clear:
+        _run(switch.async_turn_off())
     assert switch.coordinator.client.unskipped == ["2026-W26"]
     assert switch.coordinator.client.skipped == []
+    assert clear.call_count == 1
 
 
 def test_skip_switch_noop_when_already_in_target_state() -> None:

@@ -29,7 +29,11 @@ const CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown"
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
 // hero JPEGs. Unknown URL shapes are returned unchanged.
 function resizedImage(url, width) {
-  if (!url || !width) return url;
+  // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
+  // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
+  // attacker-chosen scheme/host has no business in the DOM at all.
+  if (!url || !/^https?:\/\//i.test(String(url))) return "";
+  if (!width) return url;
   return url.replace("/q_auto/", `/q_auto,w_${width}/`);
 }
 
@@ -96,6 +100,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // Drop the pending toast timer so a detached card isn't kept alive (holding the whole
     // weeks payload) only to re-render into a shadow root nobody can see.
     clearTimeout(this._toastTimer);
+    // Also drop the toast itself: with the timer cancelled, a toast shown just before
+    // disconnect would otherwise repaint forever once the card reconnects.
+    this._toast = null;
   }
 
   setConfig(config) {
@@ -558,6 +565,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Boolean(week) && !this._isPast(week) && !this._showSelectedOnly;
   }
 
+  // Whether any visibility-affecting filter is active (protein narrowed, or variants hidden).
+  // Used to decide when an in-place tile update is safe vs when a full render is needed.
+  _hasActiveFilters() {
+    return this._proteinFilter.size > 0 || !this._showVariants;
+  }
+
   // A "default" meal is one shown when variants are hidden: it has no variant group, or it IS
   // the base (default) meal of its group. Variant tiles (2x protein, protein/veg swaps) are the
   // group members whose own index differs from the group's base index.
@@ -695,12 +708,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._renderSelectionChange(week, recipe);
   }
 
-  // Selection edits are the hot path. When the "selected only" filter is OFF, a tap/stepper
-  // can't change which tiles are visible, so update just the affected tile and the header
-  // chips in place — no grid rebuild, no image teardown. With the filter ON, visibility can
-  // change, so fall back to a full render.
+  // Selection edits are the hot path. When no visibility-affecting filter is active, a
+  // tap/stepper can't change which tiles are visible, so update just the affected tile and
+  // the header chips in place — no grid rebuild, no image teardown. With "selected only"
+  // ON, or a protein/variant filter active (a selected meal bypasses those filters, so
+  // DE-selecting it can hide its tile), visibility can change — full render instead, or
+  // the grid drifts out of sync with the filter until the next unrelated render.
   _renderSelectionChange(week, recipe) {
-    if (this._showSelectedOnly || !this._shell) {
+    if (this._showSelectedOnly || this._hasActiveFilters() || !this._shell) {
       this._render();
       return;
     }
@@ -793,7 +808,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       else this._flash("Meal selection updated.");
     } catch (err) {
       this._busy = false;
+      // Preserve the user's unsaved picks across the resync: _fetchWeeks drops _pending
+      // (server is normally the source of truth), but after a FAILED save those edits are
+      // the user's only copy — wiping them forced re-picking the whole box after a
+      // transient error. Restore them so Save can simply be retried.
+      const unsaved = this._pending[week.week_id];
       await this._fetchWeeks(week.week_id); // resync from the source of truth
+      if (unsaved) this._pending[week.week_id] = unsaved;
       this._flash(`Selection failed: ${(err && err.message) || err}`, true);
     } finally {
       this._saving = null;
@@ -821,12 +842,28 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   _flash(message, isError = false) {
     this._toast = { message, isError };
-    this._render();
+    // Repaint only the toast region: a full _render() tears down and rebuilds the whole
+    // recipe grid (hundreds of <img> tiles on a planning-catalog week) twice per toast —
+    // once to show it, once 4s later to hide it — for a change confined to the toast box.
+    this._renderToast();
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => {
       this._toast = null;
-      this._render();
+      this._renderToast();
     }, 4000);
+  }
+
+  // Update just the toast/saving-banner region; falls back to a full render pre-shell.
+  _renderToast() {
+    if (!this._shell) {
+      this._render();
+      return;
+    }
+    this._shell.toast.innerHTML = this._saving
+      ? `<div class="toast saving"><span class="spinner"></span>${this._esc(this._saving)}</div>`
+      : this._toast
+        ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
+        : "";
   }
 
   // Record that HelloFresh downsized the box on the last save for `weekId`, showing a
@@ -932,11 +969,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._shell.content.innerHTML = this._renderBody(week);
     // A save in flight shows a persistent "please wait" banner (with a spinner) until the
     // reload completes; a transient toast otherwise. The saving banner takes precedence.
-    this._shell.toast.innerHTML = this._saving
-      ? `<div class="toast saving"><span class="spinner"></span>${this._esc(this._saving)}</div>`
-      : this._toast
-        ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
-        : "";
+    this._renderToast();
   }
 
   _renderBody(week) {
@@ -1078,7 +1111,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // in-place selection edit (see _renderSelectionChange) without rebuilding the whole header.
   _renderStatusRow(week) {
     const editable = this._isEditable(week);
-    const required = week.meals_required;
+    // Coerced to a number before interpolation into the chip's title attribute and body:
+    // an integer under the server contract, but the card must not trust that (innerHTML).
+    const required = Number(week.meals_required) || 0;
     const min = HelloFreshMealPlannerCard.MIN_MEALS;
     const display = this._displaySelection(week);
     // The box sizes to DISTINCT meals; servings (a 2× meal) portion within that box.

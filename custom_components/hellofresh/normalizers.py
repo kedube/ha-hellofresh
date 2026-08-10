@@ -7,7 +7,7 @@ HelloFresh payloads into integration models.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import re
 from typing import Any
 
@@ -154,10 +154,14 @@ class HelloFreshPayloadNormalizer:
             raw_meals = self._extract_delivery_week_recipe_candidates(raw_week)
             recipes = [self._recipe_from_raw_meal(raw_meal) for raw_meal in raw_meals]
 
-            meals_selected = coerce_int(
-                raw_week.get("mealsSelected")
-                or raw_week.get("selectedMealCount")
-                or self._find_first_nested_value(
+            # Explicit None checks, not ``or``: a real ``mealsSelected: 0`` (nothing chosen
+            # yet) must win over the recipe-derived fallback, which counts HelloFresh's
+            # auto-fill picks as selected and would fabricate a full selection.
+            meals_selected_raw: Any = raw_week.get("mealsSelected")
+            if meals_selected_raw is None:
+                meals_selected_raw = raw_week.get("selectedMealCount")
+            if meals_selected_raw is None:
+                meals_selected_raw = self._find_first_nested_value(
                     raw_week,
                     (
                         "mealsSelected",
@@ -166,8 +170,9 @@ class HelloFreshPayloadNormalizer:
                         "mealCountSelected",
                     ),
                 )
-                or (sum(1 for recipe in recipes if recipe.is_selected) if raw_meals else None)
-            )
+            if meals_selected_raw is None and raw_meals:
+                meals_selected_raw = sum(1 for recipe in recipes if recipe.is_selected)
+            meals_selected = coerce_int(meals_selected_raw)
             # A week's required meal count is the size of ITS OWN box, which can differ from the
             # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
             # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
@@ -619,7 +624,9 @@ class HelloFreshPayloadNormalizer:
         the real published menu, matching the grace treatment of shipped weeks. Market items
         are left alone — pausing meals is independent of add-ons.
         """
-        today = datetime.now(UTC).date()
+        # Delivery dates are local-market calendar dates — use LOCAL today, matching
+        # models.py, so week classification can't flip near midnight UTC.
+        today = date.today()
         grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for week in weeks:
             if not (week.is_paused or week.is_skipped):
@@ -941,7 +948,9 @@ class HelloFreshPayloadNormalizer:
         cap keeps the per-poll deliveries payload bounded. Extends ``_FUTURE_DELIVERY_WEEKS``
         ahead; weeks past the published-menu horizon return empty and are filtered downstream.
         """
-        today = datetime.now(UTC).date()
+        # Delivery dates are local-market calendar dates — use LOCAL today, matching
+        # models.py, so week classification can't flip near midnight UTC.
+        today = date.today()
         start = today - timedelta(weeks=self._history_weeks)
         end = today + timedelta(weeks=self._FUTURE_DELIVERY_WEEKS)
         start_iso = start.isocalendar()
@@ -1354,10 +1363,13 @@ class HelloFreshPayloadNormalizer:
             if not past_week.recipes:
                 continue
             past_by_key[(past_week.subscription_id, past_week.week_id)] = past_week
-            # Last write wins is fine: a given week id maps to one delivered menu.
+            # id-only index used ONLY when a subscription id is missing on one side; with
+            # two subscriptions the same ISO week maps to two different delivered menus.
             past_by_week_id[past_week.week_id] = past_week
 
-        today = datetime.now(UTC).date()
+        # Delivery dates are local-market calendar dates — use LOCAL today, matching
+        # models.py, so week classification can't flip near midnight UTC.
+        today = date.today()
         grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for account_week in account_weeks:
             # Only touch weeks that are actually in the PAST. The deliveries/past-deliveries
@@ -1365,14 +1377,23 @@ class HelloFreshPayloadNormalizer:
             # as "delivered"), and replacing a current/future week's full browsable menu with
             # just the delivered/selected meals would strip its menu so the customer can no
             # longer see or change their options. A week with no delivery_date, or one dated
-            # today or later, is current/future — leave its menu intact. Use UTC to match the
-            # rest of this module's past/future gating (models.is_editable, etc.).
+            # today or later, is current/future — leave its menu intact.
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
             past_week = past_by_key.get(
                 (account_week.subscription_id, account_week.week_id)
-            ) or past_by_week_id.get(account_week.week_id)
+            )
+            if past_week is None:
+                candidate = past_by_week_id.get(account_week.week_id)
+                # Fall back to the id-only match ONLY when a subscription id is missing on
+                # either side. When both sides carry (different) subscription ids, matching
+                # by week id alone would stamp another subscription's delivered meals onto
+                # this week.
+                if candidate is not None and (
+                    candidate.subscription_id is None or account_week.subscription_id is None
+                ):
+                    past_week = candidate
             if past_week is None:
                 continue
 

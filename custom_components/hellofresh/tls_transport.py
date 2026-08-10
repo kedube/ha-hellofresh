@@ -29,7 +29,7 @@ import json as _json
 import logging
 from typing import Any
 
-from aiohttp import ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,14 +129,27 @@ async def async_auth_post(
 ) -> ClientResponse | AuthResponse:
     """POST an auth request through the impersonating transport.
 
-    Shares the curl_cffi core with :func:`async_request` but keeps a ``session.post`` aiohttp
-    fallback (rather than ``session.request``) to exactly preserve the original auth-POST
-    behavior.
+    Unlike :func:`async_request`, a curl_cffi failure mid-request must NOT retry on
+    aiohttp: the auth POSTs are not idempotent (``/gw/refresh`` invalidates the refresh
+    token on use), and a timeout after the server processed the request would re-send the
+    now-spent token — the retry's 401 then read as "refresh token rejected" and forced a
+    needless reauth. aiohttp is used only when curl_cffi never attempted the request; a
+    mid-request failure surfaces as ``aiohttp.ClientError`` for callers to treat as
+    transient.
     """
-    curl = await _try_curl_cffi("POST", url, params, json_payload, headers)
-    if curl is not None:
-        return curl
-    return await session.post(url, params=params, json=json_payload, headers=headers)
+    if not tls_impersonation_available():
+        return await session.post(url, params=params, json=json_payload, headers=headers)
+    try:
+        response = await _curl_cffi_request(
+            "POST", url, params=params, json_payload=json_payload, headers=headers
+        )
+    except Exception as err:
+        raise ClientError(f"curl_cffi auth POST to {url} failed: {err}") from err
+    if response is None:
+        # The impersonating session class vanished between the availability check and the
+        # call (import raced/broken) — the request was never sent, so aiohttp is safe.
+        return await session.post(url, params=params, json=json_payload, headers=headers)
+    return response
 
 
 async def _try_curl_cffi(

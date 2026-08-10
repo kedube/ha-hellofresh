@@ -74,6 +74,7 @@ from .issues import (
     async_cleanup_stale_issues,
     async_create_write_actions_issue,
     async_delete_data_quality_issues,
+    async_delete_write_actions_issue,
 )
 from .sensor_helpers import sensor_native_value
 
@@ -392,6 +393,11 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         if len(coordinators) == 1:
             return list(coordinators.values())
 
+        if not coordinators:
+            raise HomeAssistantError(
+                "No HelloFresh account is currently loaded. Check the integration's "
+                "status on the Devices & services page."
+            )
         raise HomeAssistantError(
             "Multiple HelloFresh accounts are configured. Specify config_entry_id."
         )
@@ -736,6 +742,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         flag) so a caller can react to it.
         """
         result = await coro
+        # A write endpoint just accepted a request, so any lingering "write actions
+        # unavailable" repair warning is stale — this is its self-clear condition.
+        async_delete_write_actions_issue(hass, coordinator.config_entry.entry_id)
         await coordinator.async_request_refresh()
         return result
 

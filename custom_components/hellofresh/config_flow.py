@@ -18,13 +18,18 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+    CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
+    CONF_ISSUED_AT,
     CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
+    CONF_REFRESH_EXPIRES_IN,
     CONF_REFRESH_TOKEN,
+    CONF_REFRESH_TOKEN_ISSUED_AT,
     CONF_SCAN_INTERVAL_MINUTES,
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN,
+    CONF_TOKEN_TYPE,
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
@@ -318,13 +323,29 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         token_data: dict[str, object],
         errors: dict[str, str],
     ) -> dict | None:
-        """Validate pasted tokens against a real account endpoint, or None on error."""
+        """Validate pasted tokens against a real account endpoint, or None on error.
+
+        The validation request itself can rotate the pasted refresh token server-side
+        (the client proactively refreshes a token past half its life, and HelloFresh
+        invalidates the old refresh token on use). Any rotation is captured back into
+        ``token_data`` in place, so callers persist the LIVE token pair — persisting the
+        pre-rotation pair stored a dead refresh token and 401'd minutes after setup.
+        """
         session = async_get_clientsession(self.hass)
         client = HelloFreshClient(
             session=session,
             country=country,
             access_token=token_data.get(CONF_ACCESS_TOKEN),  # type: ignore[arg-type]
             refresh_token=token_data.get(CONF_REFRESH_TOKEN),  # type: ignore[arg-type]
+            # Pass the pasted timing so a genuinely fresh token isn't rotated needlessly.
+            token_issued_at=token_data.get(CONF_ISSUED_AT),  # type: ignore[arg-type]
+            token_expires_in=token_data.get(CONF_EXPIRES_IN),  # type: ignore[arg-type]
+            refresh_expires_in=token_data.get(CONF_REFRESH_EXPIRES_IN),  # type: ignore[arg-type]
+            refresh_token_issued_at=token_data.get(  # type: ignore[arg-type]
+                CONF_REFRESH_TOKEN_ISSUED_AT
+            ),
+            token_type=token_data.get(CONF_TOKEN_TYPE),  # type: ignore[arg-type]
+            token_refresh_callback=token_data.update,
         )
         try:
             return await client.async_validate_credentials()

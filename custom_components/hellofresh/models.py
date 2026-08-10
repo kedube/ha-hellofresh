@@ -771,13 +771,24 @@ class HelloFreshAccountData:
     selected_plan_total_price: float | None = None
     selected_plan_total_price_currency: str | None = None
     recent_order_id: str | None = None
-    _serialized_orders: list[dict[str, Any]] | None = field(default=None)
-    _serialized_weeks: list[dict[str, Any]] | None = field(default=None)
-    _serialized_past_delivery_weeks: list[dict[str, Any]] | None = field(default=None)
-    _serialized_weeks_needing_selection: list[dict[str, Any]] | None = field(default=None)
-    _summarized_weeks_needing_selection: list[dict[str, Any]] | None = field(default=None)
-    _serialized_public_menu_weeks: list[dict[str, Any]] | None = field(default=None)
-    _serialized_subscriptions: list[dict[str, Any]] | None = field(default=None)
+    # Lazily-memoized serializations MUST NOT participate in equality: entities populate
+    # them on the OLD data object between polls while the fresh object has them reset, so
+    # including them made every poll compare unequal and defeated always_update=False.
+    _serialized_orders: list[dict[str, Any]] | None = field(default=None, compare=False)
+    _serialized_weeks: list[dict[str, Any]] | None = field(default=None, compare=False)
+    _serialized_past_delivery_weeks: list[dict[str, Any]] | None = field(
+        default=None, compare=False
+    )
+    _serialized_weeks_needing_selection: list[dict[str, Any]] | None = field(
+        default=None, compare=False
+    )
+    _summarized_weeks_needing_selection: list[dict[str, Any]] | None = field(
+        default=None, compare=False
+    )
+    _serialized_public_menu_weeks: list[dict[str, Any]] | None = field(
+        default=None, compare=False
+    )
+    _serialized_subscriptions: list[dict[str, Any]] | None = field(default=None, compare=False)
     _next_order: HelloFreshOrder | None = None
     _upcoming_orders: list[HelloFreshOrder] = field(default_factory=list)
     _tracked_order: HelloFreshOrder | None = None
@@ -990,7 +1001,24 @@ class HelloFreshAccountData:
                 week.week_id,
             )
         )
-        self._weeks_by_id = {week.week_id: week for week in self.weeks}
+        # Week ids are ISO weeks, which two subscriptions can share. Keyed by week_id alone
+        # the last-sorted week silently won, so id-based lookups (get_week, the skip switch,
+        # service writes) could act on the OTHER subscription's box. On collision the primary
+        # subscription's week wins deterministically, matching next_modifiable_week, which is
+        # anchored on the primary subscription's handles.
+        primary_sub_id = (
+            self.subscriptions[0].subscription_id if self.subscriptions else None
+        )
+        self._weeks_by_id = {}
+        for week in self.weeks:
+            existing = self._weeks_by_id.get(week.week_id)
+            if (
+                existing is not None
+                and existing.subscription_id == primary_sub_id
+                and week.subscription_id != primary_sub_id
+            ):
+                continue
+            self._weeks_by_id[week.week_id] = week
         # Only non-skipped deliveries today or later are "upcoming". The deliveries endpoint
         # returns a wide window (≈12 weeks back to 6 weeks ahead) including weeks the customer
         # skipped, where no box ships — those are excluded so the count and next_order reflect

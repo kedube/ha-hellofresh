@@ -83,10 +83,13 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         self.client = client
         self.config_entry = config_entry
         self._cancel_token_refresh = None
-        # Memoized get_weeks serialization, keyed by the identity of the data object it was
-        # built from. Each poll assigns a fresh HelloFreshAccountData, so a new object is a
-        # cache miss; multiple cards calling get_weeks within one poll cycle reuse one build.
-        self._weeks_response_cache: tuple[int, ServiceResponse] | None = None
+        # Memoized get_weeks serialization, keyed by the data object it was built from.
+        # Each poll assigns a fresh HelloFreshAccountData, so a new object is a cache miss;
+        # multiple cards calling get_weeks within one poll cycle reuse one build. The key
+        # MUST be the object itself (compared with ``is``), not ``id(data)``: a bare id is
+        # a memory address that CPython reuses once the old object is freed, which let a
+        # later poll's data collide with the cached key and serve stale weeks to the cards.
+        self._weeks_response_cache: tuple[HelloFreshAccountData, ServiceResponse] | None = None
 
     def get_weeks_response(
         self,
@@ -96,14 +99,13 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
 
         ``build`` produces the response for ``self.data``; it is only invoked on a cache miss.
         The cache is invalidated automatically when the coordinator swaps in new data (the
-        key is ``id(self.data)``), so a card fetching after a poll always gets fresh content.
+        key is the data object itself), so a card fetching after a poll gets fresh content.
         """
         data = self.data
-        key = id(data)
-        if self._weeks_response_cache is not None and self._weeks_response_cache[0] == key:
+        if self._weeks_response_cache is not None and self._weeks_response_cache[0] is data:
             return self._weeks_response_cache[1]
         response = build()
-        self._weeks_response_cache = (key, response)
+        self._weeks_response_cache = (data, response)
         return response
 
     @callback
@@ -132,9 +134,18 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         try:
             await self.client.async_ensure_token_fresh()
         except HelloFreshAuthError as err:
-            # A dead refresh token requires reauth; surface it through the next poll
-            # rather than crashing the timer callback.
-            _LOGGER.warning("HelloFresh proactive token refresh failed: %s", err)
+            # A dead refresh token / rejected credentials cannot heal on their own. Stop the
+            # timer and start reauth NOW: leaving it running re-submitted the stored (stale)
+            # password every 2-10 minutes indefinitely — the classic pattern that trips
+            # provider rate limits or locks the account. The timer restarts when the entry
+            # reloads after a successful reauth.
+            _LOGGER.warning(
+                "HelloFresh proactive token refresh failed (%s); pausing token refresh "
+                "and requesting reauthentication",
+                err,
+            )
+            self.async_stop_token_refresh()
+            self.config_entry.async_start_reauth(self.hass)
         except HelloFreshError as err:
             _LOGGER.debug("HelloFresh proactive token refresh skipped (transient): %s", err)
 

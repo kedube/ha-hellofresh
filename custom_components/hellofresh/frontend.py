@@ -127,21 +127,34 @@ async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
     ]
     for _filename, url_path, resource_url in _CARDS:
         matches = [(url, item_id) for url, item_id in existing if url.startswith(url_path)]
-        if any(url == resource_url for url, _item_id in matches):
-            continue
-        if matches:
-            # Registered under a previous ?v= — update in place so the release's cache-bust
-            # actually reaches existing installs instead of only fresh ones.
-            stale_url, item_id = matches[0]
+        # Migrate EVERY stale entry for this card, not just the first, and even when the
+        # current URL is already present. Duplicate entries (e.g. a manually-added one from
+        # a pre-auto-registration install alongside ours) made the browser load the module
+        # twice — the second customElements.define throws, and if the stale URL loaded
+        # first, the OLD card code kept winning despite the release.
+        stale = [(url, item_id) for url, item_id in matches if url != resource_url]
+        current_count = len(matches) - len(stale)
+        for index, (stale_url, item_id) in enumerate(stale):
             try:
-                await resources.async_update_item(item_id, {"url": resource_url})
-                _LOGGER.info(
-                    "Updated HelloFresh card resource %s -> %s", stale_url, resource_url
-                )
+                if current_count == 0 and index == 0:
+                    # No entry carries the new URL yet — repoint the first stale one.
+                    await resources.async_update_item(item_id, {"url": resource_url})
+                    _LOGGER.info(
+                        "Updated HelloFresh card resource %s -> %s", stale_url, resource_url
+                    )
+                else:
+                    # The new URL is already registered — any other entry is a duplicate.
+                    await resources.async_delete_item(item_id)
+                    _LOGGER.info(
+                        "Removed duplicate HelloFresh card resource %s (current: %s)",
+                        stale_url,
+                        resource_url,
+                    )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception(
-                    "HelloFresh could not update card resource %s", resource_url
+                    "HelloFresh could not migrate card resource %s", resource_url
                 )
+        if matches:
             continue
         try:
             await resources.async_create_item({"res_type": "module", "url": resource_url})

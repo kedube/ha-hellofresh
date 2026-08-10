@@ -18,7 +18,7 @@ from .api import HelloFreshError
 from .const import DOMAIN
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
-from .issues import async_create_write_actions_issue
+from .issues import async_create_write_actions_issue, async_delete_write_actions_issue
 
 SWITCHES: tuple[SwitchEntityDescription, ...] = (
     SwitchEntityDescription(
@@ -93,6 +93,10 @@ class HelloFreshSwitch(HelloFreshCoordinatorEntity, SwitchEntity):
                 await self.coordinator.client.async_skip_week(week.week_id)
             else:
                 await self.coordinator.client.async_unskip_week(week.week_id)
+            # A write just succeeded — clear any stale "write actions unavailable" warning.
+            async_delete_write_actions_issue(
+                self.coordinator.hass, self.coordinator.config_entry.entry_id
+            )
             await self.coordinator.async_request_refresh()
         except HelloFreshError as err:
             # A known integration/write failure: raise a Repairs issue and surface a

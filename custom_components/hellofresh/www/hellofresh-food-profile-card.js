@@ -120,6 +120,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     // Drop the pending toast timer so a detached card isn't kept alive only to re-render
     // into a shadow root nobody can see.
     clearTimeout(this._toastTimer);
+    // Also drop the toast itself: with the timer cancelled, a toast shown just before
+    // disconnect would otherwise repaint forever once the card reconnects.
+    this._toast = null;
   }
 
   static get DATA_CHANGED_EVENT() {
@@ -612,6 +615,11 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       this._render();
       return;
     }
+    // Editor controls are inert while a save is in flight: only the footer buttons carry a
+    // disabled attribute, so without this guard a chip toggled mid-save was silently
+    // reverted when the save's response overwrote the draft.
+    const editing = ev.target.closest("[data-step],[data-weight],[data-none],[data-list]");
+    if (editing && this._busy) return;
     const step = ev.target.closest("[data-step]");
     if (step && !step.disabled) {
       const [field, dir] = step.getAttribute("data-step").split("|");

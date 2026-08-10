@@ -149,6 +149,12 @@ class HelloFreshScheduleCard extends HTMLElement {
       this._lastFetched = Date.now();
       this._loading = false;
       this._render();
+      if (this._refetchQueued) {
+        // A data-changed event arrived while this fetch was in flight; its response
+        // predates the write, so pull once more now that we're settled.
+        this._refetchQueued = false;
+        this._fetch();
+      }
     }
   }
 
@@ -253,7 +259,15 @@ class HelloFreshScheduleCard extends HTMLElement {
     const detail = (ev && ev.detail) || {};
     if (detail.source === this._instanceId) return; // our own write — already re-fetched
     if ((detail.accountKey || "default") !== this._accountKey()) return;
-    if (this._fetched && !this._loading) this._fetch();
+    if (!this._fetched) return;
+    if (this._loading) {
+      // An in-flight fetch was issued BEFORE the write this event announces; dropping the
+      // event here left pre-write data on screen until the next interval (hours). Queue
+      // one follow-up fetch to run when the current one settles.
+      this._refetchQueued = true;
+      return;
+    }
+    this._fetch();
   }
 
   _broadcastDataChanged() {
@@ -288,19 +302,27 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._busy = true;
     this._actionError = null;
     this._render();
+    // Track the failure locally: the resync in `finally` clears _actionError on success
+    // (fresh data path), which used to erase the failure notice within a second AND made
+    // the broadcast below read the cleared flag and announce a failed write as "changed".
+    let failed = null;
     try {
       const data = { week_id: weekId };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", service, data);
     } catch (err) {
-      this._actionError = `${service} failed: ${(err && err.message) || err}`;
+      failed = `${service} failed: ${(err && err.message) || err}`;
     } finally {
       this._busy = false;
       await this._fetch(); // resync from the source of truth either way
+      if (failed) {
+        this._actionError = failed; // survives the resync so the user sees why
+        this._render();
+      }
     }
     // Announce after our own refetch so any other listening card (e.g. a second schedule
     // card on another view) re-pulls; the source tag stops us re-fetching a second time.
-    if (!this._actionError) this._broadcastDataChanged();
+    if (!failed) this._broadcastDataChanged();
   }
 
   // ---- reschedule (change delivery day) ---------------------------------------
@@ -318,18 +340,23 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._busy = true;
     this._actionError = null;
     this._render();
+    let failed = null;
     try {
       const data = { week_id: weekId, delivery_option: handle };
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", "reschedule_week", data);
       this._rescheduleWeekId = null; // done — close the options panel
     } catch (err) {
-      this._actionError = `reschedule_week failed: ${(err && err.message) || err}`;
+      failed = `reschedule_week failed: ${(err && err.message) || err}`;
     } finally {
       this._busy = false;
       await this._fetch();
+      if (failed) {
+        this._actionError = failed; // survives the resync's clear — see _toggleSkip
+        this._render();
+      }
     }
-    if (!this._actionError) this._broadcastDataChanged();
+    if (!failed) this._broadcastDataChanged();
   }
 
   // Lazily fetch the plan's delivery-day catalog (weekday names + prices) the first time a
@@ -428,8 +455,10 @@ class HelloFreshScheduleCard extends HTMLElement {
   _needsSelection(week) {
     if (!this._isEditable(week)) return false;
     if (week.needs_selection != null) return Boolean(week.needs_selection);
-    const required = week.meals_required || 0;
-    const selected = week.meals_selected || 0;
+    // Coerced to numbers before any HTML interpolation: integers under the server
+    // contract, but the card must not trust that (defense in depth for innerHTML).
+    const required = Number(week.meals_required) || 0;
+    const selected = Number(week.meals_selected) || 0;
     return required > 0 && selected < required;
   }
 
@@ -929,8 +958,10 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   _rowDetail(week, state) {
     if (state === "skipped") return `<span class="muted">No box this week</span>`;
-    const required = week.meals_required || 0;
-    const selected = week.meals_selected || 0;
+    // Coerced to numbers before any HTML interpolation: integers under the server
+    // contract, but the card must not trust that (defense in depth for innerHTML).
+    const required = Number(week.meals_required) || 0;
+    const selected = Number(week.meals_selected) || 0;
     if (state === "needs") {
       const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
       const deadlineSuffix = deadline
@@ -1011,17 +1042,26 @@ class HelloFreshScheduleCard extends HTMLElement {
     return "soon";
   }
 
+  // An undated week (missing delivery_date/delivered_at — a supported state) reaches these
+  // via _renderRow. toLocaleDateString on an Invalid Date returns the literal string
+  // "Invalid Date" WITHOUT throwing, so the catch alone never fired — guard explicitly.
   _fmtDate(iso) {
+    if (!iso) return "—";
     try {
-      return this._parseLocalDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const d = this._parseLocalDate(iso);
+      if (Number.isNaN(d.getTime())) return "—";
+      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch (_e) {
       return iso || "—";
     }
   }
 
   _fmtDateShort(iso) {
+    if (!iso) return "—";
     try {
-      return this._parseLocalDate(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const d = this._parseLocalDate(iso);
+      if (Number.isNaN(d.getTime())) return "—";
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     } catch (_e) {
       return iso || "—";
     }

@@ -9,6 +9,9 @@ from typing import Any
 from .models import HelloFreshAccountData
 from .parsers import iso_week_label
 
+# Home Assistant rejects entity states longer than 255 characters.
+MAX_STATE_LENGTH = 255
+
 
 def token_seconds_remaining(expires_at: datetime | None) -> int | None:
     """Return whole seconds until the access token expires, never negative."""
@@ -276,6 +279,15 @@ def sensor_native_value(
         return humanize_status(value)
     if value is None and key in NONE_WHEN_EMPTY_KEYS:
         return "None"
+    if isinstance(value, datetime) and value.tzinfo is None:
+        # TIMESTAMP sensors require tz-aware values; an offset-less deadline string is
+        # treated as UTC, matching HelloFreshWeek.selection_deadline_passed, so the
+        # state write doesn't raise on every update.
+        return value.replace(tzinfo=UTC)
+    if isinstance(value, str) and len(value) > MAX_STATE_LENGTH:
+        # HA rejects states longer than 255 chars; a long holidayMessage or tracking
+        # URL must degrade to a truncated state, not a failed state write.
+        return value[: MAX_STATE_LENGTH - 1] + "…"
     return value
 
 
