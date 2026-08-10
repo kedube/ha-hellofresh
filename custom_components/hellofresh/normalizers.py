@@ -7,7 +7,7 @@ HelloFresh payloads into integration models.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 import re
 from typing import Any
 

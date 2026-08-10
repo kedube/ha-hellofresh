@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, date, datetime, timedelta
 import json
-from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+from custom_components.hellofresh import switch as switch_module
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
     HelloFreshCapabilities,
@@ -25,7 +26,6 @@ from custom_components.hellofresh.binary_sensor import (
 )
 from custom_components.hellofresh.sensor import SENSORS as SENSOR_DESCRIPTIONS
 from custom_components.hellofresh.sensor import HelloFreshSensor
-from custom_components.hellofresh import switch as switch_module
 from custom_components.hellofresh.switch import SWITCHES, HelloFreshSwitch
 
 
