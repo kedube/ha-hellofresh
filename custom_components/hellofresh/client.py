@@ -136,6 +136,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         )
         self._cached_subscriptions: list[HelloFreshSubscription] | None = None
         self._subscription_preferences: dict[str, str | None] = {}
+        # In-flight plan-preference resolutions, so 6-wide concurrent menu fetches share ONE
+        # preference GET per subscription instead of each issuing its own (thundering herd).
+        self._preference_resolutions: dict[str | None, asyncio.Task[str | None]] = {}
+        # Poll-scoped shared GETs: identical large requests (the ranged deliveries payload is
+        # needed by both the upcoming and the history paths, for every subscription) resolve
+        # to one HTTP fetch per poll instead of N+1.
+        self._shared_get_tasks: dict[tuple[str, tuple[tuple[str, Any], ...]], asyncio.Task] = {}
         self._enable_public_menu_fallback = enable_public_menu_fallback
         self._last_account_data: HelloFreshAccountData | None = None
         self._debug_trace: dict[str, list[dict[str, Any]]] = {}
@@ -227,6 +234,8 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self._reset_debug_trace()
         self._cached_subscriptions = None
         self._subscription_preferences = {}
+        self._preference_resolutions = {}
+        self._shared_get_tasks = {}
         public_menu_loaded = False
 
         try:
@@ -488,15 +497,12 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 f"got {distinct_meals}"
             )
 
-        selected = {
-            recipe.recipe_id: self._existing_recipe_quantity(recipe)
-            for recipe in week.recipes
-            if recipe.is_selected
-        }
+        # Always submit, even when the request matches the local snapshot: that snapshot is
+        # the PREVIOUS poll (up to hours old), and a change made on the website/app in the
+        # meantime made the old "already up to date" early-return silently drop a write the
+        # user explicitly asked for. The cart PUT is idempotent, so re-submitting an
+        # identical selection is harmless.
         requested = {recipe_id: _qty(recipe_id) for recipe_id in deduplicated_recipe_ids}
-        if selected and selected == requested:
-            _LOGGER.info("HelloFresh meal selection for week %s is already up to date", week_id)
-            return False
 
         if week.subscription_id is None:
             raise HelloFreshNotImplementedError(
@@ -841,7 +847,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         deliver the same day spends the combined amount that week). The running ``total`` counts
         only deliveries on or before today.
         """
-        today = datetime.now(UTC).date()
+        # Delivery dates are local-market calendar dates; gate them with LOCAL today so a
+        # US-evening poll (already past midnight UTC) does not misclassify today's box.
+        today = date.today()
 
         # Collapse to one amount per delivery DATE (summing across subscriptions), preferring the
         # first non-null currency seen — a single account never mixes currencies.
@@ -1196,9 +1204,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     async def async_skip_week(self, week_id: str) -> None:
         """Skip a delivery week (set its delivery status to PAUSED)."""
         week = self._get_known_week_or_raise(week_id)
-        if week.is_skipped:
-            _LOGGER.info("HelloFresh week %s is already skipped", week_id)
-            return
+        # No "already skipped" early-return: the local snapshot is the previous poll, and an
+        # unskip done on the website since then would have made this explicit request a
+        # silent no-op. The status PATCH is idempotent.
         if await self._async_patch_delivery_status(week, "PAUSED"):
             return
         # HAR-verified PATCH couldn't be built or was rejected; fall back to guessed paths.
@@ -1219,9 +1227,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     async def async_unskip_week(self, week_id: str) -> None:
         """Undo a skipped delivery week (set its delivery status back to RUNNING)."""
         week = self._get_known_week_or_raise(week_id)
-        if not week.is_skipped:
-            _LOGGER.info("HelloFresh week %s is already active", week_id)
-            return
+        # No "already active" early-return — see async_skip_week.
         if await self._async_patch_delivery_status(week, "RUNNING"):
             return
         # HAR-verified PATCH couldn't be built or was rejected; fall back to guessed paths.
@@ -1942,8 +1948,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         fallback_weeks: tuple[str, dict[str, Any] | None, list[HelloFreshWeek]] | None = None
         for path, params in ordered_calls:
             try:
-                response = await self._async_api_get(path, params=params)
-                payload = await self._async_response_json(response)
+                # Shared fetch: the ranged deliveries candidate is the same request the
+                # upcoming-deliveries path already made this poll — reuse that download.
+                status, payload = await self._async_api_get_json_shared(path, params)
             except HelloFreshError as err:
                 self._record_debug_attempt(
                     "history_attempts",
@@ -1961,7 +1968,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 {
                     "path": path,
                     "params": params,
-                    "status": self._response_status(response),
+                    "status": status,
                     "payload_summary": self._summarize_payload(payload),
                     "recognized_week_count": len(weeks),
                 },
@@ -2032,7 +2039,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # boundary (and ISO-week rounding / year-boundary ordering around it) always has its
         # delivered meals fetched, not just shown as an empty shell. Keyed off the same lookback
         # the display range uses (+2 weeks margin) so the two stay aligned as the constant moves.
-        floor_date = datetime.now(UTC).date() - timedelta(
+        floor_date = date.today() - timedelta(
             weeks=self._history_weeks + 2
         )
         floor_iso = floor_date.isocalendar()
@@ -2104,12 +2111,38 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             return (9999, 99)
         return (int(match.group(1)), int(match.group(2)))
 
+    async def _async_api_get_json_shared(
+        self,
+        path: str,
+        params: dict[str, Any] | None,
+    ) -> tuple[int | None, Any]:
+        """GET + JSON-decode with per-poll request coalescing.
+
+        Identical ``(path, params)`` requests within one poll share a single HTTP fetch and
+        one decoded payload. The ranged deliveries request is the motivating case: its
+        multi-week body is needed by both the upcoming-deliveries path and the history path,
+        for every subscription, and was previously downloaded and parsed N+1 times per poll.
+        Callers must treat the shared payload as read-only.
+        """
+        key = (path, tuple(sorted((params or {}).items())))
+        task = self._shared_get_tasks.get(key)
+        if task is None:
+
+            async def _fetch() -> tuple[int | None, Any]:
+                response = await self._async_api_get(path, params=params)
+                payload = await self._async_response_json(response)
+                return (self._response_status(response), payload)
+
+            task = asyncio.ensure_future(_fetch())
+            self._shared_get_tasks[key] = task
+        return await task
+
     async def _async_get_upcoming_deliveries(
         self,
         subscription: HelloFreshSubscription,
     ) -> tuple[list[HelloFreshWeek], list[HelloFreshOrder]]:
         """Try likely upcoming-deliveries endpoints and normalize the first success."""
-        today = datetime.now(UTC).date()
+        today = date.today()
         iso_week = f"{today.year}-W{today.isocalendar().week:02d}"
         history_range = self._build_delivery_history_range()
         subscription_id = subscription.subscription_id
@@ -2146,7 +2179,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         last_error: str | None = None
         for path, params in ordered_calls:
             try:
-                response = await self._async_api_get(path, params=params)
+                # Shared fetch: the ranged deliveries request carries no subscription filter,
+                # so multi-subscription accounts (and the history path) reuse one download.
+                status, payload = await self._async_api_get_json_shared(path, params)
             except HelloFreshAuthError:
                 raise
             except HelloFreshError as err:
@@ -2156,22 +2191,6 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                         "subscription_id": subscription.subscription_id,
                         "path": path,
                         "params": params,
-                        "error": str(err),
-                    },
-                )
-                last_error = str(err)
-                continue
-
-            try:
-                payload = await self._async_response_json(response)
-            except HelloFreshError as err:
-                self._record_debug_attempt(
-                    "delivery_attempts",
-                    {
-                        "subscription_id": subscription.subscription_id,
-                        "path": path,
-                        "params": params,
-                        "status": self._response_status(response),
                         "error": str(err),
                     },
                 )
@@ -2188,7 +2207,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                     "subscription_id": subscription.subscription_id,
                     "path": path,
                     "params": params,
-                    "status": self._response_status(response),
+                    "status": status,
                     "payload_summary": self._summarize_payload(payload),
                     "recognized_week_count": len(weeks),
                     "recognized_order_count": len(orders),
@@ -2263,7 +2282,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # _merge_past_delivery_recipes_into_account_weeks, so downloading their (often multi-MB
         # aggregate) menu only to discard it is pure waste. Weeks with no date, or dated within
         # the grace window, still fetch — the grace-window branch keeps and overlays the catalog.
-        grace_floor = datetime.now(UTC).date() - timedelta(weeks=self.menu_grace_weeks)
+        grace_floor = date.today() - timedelta(weeks=self.menu_grace_weeks)
 
         def _needs_menu_fetch(account_week: HelloFreshWeek) -> bool:
             return account_week.delivery_date is None or account_week.delivery_date >= grace_floor
@@ -2627,6 +2646,27 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if subscription_id in self._subscription_preferences:
             return self._subscription_preferences[subscription_id]
 
+        # The per-week menu fetches run 6-wide and each needs the preference; before the
+        # first resolution lands, every concurrent task missed the cache and issued its own
+        # preference GET(s). Share ONE in-flight resolution per subscription instead.
+        task = self._preference_resolutions.get(subscription_id)
+        if task is None:
+            task = asyncio.ensure_future(
+                self._async_fetch_subscription_plan_preference(subscription)
+            )
+            self._preference_resolutions[subscription_id] = task
+        try:
+            return await task
+        finally:
+            if task.done():
+                self._preference_resolutions.pop(subscription_id, None)
+
+    async def _async_fetch_subscription_plan_preference(
+        self,
+        subscription: HelloFreshSubscription,
+    ) -> str | None:
+        """Resolve and cache the plan preference (single flight per subscription)."""
+        subscription_id = subscription.subscription_id
         customer_plan_id = subscription.raw.get("customerPlanId")
         preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
 
@@ -2725,9 +2765,17 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         }
         orders_by_key = {(order.subscription_id, order.week_id): order for order in orders}
 
+        today = date.today()
         price_tasks = []
         for week in weeks:
             if week.subscription_id is None:
+                continue
+            # Never price PAST weeks. Their authoritative total is the billed charge (already
+            # applied from payment history); a past week has no menu payload, so pricing it
+            # fell through to /gw/calculate — an estimate of TODAY'S recurring plan that both
+            # overwrote the real billed amount and burst one POST per history week (default
+            # 26) on every cold poll.
+            if week.delivery_date is not None and week.delivery_date < today:
                 continue
             order = orders_by_key.get((week.subscription_id, week.week_id))
             subscription = subscriptions_by_id.get(week.subscription_id)
@@ -2742,7 +2790,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             )
 
         if price_tasks:
-            await asyncio.gather(*price_tasks)
+            # Same cap as the menu fetches — pricing every upcoming week at once was an
+            # unbounded burst against the pricing endpoints.
+            await self._async_gather_bounded(price_tasks)
 
     async def _async_apply_order_price(
         self,
@@ -3155,6 +3205,12 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             )
 
         html = await response.text()
+        # BeautifulSoup over a multi-hundred-KB marketing page is pure CPU; parsing it
+        # inline stalled HA's whole event loop for the duration on every fallback poll.
+        return await asyncio.to_thread(self._parse_public_menu_html, html)
+
+    def _parse_public_menu_html(self, html: str) -> dict[str, Any]:
+        """Parse the public menu page into a fallback week (runs in a worker thread)."""
         soup = BeautifulSoup(html, "html.parser")
 
         title_text = ""
@@ -3420,6 +3476,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if not self._tokens.has_token:
             raise HelloFreshAuthError("No HelloFresh access token configured")
 
+        # Captured at header-build time: the 401 handler below must compare against the
+        # token this request actually USED. Reading it after the 401 arrives raced with a
+        # concurrent rotation and could force a second, needless refresh-token burn.
+        token_used = self._tokens.access_token
         response = await async_request(
             self._session,
             method,
@@ -3443,7 +3503,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 # Force a refresh under the manager's lock. The manager re-checks whether
                 # another concurrent waiter already rotated the token, so only the first
                 # 401 burns a refresh-token rotation (HelloFresh invalidates it on use).
-                await self._tokens.async_force_refresh_if_unchanged(self._tokens.access_token)
+                await self._tokens.async_force_refresh_if_unchanged(token_used)
                 return await self._async_api_request(
                     method,
                     path,

@@ -131,6 +131,14 @@ def test_coerce_float_handles_localized_decimal_strings() -> None:
     assert coerce_float("€ 8,99") == 8.99
     assert coerce_float("$12.50") == 12.5
     assert coerce_float("8,99 €") == 8.99
+    # Scientific notation must keep parsing as plain float syntax, not get its
+    # exponent marker stripped by the locale normalizer ("1.5e3" -> 1.53 was a bug).
+    assert coerce_float("1.5e3") == 1500.0
+    assert coerce_float("1e5") == 100000.0
+    # Non-finite values never make useful sensor states.
+    assert coerce_float("inf") is None
+    assert coerce_float("nan") is None
+    assert coerce_float(float("inf")) is None
     # Garbage still coerces to None rather than raising.
     assert coerce_float("€") is None
     assert coerce_float("2026-08-06") is None

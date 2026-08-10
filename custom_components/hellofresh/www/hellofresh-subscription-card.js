@@ -102,6 +102,11 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       this._lastFetched = Date.now();
       this._loading = false;
       this._render();
+      if (this._refetchQueued) {
+        // A data-changed event arrived mid-fetch; that response predates the write.
+        this._refetchQueued = false;
+        this._fetch();
+      }
     }
     // Resolve the preset catalog once so the Preference row can show the full name ("Quick &
     // Easy") rather than the bare slug — but only when there's a preference to name and the

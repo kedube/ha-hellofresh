@@ -136,7 +136,10 @@ def _response_content_type(response: Any) -> str | None:
     if headers is None:
         return None
     try:
-        return headers.get("Content-Type")
+        # The curl_cffi path stores headers in a plain (case-sensitive) dict, and HTTP/2
+        # header names are lowercase on the wire — check both casings so bot-block
+        # detection doesn't go blind on the impersonated transport.
+        return headers.get("Content-Type") or headers.get("content-type")
     except AttributeError:  # pragma: no cover - defensive
         return None
 
@@ -427,13 +430,20 @@ class TokenManager:
 
     async def _async_refresh_with_token(self) -> None:
         """Renew the access token via ``POST {base}/gw/refresh``."""
-        response = await async_auth_post(
-            self._session,
-            f"{self._base_url}/gw/refresh",
-            params=self._auth_query(),
-            json_payload={"refresh_token": self._refresh_token},
-            headers=self._auth_headers(),
-        )
+        try:
+            response = await async_auth_post(
+                self._session,
+                f"{self._base_url}/gw/refresh",
+                params=self._auth_query(),
+                json_payload={"refresh_token": self._refresh_token},
+                headers=self._auth_headers(),
+            )
+        except (ClientError, TimeoutError) as err:
+            # Network-level failure (DNS, connect, mid-request timeout): transient, NOT a
+            # rejected refresh token. Wrapping it keeps callers' error handling intact —
+            # unwrapped it escaped the config flow ("Unknown error" instead of
+            # "cannot_connect") and the proactive-refresh timer (unhandled traceback).
+            raise HelloFreshError(f"HelloFresh token refresh could not connect: {err}") from err
         if response.status in _AUTH_FAILURE_STATUSES:
             try:
                 error_body = await response.text()
@@ -494,13 +504,17 @@ class TokenManager:
 
         await self._async_fetch_app_token()
 
-        response = await async_auth_post(
-            self._session,
-            f"{self._base_url}/gw/login",
-            params=self._auth_query(),
-            json_payload={"username": self._username, "password": self._password},
-            headers=self._auth_headers(),
-        )
+        try:
+            response = await async_auth_post(
+                self._session,
+                f"{self._base_url}/gw/login",
+                params=self._auth_query(),
+                json_payload={"username": self._username, "password": self._password},
+                headers=self._auth_headers(),
+            )
+        except (ClientError, TimeoutError) as err:
+            # Transient network failure — not a credential rejection. See the refresh path.
+            raise HelloFreshError(f"HelloFresh login could not connect: {err}") from err
         if response.status in _AUTH_FAILURE_STATUSES:
             try:
                 error_body = await response.text()

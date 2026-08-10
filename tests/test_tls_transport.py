@@ -11,6 +11,9 @@ import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 
+from aiohttp import ClientError
+import pytest
+
 from custom_components.hellofresh import tls_transport
 from custom_components.hellofresh.tls_transport import (
     AuthResponse,
@@ -168,8 +171,14 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     assert _run(response.json()) == {"access_token": "from-curl-cffi"}
 
 
-def test_curl_cffi_failure_degrades_to_aiohttp(monkeypatch) -> None:
-    """A curl_cffi transport error must fall back to aiohttp, not crash the auth call."""
+def test_curl_cffi_mid_request_failure_never_resends_auth_post(monkeypatch) -> None:
+    """A curl_cffi failure DURING an auth POST must raise, not retry via aiohttp.
+
+    The auth POSTs are non-idempotent: /gw/refresh burns the refresh token on use. A
+    timeout after the server processed the request meant the aiohttp retry re-sent the
+    now-spent token, whose 401 read as "refresh token rejected" and forced a needless
+    reauth. The failure must surface as a transient ClientError with NO resend.
+    """
 
     async def failing_post(**_kwargs):
         raise RuntimeError("curl boom")
@@ -177,17 +186,17 @@ def test_curl_cffi_failure_degrades_to_aiohttp(monkeypatch) -> None:
     _install_fake_curl_cffi(monkeypatch, post=failing_post)
     session = _FakeAiohttpSession()
 
-    response = _run(
-        async_auth_post(
-            session,  # type: ignore[arg-type]
-            "https://www.hellofresh.co.uk/gw/refresh",
-            json_payload={"refresh_token": "r"},
+    with pytest.raises(ClientError):
+        _run(
+            async_auth_post(
+                session,  # type: ignore[arg-type]
+                "https://www.hellofresh.co.uk/gw/refresh",
+                json_payload={"refresh_token": "r"},
+            )
         )
-    )
 
-    # Fell through to aiohttp.
-    assert len(session.calls) == 1
-    assert _run(response.text()) == '{"access_token": "from-aiohttp"}'
+    # The one-time token was NOT re-sent through aiohttp.
+    assert session.calls == []
 
 
 def test_auth_response_exposes_status_headers_text_and_json() -> None:

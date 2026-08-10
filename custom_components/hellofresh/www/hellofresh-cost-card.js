@@ -109,6 +109,11 @@ class HelloFreshCostCard extends HTMLElement {
       this._lastFetched = Date.now();
       this._loading = false;
       this._render();
+      if (this._refetchQueued) {
+        // A data-changed event arrived mid-fetch; that response predates the write.
+        this._refetchQueued = false;
+        this._fetch();
+      }
     }
   }
 
@@ -157,7 +162,14 @@ class HelloFreshCostCard extends HTMLElement {
   _receiveDataChanged(ev) {
     const detail = (ev && ev.detail) || {};
     if ((detail.accountKey || "default") !== this._accountKey()) return;
-    if (this._fetched && !this._loading) this._fetch();
+    if (!this._fetched) return;
+    if (this._loading) {
+      // An in-flight fetch predates the write this event announces; dropping the event
+      // left pre-write data on screen until the next interval. Queue one follow-up.
+      this._refetchQueued = true;
+      return;
+    }
+    this._fetch();
   }
 
   // ---- rendering -------------------------------------------------------------

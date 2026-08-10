@@ -146,3 +146,23 @@ def test_tokens_and_credentials_still_redacted() -> None:
     assert data["refresh_token"] == "**REDACTED**"
     assert data["username"] == "**REDACTED**"
     assert data["password"] == "**REDACTED**"
+
+
+def test_payment_descriptors_redacted() -> None:
+    """Subscription payment method/gateway fields never reach a diagnostics export."""
+    diagnostics = {
+        "subscriptions": [
+            {
+                "payment_method": "visa **** 4242",
+                "payment_gateway": "braintree",
+                "paymentMethod": "PayPal user@example.com",
+                "paymentGateway": "paypal",
+            }
+        ]
+    }
+
+    redacted = _redact(diagnostics)["subscriptions"][0]
+    assert redacted["payment_method"] == "**REDACTED**"
+    assert redacted["payment_gateway"] == "**REDACTED**"
+    assert redacted["paymentMethod"] == "**REDACTED**"
+    assert redacted["paymentGateway"] == "**REDACTED**"

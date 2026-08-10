@@ -2231,7 +2231,9 @@ def test_history_range_covers_a_full_year_past_the_boundary() -> None:
 
     client = HelloFreshClient(session=None, history_weeks=56)  # type: ignore[arg-type]
     range_ = client._build_delivery_history_range()
-    today = datetime.now(UTC).date()
+    # The integration gates delivery dates with LOCAL today (they are local-market
+    # calendar dates); expectations must match or they diverge near midnight UTC.
+    today = date.today()
     # The week from 53 weeks ago (comfortably "a year back") must be at/after range_start.
     boundary = today - timedelta(weeks=53)
     boundary_iso = boundary.isocalendar()
@@ -2248,7 +2250,9 @@ def test_history_range_honors_configured_lookback() -> None:
     short = HelloFreshClient(session=None, history_weeks=8)  # type: ignore[arg-type]
     default = HelloFreshClient(session=None)  # type: ignore[arg-type]
     key = HelloFreshClient._iso_week_sort_key
-    today = datetime.now(UTC).date()
+    # The integration gates delivery dates with LOCAL today (they are local-market
+    # calendar dates); expectations must match or they diverge near midnight UTC.
+    today = date.today()
 
     short_start = short._build_delivery_history_range()["range_start"]
     default_start = default._build_delivery_history_range()["range_start"]
@@ -2268,7 +2272,9 @@ def test_history_range_reaches_far_enough_into_the_future() -> None:
 
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     range_end = client._build_delivery_history_range()["range_end"]
-    today = datetime.now(UTC).date()
+    # The integration gates delivery dates with LOCAL today (they are local-market
+    # calendar dates); expectations must match or they diverge near midnight UTC.
+    today = date.today()
     key = HelloFreshClient._iso_week_sort_key
     # A box 8 weeks out (within HelloFresh's typical publish window) must be at/before range_end.
     eight_out = today + timedelta(weeks=8)
@@ -2526,7 +2532,9 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
             "deliveryOption": {"handle": "US-1-0800-2000"},
         },
     )
-    today = datetime.now(UTC).date()
+    # The integration gates delivery dates with LOCAL today (they are local-market
+    # calendar dates); expectations must match or they diverge near midnight UTC.
+    today = date.today()
     # menu_grace_weeks default is 2; a week delivered 10 weeks ago is well past the floor.
     old_week = HelloFreshWeek(
         week_id="2026-old",
@@ -2681,7 +2689,7 @@ def test_merge_past_delivery_leaves_current_week_menu_intact() -> None:
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     # The merge gates "past" on UTC (matching normalizers), so pin the boundary to UTC too.
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     # Current week: full menu catalog present, dated today (not past).
     current_week = HelloFreshWeek(
         week_id="2026-W27",
@@ -2873,7 +2881,7 @@ def test_merge_past_delivery_grace_window_keeps_catalog_with_delivered_overlay()
     are re-selected, and a delivered meal missing from the catalog is appended.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -2926,7 +2934,7 @@ def test_merge_past_delivery_grace_window_keeps_catalog_with_delivered_overlay()
 def test_merge_past_delivery_grace_window_appends_unmatched_delivered_meal() -> None:
     """A delivered meal absent from the kept catalog is appended, selected — never hidden."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -2960,7 +2968,7 @@ def test_merge_past_delivery_grace_window_without_catalog_shows_delivered_only()
     recipes of its own, so it gets the plain delivered-only fill — same as an old week.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -2989,6 +2997,49 @@ def test_merge_past_delivery_grace_window_without_catalog_shows_delivered_only()
     assert all(r.is_selected for r in week.recipes)
 
 
+def test_merge_past_delivery_never_crosses_subscriptions() -> None:
+    """Delivered meals from ANOTHER subscription's same-id week must not fill this week.
+
+    With two subscriptions, one ISO week id maps to two different delivered menus; the
+    id-only fallback used to stamp whichever was indexed last onto both weeks.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    account_week = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Week",
+        subscription_id="sub-1",
+        delivery_date=date.today() - timedelta(weeks=10),
+        recipes=[],
+    )
+    other_subs_week = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Week",
+        subscription_id="sub-2",
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="d-9", name="Other Household Dish")],
+    )
+
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week],
+        past_delivery_weeks=[other_subs_week],
+    )
+    assert merged[0].recipes == []
+
+    # The id-only fallback still applies when the delivered week carries no subscription id.
+    unowned_week = HelloFreshWeek(
+        week_id="2026-W20",
+        display_name="Week",
+        subscription_id=None,
+        source="past_deliveries",
+        recipes=[HelloFreshRecipe(recipe_id="d-1", name="Delivered A")],
+    )
+    merged = client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week],
+        past_delivery_weeks=[unowned_week],
+    )
+    assert [r.name for r in merged[0].recipes] == ["Delivered A"]
+
+
 def test_merge_past_delivery_older_than_grace_replaces_catalog() -> None:
     """A week just OUTSIDE the grace window still collapses to delivered-only.
 
@@ -2998,7 +3049,7 @@ def test_merge_past_delivery_older_than_grace_replaces_catalog() -> None:
     from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
 
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     old_week = HelloFreshWeek(
         week_id="2026-W26",
         display_name="Older Week",
@@ -3037,7 +3088,7 @@ def test_menu_grace_weeks_option_is_honored() -> None:
     """
     from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
 
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
 
     def _week_pair(days_ago: int) -> tuple[HelloFreshWeek, HelloFreshWeek]:
         account_week = HelloFreshWeek(
@@ -5533,6 +5584,9 @@ def test_upcoming_deliveries_prefers_last_successful_endpoint() -> None:
     assert first_poll_calls >= 3  # it had to probe past the earlier candidates
 
     calls.clear()
+    # A new poll resets the per-poll shared-GET memo (async_get_account_data does this);
+    # simulate that boundary so the second call issues real requests again.
+    client._shared_get_tasks = {}
     weeks_2, _ = loop.run_until_complete(client._async_get_upcoming_deliveries(subscription))
     assert weeks_2
     # Second poll hits the remembered winner on the very first request — no wasted probes.
@@ -6564,7 +6618,7 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
     order is a real recent payment even while its delivery is still upcoming.
     """
     client = _make_client()
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     older_charge = today - timedelta(days=14)
     recent_charge = today - timedelta(days=3)
     future_delivery = today + timedelta(days=4)
@@ -6594,7 +6648,7 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
 def test_accumulate_order_prices_next_order_nr_is_earliest_future() -> None:
     """next_order_nr_by_subscription should point to the nearest upcoming delivery."""
     client = _make_client()
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     nearest_future = today + timedelta(days=3)
     farther_future = today + timedelta(days=10)
     items = [
@@ -6652,7 +6706,7 @@ def test_recent_payment_date_is_most_recent_actual_charge() -> None:
     charge, because the upcoming box (billed days ago) was skipped in favour of the prior one.
     """
     client = _make_client()
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     older_charge = today - timedelta(days=14)
     recent_charge = today - timedelta(days=3)
     items = [
@@ -6680,7 +6734,7 @@ def test_recent_payment_date_is_most_recent_actual_charge() -> None:
 def test_recent_payment_date_none_when_charge_is_still_in_the_future() -> None:
     """A charge dated in the future (not yet billed) does not count as a recent payment."""
     client = _make_client()
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     future_charge = today + timedelta(days=2)
     items = [
         _billing_item(
@@ -7350,7 +7404,7 @@ def test_build_spending_dataset_aggregates_ledger() -> None:
 
 def test_build_spending_dataset_excludes_upcoming_from_running_total() -> None:
     """A not-yet-delivered box appears flagged upcoming but is not counted in the running total."""
-    today = datetime.now(timezone.utc).date()
+    today = date.today()  # matches the integration's LOCAL delivery-date gating
     past = today - timedelta(days=7)
     future = today + timedelta(days=7)
     price_by_key = {

@@ -12,6 +12,7 @@ import binascii
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -270,13 +271,22 @@ def coerce_float(value: Any) -> float | None:
     if value is None:
         return None
     if isinstance(value, str):
-        value = _normalize_localized_number(value)
-        if value is None:
-            return None
+        # Try plain float() syntax first — it handles scientific notation ("1.5e3"),
+        # which the localized normalizer would mangle by stripping the exponent marker.
+        # Only fall back to locale normalization for strings float() rejects.
+        try:
+            result = float(value)
+        except ValueError:
+            value = _normalize_localized_number(value)
+            if value is None:
+                return None
+        else:
+            return result if math.isfinite(result) else None
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    return result if math.isfinite(result) else None
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,11 @@
 const MARKET_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
 function resizedImage(url, width) {
-  if (!url || !width) return url;
+  // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
+  // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
+  // attacker-chosen scheme/host has no business in the DOM at all.
+  if (!url || !/^https?:\/\//i.test(String(url))) return "";
+  if (!width) return url;
   return url.replace("/q_auto/", `/q_auto,w_${width}/`);
 }
 
@@ -82,6 +86,9 @@ class HelloFreshMarketCard extends HTMLElement {
     // Drop the pending toast timer so a detached card isn't kept alive (holding the whole
     // weeks payload) only to re-render into a shadow root nobody can see.
     clearTimeout(this._toastTimer);
+    // Also drop the toast itself: with the timer cancelled, a toast shown just before
+    // disconnect would otherwise repaint forever once the card reconnects.
+    this._toast = null;
   }
 
   setConfig(config) {
@@ -513,7 +520,11 @@ class HelloFreshMarketCard extends HTMLElement {
       else this._flash("Market selection updated.");
     } catch (err) {
       this._busy = false;
+      // Keep the unsaved quantities across the resync (which wipes _pending) so a failed
+      // save can just be retried instead of forcing the user to re-pick everything.
+      const unsaved = this._pending[week.week_id];
       await this._fetchWeeks(week.week_id); // resync from the source of truth
+      if (unsaved) this._pending[week.week_id] = unsaved;
       this._flash(`Selection failed: ${(err && err.message) || err}`, true);
     } finally {
       this._saving = null;
@@ -665,7 +676,7 @@ class HelloFreshMarketCard extends HTMLElement {
     return `
       <div class="statusrow">
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
-          Market total ${this._fmtPrice(totalCents / 100, currency)}${dirty ? " · unsaved" : ""}
+          Market total ${this._esc(this._fmtPrice(totalCents / 100, currency))}${dirty ? " · unsaved" : ""}
         </span>
         ${this._isPast(week)
           ? "" // Past weeks always show only what was ordered, so the toggle is meaningless.
