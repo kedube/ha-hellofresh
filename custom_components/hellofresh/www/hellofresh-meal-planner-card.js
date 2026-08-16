@@ -1449,12 +1449,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         return;
       }
 
-      // Dismissing the video overlay (backdrop or close button).
-      if (ev.target.closest("[data-video-close]")) {
-        ev.stopPropagation();
-        this._closeVideo();
-        return;
-      }
+      // NOTE: the video overlay is dismissed by its own listener in _openVideo, not here — it
+      // lives beside <ha-card> in the shadow root, so its clicks never reach this handler.
 
       // Recipe tile tap (only meaningful on editable weeks).
       const tile = ev.target.closest(".recipe.editable");
@@ -1503,23 +1499,34 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
     const overlay = document.createElement("div");
     overlay.className = "videowrap";
-    overlay.setAttribute("data-video-close", "");
     // HelloFresh serves both .mp4 and .mov. Chrome/Firefox cannot play .mov, so an explicit
     // "open in a new tab" fallback sits under the player instead of a silently black box.
     overlay.innerHTML = `
       <div class="videobox">
         <div class="videohead">
           <span class="videotitle">${this._esc(recipe.name)}</span>
-          <button class="videoclose" data-video-close title="Close">✕</button>
+          <button class="videoclose" title="Close" aria-label="Close video">✕</button>
         </div>
         <video class="videoel" src="${this._esc(url)}" controls autoplay playsinline></video>
         <a class="videofallback" href="${this._esc(url)}" target="_blank" rel="noopener noreferrer">
           Video not playing? Open it directly
         </a>
       </div>`;
-    // Clicks inside the player must not bubble to the backdrop's dismiss handler.
-    const box = overlay.querySelector(".videobox");
-    if (box) box.addEventListener("click", (ev) => ev.stopPropagation());
+    // The overlay is a SIBLING of <ha-card> in the shadow root, so the card's delegated click
+    // listener never sees these clicks — it must bind its own. (An earlier revision relied on
+    // that delegated handler and additionally stopped propagation on .videobox, which contains
+    // the ✕ button; between the two, neither the backdrop nor the close button could dismiss
+    // the lightbox.)
+    //
+    // The backdrop is matched by IDENTITY (ev.target === overlay), not by a data attribute on
+    // the overlay: closest() walks *up* from the target, so a dismiss marker on the overlay
+    // would match every click inside it — including one on the video — and close the lightbox
+    // the moment you tried to use the player controls.
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay || ev.target.closest(".videoclose")) {
+        this._closeVideo();
+      }
+    });
 
     this.shadowRoot.appendChild(overlay);
     this._videoOverlay = overlay;

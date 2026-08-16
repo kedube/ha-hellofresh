@@ -27,6 +27,10 @@ version heading and publishes it as the release's Highlights.
   the untransformed assets are ~1.7 MB each, versus ~20 KB for a grid tile.
 - All Recipes now matches the other dashboard cards' header sizing, which was noticeably
   smaller than My Menu, Market and Food Profile.
+- Fixed the recipe video lightbox being impossible to close: neither the ✕ button nor a
+  backdrop click dismissed it (only Escape worked). The overlay sits outside the card element
+  that carried the click handler, and a propagation guard meant to protect the player was also
+  swallowing clicks on the ✕. Clicking the video's own controls still does not close it.
 
 ## 2.49 — 2026-08-16
 - **Recipe videos in the meal planner** — meals that ship with a HelloFresh promo clip now
