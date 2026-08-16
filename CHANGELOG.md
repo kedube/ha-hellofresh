@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.53 — 2026-08-16
 - Fixed the recipe detail sheet showing no photo. The payload offers both a bare image path
   and a ready-made absolute URL, and the convenient one is dead — it points at a CloudFront
   host that now answers 502 for every path, the same host behind the missing catalog
