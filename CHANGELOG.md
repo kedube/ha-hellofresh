@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.51 — 2026-08-16
 - Fixed the integration failing to load entirely (`ServiceRegistry.async_register() got
   multiple values for argument 'schema'`): a duplicated argument in the
   `get_recipe_collections` registration shifted its handler onto the `schema` parameter.
