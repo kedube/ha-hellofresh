@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.49 — 2026-08-16
 - **Recipe videos in the meal planner** — meals that ship with a HelloFresh promo clip now
   show a ▶ button that opens the video in a lightbox. Coverage is sparse (a few meals out of
   several hundred per week), on past and upcoming weeks alike; the still image always stays
