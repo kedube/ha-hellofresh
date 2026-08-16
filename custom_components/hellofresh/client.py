@@ -1091,11 +1091,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     # changes on every HelloFresh web deploy, so it is scraped from the page HTML on first use,
     # cached, and re-scraped once when a request 404s (the signature of a stale id).
 
-    # Catalog rows carry a bare `imagePath` ("/image/foo.jpg") with no host. The paired
-    # imagePath/imageLink fields on the menus-service payload pin the host down: the same
-    # "/image/…" path resolves against this CloudFront distribution, whose "0,0" segment is
-    # the (no-op) crop transform the site uses for an unresized asset.
-    _CATALOG_IMAGE_BASE = "https://d3hvwccx09j84u.cloudfront.net/0,0"
+    # Catalog rows carry a bare `imagePath` ("/image/foo.jpg") with no host. Verified against
+    # the live site (the HAR captures never re-fetched these images, so they were browser-cached
+    # and absent from the export): the site renders them from Cloudinary as
+    #   https://img.hellofresh.com/<transform>/hellofresh_s3/image/<file>.jpg
+    # Note the `hellofresh_s3` segment, which is part of the path and not optional. The
+    # transform is what keeps the grid affordable — untransformed, this same asset is 1.7 MB
+    # versus 73 KB at w_640 — so a default width is baked in here rather than left to the card.
+    _CATALOG_IMAGE_BASE = "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
     _BUILD_ID_RE = re.compile(r'"buildId"\s*:\s*"([A-Za-z0-9._-]{1,64})"')
 
     async def _async_get_build_id(self, *, force_refresh: bool = False) -> str | None:

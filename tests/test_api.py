@@ -8181,8 +8181,12 @@ def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
 def test_catalog_image_path_resolves_against_the_cdn_host() -> None:
     """Catalog rows carry a bare `imagePath`; it must become a usable absolute URL.
 
-    The host is pinned by the menus-service payload, which returns the SAME "/image/…" path
-    in `imagePath` alongside a fully-qualified `imageLink` on this CloudFront distribution.
+    Verified against the live site rather than the HAR captures: the browser had these images
+    cached, so no image request appears in any export. An earlier revision inferred a
+    CloudFront host from the menus-service payload and shipped it — every URL it built 502'd,
+    so the whole catalog rendered imageless while this test happily asserted the broken value.
+    Hence the shape assertions below: the `hellofresh_s3` segment and the resize transform are
+    both load-bearing, and pinning them is what makes this test able to fail again.
     """
     from custom_components.hellofresh.models import HelloFreshCatalogRecipe
 
@@ -8196,9 +8200,13 @@ def test_catalog_image_path_resolves_against_the_cdn_host() -> None:
     )
 
     assert recipe.image_url == (
-        "https://d3hvwccx09j84u.cloudfront.net/0,0"
+        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
         "/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
     )
+    # The path segment Cloudinary needs; without it the CDN answers 404.
+    assert "/hellofresh_s3/image/" in recipe.image_url
+    # A width transform must be present: untransformed, this asset is ~1.7 MB versus ~73 KB.
+    assert "w_640" in recipe.image_url
 
 
 def test_catalog_absolute_image_url_is_left_alone() -> None:

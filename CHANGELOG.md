@@ -10,6 +10,24 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
+## Unreleased
+- Fixed the integration failing to load entirely (`ServiceRegistry.async_register() got
+  multiple values for argument 'schema'`): a duplicated argument in the
+  `get_recipe_collections` registration shifted its handler onto the `schema` parameter.
+  Service registrations are now checked structurally, so a malformed one fails a test instead
+  of setup.
+- Fixed every read-only service (`get_spending`, `get_plans`, `get_presets`,
+  `get_delivery_options`) raising `'HelloFreshDataUpdateCoordinator' object has no attribute
+  'async_get_*'` — most visibly as "Could not load spending" on the cost card. A second helper
+  with the same name shadowed the original and returned the coordinator instead of its client.
+- Fixed missing images throughout the All Recipes card: catalog rows carry a bare image path,
+  and the CDN host it was joined to was inferred rather than observed (the HAR captures never
+  re-fetched these images, so none appear in the exports). Every URL it produced 502'd. The
+  host is now verified against the live site, and thumbnails are requested at display width —
+  the untransformed assets are ~1.7 MB each, versus ~20 KB for a grid tile.
+- All Recipes now matches the other dashboard cards' header sizing, which was noticeably
+  smaller than My Menu, Market and Food Profile.
+
 ## 2.49 — 2026-08-16
 - **Recipe videos in the meal planner** — meals that ship with a HelloFresh promo clip now
   show a ▶ button that opens the video in a lightbox. Coverage is sparse (a few meals out of
