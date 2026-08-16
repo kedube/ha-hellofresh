@@ -1036,7 +1036,6 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         SERVICE_GET_RECIPE_COLLECTIONS,
-    SERVICE_GET_RECIPE_DETAIL,
         async_get_recipe_collections,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
         supports_response=SupportsResponse.ONLY,
