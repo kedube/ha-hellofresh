@@ -84,6 +84,7 @@ class HelloFreshRecipesCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.shadowRoot.adoptedStyleSheets = [HelloFreshRecipesCard._sheet()];
     this._collections = [];
+    this._subcollections = [];
     this._recipes = [];
     this._collection = null;
     this._loading = false;
@@ -177,12 +178,16 @@ class HelloFreshRecipesCard extends HTMLElement {
         // the heart is filled here rather than resolved per recipe.
         const payload = await this._call("get_favorites");
         this._recipes = (payload.favorites || []).map((f) => ({ ...f, is_favorite: true }));
+        this._subcollections = [];
       } else {
         const payload = await this._call("get_catalog_recipes", {
           ...(this._collection ? { collection: this._collection } : {}),
           limit: Number(this._config.limit) || DEFAULT_LIMIT,
         });
         this._recipes = payload.recipes || [];
+        // Categories can nest (Noodle -> Ramen/Udon/…). These children are absent from the
+        // top-level category list, so this second row is the only route to them.
+        this._subcollections = payload.subcollections || [];
       }
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -310,12 +315,24 @@ class HelloFreshRecipesCard extends HTMLElement {
     // mixed into the catalog collections. A leading "@" cannot collide with a real slug.
     const cookbook = `<button class="chip ${this._collection === COOKBOOK_SLUG ? "active" : ""}"
          data-collection="${COOKBOOK_SLUG}">♥ Cookbook</button>`;
+    // Second row: the selected category's own children (Noodle -> Ramen / Udon / Rice / …).
+    // These are absent from the top-level list, so without this row they are unreachable.
+    // Rendered only when the current category has any, so the bar stays one row elsewhere.
+    // A nested category must be requested by its PATH ("noodle-recipes/ramen-noodles"), not
+    // its bare slug — /recipes/ramen-noodles 301-redirects away and yields no recipes.
+    const subs = this._subcollections.length
+      ? `<div class="chips subchips">
+           <span class="sublabel">Refine</span>
+           ${this._subcollections.map((c) => chip(c.path || c.slug, c.name)).join("")}
+         </div>`
+      : "";
     return `
       <div class="chips">
         ${chip("", "Top rated")}
         ${cookbook}
-        ${this._collections.map((c) => chip(c.slug, c.name)).join("")}
-      </div>`;
+        ${this._collections.map((c) => chip(c.path || c.slug, c.name)).join("")}
+      </div>
+      ${subs}`;
   }
 
   _renderRecipe(recipe) {
@@ -575,6 +592,16 @@ class HelloFreshRecipesCard extends HTMLElement {
         .chips {
           display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 12px;
         }
+        /* Sub-category row: visually subordinate to the main bar so the two don't read as one
+           flat list of equals. Only rendered when the selected category has children. */
+        .subchips {
+          align-items: center; padding-top: 0; margin-top: -6px;
+        }
+        .sublabel {
+          font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.04em;
+          color: var(--secondary-text-color); margin-right: 2px;
+        }
+        .subchips .chip { font-size: 0.78em; }
         .chip {
           border: 1px solid var(--divider-color); background: transparent; cursor: pointer;
           border-radius: 14px; padding: 4px 10px; font-size: 0.82em;

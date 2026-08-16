@@ -752,13 +752,16 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def async_get_catalog_recipes(service_call: ServiceCall) -> ServiceResponse:
         """Return recipes from the public catalog, optionally filtered to one collection."""
         coordinator = _single_coordinator(service_call)
-        recipes = await coordinator.client.async_get_catalog_recipes(
+        page = await coordinator.client.async_get_catalog_page(
             service_call.data.get(ATTR_COLLECTION),
             limit=int(service_call.data.get(ATTR_LIMIT, 40)),
         )
         return {
-            "collection": service_call.data.get(ATTR_COLLECTION),
-            "recipes": [recipe.as_dict() for recipe in recipes],
+            "collection": page["collection"],
+            "recipes": [recipe.as_dict() for recipe in page["recipes"]],
+            # Child categories of this collection (Noodle -> Ramen/Udon/…). Not present in the
+            # top-level category list, so this is the only way to reach them.
+            "subcollections": [sub.as_dict() for sub in page["subcollections"]],
         }
 
     async def async_preview_meal_price(service_call: ServiceCall) -> ServiceResponse:

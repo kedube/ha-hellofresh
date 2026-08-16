@@ -1339,13 +1339,28 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         ``include_favorites`` is set, each recipe is flagged with its bookmark state in one
         extra batched request.
         """
-        if collection:
-            page = f"recipes/{collection}.json"
-            params = {"main-collection": collection}
-        else:
-            page = "recipes.json"
-            params = None
+        page, params = self._catalog_page_params(collection)
         payload = await self._async_get_catalog_json(page, params)
+        return await self._catalog_recipes_from_payload(
+            payload, collection=collection, limit=limit, include_favorites=include_favorites
+        )
+
+    @staticmethod
+    def _catalog_page_params(collection: str | None) -> tuple[str, dict[str, str] | None]:
+        """Return the (data-URL page, params) pair for a catalog listing."""
+        if collection:
+            return f"recipes/{collection}.json", {"main-collection": collection}
+        return "recipes.json", None
+
+    async def _catalog_recipes_from_payload(
+        self,
+        payload: Any,
+        *,
+        collection: str | None,
+        limit: int,
+        include_favorites: bool,
+    ) -> list[HelloFreshCatalogRecipe]:
+        """Parse, dedupe and favorite-flag the recipe rows on a catalog page."""
         rows = self._extract_catalog_rows(payload, collection=collection)
 
         recipes: list[HelloFreshCatalogRecipe] = []
@@ -1364,6 +1379,41 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             for recipe in recipes:
                 recipe.is_favorite = recipe.recipe_id in favorites
         return recipes
+
+    async def async_get_catalog_page(
+        self,
+        collection: str | None = None,
+        *,
+        limit: int = 40,
+        include_favorites: bool = True,
+    ) -> dict[str, Any]:
+        """Return one catalog page: its recipes plus any sub-categories it offers.
+
+        Categories can nest — Noodle Recipes has Ramen / Udon / Rice / Soba / Yakisoba, Chicken
+        Recipes has eight — and those children are **not** in the top-level category list, so
+        without this they are unreachable from the card. They are returned alongside the
+        recipes because the page already carries them: surfacing them costs no extra request.
+        """
+        page, params = self._catalog_page_params(collection)
+        payload = await self._async_get_catalog_json(page, params)
+        recipes = await self._catalog_recipes_from_payload(
+            payload, collection=collection, limit=limit, include_favorites=include_favorites
+        )
+        return {
+            "collection": collection,
+            "recipes": recipes,
+            "subcollections": self._extract_subcollections(payload),
+        }
+
+    def _extract_subcollections(self, payload: Any) -> list[HelloFreshRecipeCollection]:
+        """Return the child categories of the collection this page represents."""
+        docs = self._nested_get(payload, "pageProps", "ssrPayload", "collection", "children", "docs")
+        out: list[HelloFreshRecipeCollection] = []
+        for row in docs if isinstance(docs, list) else []:
+            parsed = HelloFreshRecipeCollection.from_api(row, image_base=self._CATALOG_IMAGE_BASE)
+            if parsed is not None:
+                out.append(parsed)
+        return out
 
     @staticmethod
     def _extract_catalog_rows(payload: Any, *, collection: str | None = None) -> list[dict[str, Any]]:
@@ -1391,6 +1441,16 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         ssr = HelloFreshClient._nested_get(payload, "pageProps", "ssrPayload")
         if not isinstance(ssr, dict):
             return rows
+
+        # `collection.recipes` is the category's OWN canonical listing and by far the richest
+        # source — 30 rows for Noodle where the query cache holds 10, 17 vs 8 for Indian. The
+        # react-query entries below are the page's small "Quick & Easy" / "Most Recent" rails,
+        # which overlap it but do contribute a few extras, so both are merged (deduped by
+        # recipe id in async_get_catalog_recipes). Reading only the rails is what made a
+        # category show ~10 recipes when the website listed 30.
+        collection_rows = HelloFreshClient._nested_get(ssr, "collection", "recipes")
+        if isinstance(collection_rows, list):
+            rows.extend(row for row in collection_rows if isinstance(row, dict))
 
         queries = HelloFreshClient._nested_get(ssr, "dehydratedState", "queries")
         for query in queries if isinstance(queries, list) else []:

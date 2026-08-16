@@ -10,6 +10,19 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
+## Unreleased
+- Fixed categories in the All Recipes card showing far fewer recipes than the website: Noodle
+  Recipes listed 10 where the site shows 30, Chicken 14 where the site shows 30. The page
+  carries the category's canonical recipe list *and* a couple of small "Quick & Easy" /
+  "Most Recent" rails, and only the rails were being read. Both are now merged and deduped —
+  Noodle goes 10 → 34, Chicken 14 → 42.
+- **Sub-categories are now browsable** — selecting a category that has children (Noodle →
+  Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) shows a
+  second "Refine" chip row. These children never appear in HelloFresh's top-level category
+  list, so they were previously unreachable. They also cannot be fetched by their bare slug —
+  `/recipes/ramen-noodles` redirects away — so `get_catalog_recipes` now reports each child's
+  full `path` alongside its slug.
+
 ## 2.57 — 2026-08-16
 - Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.
   HelloFresh began returning 404 for every `_next/data` catalog URL — on every build id,
