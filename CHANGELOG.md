@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.58 — 2026-08-16
 - Fixed categories in the All Recipes card showing far fewer recipes than the website: Noodle
   Recipes listed 10 where the site shows 30, Chicken 14 where the site shows 30. The page
   carries the category's canonical recipe list *and* a couple of small "Quick & Easy" /
