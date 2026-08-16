@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.57 — 2026-08-16
 - Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.
   HelloFresh began returning 404 for every `_next/data` catalog URL — on every build id,
   including ones that had just worked — while the corresponding pages kept rendering
