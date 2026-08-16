@@ -8403,6 +8403,82 @@ def test_category_listing_does_not_fall_back_to_best_rated() -> None:
     assert rows == []
 
 
+def test_category_listing_includes_the_collections_own_recipe_list() -> None:
+    """`collection.recipes` is the category's canonical listing and must be read.
+
+    Reading only the react-query rails gave ~10 recipes for a category the website lists 30 for
+    (Noodle: 10 vs 30; Chicken: 14 vs 30). Both sources are merged — the rails do contribute a
+    few extras — and deduped by recipe id downstream.
+    """
+    payload = _catalog_page_payload()
+    payload["pageProps"]["ssrPayload"]["collection"] = {
+        "recipes": [
+            {"recipeId": "c1", "name": "Szechuan Pork Noodle Stir-Fry"},
+            {"recipeId": "c2", "name": "Chicken Ramen in a Shoyu-Style Broth"},
+        ]
+    }
+
+    rows = HelloFreshClient._extract_catalog_rows(payload, collection="noodle-recipes")
+    names = [row["name"] for row in rows]
+
+    assert "Szechuan Pork Noodle Stir-Fry" in names
+    assert "Chicken Ramen in a Shoyu-Style Broth" in names
+    # The rails' own rows still contribute.
+    assert "Tandoori Chicken" in names
+    # ...and the generic best-rated list is still excluded.
+    assert not any("Fondue" in name for name in names)
+
+
+def test_nested_category_path_comes_from_breadcrumbs() -> None:
+    """A child category is NOT reachable at its bare slug.
+
+    /recipes/ramen-noodles 301-redirects away; the real page is
+    /recipes/noodle-recipes/ramen-noodles. The breadcrumb trail carries that path, so `path`
+    (not `slug`) is what a lookup must use.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeCollection
+
+    child = HelloFreshRecipeCollection.from_api(
+        {
+            "id": "abc",
+            "slug": "ramen-noodles",
+            "name": "Ramen Noodle Recipes",
+            "breadcrumbs": [
+                {"url": "/recipes", "label": "Recipes"},
+                {"url": "/recipes/noodle-recipes", "label": "Noodle Recipes"},
+                {"url": "/recipes/noodle-recipes/ramen-noodles", "label": "Ramen"},
+            ],
+        }
+    )
+
+    assert child.slug == "ramen-noodles"
+    assert child.path == "noodle-recipes/ramen-noodles"
+    assert child.as_dict()["path"] == "noodle-recipes/ramen-noodles"
+
+
+def test_collection_path_falls_back_to_the_slug() -> None:
+    """A top-level category has no useful breadcrumb depth; its slug IS its path."""
+    from custom_components.hellofresh.models import HelloFreshRecipeCollection
+
+    top = HelloFreshRecipeCollection.from_api({"slug": "noodle-recipes", "name": "Noodle"})
+
+    assert top.path == "noodle-recipes"
+    assert top.as_dict()["path"] == "noodle-recipes"
+
+
+def test_catalog_page_url_handles_a_nested_collection() -> None:
+    """A nested path must produce a nested data URL, not a flattened one."""
+    assert HelloFreshClient._catalog_page_params(None)[0] == "recipes.json"
+    assert (
+        HelloFreshClient._catalog_page_params("noodle-recipes")[0]
+        == "recipes/noodle-recipes.json"
+    )
+    assert (
+        HelloFreshClient._catalog_page_params("noodle-recipes/ramen-noodles")[0]
+        == "recipes/noodle-recipes/ramen-noodles.json"
+    )
+
+
 def test_recipe_collections_are_not_truncated_or_filtered() -> None:
     """Every category HelloFresh publishes must survive parsing.
 

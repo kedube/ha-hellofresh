@@ -1170,6 +1170,11 @@ class HelloFreshRecipeCollection:
     name: str
     collection_id: str | None = None
     thumbnail_url: str | None = None
+    # Catalog path relative to /recipes/, WITHOUT a leading slash: "noodle-recipes" for a
+    # top-level category, "noodle-recipes/ramen-noodles" for a child. A nested category is NOT
+    # reachable at its bare slug — /recipes/ramen-noodles 301-redirects away — so this, not
+    # `slug`, is what a lookup must use.
+    path: str | None = None
 
     @classmethod
     def from_api(cls, raw: dict[str, Any], *, image_base: str | None = None) -> Any:
@@ -1192,7 +1197,26 @@ class HelloFreshRecipeCollection:
             name=name,
             collection_id=raw.get("id") if isinstance(raw.get("id"), str) else None,
             thumbnail_url=thumbnail_url,
+            path=cls._path_from_breadcrumbs(raw.get("breadcrumbs")) or slug,
         )
+
+    @staticmethod
+    def _path_from_breadcrumbs(breadcrumbs: Any) -> str | None:
+        """Derive the catalog path from a row's breadcrumb trail.
+
+        The last crumb's ``url`` is the category's real page ("/recipes/noodle-recipes/
+        ramen-noodles"); everything after "/recipes/" is the path a lookup needs.
+        """
+        if not isinstance(breadcrumbs, list) or not breadcrumbs:
+            return None
+        last = breadcrumbs[-1]
+        url = last.get("url") if isinstance(last, dict) else None
+        if not isinstance(url, str):
+            return None
+        prefix = "/recipes/"
+        if not url.startswith(prefix):
+            return None
+        return url[len(prefix) :].strip("/") or None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1200,6 +1224,9 @@ class HelloFreshRecipeCollection:
             "name": self.name,
             "collection_id": self.collection_id,
             "thumbnail_url": self.thumbnail_url,
+            # What a lookup must pass back as `collection` — differs from `slug` for a nested
+            # category, which is not reachable at its bare slug.
+            "path": self.path or self.slug,
         }
 
 
