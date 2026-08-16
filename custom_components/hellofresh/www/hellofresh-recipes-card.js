@@ -30,6 +30,9 @@ const RECIPES_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "
 
 const LOGO_URL = "/hellofresh/hellofresh-logo.png";
 const DEFAULT_LIMIT = 40;
+// Sentinel "collection" for the customer's own cookbook, which comes from a different service
+// than the browse catalog. The "@" prefix cannot collide with a real HelloFresh category slug.
+const COOKBOOK_SLUG = "@cookbook";
 
 // Rewrite a HelloFresh image URL to the width we actually display. This matters more than it
 // looks: the catalog's hero JPEGs are ~1.7 MB untransformed and ~73 KB at w_640, and the grid
@@ -167,11 +170,20 @@ class HelloFreshRecipesCard extends HTMLElement {
         const collections = await this._call("get_recipe_collections");
         this._collections = collections.collections || [];
       }
-      const payload = await this._call("get_catalog_recipes", {
-        ...(this._collection ? { collection: this._collection } : {}),
-        limit: Number(this._config.limit) || DEFAULT_LIMIT,
-      });
-      this._recipes = payload.recipes || [];
+      if (this._collection === COOKBOOK_SLUG) {
+        // The cookbook is the customer's own saved list, served by a different endpoint than
+        // the browse catalog. Its rows use the same field names the grid already reads, except
+        // that everything in it is by definition a favorite — the list IS the favorites — so
+        // the heart is filled here rather than resolved per recipe.
+        const payload = await this._call("get_favorites");
+        this._recipes = (payload.favorites || []).map((f) => ({ ...f, is_favorite: true }));
+      } else {
+        const payload = await this._call("get_catalog_recipes", {
+          ...(this._collection ? { collection: this._collection } : {}),
+          limit: Number(this._config.limit) || DEFAULT_LIMIT,
+        });
+        this._recipes = payload.recipes || [];
+      }
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -197,6 +209,12 @@ class HelloFreshRecipesCard extends HTMLElement {
         recipe_id: recipe.recipe_id,
       });
       recipe.is_favorite = makeFavorite;
+      // In the cookbook view the list IS the favorites, so an un-favorited row no longer
+      // belongs in it — drop it rather than leaving a hollow heart on a recipe that is no
+      // longer saved. Elsewhere the row is browse content and stays put.
+      if (!makeFavorite && this._collection === COOKBOOK_SLUG) {
+        this._recipes = this._recipes.filter((r) => r.recipe_id !== recipe.recipe_id);
+      }
       this._flash(makeFavorite ? "Added to your cookbook." : "Removed from your cookbook.");
       // Let the meal-planner card re-read its hearts without a full page refresh.
       window.dispatchEvent(new CustomEvent("hellofresh-data-changed", { detail: {} }));
@@ -272,7 +290,11 @@ class HelloFreshRecipesCard extends HTMLElement {
       return `${chips}<div class="msg">Loading recipes…</div>`;
     }
     if (!this._recipes.length) {
-      return `${chips}<div class="msg">No recipes found.</div>`;
+      // An empty cookbook is a normal state, not a failed search — say so plainly.
+      const empty = this._collection === COOKBOOK_SLUG
+        ? "Your cookbook is empty. Tap the ♥ on any recipe to save it here."
+        : "No recipes found.";
+      return `${chips}<div class="msg">${empty}</div>`;
     }
     return `${chips}<div class="grid">${this._recipes.map((r) => this._renderRecipe(r)).join("")}</div>`;
   }
@@ -283,9 +305,15 @@ class HelloFreshRecipesCard extends HTMLElement {
       const active = (this._collection || "") === slug ? "active" : "";
       return `<button class="chip ${active}" data-collection="${this._esc(slug)}">${this._esc(name)}</button>`;
     };
+    // The cookbook is not one of HelloFresh's browse categories — it is the customer's own
+    // saved list, from a different service — so it gets a sentinel slug rather than being
+    // mixed into the catalog collections. A leading "@" cannot collide with a real slug.
+    const cookbook = `<button class="chip ${this._collection === COOKBOOK_SLUG ? "active" : ""}"
+         data-collection="${COOKBOOK_SLUG}">♥ Cookbook</button>`;
     return `
       <div class="chips">
         ${chip("", "Top rated")}
+        ${cookbook}
         ${this._collections.map((c) => chip(c.slug, c.name)).join("")}
       </div>`;
   }
@@ -410,18 +438,21 @@ class HelloFreshRecipesCard extends HTMLElement {
     if (!this._detailOverlay) {
       const overlay = document.createElement("div");
       overlay.className = "detailwrap";
-      overlay.setAttribute("data-detail-close", "");
       // The overlay is a sibling of the <ha-card>, so the card's delegated listener never
-      // sees its clicks — it needs its own. Backdrop and close both dismiss; the servings
-      // switcher refetches at the chosen yield.
+      // sees its clicks — it needs its own. The servings switcher refetches at the chosen
+      // yield; backdrop and ✕ dismiss.
+      //
+      // The backdrop is matched by IDENTITY, not by a marker attribute on the overlay:
+      // closest() walks *up* from the event target, so a marker there matches every click
+      // inside the panel and would dismiss the sheet when you picked a serving size or
+      // selected recipe text.
       overlay.addEventListener("click", (ev) => {
         const servingsBtn = ev.target.closest("[data-servings]");
         if (servingsBtn) {
-          ev.stopPropagation();
           this._openDetail(this._detailId, Number(servingsBtn.getAttribute("data-servings")));
           return;
         }
-        if (ev.target.closest("[data-detail-close]")) this._closeDetail();
+        if (ev.target === overlay || ev.target.closest(".detailclose")) this._closeDetail();
       });
       this.shadowRoot.appendChild(overlay);
       this._detailOverlay = overlay;
@@ -430,14 +461,15 @@ class HelloFreshRecipesCard extends HTMLElement {
       };
       document.addEventListener("keydown", this._detailKeyHandler);
     }
+    // No propagation guard on .detailbox: the ✕ lives inside it, so swallowing every click
+    // there also swallowed the close button. The handler above distinguishes the backdrop by
+    // identity instead, which needs no guard — and attaching one here would re-bind on every
+    // render anyway, since this innerHTML assignment replaces the node it was bound to.
     this._detailOverlay.innerHTML = this._renderDetailBody();
-    // Clicks inside the panel must not reach the backdrop's dismiss handler.
-    const box = this._detailOverlay.querySelector(".detailbox");
-    if (box) box.addEventListener("click", (ev) => ev.stopPropagation());
   }
 
   _renderDetailBody() {
-    const close = `<button class="detailclose" data-detail-close title="Close">✕</button>`;
+    const close = `<button class="detailclose" title="Close" aria-label="Close recipe">✕</button>`;
     if (this._detailLoading && !this._detail) {
       return `<div class="detailbox"><div class="detailhead">${close}</div>
                 <div class="msg">Loading recipe…</div></div>`;
