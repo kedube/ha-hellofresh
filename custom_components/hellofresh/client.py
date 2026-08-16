@@ -1274,7 +1274,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             page = "recipes.json"
             params = None
         payload = await self._async_get_catalog_json(page, params)
-        rows = self._extract_catalog_rows(payload)
+        rows = self._extract_catalog_rows(payload, collection=collection)
 
         recipes: list[HelloFreshCatalogRecipe] = []
         seen: set[str] = set()
@@ -1294,13 +1294,26 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         return recipes
 
     @staticmethod
-    def _extract_catalog_rows(payload: Any) -> list[dict[str, Any]]:
+    def _extract_catalog_rows(payload: Any, *, collection: str | None = None) -> list[dict[str, Any]]:
         """Pull recipe rows out of a catalog page's react-query cache.
 
         The listing lives in ``dehydratedState.queries`` under a ``foodContentHubRecipe.*`` key,
         whose data is ``{"pages": [...]}`` — despite the name, ``pages`` is the flat recipe list,
-        not pagination. ``bestRatedRecipes`` on the page payload has the same shape and is used
-        as a fallback when the query cache layout shifts.
+        not pagination.
+
+        **A category page carries several such queries, and only some belong to the category.**
+        A page for e.g. ``flatbread-recipes`` holds:
+
+        * one or more queries whose ``where`` clause has **``recipeCollectionTags.id``** — these
+          are the category's own recipes (the actual flatbreads);
+        * a generic "best rated overall" query, distinguished by having **no** collection tag
+          (it filters on ``ratingsCount >= 100`` instead), which is the SAME top-20 list on
+          every category page.
+
+        Concatenating all of them let the generic list dominate — it is the largest and comes
+        last — so every category rendered the same top-rated recipes and "Indian Recipes"
+        showed no Indian food. When a collection is requested, the untagged query is therefore
+        skipped; without one (the top-level listing) it is exactly what we want.
         """
         rows: list[dict[str, Any]] = []
         ssr = HelloFreshClient._nested_get(payload, "pageProps", "ssrPayload")
@@ -1311,8 +1324,19 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         for query in queries if isinstance(queries, list) else []:
             if not isinstance(query, dict):
                 continue
-            key = json.dumps(query.get("queryKey", ""), default=str)
-            if "foodContentHubRecipe" not in key or "Collection" in key:
+            key = query.get("queryKey")
+            # Match on the query NAME only. Testing the serialized key was subtly wrong: the
+            # category queries carry `recipeCollectionTags` inside their `where` clause, so a
+            # blanket "Collection" test threw away the very rows we want and left only the
+            # generic list — which is what made every category show the same recipes.
+            name = key[0] if isinstance(key, list) and key else key
+            if not isinstance(name, str) or not name.startswith("foodContentHubRecipe."):
+                continue
+            if name.startswith("foodContentHubRecipeCollection"):
+                # Collection *metadata* (the category's own title/description), not recipes.
+                continue
+            if collection and not HelloFreshClient._query_is_collection_scoped(key):
+                # Generic cross-site listing on a category page — not this category's recipes.
                 continue
             data = HelloFreshClient._nested_get(query, "state", "data")
             if not isinstance(data, dict):
@@ -1321,12 +1345,32 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 if isinstance(candidate, list):
                     rows.extend(row for row in candidate if isinstance(row, dict))
 
-        if not rows:
+        if not rows and not collection:
+            # Only meaningful for the top-level listing: `bestRatedRecipes` IS the generic list,
+            # so falling back to it for a category would reintroduce the wrong-recipes bug.
             fallback = ssr.get("bestRatedRecipes")
             pages = fallback.get("pages") if isinstance(fallback, dict) else None
             if isinstance(pages, list):
                 rows.extend(row for row in pages if isinstance(row, dict))
         return rows
+
+    @staticmethod
+    def _query_is_collection_scoped(query_key: Any) -> bool:
+        """Return True when a react-query key filters on a recipe-collection tag.
+
+        The key is ``[name, {"searchParams": {"where": {...}}}]``; a category-scoped query
+        constrains ``recipeCollectionTags.id``. Matched textually against the ``where`` clause
+        so a nested/renamed operator (``equals``, ``in``, …) still counts.
+        """
+        if not isinstance(query_key, list) or len(query_key) < 2:
+            return False
+        params = query_key[1]
+        if not isinstance(params, dict):
+            return False
+        where = HelloFreshClient._nested_get(params, "searchParams", "where")
+        if not isinstance(where, dict):
+            return False
+        return "recipeCollectionTags" in json.dumps(where, default=str)
 
     @staticmethod
     def _nested_get(node: Any, *keys: str) -> Any:

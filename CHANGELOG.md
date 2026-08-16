@@ -10,6 +10,17 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
+## Unreleased
+- Fixed every category in the All Recipes card showing the same recipes: picking **Indian
+  Recipes** listed beef fondue and steak, and so did every other category. A category page
+  embeds several recipe queries — some scoped to that category, plus a generic "best rated
+  overall" list that is identical on every page — and the integration merged all of them, so
+  the generic list (the largest, and last) swamped the real results. Two faults compounded:
+  a filter meant to skip the category's *metadata* query matched on the whole serialized
+  query key, and the category queries mention the collection inside their filter clause, so
+  the correct rows were discarded before the merge even happened. Categories now read only
+  their own recipes; the top-level listing still shows the best-rated selection.
+
 ## 2.53 — 2026-08-16
 - Fixed the recipe detail sheet showing no photo. The payload offers both a bare image path
   and a ready-made absolute URL, and the convenient one is dead — it points at a CloudFront
