@@ -31,16 +31,33 @@ const RECIPES_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "
 const LOGO_URL = "/hellofresh/hellofresh-logo.png";
 const DEFAULT_LIMIT = 40;
 
-// Catalog thumbnails come from HelloFresh's CloudFront distribution, whose path carries a
-// "<width>,<height>" crop segment before /image/ ("…/0,0/image/foo.jpg" = unresized). Setting
-// the width there keeps the grid light instead of pulling full-size hero JPEGs. The Cloudinary
-// `/q_auto/` form is also handled, since other HelloFresh payloads use that host instead.
-// Only plain http(s) URLs may reach an <img src>, so an attacker-chosen scheme never lands
-// in the DOM; an unrecognized URL shape is returned unchanged rather than mangled.
+// Rewrite a HelloFresh image URL to the width we actually display. This matters more than it
+// looks: the catalog's hero JPEGs are ~1.7 MB untransformed and ~73 KB at w_640, and the grid
+// shows dozens at once.
+//
+// Three URL shapes occur across HelloFresh's payloads:
+//   1. Cloudinary WITH a transform — img.hellofresh.com/f_auto,q_auto,w_450/hellofresh_s3/image/…
+//      Rewrite an existing w_<n>, or append one to the transform segment when absent.
+//   2. Cloudinary WITHOUT a transform — img.hellofresh.com/hellofresh_s3/image/…
+//      Insert a transform segment before `hellofresh_s3`. Skipping this is what serves the
+//      full 1.7 MB asset.
+//   3. CloudFront crop form — …/<w>,<h>/image/… , where "0,0" means unresized.
+// Only plain http(s) URLs may reach an <img src>, so an attacker-chosen scheme never lands in
+// the DOM; an unrecognized shape is returned unchanged rather than mangled.
 function resizedImage(url, width) {
   if (!url || !/^https?:\/\//i.test(String(url))) return "";
   const raw = String(url);
   if (!width) return raw;
+  if (raw.includes("/hellofresh_s3/")) {
+    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
+    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
+      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
+    }
+    return raw.replace(
+      "/hellofresh_s3/",
+      `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`,
+    );
+  }
   if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
   return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
 }
@@ -507,12 +524,16 @@ class HelloFreshRecipesCard extends HTMLElement {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(`
         :host { display: block; }
+        /* Header sizing is deliberately identical to the other HelloFresh cards (planner,
+           market, food profile): 12px gap, a 40px square logo and a 1.5em/500 title. The
+           title size lives on .title rather than .head so it cannot cascade into the toolbar
+           button beside it. */
         .head {
-          display: flex; align-items: center; gap: 8px;
-          padding: 16px 16px 8px; font-size: 1.2em; font-weight: 500;
+          display: flex; align-items: center; gap: 12px;
+          padding: 16px 16px 8px;
         }
-        .head .title { flex: 1; }
-        .logo { height: 22px; width: auto; }
+        .head .title { flex: 1; font-size: 1.5em; font-weight: 500; }
+        .logo { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; flex: none; }
         .iconbtn {
           border: none; background: transparent; cursor: pointer; font-size: 1.1em;
           color: var(--secondary-text-color); padding: 4px 8px; border-radius: 6px;
@@ -557,7 +578,7 @@ class HelloFreshRecipesCard extends HTMLElement {
         .name a { color: inherit; text-decoration: none; }
         .name a:hover { text-decoration: underline; }
         .desc {
-          font-size: 0.78em; color: var(--secondary-text-color); line-height: 1.3;
+          font-size: 0.8em; color: var(--secondary-text-color); line-height: 1.3;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
           overflow: hidden;
         }

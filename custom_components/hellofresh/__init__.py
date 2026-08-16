@@ -662,8 +662,16 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """
         return await _single_client(service_call).async_get_spending()
 
-    def _single_client(service_call: ServiceCall):
-        """Return the one targeted coordinator's client, or raise if ambiguous."""
+    def _single_coordinator(service_call: ServiceCall):
+        """Resolve the one target coordinator, or raise if ambiguous.
+
+        Distinct from ``_single_client`` above, which unwraps to ``.client``. Services that
+        only read go through that; services that also need to trigger a refresh after a write
+        need the coordinator itself. Keeping the two names distinct matters: an earlier
+        revision defined a second function *also* called ``_single_client`` that returned the
+        coordinator, which silently shadowed the original and broke every read-only service
+        with "'HelloFreshDataUpdateCoordinator' object has no attribute 'async_get_*'".
+        """
         coordinators = _get_target_coordinators(service_call)
         if len(coordinators) != 1:
             raise HomeAssistantError(
@@ -679,7 +687,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         "which of THESE are bookmarked?", which returns ids only — useful for decorating a
         menu you already have in hand.
         """
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         recipe_ids = list(service_call.data.get(ATTR_RECIPE_IDS) or [])
         if not recipe_ids:
             favorites = await coordinator.client.async_list_favorites()
@@ -708,7 +716,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         Unlike the browse catalog, this reads a plain HelloFresh API rather than the website's
         Next.js data URLs, so it does not depend on the site's build id.
         """
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         detail = await coordinator.client.async_get_recipe_detail(
             service_call.data[ATTR_RECIPE_ID],
             servings=service_call.data.get(ATTR_SERVINGS),
@@ -717,7 +725,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     async def async_add_favorite(service_call: ServiceCall) -> ServiceResponse:
         """Bookmark a recipe in the customer's cookbook."""
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         favorite = await coordinator.client.async_add_favorite(service_call.data[ATTR_RECIPE_ID])
         await coordinator.async_request_refresh()
         return {"favorite": favorite.as_dict()}
@@ -728,7 +736,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         The delete endpoint is inferred rather than HAR-confirmed, so this can fail even when
         the recipe is genuinely favorited; the error explains that when it happens.
         """
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         removed = await coordinator.client.async_remove_favorite(
             service_call.data[ATTR_RECIPE_ID]
         )
@@ -737,13 +745,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     async def async_get_recipe_collections(service_call: ServiceCall) -> ServiceResponse:
         """Return the browsable categories of the public recipe catalog."""
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         collections = await coordinator.client.async_get_recipe_collections()
         return {"collections": [collection.as_dict() for collection in collections]}
 
     async def async_get_catalog_recipes(service_call: ServiceCall) -> ServiceResponse:
         """Return recipes from the public catalog, optionally filtered to one collection."""
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         recipes = await coordinator.client.async_get_catalog_recipes(
             service_call.data.get(ATTR_COLLECTION),
             limit=int(service_call.data.get(ATTR_LIMIT, 40)),
@@ -755,7 +763,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     async def async_preview_meal_price(service_call: ServiceCall) -> ServiceResponse:
         """Price a hypothetical meal selection without saving it."""
-        coordinator = _single_client(service_call)
+        coordinator = _single_coordinator(service_call)
         return await coordinator.client.async_preview_meal_price(
             service_call.data[ATTR_WEEK_ID],
             list(service_call.data[ATTR_RECIPE_IDS]),
