@@ -245,3 +245,143 @@ get_spending:
       required: false
       selector:
         text:
+
+get_favorites:
+  name: Get favorites
+  description: >-
+    Return your HelloFresh cookbook. With no arguments, lists every bookmark
+    with full detail (title, image, times, nutrition) — including ones the
+    HelloFresh website hides, since its cookbook page only shows a 3-item
+    preview. Pass recipe_ids instead to ask the cheaper filter endpoint which
+    of THOSE are bookmarked (ids only). Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    recipe_ids:
+      required: false
+      example: '["694053fe353e00bd89ba2d3e"]'
+      selector:
+        object:
+
+add_favorite:
+  name: Add favorite
+  description: >-
+    Bookmark a recipe in the HelloFresh cookbook.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    recipe_id:
+      required: true
+      example: 694053fe353e00bd89ba2d3e
+      selector:
+        text:
+
+remove_favorite:
+  name: Remove favorite
+  description: >-
+    Remove a recipe bookmark from the HelloFresh cookbook.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    recipe_id:
+      required: true
+      example: 694053fe353e00bd89ba2d3e
+      selector:
+        text:
+
+get_recipe_collections:
+  name: Get recipe collections
+  description: >-
+    Return the browsable categories of the public HelloFresh recipe catalog
+    (Chicken Recipes, Carb Smart, Hall of Fame, …). Read-only; returns a
+    response. Use a returned slug with Get catalog recipes.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+get_catalog_recipes:
+  name: Get catalog recipes
+  description: >-
+    Return recipes from the public HelloFresh recipe catalog, optionally within
+    one collection. This is browse content for all customers, independent of
+    your subscription and delivery weeks. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    collection:
+      required: false
+      example: chicken-recipes
+      selector:
+        text:
+    limit:
+      required: false
+      default: 40
+      selector:
+        number:
+          min: 1
+          max: 200
+          mode: box
+
+preview_meal_price:
+  name: Preview meal price
+  description: >-
+    Price a hypothetical meal selection for a week without saving it — the
+    grand total, subtotal, shipping, tax, and any per-meal premium surcharges.
+    Read-only: nothing is written to your account. Only works for weeks that
+    are still bookable.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      example: 2026-W39
+      selector:
+        text:
+    recipe_ids:
+      required: true
+      example: '["69e91aa2fe534c766c45a33a"]'
+      selector:
+        object:
+    quantities:
+      required: false
+      example: '{"69e91aa2fe534c766c45a33a": 2}'
+      selector:
+        object:
+
+get_recipe_detail:
+  name: Get recipe detail
+  description: >-
+    Return one recipe's full cooking detail — ingredients (scaled to a serving
+    count), step-by-step instructions, utensils, allergens, nutrition, and a
+    link to the printable recipe card. Works for any recipe id, whether it came
+    from a delivery week or the browse catalog. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    recipe_id:
+      required: true
+      example: 6819dfd55efe69a088447ef3
+      selector:
+        text:
+    servings:
+      required: false
+      example: 4
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box

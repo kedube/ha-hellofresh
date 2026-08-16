@@ -21,6 +21,7 @@ from .models import (
 )
 from .parsers import (
     MAX_SEARCH_DEPTH,
+    clean_optional_str,
     coerce_float,
     coerce_int,
     date_from_iso_week,
@@ -29,6 +30,7 @@ from .parsers import (
     extract_tracking_details,
     find_nested_collection,
     looks_like_recipe_collection,
+    money_to_cents,
     normalize_candidate_dict_list,
     parse_date,
     parse_datetime,
@@ -274,11 +276,23 @@ class HelloFreshPayloadNormalizer:
             fallback_to_node=True,
         )
 
+    @staticmethod
+    def _recipe_node(raw_meal: dict[str, Any]) -> dict[str, Any]:
+        """Return the dict actually carrying a meal's recipe fields.
+
+        Most payloads nest them under ``recipe``, but the past-deliveries endpoint puts them
+        directly on the meal AND still emits an empty ``recipe: {}`` alongside. Testing only
+        ``isinstance(..., dict)`` therefore picked the empty dict and lost the name, image and
+        video for every delivered meal, so the nested node is used only when it is non-empty.
+        """
+        nested = raw_meal.get("recipe")
+        if isinstance(nested, dict) and nested:
+            return nested
+        return raw_meal
+
     def _extract_recipe_id_from_raw_meal(self, raw_meal: dict[str, Any]) -> str:
         """Extract just the recipe id from a raw meal dict without full object construction."""
-        recipe_data = (
-            raw_meal.get("recipe") if isinstance(raw_meal.get("recipe"), dict) else raw_meal
-        )
+        recipe_data = self._recipe_node(raw_meal)
         name = (
             recipe_data.get("name") or recipe_data.get("title") or recipe_data.get("slug") or "Meal"
         )
@@ -298,9 +312,7 @@ class HelloFreshPayloadNormalizer:
         variation_titles: dict[int, str] | None = None,
     ) -> HelloFreshRecipe:
         """Create a recipe from a recipe-like payload."""
-        recipe_data = (
-            raw_meal.get("recipe") if isinstance(raw_meal.get("recipe"), dict) else raw_meal
-        )
+        recipe_data = self._recipe_node(raw_meal)
         name = (
             recipe_data.get("name") or recipe_data.get("title") or recipe_data.get("slug") or "Meal"
         )
@@ -390,6 +402,10 @@ class HelloFreshPayloadNormalizer:
             image_url=recipe_data.get("imagePath")
             or recipe_data.get("image")
             or recipe_data.get("imageUrl"),
+            # `videoLink` (my-deliveries/menu, menus-service) is the only spelling HelloFresh
+            # uses for the promo clip; it is simply absent on the majority of meals and on every
+            # past-delivery payload, so a missing value is normal rather than an error.
+            video_url=clean_optional_str(recipe_data.get("videoLink")),
             description=recipe_data.get("description") or recipe_data.get("headline"),
             ingredients=ingredients,
             allergens=allergens,
@@ -405,7 +421,59 @@ class HelloFreshPayloadNormalizer:
             surcharge_cents=surcharge_cents,
             badge=badge,
             variation_title=variation_title,
+            # Availability flags live on the MEAL/course wrapper (menus-service), not on the
+            # recipe node, so they are read from raw_meal regardless of which node won above.
+            is_sold_out=bool(raw_meal.get("isSoldOut")),
+            is_hidden=bool(raw_meal.get("isHidden")),
+            related_category=clean_optional_str(raw_meal.get("relatedCategory")),
+            **self._price_fields(raw_meal),
+            **self._feedback_fields(recipe_data),
         )
+
+    @staticmethod
+    def _price_fields(raw_meal: dict[str, Any]) -> dict[str, Any]:
+        """Extract the meal's real per-serving price from the delivery menu's ``itemPrice``.
+
+        Distinct from the ``charge`` block already parsed as ``surcharge_*``: that is only the
+        premium *uplift*, whereas this is what the serving actually costs. Only the delivery
+        menu carries it (menus-service omits it), so absence is normal.
+        """
+        item_price = raw_meal.get("itemPrice")
+        if not isinstance(item_price, dict):
+            return {}
+        per_unit = item_price.get("pricePerUnit")
+        cents = money_to_cents(per_unit)
+        out: dict[str, Any] = {"price_group": clean_optional_str(item_price.get("group"))}
+        if cents is not None:
+            out["price_cents"] = cents
+            out["price"] = cents / 100
+        if isinstance(per_unit, dict):
+            out["currency"] = clean_optional_str(per_unit.get("currencyCode"))
+        return out
+
+    @staticmethod
+    def _feedback_fields(recipe_data: dict[str, Any]) -> dict[str, Any]:
+        """Extract HelloFresh's per-recipe ``feedback`` block.
+
+        It carries EITHER a delivery-history pair (``productDeliveryCount`` +
+        ``lastDeliveryWeek``) OR the customer's own star rating (``rating`` + ``ratingScale``),
+        never both — so each is mapped independently rather than assuming one shape.
+        """
+        feedback = recipe_data.get("feedback")
+        if not isinstance(feedback, dict):
+            return {}
+        out: dict[str, Any] = {}
+        delivered = coerce_int(feedback.get("productDeliveryCount"))
+        if delivered is not None:
+            out["delivered_count"] = delivered
+        last_week = clean_optional_str(feedback.get("lastDeliveryWeek"))
+        if last_week:
+            out["last_delivered_week"] = last_week
+        rating = coerce_int(feedback.get("rating"))
+        if rating is not None:
+            out["rating"] = rating
+            out["rating_scale"] = coerce_int(feedback.get("ratingScale"))
+        return out
 
     @staticmethod
     def _build_variation_titles(raw_week: dict[str, Any]) -> dict[int, str]:

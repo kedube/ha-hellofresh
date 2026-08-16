@@ -19,18 +19,23 @@ import voluptuous as vol
 from .api import HelloFreshClient, HelloFreshError, HelloFreshNotImplementedError
 from .client import _token_fingerprint
 from .const import (
+    ATTR_COLLECTION,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_DELIVERY_INTERVAL,
     ATTR_DELIVERY_OPTION,
     ATTR_GOALS,
     ATTR_HOUSEHOLD,
+    ATTR_LIMIT,
     ATTR_QUANTITIES,
+    ATTR_RECIPE_ID,
     ATTR_RECIPE_IDS,
+    ATTR_SERVINGS,
     ATTR_SUBSCRIPTION_ID,
     ATTR_TASTE,
     ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
@@ -44,6 +49,7 @@ from .const import (
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
+    DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_MENU_GRACE_WEEKS,
@@ -51,15 +57,22 @@ from .const import (
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DOMAIN,
     PLATFORMS,
+    SERVICE_ADD_FAVORITE,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
     SERVICE_GET_ACCOUNT_SUMMARY,
+    SERVICE_GET_CATALOG_RECIPES,
     SERVICE_GET_DELIVERY_OPTIONS,
+    SERVICE_GET_FAVORITES,
     SERVICE_GET_FOOD_PROFILE,
     SERVICE_GET_PLANS,
     SERVICE_GET_PRESETS,
+    SERVICE_GET_RECIPE_COLLECTIONS,
+    SERVICE_GET_RECIPE_DETAIL,
     SERVICE_GET_SPENDING,
     SERVICE_GET_WEEKS,
+    SERVICE_PREVIEW_MEAL_PRICE,
     SERVICE_REFRESH_DATA,
+    SERVICE_REMOVE_FAVORITE,
     SERVICE_RESCHEDULE_WEEK,
     SERVICE_SELECT_MARKET_ITEMS,
     SERVICE_SELECT_MEALS,
@@ -316,6 +329,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_ENABLE_PUBLIC_MENU_FALLBACK,
             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
         ),
+        enable_favorites=entry.options.get(CONF_ENABLE_FAVORITES, DEFAULT_ENABLE_FAVORITES),
         history_weeks=entry.options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
         menu_grace_weeks=entry.options.get(CONF_MENU_GRACE_WEEKS, DEFAULT_MENU_GRACE_WEEKS),
         token_refresh_callback=_persist_refreshed_token,
@@ -582,7 +596,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         client = coordinators[0].client
         profile = await client.async_get_food_profile()
         options = await client.async_get_food_profile_options()
-        return {"profile": profile.as_dict(), "options": options.as_dict()}
+        # How much of the profile is filled in, so the card can show a progress figure.
+        # Best-effort — None when HelloFresh doesn't answer, and the card just omits it.
+        completion = await client.async_get_food_profile_completion()
+        return {
+            "profile": profile.as_dict(),
+            "options": options.as_dict(),
+            "completion": completion.as_dict() if completion is not None else None,
+        }
 
     async def async_set_food_profile(service_call: ServiceCall) -> ServiceResponse:
         """Update the customer's food profile (auto-preselection preferences).
@@ -640,6 +661,106 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         HelloFresh spend, not just the schedule window. Powers the cost card.
         """
         return await _single_client(service_call).async_get_spending()
+
+    def _single_client(service_call: ServiceCall):
+        """Return the one targeted coordinator's client, or raise if ambiguous."""
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        return coordinators[0]
+
+    async def async_get_favorites(service_call: ServiceCall) -> ServiceResponse:
+        """Return the customer's cookbook bookmarks.
+
+        With no ``recipe_ids``, the whole cookbook is listed with full detail (title, image,
+        times, nutrition). Passing ``recipe_ids`` instead asks the cheaper filter endpoint
+        "which of THESE are bookmarked?", which returns ids only — useful for decorating a
+        menu you already have in hand.
+        """
+        coordinator = _single_client(service_call)
+        recipe_ids = list(service_call.data.get(ATTR_RECIPE_IDS) or [])
+        if not recipe_ids:
+            favorites = await coordinator.client.async_list_favorites()
+            # HelloFresh also runs a second, separate favorites store ("cfs") behind its
+            # /recipes/favorites page. It is reported alongside rather than merged: the two
+            # are not synchronized, and in all captured traffic it was empty while the
+            # cookbook held bookmarks. Surfacing it separately means a user who does have
+            # rows there can see them without the counts silently disagreeing.
+            secondary = await coordinator.client.async_get_cfs_favorites()
+            return {
+                "favorites": [favorite.as_dict() for favorite in favorites],
+                "favorite_recipe_ids": sorted({f.recipe_id for f in favorites}),
+                "total": len(favorites),
+                "secondary_favorites": secondary,
+            }
+        found = await coordinator.client.async_get_favorite_recipe_ids(recipe_ids)
+        return {
+            "favorites": [favorite.as_dict() for favorite in found.values()],
+            "favorite_recipe_ids": sorted(found),
+            "checked_count": len(recipe_ids),
+        }
+
+    async def async_get_recipe_detail(service_call: ServiceCall) -> ServiceResponse:
+        """Return one recipe's full cooking detail.
+
+        Unlike the browse catalog, this reads a plain HelloFresh API rather than the website's
+        Next.js data URLs, so it does not depend on the site's build id.
+        """
+        coordinator = _single_client(service_call)
+        detail = await coordinator.client.async_get_recipe_detail(
+            service_call.data[ATTR_RECIPE_ID],
+            servings=service_call.data.get(ATTR_SERVINGS),
+        )
+        return {"recipe": detail.as_dict()}
+
+    async def async_add_favorite(service_call: ServiceCall) -> ServiceResponse:
+        """Bookmark a recipe in the customer's cookbook."""
+        coordinator = _single_client(service_call)
+        favorite = await coordinator.client.async_add_favorite(service_call.data[ATTR_RECIPE_ID])
+        await coordinator.async_request_refresh()
+        return {"favorite": favorite.as_dict()}
+
+    async def async_remove_favorite(service_call: ServiceCall) -> ServiceResponse:
+        """Remove a recipe bookmark.
+
+        The delete endpoint is inferred rather than HAR-confirmed, so this can fail even when
+        the recipe is genuinely favorited; the error explains that when it happens.
+        """
+        coordinator = _single_client(service_call)
+        removed = await coordinator.client.async_remove_favorite(
+            service_call.data[ATTR_RECIPE_ID]
+        )
+        await coordinator.async_request_refresh()
+        return {"removed": removed}
+
+    async def async_get_recipe_collections(service_call: ServiceCall) -> ServiceResponse:
+        """Return the browsable categories of the public recipe catalog."""
+        coordinator = _single_client(service_call)
+        collections = await coordinator.client.async_get_recipe_collections()
+        return {"collections": [collection.as_dict() for collection in collections]}
+
+    async def async_get_catalog_recipes(service_call: ServiceCall) -> ServiceResponse:
+        """Return recipes from the public catalog, optionally filtered to one collection."""
+        coordinator = _single_client(service_call)
+        recipes = await coordinator.client.async_get_catalog_recipes(
+            service_call.data.get(ATTR_COLLECTION),
+            limit=int(service_call.data.get(ATTR_LIMIT, 40)),
+        )
+        return {
+            "collection": service_call.data.get(ATTR_COLLECTION),
+            "recipes": [recipe.as_dict() for recipe in recipes],
+        }
+
+    async def async_preview_meal_price(service_call: ServiceCall) -> ServiceResponse:
+        """Price a hypothetical meal selection without saving it."""
+        coordinator = _single_client(service_call)
+        return await coordinator.client.async_preview_meal_price(
+            service_call.data[ATTR_WEEK_ID],
+            list(service_call.data[ATTR_RECIPE_IDS]),
+            dict(service_call.data.get(ATTR_QUANTITIES) or {}),
+        )
 
     async def async_select_meals(service_call: ServiceCall) -> ServiceResponse:
         """Submit meal selections.
@@ -858,6 +979,97 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_FAVORITES,
+        async_get_favorites,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                # Optional: defaults to every recipe across the known weeks. The cookbook API
+                # is a filter, so something must be supplied to check against.
+                vol.Optional(ATTR_RECIPE_IDS): [str],
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_FAVORITE,
+        async_add_favorite,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_RECIPE_ID): str,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_FAVORITE,
+        async_remove_favorite,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_RECIPE_ID): str,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_RECIPE_DETAIL,
+        async_get_recipe_detail,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_RECIPE_ID): str,
+                # Which yields entry the ingredient amounts are scaled to (2, 4, ...).
+                # Defaults to the smallest the recipe offers.
+                vol.Optional(ATTR_SERVINGS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_RECIPE_COLLECTIONS,
+    SERVICE_GET_RECIPE_DETAIL,
+        async_get_recipe_collections,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_CATALOG_RECIPES,
+        async_get_catalog_recipes,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                # Collection slug from get_recipe_collections; omit for the top-level listing.
+                vol.Optional(ATTR_COLLECTION): str,
+                vol.Optional(ATTR_LIMIT, default=40): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=200)
+                ),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PREVIEW_MEAL_PRICE,
+        async_preview_meal_price,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_WEEK_ID): str,
+                vol.Required(ATTR_RECIPE_IDS): vol.All([str], vol.Length(min=1)),
+                vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,

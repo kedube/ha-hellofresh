@@ -294,6 +294,41 @@ def coerce_float(value: Any) -> float | None:
 # ---------------------------------------------------------------------------
 
 
+def money_to_cents(value: Any) -> int | None:
+    """Convert a protobuf-style ``{units, nanos}`` money object to whole cents.
+
+    HelloFresh sends prices as ``{"currencyCode": "USD", "units": 17, "nanos": 980000000}``
+    — units are whole currency, nanos are billionths. 17 + 0.98 -> 1798 cents. Rounding is
+    done on the combined value so a price like 10.99 can't land on 1098 through float error.
+    Returns None for anything that isn't a usable money object.
+    """
+    if not isinstance(value, dict):
+        return None
+    units = value.get("units")
+    nanos = value.get("nanos")
+    if isinstance(units, str) and units.lstrip("-").isdigit():
+        units = int(units)
+    if isinstance(units, bool) or not isinstance(units, (int, float)):
+        units = 0 if nanos is not None else None
+    if isinstance(nanos, bool) or not isinstance(nanos, (int, float)):
+        nanos = 0
+    if units is None:
+        return None
+    return round(units * 100 + nanos / 10_000_000)
+
+
+def clean_optional_str(value: Any) -> str | None:
+    """Return a stripped string, or None for anything blank or non-string.
+
+    HelloFresh payloads express "no value" inconsistently — a missing key, an explicit null, or
+    an empty string — and all three should collapse to None so callers can test one condition.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def slugify(text: str) -> str:
     """Create a stable id from text."""
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")

@@ -66,6 +66,14 @@ MAX_MENU_GRACE_WEEKS = 3
 CONF_SHOW_DATA_QUALITY_ISSUES = "show_data_quality_issues"
 DEFAULT_SHOW_DATA_QUALITY_ISSUES = True
 
+# Whether each poll should resolve which meals are bookmarked in the customer's cookbook, so
+# the meal-planner card can show a favorite heart. Costs one extra batched request per refresh
+# (HelloFresh has no "list my favorites" endpoint — the ids on the menu must be sent to a
+# filter endpoint to learn which are bookmarked). Turn off to skip that request entirely; the
+# add/remove favorite services keep working either way.
+CONF_ENABLE_FAVORITES = "enable_favorites"
+DEFAULT_ENABLE_FAVORITES = True
+
 PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
@@ -89,6 +97,13 @@ SERVICE_GET_DELIVERY_OPTIONS = "get_delivery_options"
 SERVICE_GET_PLANS = "get_plans"
 SERVICE_GET_PRESETS = "get_presets"
 SERVICE_GET_SPENDING = "get_spending"
+SERVICE_ADD_FAVORITE = "add_favorite"
+SERVICE_REMOVE_FAVORITE = "remove_favorite"
+SERVICE_GET_FAVORITES = "get_favorites"
+SERVICE_GET_RECIPE_COLLECTIONS = "get_recipe_collections"
+SERVICE_GET_CATALOG_RECIPES = "get_catalog_recipes"
+SERVICE_PREVIEW_MEAL_PRICE = "preview_meal_price"
+SERVICE_GET_RECIPE_DETAIL = "get_recipe_detail"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
@@ -97,6 +112,10 @@ ATTR_GOALS = "goals"
 ATTR_RECIPE_IDS = "recipe_ids"
 ATTR_QUANTITIES = "quantities"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_RECIPE_ID = "recipe_id"
+ATTR_COLLECTION = "collection"
+ATTR_LIMIT = "limit"
+ATTR_SERVINGS = "servings"
 ATTR_DELIVERY_OPTION = "delivery_option"
 ATTR_DELIVERY_INTERVAL = "delivery_interval"
 ATTR_SUBSCRIPTION_ID = "subscription_id"
