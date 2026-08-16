@@ -467,7 +467,7 @@
         },
         "limit": {
           "name": "Limit",
-          "description": "Maximum number of recipes to return (1-200; default 40)."
+          "description": "Maximum number of recipes to return (1-200; default 50)."
         }
       }
     },

@@ -16,6 +16,9 @@ version heading and publishes it as the release's Highlights.
   carries the category's canonical recipe list *and* a couple of small "Quick & Easy" /
   "Most Recent" rails, and only the rails were being read. Both are now merged and deduped —
   Noodle goes 10 → 34, Chicken 14 → 42.
+- The All Recipes card now loads **50** recipes per category by default (was 40), so the
+  larger categories are no longer clipped — Chicken has 42. Still configurable via the card's
+  `limit` option and the `get_catalog_recipes` service (1–200).
 - **Sub-categories are now browsable** — selecting a category that has children (Noodle →
   Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) shows a
   second "Refine" chip row. These children never appear in HelloFresh's top-level category

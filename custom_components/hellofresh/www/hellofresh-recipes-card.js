@@ -18,7 +18,7 @@
  *   config_entry_id: <optional>     # required only when multiple HelloFresh accounts exist
  *   title: HelloFresh Recipes       # optional card header
  *   collection: chicken-recipes     # optional starting category slug
- *   limit: 40                       # optional recipes per category (1-200)
+ *   limit: 50                       # optional recipes per category (1-200)
  *   logo: true                      # optional bundled HelloFresh logo in the header
  *
  * No build step: hand-written ES2020 served from the integration's www/ directory.
@@ -29,7 +29,7 @@
 const RECIPES_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
 const LOGO_URL = "/hellofresh/hellofresh-logo.png";
-const DEFAULT_LIMIT = 40;
+const DEFAULT_LIMIT = 50;
 // Sentinel "collection" for the customer's own cookbook, which comes from a different service
 // than the browse catalog. The "@" prefix cannot collide with a real HelloFresh category slug.
 const COOKBOOK_SLUG = "@cookbook";
