@@ -173,6 +173,30 @@ def test_cookbook_is_reachable_from_the_card() -> None:
     assert "${cookbook}" in returned, "cookbook chip is built but never rendered"
 
 
+def test_every_collection_is_rendered_as_a_chip() -> None:
+    """All ~60 categories must render, not a slice.
+
+    HelloFresh publishes around sixty categories and the chips are the card's only route into
+    one, so a `.slice(0, n)` here would quietly hide whole cuisines (Indian, Korean, Thai …)
+    while the bar still looked populated.
+    """
+    collections = re.search(r"^  _renderCollections\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert collections, "_renderCollections not found"
+    body = collections.group(0)
+
+    assert "this._collections.map(" in body, "collections are not mapped to chips"
+    assert ".slice(" not in body, "the chip list is truncated"
+
+
+def test_collections_are_fetched_without_a_cap() -> None:
+    """`get_recipe_collections` takes no limit; the card must not invent one."""
+    fetch = re.search(r"^  async _fetch\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert fetch, "_fetch not found"
+    call = re.search(r'_call\("get_recipe_collections"(.*?)\)', fetch.group(0), re.S)
+    assert call, "get_recipe_collections is not called"
+    assert call.group(1).strip() in ("", ","), "collections are fetched with unexpected arguments"
+
+
 def test_cookbook_view_calls_the_favorites_service() -> None:
     """The cookbook comes from get_favorites, not the browse catalog endpoint."""
     fetch = re.search(r"^  async _fetch\(\) \{.*?^  \}", SOURCE, re.S | re.M)
