@@ -10,6 +10,15 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
+## Unreleased
+- Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.
+  HelloFresh began returning 404 for every `_next/data` catalog URL — on every build id,
+  including ones that had just worked — while the corresponding pages kept rendering
+  normally, so the build-id re-scrape that normally heals a deploy had nothing to recover.
+  The same data is embedded in each page's `__NEXT_DATA__` blob, so the integration now falls
+  back to reading it from the page when the JSON route fails. The cheap JSON URL is still
+  tried first, and no extra request is made while it works.
+
 ## 2.56 — 2026-08-16
 - Fixed every category in the All Recipes card showing the same recipes: picking **Indian
   Recipes** listed beef fondue and steak, and so did every other category. A category page
