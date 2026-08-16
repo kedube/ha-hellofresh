@@ -1329,7 +1329,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self,
         collection: str | None = None,
         *,
-        limit: int = 40,
+        limit: int = 50,
         include_favorites: bool = True,
     ) -> list[HelloFreshCatalogRecipe]:
         """Return recipes from the browse catalog, optionally within one collection.
@@ -1384,7 +1384,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self,
         collection: str | None = None,
         *,
-        limit: int = 40,
+        limit: int = 50,
         include_favorites: bool = True,
     ) -> dict[str, Any]:
         """Return one catalog page: its recipes plus any sub-categories it offers.

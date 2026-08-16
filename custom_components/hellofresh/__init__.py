@@ -754,7 +754,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         coordinator = _single_coordinator(service_call)
         page = await coordinator.client.async_get_catalog_page(
             service_call.data.get(ATTR_COLLECTION),
-            limit=int(service_call.data.get(ATTR_LIMIT, 40)),
+            limit=int(service_call.data.get(ATTR_LIMIT, 50)),
         )
         return {
             "collection": page["collection"],
@@ -1060,7 +1060,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
                 # Collection slug from get_recipe_collections; omit for the top-level listing.
                 vol.Optional(ATTR_COLLECTION): str,
-                vol.Optional(ATTR_LIMIT, default=40): vol.All(
+                vol.Optional(ATTR_LIMIT, default=50): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=200)
                 ),
             }
