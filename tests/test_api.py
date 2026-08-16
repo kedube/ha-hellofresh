@@ -8062,6 +8062,116 @@ def test_catalog_build_id_is_refreshed_once_on_404() -> None:
     assert "/_next/data/fresh-build/recipes.json" in requested
 
 
+def _next_data_html(payload: dict) -> str:
+    """A rendered catalog page carrying its SSR payload, as the real site ships it."""
+    return (
+        "<html><body><div>markup</div>"
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(payload)
+        + "</script></body></html>"
+    )
+
+
+def test_catalog_falls_back_to_page_html_when_the_data_url_404s() -> None:
+    """A 404 on EVERY build id must not empty the card.
+
+    HelloFresh has served 404 for every `_next/data` catalog URL while the corresponding pages
+    rendered perfectly — the All Recipes card reported "No recipes found" for the whole
+    catalog. The same payload is embedded in the page's __NEXT_DATA__ blob, so the card keeps
+    working through it.
+    """
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "b1"
+    requested: list[str] = []
+    # The HTML blob wraps the payload under `props`; the data URL does not.
+    blob = {"props": {"pageProps": {"ssrPayload": {"marker": "from-html"}}}}
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        requested.append(path)
+        if path.startswith("/_next/data/"):
+            return _StubResponse(404)
+        if path == "/recipes":
+            # Serves both the build-id re-scrape and the HTML fallback.
+            return _StubResponse(200, text=_next_data_html(blob))
+        return _StubResponse(404)
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client._async_get_catalog_json("recipes.json"))
+
+    # Unwrapped to the same shape the data URL returns, so callers need no special casing.
+    assert result == {"pageProps": {"ssrPayload": {"marker": "from-html"}}}
+    assert any(p.startswith("/_next/data/") for p in requested), "data URL was not tried first"
+
+
+def test_catalog_html_fallback_maps_a_category_page_to_its_path() -> None:
+    """`recipes/<slug>.json` must fall back to the `/recipes/<slug>` page, not `/recipes`."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "b1"
+    requested: list[str] = []
+    blob = {"props": {"pageProps": {"ssrPayload": {"marker": "indian"}}}}
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        requested.append(path)
+        if path.startswith("/_next/data/"):
+            return _StubResponse(404)
+        return _StubResponse(200, text=_next_data_html(blob))
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(
+        client._async_get_catalog_json("recipes/indian-recipes.json")
+    )
+
+    assert result == {"pageProps": {"ssrPayload": {"marker": "indian"}}}
+    assert "/recipes/indian-recipes" in requested
+
+
+def test_catalog_prefers_the_data_url_when_it_works() -> None:
+    """The fallback must not add a page fetch when the cheap JSON route is healthy."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "b1"
+    requested: list[str] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        requested.append(path)
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {"pageProps": {"ssrPayload": {"marker": "from-json"}}}
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client._async_get_catalog_json("recipes.json"))
+
+    assert result == {"pageProps": {"ssrPayload": {"marker": "from-json"}}}
+    assert requested == ["/_next/data/b1/recipes.json"], "an extra page fetch was made"
+
+
+def test_catalog_html_fallback_survives_an_unparseable_page() -> None:
+    """A page with no (or broken) __NEXT_DATA__ must return None, not raise."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "b1"
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        if path.startswith("/_next/data/"):
+            return _StubResponse(404)
+        return _StubResponse(200, text="<html><body>no blob here</body></html>")
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    assert loop.run_until_complete(client._async_get_catalog_json("recipes.json")) is None
+
+
 def test_preview_meal_price_prices_hypothetical_selection() -> None:
     """Preview must price the REQUESTED courses, not the week's saved selection."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]

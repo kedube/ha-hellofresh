@@ -1123,7 +1123,34 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self._record_debug_attempt("catalog_attempts", {"build_id": self._build_id})
         return self._build_id
 
+    # The same SSR payload the `_next/data` JSON returns is also embedded in the rendered page
+    # inside <script id="__NEXT_DATA__">. It is the fallback when the JSON URL is unavailable.
+    _NEXT_DATA_RE = re.compile(
+        r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S
+    )
+
     async def _async_get_catalog_json(self, page: str, params: dict[str, str] | None = None) -> Any:
+        """Fetch one catalog document's SSR payload.
+
+        Tries the `_next/data` JSON URL first (small and precise), refreshing a stale build id
+        once on 404, then falls back to scraping the same payload out of the rendered page's
+        ``__NEXT_DATA__`` blob.
+
+        The fallback is not paranoia: HelloFresh has served **404 for every `_next/data`
+        catalog URL on every build id** while the corresponding pages render perfectly, which
+        made the whole All Recipes card report "No recipes found". A cached 200 can linger for
+        hours after the origin starts refusing (an observed response had `age: 38586`), so a
+        URL that works once is not evidence the route is healthy. The page HTML carries the
+        identical payload, so the card keeps working through it.
+        """
+        payload = await self._async_get_catalog_data_url(page, params)
+        if payload is not None:
+            return payload
+        return await self._async_get_catalog_from_html(page, params)
+
+    async def _async_get_catalog_data_url(
+        self, page: str, params: dict[str, str] | None = None
+    ) -> Any:
         """Fetch one Next.js data document, refreshing a stale build id once on 404."""
         for attempt in (0, 1):
             build_id = await self._async_get_build_id(force_refresh=attempt == 1)
@@ -1136,7 +1163,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 self._record_debug_attempt("catalog_attempts", {"path": path, "error": str(err)})
                 return None
             if response.status == 404 and attempt == 0:
-                # Almost always a deploy rotating the build id: drop the cache and retry once.
+                # Usually a deploy rotating the build id: drop the cache and retry once.
                 _LOGGER.debug("HelloFresh catalog 404 for %s; refreshing build id", path)
                 continue
             if response.status >= 400:
@@ -1146,6 +1173,51 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 return None
             return await self._async_response_json(response)
         return None
+
+    async def _async_get_catalog_from_html(
+        self, page: str, params: dict[str, str] | None = None
+    ) -> Any:
+        """Scrape a catalog page's SSR payload out of its rendered HTML.
+
+        ``page`` is the data-URL form (``recipes.json`` / ``recipes/<slug>.json``); the
+        corresponding page path is the same with the ``.json`` suffix dropped.
+
+        Returns the payload in the SAME shape the data URL yields, so callers need no special
+        casing: the HTML blob nests the payload under ``props``, which is unwrapped here.
+        """
+        path = "/" + page[: -len(".json")] if page.endswith(".json") else "/" + page
+        try:
+            response = await self._async_api_request("GET", path, params=params)
+            if response.status >= 400:
+                raise HelloFreshError(f"HTTP {response.status}")
+            html = await response.text()
+        except HelloFreshError as err:
+            self._record_debug_attempt(
+                "catalog_attempts", {"path": path, "fallback": "html", "error": str(err)}
+            )
+            return None
+
+        match = self._NEXT_DATA_RE.search(html)
+        if match is None:
+            self._record_debug_attempt(
+                "catalog_attempts", {"path": path, "fallback": "html", "error": "no __NEXT_DATA__"}
+            )
+            return None
+        try:
+            blob = json.loads(match.group(1))
+        except ValueError as err:
+            self._record_debug_attempt(
+                "catalog_attempts", {"path": path, "fallback": "html", "error": str(err)}
+            )
+            return None
+
+        # The data URL returns {pageProps: ...}; the HTML blob wraps that under `props`.
+        props = blob.get("props") if isinstance(blob, dict) else None
+        payload = props if isinstance(props, dict) else blob
+        self._record_debug_attempt(
+            "catalog_attempts", {"path": path, "fallback": "html", "status": response.status}
+        )
+        return payload
 
     async def async_get_recipe_collections(self) -> list[HelloFreshRecipeCollection]:
         """Return the browsable recipe categories (Chicken, Carb Smart, Hall of Fame, ...)."""
