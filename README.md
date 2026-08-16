@@ -429,7 +429,7 @@ type: custom:hellofresh-recipes-card
 
 What it does:
 
-- **Category chips** — the catalog's own browsable categories (Top rated, Chicken Recipes, Carb Smart, Hall of Fame, …), fetched once and switched without a page reload.
+- **Category chips** — every category HelloFresh publishes, fetched from the site itself and switched without a page reload. This is not a curated subset: the US catalog currently returns **~60** of them, spanning cuisines (Indian, Korean, Thai, Cuban, Vietnamese, …), dish types (Pasta, Burger, Risotto, Soup, …), and dietary lines (Carb Smart, Calorie Smart, Plant-Based, Pescatarian, …). The list is whatever HelloFresh serves on the day, so new categories appear on their own with no integration update.
 - **♥ Cookbook** — a chip alongside the categories that lists **your** saved recipes instead of catalog browse content. This shows every bookmark, including the ones HelloFresh's own website hides: its cookbook page only ever renders a 3-item preview, while the underlying endpoint reports the true total and pages the rest. Un-favoriting a recipe here removes it from the list rather than leaving a hollow heart on something you no longer have saved.
 - **Recipe grid** — thumbnail, name (linking to the recipe on hellofresh.com), headline, star rating with its ratings count, and prep time.
 - **Favorite hearts** — tap to add or remove a recipe from your HelloFresh cookbook. Both directions are verified against HelloFresh's real endpoints; a rejected write surfaces as an error rather than a heart that silently springs back.

@@ -8178,6 +8178,46 @@ def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
     ]
 
 
+def test_recipe_collections_are_not_truncated_or_filtered() -> None:
+    """Every category HelloFresh publishes must survive parsing.
+
+    The chips are the card's only way to reach a category, so silently dropping rows makes
+    whole cuisines unreachable while the card still looks complete — the failure mode that
+    prompted "I don't see Indian recipes in the list". The real US catalog returns ~60
+    categories; this fixture mirrors its shape, including rows that must NOT be dropped
+    (no image, extra unknown keys) alongside genuinely unusable ones.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeCollection
+
+    docs = [
+        {"slug": "chicken-recipes", "name": "Chicken Recipes", "imagePath": "/image/c.jpg"},
+        {"slug": "indian-recipes", "name": "Indian Recipes", "imagePath": "/image/i.jpg"},
+        # No image: still a perfectly navigable category.
+        {"slug": "thai-recipes", "name": "Thai Recipes"},
+        # Unknown extra keys must not disqualify a row.
+        {"slug": "korean-recipes", "name": "Korean Recipes", "somethingNew": {"a": 1}},
+        # Genuinely unusable — no slug to navigate to, no name to label.
+        {"name": "Nameless"},
+        {"slug": "no-name-recipes"},
+        "not a dict",
+    ]
+
+    parsed = [
+        HelloFreshRecipeCollection.from_api(row, image_base=HelloFreshClient._CATALOG_IMAGE_BASE)
+        for row in docs
+    ]
+    kept = [row for row in parsed if row is not None]
+
+    assert [row.slug for row in kept] == [
+        "chicken-recipes",
+        "indian-recipes",
+        "thai-recipes",
+        "korean-recipes",
+    ]
+    # An imageless category is navigable and must be kept, image or not.
+    assert next(row for row in kept if row.slug == "thai-recipes").name == "Thai Recipes"
+
+
 def test_catalog_image_path_resolves_against_the_cdn_host() -> None:
     """Catalog rows carry a bare `imagePath`; it must become a usable absolute URL.
 
