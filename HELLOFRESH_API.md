@@ -608,6 +608,76 @@ These additional read endpoints the web app uses are exposed as optional read-on
 
   Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](README.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
 
+### Cookbook favorites (`/gw/cookbook/v1/…`)
+
+HelloFresh's cookbook is the customer's own bookmark list. Its naming is genuinely counter-intuitive and worth reading carefully before changing this code: bookmarks are **created** under `internal-recipes` but **listed and deleted** under `external-recipes`.
+
+| Purpose | Method | Path | Notes |
+| --- | --- | --- | --- |
+| List the whole cookbook | `GET` | `/gw/cookbook/v1/external-recipes` | `country`, `hf_public_id`; cursor-paged |
+| "Which of these are bookmarked?" | `POST` | `/gw/cookbook/v1/internal-recipes/search` | batched, 50 recipe ids per request |
+| Add a bookmark | `POST` | `/gw/cookbook/v1/internal-recipes` | keyed by recipe id |
+| Remove a bookmark | `DELETE` | `/gw/cookbook/v1/external-recipes/{row_id}` | **row** id, not recipe id |
+
+Row shape: `{bookmark_id, id, title, headline, thumbnail_url, url, prep_time, total_time, nutrition, created_at, …}`. Two id traps:
+
+- **`bookmark_id` is `<recipeId>-<locale>`** (e.g. `61f0…e112-en-US`). Recipe ids are hex and never contain a hyphen, so the recipe id is the part before the first hyphen.
+- **Deletion needs the row's own `id`**, assigned by the server — not `bookmark_id` and not the recipe id. Deleting by recipe id 404s.
+
+**Paging is cursor-based, not offset-based.** The response's `pagination.next_cursor` is an opaque token that must be echoed back as `cursor=`; there is no `offset`. An offset-style implementation silently returns only page one. The integration stops on a missing cursor, a page that adds no new rows, or a page cap, and warns if it collected fewer rows than `total_count`.
+
+> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](README.md#recipes-card)'s ♥ Cookbook chip shows all of it.
+
+### Secondary favorites store (`/gw/cfs/v2/favorites/recipe`)
+
+A **second, separate** favorites service backs HelloFresh's `/recipes/favorites` page. It is not synchronized with the cookbook above. `get_favorites` reports it alongside the cookbook under `secondary_favorites` rather than merging the two, so mismatched counts stay visible instead of silently disagreeing. Its rows are passed through unmodelled — no populated response has ever been observed, so there is nothing verified to model.
+
+### Recipe detail (`/gw/recipes/recipes/{id}`)
+
+| Purpose | Method | Path | Params |
+| --- | --- | --- | --- |
+| Full recipe | `GET` | `/gw/recipes/recipes/{recipe_id}` | `country=<CC>`, `locale=<locale>` |
+
+Carries ingredients, `yields[]`, `steps[]`, `utensils`, `allergens`, `nutrition`, `cardLink` (printable PDF), and `videoLink`. Ingredient **amounts** live per-yield: each `yields[]` entry has its own `ingredients[]` with amounts for that serving count, so rescaling servings means re-reading the matching entry (the integration defaults to the smallest yield, matching the website).
+
+Unlike the browse catalog below, this is a plain `/gw/` API with no build id involved, so it cannot break on a HelloFresh web deploy.
+
+**Image trap:** the payload offers both a bare `imagePath` and a ready-made absolute `imageLink`, and the convenient one is dead — `imageLink` points at a CloudFront distribution (`d3hvwccx09j84u.cloudfront.net`) that now answers **502** for every path. Join `imagePath` to the verified host instead (see below).
+
+### Public recipe catalog (Next.js data URLs)
+
+The ~10,000-recipe browse catalog is **not** served by a `/gw/` API. It comes from the website's Next.js data URLs:
+
+| Purpose | Method | Path |
+| --- | --- | --- |
+| Categories + top-rated listing | `GET` | `/_next/data/<buildId>/recipes.json` |
+| One category's listing | `GET` | `/_next/data/<buildId>/recipes/<slug>.json?main-collection=<slug>` |
+
+The `<buildId>` rotates on **every** HelloFresh web deploy. The integration scrapes it from the page HTML on first use, caches it, and re-scrapes once when a request 404s (the signature of a stale id), so this self-heals — but it is inherently less stable than the account endpoints.
+
+Row shape: `{id, recipeId, name, headline, slug, imagePath, websiteUrl, aggregateRating, aggregateRatingsCount, prepTime}`.
+
+**Image host.** Catalog rows carry a bare `imagePath` (`/image/foo.jpg`) with no host. The correct host is Cloudinary:
+
+```
+https://img.hellofresh.com/<transform>/hellofresh_s3/image/<file>.jpg
+```
+
+Two details are load-bearing and easy to get wrong:
+
+- The **`hellofresh_s3`** path segment is required; without it the CDN answers 404.
+- The **transform segment controls size**. Untransformed, one hero JPEG is ~1.7 MB; at `w_640` it is ~73 KB, and ~20 KB for a grid thumbnail. A catalog grid without a transform downloads tens of megabytes.
+
+Note that these images do **not** appear in HAR exports of a normal browsing session — the browser serves them from cache — so the host cannot be confirmed from a capture alone. It was verified against the live site.
+
+### Food profile completion (`/gw/profile-service/v2/…/profile/completion`)
+
+| Purpose | Method | Path |
+| --- | --- | --- |
+| Profile completion progress | `GET` | `/gw/profile-service/v2/customers/me/profile/completion` |
+
+Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](README.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
+
 ### Exact cart pricing
 
 HAR captures from the logged-in US site also showed a dedicated cart-pricing request for the subscribed week:
@@ -803,7 +873,18 @@ Before scraping HTML, the integration tries the structured-JSON menu catalog the
 | --- | --- | --- | --- |
 | Structured regional menu catalog | `GET` | `/gw/menus-service/menus` | `country=<CC>`, `locale=<locale>`, `weeks=<W,…>`, `exclude=` |
 
-Response shape: `{count, items[], skip, take, total}`. Each `items[]` entry is a week whose recipes live under a **`courses`** list, where each course wraps the recipe in a nested `recipe` object (the normalizer recognizes `courses` and unwraps `recipe`). **Caveat:** this catalog is large — a single week's response was observed at ~6.6 MB — so it is used only as a fallback when the per-week authenticated menu endpoints return nothing.
+Response shape: `{count, items[], skip, take, total}`. Each `items[]` entry is a week whose recipes live under a **`courses`** list, where each course wraps the recipe in a nested `recipe` object (the normalizer recognizes `courses` and unwraps `recipe`). **Caveat:** this catalog is large — a single week's response was observed at ~6.6 MB — so a full unfiltered fetch is used only as a fallback when the per-week authenticated menu endpoints return nothing.
+
+This endpoint is called for a **second, narrower** purpose: it is the only source of availability flags. The two menu sources are disjoint —
+
+| Field | `/gw/my-deliveries/menu` (primary) | `/gw/menus-service/menus` |
+| --- | --- | --- |
+| `itemPrice`, `feedback`, `relatedCategory` | present | absent |
+| `isSoldOut`, `isHidden` | absent | present |
+
+— and the fallback path replaces a week's recipe list wholesale, so a week can only ever carry one set. To get both, `_async_apply_menu_availability` fetches this endpoint once per poll with `weeks=` narrowed to the weeks the customer can still change (`is_editable`: meal swaps allowed, not skipped, deadline open) and overlays **only** `isSoldOut`/`isHidden` onto the existing recipes, field by field. Delivered and past-cutoff weeks are skipped — the flag cannot change an outcome there — which in a typical account means one extra request covering a single week. A recipe absent from the catalog is left untouched rather than assumed sold out; the whole pass is best-effort and swallows transport and parse failures, since it is cosmetic enrichment on an already-complete menu.
+
+**Trust caveat:** this is the *anonymous regional* catalog. It has not been confirmed to track per-customer availability, so the flag is treated as advisory — `select_meals` logs a warning and submits anyway rather than blocking a selection HelloFresh might well accept.
 
 ### Public menu fallback
 
@@ -991,8 +1072,17 @@ Backfill notes:
 | `badge` | `recipe.label.text` (e.g. `Premium Picks`) |
 | `variation_title` | resolved from the week's `modularity` block by `course_index` (e.g. `2x Bacon`) — names how a same-named variant differs |
 | `variation_group` | the `defaultCourseIndex` of the `modularity` group this recipe belongs to (base meal + every variation/add-on member share it); `null` for a meal that has no variants. A recipe is the group's **base ("Default")** meal when its own `course_index == variation_group`. Lets the card cluster a dish's variants — including renamed protein swaps — and hide variants down to the default. |
+| `video_url` | `videoLink` — a HelloFresh promo clip. Sparse (a few meals per week) and present on past and upcoming weeks alike. Formats are mixed `.mp4`/`.mov`; `.mov` will not play in Chrome/Firefox, which the card surfaces as an open-directly link. |
+| `price`, `price_cents`, `currency` | `itemPrice.pricePerUnit` — the meal's own per-serving price. **Money is protobuf-style `{units, nanos}`** (nanos = billionths), so `{units: 17, nanos: 980000000}` is `$17.98`. Distinct from `surcharge_*`, which is only the premium *uplift*. |
+| `price_group` | `itemPrice.priceGroup` (`premium` / `classic`) |
+| `delivered_count`, `last_delivered_week` | `feedback.productDeliveryCount`, `feedback.lastDeliveryWeek` — HelloFresh's own "you've ordered this N times, last in W22" |
+| `rating`, `rating_scale` | `feedback.rating`, `feedback.ratingScale` — **your** star rating. Note `feedback` has **two disjoint shapes**: a meal carries either the delivery-history pair or the rating pair, never both. |
+| `is_sold_out`, `is_hidden` | `isSoldOut`, `isHidden` — read from the **course wrapper**, not the nested recipe. Only `/gw/menus-service/menus` reports these (see [Structured menu catalog](#structured-menu-catalog-gwmenus-servicemenus)). |
+| `related_category` | `relatedCategory` (appetizers / desserts / …) |
 
-Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields. `surcharge_*`, `badge`, `protein_g`, `selected_quantity`, `variation_title`, and `variation_group` exist to differentiate same-named meal variants on a dashboard (the meal-planner card collapses truly-identical duplicate listings and calls out the rest). `preference` (one of `Beef`, `Poultry`, `Pork`, `Seafood`, `Lamb`, `Veggie`, falling back to `Veggie` for meals tagged `Veggie`/`Vegan`) and `variation_group` also drive the card's **protein** and **hide-variants** filters on current/upcoming weeks.
+Authenticated menu payloads may wrap these fields under `meal.recipe`, so the normalizer unwraps nested recipe objects before mapping fields.
+
+> **Trap — the empty `recipe: {}`.** The past-deliveries endpoint puts recipe fields **directly on the meal** while *also* emitting an empty `recipe: {}` alongside. Testing only `isinstance(node, dict)` therefore selects the empty dict and loses the name, image and video for every delivered meal. `_recipe_node` uses the nested node only when it is **non-empty**. Fields that live on the course wrapper rather than the recipe (`isSoldOut`, `isHidden`, `itemPrice`, `relatedCategory`) must be read from the wrapper regardless. `surcharge_*`, `badge`, `protein_g`, `selected_quantity`, `variation_title`, and `variation_group` exist to differentiate same-named meal variants on a dashboard (the meal-planner card collapses truly-identical duplicate listings and calls out the rest). `preference` (one of `Beef`, `Poultry`, `Pork`, `Seafood`, `Lamb`, `Veggie`, falling back to `Veggie` for meals tagged `Veggie`/`Vegan`) and `variation_group` also drive the card's **protein** and **hide-variants** filters on current/upcoming weeks.
 
 Nutrition handling:
 
@@ -1164,7 +1254,7 @@ Entity behavior notes:
 
 ### Frontend assets
 
-The integration ships five custom Lovelace cards (`www/hellofresh-meal-planner-card.js`, `www/hellofresh-market-card.js`, `www/hellofresh-food-profile-card.js`, `www/hellofresh-schedule-card.js`, and `www/hellofresh-subscription-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
+The integration ships seven custom Lovelace cards (`www/hellofresh-meal-planner-card.js`, `www/hellofresh-market-card.js`, `www/hellofresh-food-profile-card.js`, `www/hellofresh-schedule-card.js`, `www/hellofresh-subscription-card.js`, `www/hellofresh-cost-card.js`, and `www/hellofresh-recipes-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
 
 - the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so each card is reachable at `/hellofresh/<filename>` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
 - every card resource URL carries a `?v=` cache-bust stamped with the **integration release version** read from `manifest.json` (`INTEGRATION_VERSION`), so the release workflow's automatic manifest bump invalidates cached card JS on every release — there are no per-card version constants to maintain
@@ -1173,7 +1263,7 @@ The integration ships five custom Lovelace cards (`www/hellofresh-meal-planner-c
 - registration is best-effort and never blocks integration setup — the sensors/calendar/services work without the cards
 - because this uses `hass.http`, `http` is declared in `manifest.json`'s `dependencies`
 
-The cards are pure read+write clients of existing services: they call `get_weeks` to render and `select_meals` / `select_market_items` / `skip_week` / `unskip_week` to act. They define no new entities or endpoints.
+The cards are pure read+write clients of existing services — they define no new entities or endpoints. The week-data cards call `get_weeks` to render and `select_meals` / `select_market_items` / `skip_week` / `unskip_week` / `reschedule_week` to act; the Food Profile card uses `get_food_profile` / `set_food_profile`, the Subscription card `get_account_summary`, the Cost card `get_spending`, and the Recipes card `get_recipe_collections` / `get_catalog_recipes` / `get_recipe_detail` / `get_favorites` / `add_favorite` / `remove_favorite`.
 
 ### Diagnostics redaction
 
