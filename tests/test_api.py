@@ -8235,6 +8235,8 @@ def _recipe_detail_payload() -> dict:
         "headline": "with Pearl Couscous & Lemony Carrots",
         "description": "Consider plain chicken a thing of the past.",
         "slug": "crispy-parmesan-chicken",
+        # Real payloads carry BOTH, and the absolute one is the dead CloudFront host.
+        "imagePath": "/image/chicken.jpeg",
         "imageLink": "https://d3hvwccx09j84u.cloudfront.net/0,0/image/chicken.jpeg",
         "videoLink": None,
         "cardLink": "https://www.hellofresh.com/recipecards/card/6bbbdb6a-en-US-auto.pdf",
@@ -8302,6 +8304,40 @@ def test_recipe_detail_parses_steps_ingredients_and_metadata() -> None:
     # Blank-line padding in the raw instructions is collapsed, not passed through.
     assert detail.steps[0]["instructions"] == "Preheat oven to 425 degrees.\nWash produce."
     assert len(detail.steps) == 2
+
+
+def test_recipe_detail_image_uses_the_working_host_not_the_payloads_own_link() -> None:
+    """The recipe photo must resolve, which means IGNORING the payload's own `imageLink`.
+
+    The detail payload offers both a bare `imagePath` and a ready-made absolute `imageLink`,
+    and the convenient one is dead: `imageLink` points at a CloudFront distribution that now
+    answers 502 for every path. Taking it at face value is what left the detail sheet with no
+    photo, so the path is joined to the verified host instead.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    detail = HelloFreshRecipeDetail.from_api(
+        _recipe_detail_payload(), image_base=HelloFreshClient._CATALOG_IMAGE_BASE
+    )
+
+    assert detail.image_url == (
+        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640"
+        "/hellofresh_s3/image/chicken.jpeg"
+    )
+    assert "cloudfront" not in detail.image_url
+
+
+def test_recipe_detail_falls_back_to_image_link_when_no_path() -> None:
+    """A row with only the absolute URL is still better than no image at all."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    payload = _recipe_detail_payload()
+    del payload["imagePath"]
+    detail = HelloFreshRecipeDetail.from_api(
+        payload, image_base=HelloFreshClient._CATALOG_IMAGE_BASE
+    )
+
+    assert detail.image_url == payload["imageLink"]
 
 
 def test_recipe_detail_scales_ingredient_amounts_to_servings() -> None:

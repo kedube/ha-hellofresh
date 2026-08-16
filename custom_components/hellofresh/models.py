@@ -869,13 +869,33 @@ class HelloFreshRecipeDetail:
     is_favorite: bool | None = None
 
     @classmethod
-    def from_api(cls, raw: dict[str, Any], *, servings: int | None = None) -> Any:
+    def from_api(
+        cls,
+        raw: dict[str, Any],
+        *,
+        servings: int | None = None,
+        image_base: str | None = None,
+    ) -> Any:
         if not isinstance(raw, dict):
             return None
         recipe_id = raw.get("id")
         name = raw.get("name")
         if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
             return None
+
+        # The payload offers BOTH a bare `imagePath` and a ready-made absolute `imageLink`,
+        # and the tempting one is wrong: `imageLink` points at a CloudFront distribution that
+        # now answers 502 for every path. So the path is joined to the verified host instead,
+        # exactly as the catalog rows are, and `imageLink` is used only as a last resort.
+        image_path = raw.get("imagePath")
+        image_url = None
+        if isinstance(image_path, str) and image_path.strip() and image_base:
+            image_url = f"{image_base.rstrip('/')}{image_path}"
+        elif isinstance(image_path, str) and image_path.strip():
+            image_url = image_path
+        else:
+            link = raw.get("imageLink")
+            image_url = link if isinstance(link, str) and link.strip() else None
 
         yields = raw.get("yields") if isinstance(raw.get("yields"), list) else []
         available = sorted(
@@ -944,7 +964,7 @@ class HelloFreshRecipeDetail:
             headline=raw.get("headline"),
             description=raw.get("description"),
             slug=raw.get("slug"),
-            image_url=raw.get("imageLink"),
+            image_url=image_url,
             video_url=raw.get("videoLink") or None,
             card_url=raw.get("cardLink"),
             url=raw.get("websiteUrl") or raw.get("canonicalLink"),

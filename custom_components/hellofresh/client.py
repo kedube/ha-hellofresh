@@ -1194,7 +1194,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 f"HelloFresh recipe-detail request failed (HTTP {response.status})"
             )
         payload = await self._async_response_json(response)
-        detail = HelloFreshRecipeDetail.from_api(payload, servings=servings)
+        detail = HelloFreshRecipeDetail.from_api(
+            payload, servings=servings, image_base=self._CATALOG_IMAGE_BASE
+        )
         if detail is None:
             raise HelloFreshError(f"HelloFresh returned an unreadable recipe payload for {bare}")
         if include_favorite:

@@ -10,6 +10,20 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
+## Unreleased
+- Fixed the recipe detail sheet showing no photo. The payload offers both a bare image path
+  and a ready-made absolute URL, and the convenient one is dead — it points at a CloudFront
+  host that now answers 502 for every path, the same host behind the missing catalog
+  thumbnails. The path is now joined to the verified host instead.
+- Fixed the recipe detail sheet's ✕ not closing it — the same two faults as the video
+  lightbox, in its twin: the overlay sits outside the element carrying the click handler, and
+  a propagation guard meant to protect the panel was swallowing clicks on the ✕ inside it.
+  Reading the recipe and using the servings switcher still don't dismiss it.
+- **Your cookbook is now browsable** — the Recipes card could add and remove favorites but had
+  no way to show them. A ♥ Cookbook chip now lists your saved recipes alongside the browse
+  categories, and un-favoriting one removes it from the list rather than leaving a hollow
+  heart behind.
+
 ## 2.51 — 2026-08-16
 - Fixed the integration failing to load entirely (`ServiceRegistry.async_register() got
   multiple values for argument 'schema'`): a duplicated argument in the
