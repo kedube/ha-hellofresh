@@ -37,6 +37,14 @@ function resizedImage(url, width) {
   return url.replace("/q_auto/", `/q_auto,w_${width}/`);
 }
 
+// Recipe promo clips are served from media.hellofresh.com. Same gate as resizedImage: only
+// plain http(s) URLs may reach a media sink, so a payload-supplied scheme can never become a
+// javascript:/data: URL in the DOM. Returns "" when there is no usable video.
+function safeMediaUrl(url) {
+  if (!url || !/^https?:\/\//i.test(String(url))) return "";
+  return String(url);
+}
+
 // Preference -> accent color for the little protein dot. Mirrors HelloFresh's own grouping.
 const PREFERENCE_COLORS = {
   Poultry: "#f0a202",
@@ -103,6 +111,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // Also drop the toast itself: with the timer cancelled, a toast shown just before
     // disconnect would otherwise repaint forever once the card reconnects.
     this._toast = null;
+    // The video overlay lives beside the card in the shadow root and holds a document-level
+    // key listener, so it has to be torn down explicitly rather than with the card's markup.
+    this._closeVideo();
   }
 
   setConfig(config) {
@@ -311,6 +322,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (clamped === this._cursor) return;
     this._cursor = clamped;
     this._downgradeNotice = null; // a downgrade warning is about the week you just saved
+    // A clip belongs to the week it was opened from; leaving that week must not leave it playing.
+    this._closeVideo();
     this._render();
     if (broadcast) this._broadcastWeek();
   }
@@ -1335,6 +1348,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const stats = [];
     if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
     if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
+    // HelloFresh's own "you've had this before" count, and your star rating when you gave one.
+    // Both are optional and only ever present on a minority of meals.
+    if (r.delivered_count) {
+      const when = r.last_delivered_week ? `, last ${r.last_delivered_week}` : "";
+      stats.push(`Ordered ${r.delivered_count}×${when}`);
+    }
+    if (r.rating) stats.push(`You rated ${r.rating}/${r.rating_scale || 5}`);
     // A meatless dish carries no protein category, so surface an explicit "Veggie" chip driven
     // by preference (reliably set to "Veggie" for Veggie/Vegan meals) — the protein dot alone is
     // an unlabeled color. Meat meals identify their protein via that dot instead.
@@ -1348,13 +1368,29 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
     const idxAttr = this._esc(String(r.course_index));
     const currency = this._account?.selected_plan_total_price_currency;
+    // Only a handful of meals per week carry a promo clip (past weeks included — delivered
+    // meals keep theirs), so the still image is always the base layer and the play affordance
+    // is purely additive. Formats are mixed .mp4/.mov —
+    // .mov will not play in Chrome/Firefox, which the player surfaces as a fallback link
+    // rather than a silently dead <video>.
+    const videoUrl = safeMediaUrl(r.video_url);
+    // A sold-out meal is greyed with a ribbon but stays tappable. The flag comes from the
+    // anonymous regional catalog, which has not been confirmed to track per-customer
+    // availability — so it is shown as advice, not enforced. Blocking on it would make a
+    // selection HelloFresh might well accept impossible to build, with no override.
+    const soldOut = r.is_sold_out === true;
     return `
-      <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""}"
+      <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""} ${soldOut ? "soldout" : ""}"
            data-index="${idxAttr}">
         <div class="imgwrap">
           ${r.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
             : `<div class="noimg"></div>`}
+          ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
+          ${videoUrl
+            ? `<button class="playbtn" data-video="${idxAttr}" title="Play recipe video" aria-label="Play video for ${this._esc(r.name)}">▶</button>`
+            : ""}
+          ${r.is_favorite === true ? `<div class="fav" title="In your HelloFresh cookbook">♥</div>` : ""}
           ${isSelected ? `<div class="check">✓</div>` : ""}
           ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
           ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label, currency))}</div>` : ""}
@@ -1364,6 +1400,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           <div class="name"><span class="dot" style="background:${color}"></span>${this._esc(r.name)}</div>
           ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
           ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
+          ${r.price != null
+            ? `<div class="price">${this._esc(this._fmtPrice(r.price, r.currency || currency))}<span class="perserving"> / serving</span></div>`
+            : ""}
           ${r.badge || isVeggie || tags.length
             ? `<div class="chips">
                  ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
@@ -1398,6 +1437,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         if (week && recipe) {
           this._changeQuantity(week, recipe, qbtn.getAttribute("data-qty") === "inc" ? 1 : -1);
         }
+        return;
+      }
+
+      // Play button takes priority too — watching the clip must not toggle the selection.
+      const playbtn = ev.target.closest(".playbtn");
+      if (playbtn) {
+        ev.stopPropagation();
+        const recipe = this._findRenderedRecipe(playbtn.getAttribute("data-video"));
+        if (recipe) this._openVideo(recipe);
+        return;
+      }
+
+      // Dismissing the video overlay (backdrop or close button).
+      if (ev.target.closest("[data-video-close]")) {
+        ev.stopPropagation();
+        this._closeVideo();
         return;
       }
 
@@ -1436,6 +1491,58 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return list.find((r) => String(r.course_index) === index);
   }
 
+  // ---- recipe video overlay -------------------------------------------------
+
+  // Shows the clip in a lightbox rather than inline: only a few meals per week have one, and
+  // an inline <video> per tile would load media for a 400-tile catalog week. The overlay is
+  // appended to the shadow root (not the tile) so it is never clipped by the grid's overflow.
+  _openVideo(recipe) {
+    const url = safeMediaUrl(recipe.video_url);
+    if (!url || !this.shadowRoot) return;
+    this._closeVideo();
+
+    const overlay = document.createElement("div");
+    overlay.className = "videowrap";
+    overlay.setAttribute("data-video-close", "");
+    // HelloFresh serves both .mp4 and .mov. Chrome/Firefox cannot play .mov, so an explicit
+    // "open in a new tab" fallback sits under the player instead of a silently black box.
+    overlay.innerHTML = `
+      <div class="videobox">
+        <div class="videohead">
+          <span class="videotitle">${this._esc(recipe.name)}</span>
+          <button class="videoclose" data-video-close title="Close">✕</button>
+        </div>
+        <video class="videoel" src="${this._esc(url)}" controls autoplay playsinline></video>
+        <a class="videofallback" href="${this._esc(url)}" target="_blank" rel="noopener noreferrer">
+          Video not playing? Open it directly
+        </a>
+      </div>`;
+    // Clicks inside the player must not bubble to the backdrop's dismiss handler.
+    const box = overlay.querySelector(".videobox");
+    if (box) box.addEventListener("click", (ev) => ev.stopPropagation());
+
+    this.shadowRoot.appendChild(overlay);
+    this._videoOverlay = overlay;
+    // Escape closes, matching what a lightbox is expected to do.
+    this._videoKeyHandler = (ev) => {
+      if (ev.key === "Escape") this._closeVideo();
+    };
+    document.addEventListener("keydown", this._videoKeyHandler);
+  }
+
+  _closeVideo() {
+    if (this._videoKeyHandler) {
+      document.removeEventListener("keydown", this._videoKeyHandler);
+      this._videoKeyHandler = null;
+    }
+    if (!this._videoOverlay) return;
+    // Pause before removal so audio stops immediately even if the node lingers.
+    const el = this._videoOverlay.querySelector("video");
+    if (el) el.pause();
+    this._videoOverlay.remove();
+    this._videoOverlay = null;
+  }
+
   // ---- small helpers -------------------------------------------------------
 
   // Normalize HelloFresh's surcharge label ("+7.99/serving") to a compact "+$7.99" in the
@@ -1463,6 +1570,24 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       });
     } catch (_e) {
       return String(label);
+    }
+  }
+
+  // The meal's actual per-serving price (distinct from the surcharge badge, which shows only
+  // the premium uplift). Prefers the price's own currency — HelloFresh sends it per item —
+  // over the account default.
+  _fmtPrice(amount, currency) {
+    if (typeof amount !== "number" || !Number.isFinite(amount)) return "";
+    try {
+      return amount.toLocaleString(undefined, {
+        style: "currency",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        currency: currency || "USD",
+        currencyDisplay: "narrowSymbol",
+      });
+    } catch (_e) {
+      return String(amount);
     }
   }
 
@@ -1686,6 +1811,62 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         border-radius: 50%; display: flex; align-items: center; justify-content: center;
         font-weight: 700;
       }
+      /* A sold-out meal is shown rather than hidden (HelloFresh drops it from its own grid),
+         so it is obvious why a dish you were considering is no longer choosable. Dimmed and
+         non-interactive: the tile also loses its .editable class, so taps do nothing. */
+      .recipe.soldout { opacity: 0.55; }
+      .recipe.soldout .imgwrap img { filter: grayscale(1); }
+      .soldoutflag {
+        position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%);
+        background: rgba(0, 0, 0, 0.62); color: #fff; text-align: center;
+        font-size: 0.78em; font-weight: 700; letter-spacing: 0.04em;
+        text-transform: uppercase; padding: 4px 0;
+      }
+      .price { font-size: 0.82em; font-weight: 600; margin-top: 2px; }
+      .perserving { font-weight: 400; color: var(--secondary-text-color); font-size: 0.92em; }
+      /* Favorite heart sits top-LEFT so it never collides with the selection check/qty badge
+         stacked down the right edge. Only rendered when is_favorite is exactly true. */
+      .fav {
+        position: absolute; top: 6px; left: 6px; width: 24px; height: 24px;
+        background: rgba(0, 0, 0, 0.45); color: #ff5a7a; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.9em; line-height: 1; pointer-events: none;
+      }
+      /* Play affordance is centered over the still image; the image stays the base layer so a
+         missing/unplayable video never leaves an empty tile. */
+      .playbtn {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 40px; height: 40px; border: none; border-radius: 50%; cursor: pointer;
+        background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 1em; line-height: 40px;
+        padding: 0 0 0 3px; /* optical centering of the ▶ glyph */
+        display: flex; align-items: center; justify-content: center;
+      }
+      .playbtn:hover { background: rgba(0, 0, 0, 0.75); }
+      .playbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      .videowrap {
+        position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.75);
+        display: flex; align-items: center; justify-content: center; padding: 16px;
+      }
+      .videobox {
+        background: var(--card-background-color, #fff); border-radius: 12px; overflow: hidden;
+        max-width: min(560px, 92vw); width: 100%; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      }
+      .videohead {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 8px 8px 8px 12px;
+      }
+      .videotitle { font-weight: 600; font-size: 0.95em; }
+      .videoclose {
+        border: none; background: transparent; cursor: pointer; font-size: 1.1em;
+        color: var(--secondary-text-color); padding: 4px 8px; border-radius: 6px;
+      }
+      .videoclose:hover { background: var(--divider-color); }
+      .videoel { display: block; width: 100%; max-height: 70vh; background: #000; }
+      .videofallback {
+        display: block; padding: 8px 12px; font-size: 0.82em;
+        color: var(--secondary-text-color); text-decoration: none;
+      }
+      .videofallback:hover { text-decoration: underline; }
       .qtybadge {
         position: absolute; top: 38px; right: 6px; min-width: 26px; height: 22px; padding: 0 6px;
         box-sizing: border-box; background: var(--primary-color); color: var(--text-primary-color, #fff);

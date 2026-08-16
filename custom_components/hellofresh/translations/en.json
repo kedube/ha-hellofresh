@@ -62,6 +62,7 @@
           "history_weeks": "Past delivery history (weeks)",
           "menu_grace_weeks": "Full menu history (weeks)",
           "enable_public_menu_fallback": "Use public menu fallback",
+          "enable_favorites": "Show favorite hearts",
           "show_data_quality_issues": "Show data-quality repair warnings"
         },
         "data_description": {
@@ -69,6 +70,7 @@
           "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
           "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 2 (the last couple of boxes stay browsable). 0 turns the grace window off. HelloFresh stops publishing the menu for older weeks, so weeks past what it still serves just fall back to delivered-only. Changing this reloads the integration.",
           "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data.",
+          "enable_favorites": "Look up which meals are bookmarked in your HelloFresh cookbook on each refresh, so the meal-planner card can show a favorite heart. Costs one extra request per refresh: HelloFresh has no \"list my favorites\" endpoint, so the menu's recipes must be sent to a filter endpoint to learn which are favorites. Turn off to skip it — the add/remove favorite services keep working either way.",
           "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing."
         }
       }
@@ -396,6 +398,116 @@
         "subscription_id": {
           "name": "Subscription ID",
           "description": "Which subscription to change when multiple exist. Defaults to the primary subscription."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Get favorites",
+      "description": "Return your HelloFresh cookbook: every bookmark with full detail, or — when recipe_ids is given — which of those recipes are bookmarked.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "recipe_ids": {
+          "name": "Recipe IDs",
+          "description": "Optional. Leave empty to list the whole cookbook. Supply ids to use the cheaper filter endpoint, which answers which of those recipes are bookmarked."
+        }
+      }
+    },
+    "add_favorite": {
+      "name": "Add favorite",
+      "description": "Bookmark a recipe in the HelloFresh cookbook.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "recipe_id": {
+          "name": "Recipe ID",
+          "description": "The HelloFresh recipe identifier to bookmark (the 24-character id, e.g. 694053fe353e00bd89ba2d3e)."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Remove favorite",
+      "description": "Remove a recipe bookmark from the HelloFresh cookbook.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "recipe_id": {
+          "name": "Recipe ID",
+          "description": "The HelloFresh recipe identifier to bookmark (the 24-character id, e.g. 694053fe353e00bd89ba2d3e)."
+        }
+      }
+    },
+    "get_recipe_collections": {
+      "name": "Get recipe collections",
+      "description": "Return the browsable categories of the public HelloFresh recipe catalog.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_catalog_recipes": {
+      "name": "Get catalog recipes",
+      "description": "Return recipes from the public HelloFresh recipe catalog, optionally within one collection.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "collection": {
+          "name": "Collection",
+          "description": "Collection slug from Get recipe collections (e.g. chicken-recipes). Omit for the top-level listing."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Maximum number of recipes to return (1-200; default 40)."
+        }
+      }
+    },
+    "preview_meal_price": {
+      "name": "Preview meal price",
+      "description": "Price a hypothetical meal selection for a week without saving it.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        },
+        "recipe_ids": {
+          "name": "Recipe IDs",
+          "description": "The recipes to price for that week."
+        },
+        "quantities": {
+          "name": "Quantities",
+          "description": "Optional map of recipe ID to serving count (positive integer). Recipes omitted default to one serving."
+        }
+      }
+    },
+    "get_recipe_detail": {
+      "name": "Get recipe detail",
+      "description": "Return one recipe's full cooking detail: ingredients, instructions, utensils, allergens, nutrition, and the printable recipe card.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "recipe_id": {
+          "name": "Recipe ID",
+          "description": "The HelloFresh recipe identifier (the 24-character id, e.g. 6819dfd55efe69a088447ef3)."
+        },
+        "servings": {
+          "name": "Servings",
+          "description": "Which serving count to scale ingredient amounts to (2, 4, ...). Defaults to the smallest the recipe offers."
         }
       }
     }

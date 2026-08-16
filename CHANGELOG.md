@@ -11,6 +11,61 @@ version heading and publishes it as the release's Highlights.
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
 ## Unreleased
+- **Recipe videos in the meal planner** — meals that ship with a HelloFresh promo clip now
+  show a ▶ button that opens the video in a lightbox. Coverage is sparse (a few meals out of
+  several hundred per week), on past and upcoming weeks alike; the still image always stays
+  the base layer, and a `.mov` (which Chrome/Firefox cannot play) falls back to an
+  open-directly link.
+- **New Recipes card** (`custom:hellofresh-recipes-card`) — browse HelloFresh's public
+  ~10,000-recipe catalog by category, with ratings and prep times, and add/remove cookbook
+  favorites. This is browse content shared by all customers, unrelated to your subscription,
+  so it is fetched on demand rather than polled into entity state. The catalog comes from the
+  website's Next.js data URLs, whose build id rotates on every HelloFresh deploy; the
+  integration scrapes it on demand and re-scrapes automatically on a 404, so this self-heals.
+- **Cookbook favorites** — meals bookmarked in your HelloFresh cookbook now show a ♥ in the
+  meal-planner card, via new `get_favorites` / `add_favorite` / `remove_favorite` services.
+  `get_favorites` lists the whole cookbook with full detail, or — given `recipe_ids` — uses
+  HelloFresh's cheaper filter endpoint to answer which of those are bookmarked. The hearts on
+  a week's menu use that filter, one extra batched request per refresh; turn it off with the
+  new **Show favorite hearts** option. A failed lookup leaves tiles with no heart rather than
+  a misleading empty one. HelloFresh's own collection naming is counter-intuitive and worth
+  knowing if you read the code: bookmarks are *created* under `internal-recipes` but *listed
+  and deleted* under `external-recipes`, keyed by a server-assigned row id.
+- **Per-meal pricing, order history and sold-out state** — fields that were present in menu
+  payloads the integration already fetched but never read:
+  - Each meal's real per-serving `price` (HelloFresh sends money as `{units, nanos}`; 17 +
+    0.98 → $17.98) plus its `premium`/`classic` price group, shown on the planner tile. This
+    is distinct from the existing surcharge badge, which is only the premium *uplift*.
+  - `delivered_count` / `last_delivered_week` — HelloFresh's own "you've ordered this N times,
+    last in W22" signal — and your own star `rating` where you've given one.
+  - `is_sold_out` / `is_hidden`: sold-out meals are greyed with a **Sold out** ribbon. The two
+    menu sources are disjoint — the primary endpoint has the prices and history, the catalog
+    has the availability flags — so the catalog is now fetched once per refresh for the weeks
+    you can still change, and *only* its availability flags are overlaid onto the existing
+    meals. Delivered and past-cutoff weeks are skipped, since the flag can't change an outcome
+    there. Marking is **advisory**: the catalog is HelloFresh's anonymous regional menu and is
+    not confirmed to track per-customer availability, so the tile stays tappable and
+    `select_meals` still submits (with a warning) rather than blocking a selection HelloFresh
+    might well accept.
+  - `related_category` (appetizers / desserts / …) for menu grouping.
+- **Full recipe detail** — new `get_recipe_detail` service and a tap-through view in the
+  Recipes card: ingredients with amounts, a servings switcher that rescales them, step-by-step
+  instructions, utensils, allergens, nutrition, and the printable recipe-card PDF. This reads
+  a plain HelloFresh API rather than the website, so unlike the browse listing it does not
+  depend on the site's Next.js build id and cannot break on a deploy.
+- **Food profile completion** — `get_food_profile` now also returns how many profile fields
+  HelloFresh considers answered (and which are outstanding), shown as a progress bar in the
+  Food Profile card. Best-effort: omitted rather than fatal when the endpoint doesn't answer.
+- **Secondary favorites store surfaced** — HelloFresh runs a second favorites service ("cfs")
+  behind its /recipes/favorites page, separate from the cookbook and not synchronized with it.
+  `get_favorites` now reports it alongside the cookbook under `secondary_favorites` rather
+  than merging the two, so mismatched counts stay visible instead of silently disagreeing.
+  Its rows are passed through unmodelled — no populated response has ever been observed.
+- **Meal price preview** — new `preview_meal_price` service prices a hypothetical selection
+  (grand total, subtotal, shipping, tax, discounts, and per-meal premium surcharges) without
+  saving it, so a planner UI can show cost before committing. The box SKU is resized for the
+  requested meal count, matching what a real save does, so previewing more meals than your
+  current box holds is priced rather than rejected.
 - Deep-audit fixes across the integration (17+ issues found by a full code review):
 - Fixed a stale-data bug where dashboard cards could be served a previous poll's weeks
   for up to a full refresh interval (the get_weeks response cache was keyed by a

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
+import logging
 from typing import cast
 
 import pytest
@@ -3319,6 +3320,8 @@ def test_account_data_does_not_flag_public_menu_fallback_when_delivery_weeks_hav
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
         access_token="token",
+        # Favorites would issue a cookbook request this test does not stub.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(
         subscription_id="sub-1",
@@ -3380,6 +3383,8 @@ def test_account_data_merges_authenticated_menu_catalog_into_delivery_week() -> 
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
         access_token="token",
+        # Favorites would issue a cookbook request this test does not stub.
+        enable_favorites=False,
         enable_public_menu_fallback=False,
     )
     subscription = HelloFreshSubscription(
@@ -3745,6 +3750,8 @@ def test_account_data_collects_debug_trace_for_menu_and_delivery_attempts() -> N
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
         access_token="token",
+        # Favorites would issue a cookbook request this test does not stub.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(
         subscription_id="sub-1",
@@ -4004,6 +4011,8 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
         access_token="token",
+        # Favorites would issue a cookbook request this test does not stub.
+        enable_favorites=False,
     )
     # A FUTURE modifiable week — needs_selection (and thus next_selection_week) only considers
     # upcoming weeks, since a past box can't be changed.
@@ -7516,3 +7525,1406 @@ def test_get_presets_falls_back_to_menus_service() -> None:
     presets = loop.run_until_complete(client.async_get_presets())
     assert calls == ["/gw/api/presets", "/gw/menus-service/presets"]
     assert [p["handle"] for p in presets] == ["fit"]
+
+
+# ---------------------------------------------------------------------------
+# Recipe videos, cookbook favorites, catalog browsing, and price preview
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    """Minimal stand-in for the transport response objects the client consumes."""
+
+    def __init__(self, status: int, text: str = "") -> None:
+        self.status = status
+        self._text = text
+
+    async def text(self) -> str:
+        return self._text
+
+
+def test_recipe_video_link_is_parsed_from_menu_payload() -> None:
+    """`videoLink` on a menu recipe must surface as video_url (HAR: 2026-W36)."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    recipe = client._recipe_from_raw_meal(
+        {
+            "index": 33,
+            "recipe": {
+                "id": "6668640e2238",
+                "name": "Yakitori-Style Steak Skewers",
+                "image": "https://img.hellofresh.com/q_auto/recipes/image/steak.jpg",
+                "videoLink": (
+                    "https://media.hellofresh.com/dam/asset/d206d16f/"
+                    "INTLBRAND_4341_US_wk36_33_R80319C_Rd1_Clip1.mp4"
+                ),
+            },
+        }
+    )
+
+    assert recipe.video_url is not None
+    assert recipe.video_url.endswith("Clip1.mp4")
+    assert recipe.as_dict()["video_url"] == recipe.video_url
+
+
+def test_recipe_without_video_link_has_none() -> None:
+    """Most meals carry no `videoLink` at all; that must be None, not an empty string.
+
+    Past-delivery payloads omit the field entirely, so delivered weeks always land here.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    absent = client._recipe_from_raw_meal({"recipe": {"id": "r1", "name": "No Video"}})
+    blank = client._recipe_from_raw_meal(
+        {"recipe": {"id": "r2", "name": "Blank Video", "videoLink": "   "}}
+    )
+
+    assert absent.video_url is None
+    assert blank.video_url is None
+
+
+def test_favorite_search_batches_and_maps_bookmark_ids() -> None:
+    """The cookbook search is a filter: send candidate ids, get the bookmarked subset back."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    sent: list[list[str]] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        assert method == "POST"
+        assert path.endswith("/internal-recipes/search")
+        sent.append(list(json_payload["bookmark_ids"]))
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        # HelloFresh echoes back only the ids that ARE bookmarked.
+        return {"recipes": [{"id": "srv-1", "bookmark_id": "694053fe353e00bd89ba2d3e-en-US"}]}
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    found = loop.run_until_complete(
+        client.async_get_favorite_recipe_ids(
+            ["694053fe353e00bd89ba2d3e", "63aa8b5b1de163c0b20fb22b"]
+        )
+    )
+
+    assert set(found) == {"694053fe353e00bd89ba2d3e"}
+    assert found["694053fe353e00bd89ba2d3e"].favorite_id == "srv-1"
+    # Locale suffix is added on the way out and stripped on the way back in.
+    assert sent == [
+        ["694053fe353e00bd89ba2d3e-en-US", "63aa8b5b1de163c0b20fb22b-en-US"]
+    ]
+
+
+def test_favorite_search_requests_are_batched() -> None:
+    """More ids than the batch size must span multiple requests, not one huge body."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    batch_sizes: list[int] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        batch_sizes.append(len(json_payload["bookmark_ids"]))
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {"recipes": []}
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    ids = [f"{index:024x}" for index in range(120)]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client.async_get_favorite_recipe_ids(ids))
+
+    assert sum(batch_sizes) == 120
+    assert max(batch_sizes) <= client._COOKBOOK_SEARCH_BATCH
+
+
+def test_favorites_pass_leaves_state_unknown_when_lookup_fails() -> None:
+    """A cookbook outage must leave is_favorite None (no heart), never a misleading False."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[HelloFreshRecipe(recipe_id="abc123", name="Dish")],
+    )
+
+    async def failing_api_request(*_args, **_kwargs):
+        raise HelloFreshError("cookbook down")
+
+    client._async_api_request = failing_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_apply_favorites([week]))
+
+    assert week.recipes[0].is_favorite is None
+
+
+def test_favorites_pass_marks_hits_and_misses_when_lookup_succeeds() -> None:
+    """A successful lookup must mark non-bookmarked recipes False, not leave them unknown."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="694053fe353e00bd89ba2d3e", name="Favorited"),
+            HelloFreshRecipe(recipe_id="000000000000000000000000", name="Not favorited"),
+        ],
+    )
+
+    async def fake_api_request(*_args, **_kwargs):
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {"recipes": [{"id": "srv-1", "bookmark_id": "694053fe353e00bd89ba2d3e-en-US"}]}
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_apply_favorites([week]))
+
+    assert week.recipes[0].is_favorite is True
+    assert week.recipes[1].is_favorite is False
+
+
+def test_favorites_pass_is_skipped_when_disabled() -> None:
+    """The option must prevent the extra request entirely."""
+    client = HelloFreshClient(
+        session=object(),  # type: ignore[arg-type]
+        access_token="t",
+        enable_favorites=False,
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[HelloFreshRecipe(recipe_id="abc123", name="Dish")],
+    )
+
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("no cookbook request should be made when favorites are disabled")
+
+    client._async_api_request = fail  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_apply_favorites([week]))
+
+    assert week.recipes[0].is_favorite is None
+
+
+def test_add_favorite_parses_created_bookmark() -> None:
+    """The 201 body is rich (title, image, nutrition) — all of it should survive."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        assert method == "POST"
+        assert json_payload == {
+            "bookmark_id": "694053fe353e00bd89ba2d3e-en-US",
+            "bookmark_source": "hellofresh",
+        }
+        return _StubResponse(201)
+
+    async def fake_response_json(_response):
+        return {
+            "id": "6a80fd9bcbe7508b132a82cc",
+            "bookmark_id": "694053fe353e00bd89ba2d3e-en-US",
+            "url": "https://www.hellofresh.com/recipes/indian-style-butter-chicken",
+            "title": "Indian-Style Butter Chicken & Rice",
+            "headline": "with Dark Meat Chicken, Rice & Cheesy Garlic Naan",
+            "thumbnail_url": "https://media.hellofresh.com/w_640/image/butter-chicken.jpg",
+            "total_time": "PT35M",
+            "prep_time": "PT35M",
+            "nutrition": {"calories": 960, "protein": 43},
+            "created_at": "2026-08-16T00:00:27Z",
+        }
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    favorite = loop.run_until_complete(
+        client.async_add_favorite("694053fe353e00bd89ba2d3e")
+    )
+
+    assert favorite.recipe_id == "694053fe353e00bd89ba2d3e"
+    assert favorite.name == "Indian-Style Butter Chicken & Rice"
+    assert favorite.total_time_minutes == 35
+    assert favorite.calories_kcal == 960
+    assert favorite.created_at is not None
+
+
+def test_remove_favorite_reports_no_op_when_not_bookmarked() -> None:
+    """Removing something that is not a favorite is a no-op, not an error."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_search(_ids):
+        return {}, True
+
+    client._async_search_favorites = fake_search  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    removed = loop.run_until_complete(client.async_remove_favorite("abc123"))
+
+    assert removed is False
+
+
+def test_remove_favorite_deletes_row_under_external_recipes() -> None:
+    """The delete targets the server row id under external-recipes (HAR: DELETE -> 204).
+
+    The collection is counter-intuitive: bookmarks are CREATED under internal-recipes but
+    listed and deleted under external-recipes, and the path takes the row `id`, never the
+    bookmark_id. Pinning both here stops a "tidying" refactor from silently breaking it.
+    """
+    from custom_components.hellofresh.models import HelloFreshFavorite
+
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    called: dict[str, str] = {}
+
+    async def fake_search(_ids):
+        return {
+            "691f38f6927c3f76100b20a2": HelloFreshFavorite(
+                bookmark_id="691f38f6927c3f76100b20a2-en-US",
+                recipe_id="691f38f6927c3f76100b20a2",
+                favorite_id="6a810007cbe7508b132a8347",
+            )
+        }, True
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        called["method"] = method
+        called["path"] = path
+        return _StubResponse(204)
+
+    client._async_search_favorites = fake_search  # type: ignore[method-assign]
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    removed = loop.run_until_complete(
+        client.async_remove_favorite("691f38f6927c3f76100b20a2")
+    )
+
+    assert removed is True
+    assert called["method"] == "DELETE"
+    assert called["path"] == "/gw/cookbook/v1/external-recipes/6a810007cbe7508b132a8347"
+
+
+def test_remove_favorite_raises_on_rejected_delete() -> None:
+    """A rejected delete must raise rather than report a removal that did not happen."""
+    from custom_components.hellofresh.models import HelloFreshFavorite
+
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_search(_ids):
+        return {
+            "abc123": HelloFreshFavorite(
+                bookmark_id="abc123-en-US", recipe_id="abc123", favorite_id="srv-9"
+            )
+        }, True
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        return _StubResponse(403)
+
+    client._async_search_favorites = fake_search  # type: ignore[method-assign]
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="403"):
+        loop.run_until_complete(client.async_remove_favorite("abc123"))
+
+
+def test_list_favorites_pages_with_the_opaque_cursor() -> None:
+    """external-recipes pages by an opaque `next_cursor`, echoed back verbatim.
+
+    Shapes taken from real traffic: rows come newest-first, `total_count` reports the true
+    cookbook size (the website's own UI only ever renders a 3-item preview), and the cursor
+    is an opaque token that must be sent back as-is. An `offset` param is ignored by the
+    server, so getting this wrong silently re-serves page one forever.
+    """
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    pages = [
+        {
+            "data": [
+                {
+                    "id": "6a810684cbe7508b132a8457",
+                    "bookmark_id": "59669b10043c3c7d9e0e9da2-en-US",
+                    "title": "Crantastic Turkey Burgers",
+                    "headline": "with Jammy Mayo and a Green Salad",
+                    "thumbnail_url": "https://media.hellofresh.com/w_640/image/turkey.jpg",
+                    "total_time": "PT35M",
+                    "prep_time": "PT35M",
+                    "nutrition": {"calories": 960, "protein": 43},
+                    "created_at": "2026-08-16T00:38:28Z",
+                }
+            ],
+            "pagination": {
+                "has_more": True,
+                "limit": 1,
+                "total_count": 2,
+                "next_cursor": "NmE4MTA2ODBjYmU3NTA4YjEzMmE4NDU2",
+            },
+        },
+        {
+            "data": [
+                {
+                    "id": "6a810680cbe7508b132a8456",
+                    "bookmark_id": "590c7f243131001c5f56d143-en-US",
+                    "title": "Lemon Basil Shrimp Skewers",
+                }
+            ],
+            "pagination": {"has_more": False, "limit": 1, "total_count": 2},
+        },
+    ]
+    seen_params: list[dict] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        assert method == "GET"
+        assert path == "/gw/cookbook/v1/external-recipes"
+        seen_params.append(dict(params or {}))
+        return _StubResponse(200)
+
+    call = {"n": 0}
+
+    async def fake_response_json(_response):
+        page = pages[min(call["n"], len(pages) - 1)]
+        call["n"] += 1
+        return page
+
+    client._COOKBOOK_LIST_PAGE = 1
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    favorites = loop.run_until_complete(client.async_list_favorites())
+
+    assert [f.recipe_id for f in favorites] == [
+        "59669b10043c3c7d9e0e9da2",
+        "590c7f243131001c5f56d143",
+    ]
+    # Full detail survives, unlike the id-only search endpoint.
+    assert favorites[0].name == "Crantastic Turkey Burgers"
+    assert favorites[0].calories_kcal == 960
+    assert favorites[0].total_time_minutes == 35
+    # Page one carries no cursor; page two echoes the server's token verbatim.
+    assert "cursor" not in seen_params[0]
+    assert seen_params[1]["cursor"] == "NmE4MTA2ODBjYmU3NTA4YjEzMmE4NDU2"
+
+
+def test_list_favorites_stops_when_cursor_is_missing() -> None:
+    """has_more with no usable cursor must end the loop, not spin re-requesting page one."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    calls = {"n": 0}
+
+    async def fake_api_request(*_args, **_kwargs):
+        calls["n"] += 1
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        # Claims more pages exist but never hands back a token to reach them.
+        return {
+            "data": [{"id": "row-1", "bookmark_id": "aaa-en-US", "title": "Stuck"}],
+            "pagination": {"has_more": True, "limit": 1, "total_count": 9},
+        }
+
+    client._COOKBOOK_LIST_PAGE = 1
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    favorites = loop.run_until_complete(client.async_list_favorites())
+
+    assert [f.recipe_id for f in favorites] == ["aaa"]
+    assert calls["n"] == 1
+
+
+def test_list_favorites_stops_when_cursor_replays_the_same_page() -> None:
+    """A cursor that re-serves identical rows must not accumulate duplicates."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    calls = {"n": 0}
+
+    async def fake_api_request(*_args, **_kwargs):
+        calls["n"] += 1
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {
+            "data": [{"id": "row-1", "bookmark_id": "aaa-en-US", "title": "Stuck"}],
+            "pagination": {"has_more": True, "limit": 1, "next_cursor": "same-token"},
+        }
+
+    client._COOKBOOK_LIST_PAGE = 1
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    favorites = loop.run_until_complete(client.async_list_favorites())
+
+    assert [f.recipe_id for f in favorites] == ["aaa"]
+    # Second request contributed nothing new, so the loop stopped instead of burning
+    # the whole page budget.
+    assert calls["n"] == 2
+
+
+def test_catalog_rows_are_extracted_from_dehydrated_query_cache() -> None:
+    """Catalog recipes live under a foodContentHubRecipe query whose `pages` is the flat list."""
+    payload = {
+        "pageProps": {
+            "ssrPayload": {
+                "dehydratedState": {
+                    "queries": [
+                        {
+                            "queryKey": ["t9n", {"group": "recipe-archive"}],
+                            "state": {"data": {"pages": [{"name": "not a recipe"}]}},
+                        },
+                        {
+                            "queryKey": ["foodContentHubRecipe.all", {"limit": 20}],
+                            "state": {
+                                "data": {
+                                    "pages": [
+                                        {
+                                            "recipeId": "61f051cc17c4db690168e112",
+                                            "name": "Beef with Cheddar-Gouda Fondue",
+                                            "imagePath": "/image/beef.jpg",
+                                            "aggregateRating": 4.72,
+                                            "aggregateRatingsCount": 3503,
+                                            "prepTime": "PT35M",
+                                        }
+                                    ]
+                                }
+                            },
+                        },
+                    ]
+                }
+            }
+        }
+    }
+
+    rows = HelloFreshClient._extract_catalog_rows(payload)
+
+    assert len(rows) == 1
+    assert rows[0]["recipeId"] == "61f051cc17c4db690168e112"
+
+
+def test_catalog_rows_fall_back_to_best_rated_recipes() -> None:
+    """When the query cache layout shifts, the page's bestRatedRecipes still works."""
+    payload = {
+        "pageProps": {
+            "ssrPayload": {
+                "dehydratedState": {"queries": []},
+                "bestRatedRecipes": {"pages": [{"recipeId": "abc", "name": "Fallback Dish"}]},
+            }
+        }
+    }
+
+    rows = HelloFreshClient._extract_catalog_rows(payload)
+
+    assert [row["name"] for row in rows] == ["Fallback Dish"]
+
+
+def test_catalog_build_id_is_refreshed_once_on_404() -> None:
+    """A rotated Next.js build id (deploy) must trigger exactly one re-scrape and retry."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "stale-build"
+    requested: list[str] = []
+
+    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+        requested.append(path)
+        if path == "/recipes":
+            return _StubResponse(200, text='window.x = {"buildId":"fresh-build"};')
+        if path.startswith("/_next/data/stale-build/"):
+            return _StubResponse(404)
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {"ok": True}
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client._async_get_catalog_json("recipes.json"))
+
+    assert result == {"ok": True}
+    assert client._build_id == "fresh-build"
+    assert "/_next/data/stale-build/recipes.json" in requested
+    assert "/_next/data/fresh-build/recipes.json" in requested
+
+
+def test_preview_meal_price_prices_hypothetical_selection() -> None:
+    """Preview must price the REQUESTED courses, not the week's saved selection."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="r-a", name="A", course_index=1),
+            HelloFreshRecipe(recipe_id="r-b", name="B", course_index=10),
+        ],
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="sub-1", account_id="42", locale="en-US"
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_get_subscription(_week):
+        return subscription
+
+    async def fake_price(_sub, _week, course_quantities=None):
+        captured["course_quantities"] = course_quantities
+        return {
+            "grandTotal": 90.91,
+            "subTotal": 79.92,
+            "shippingAmount": 10.99,
+            "taxAmount": 0.0,
+            "discountAmount": 0.0,
+            "couponCode": "",
+            "products": [
+                {
+                    "handle": "US-CHARGE-0-0-0",
+                    "charges": [
+                        {
+                            "reason": "premium",
+                            "amount": 1398,
+                            "entity_id": "6a0df034bff716338a6d6f90",
+                            "entity_type": "recipe",
+                            "strategy": "per_meal",
+                        }
+                    ],
+                }
+            ],
+        }
+
+    client._get_known_week_or_raise = lambda _week_id: week  # type: ignore[method-assign]
+    client._async_get_subscription_for_week = fake_get_subscription  # type: ignore[method-assign]
+    client._async_get_cart_price_for_week = fake_price  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(
+        client.async_preview_meal_price("2026-W39", ["r-a", "r-b"], {"r-b": 2})
+    )
+
+    # Recipe ids are resolved to the course indexes the cart is keyed by.
+    assert captured["course_quantities"] == {1: 1, 10: 2}
+    assert result["grand_total"] == 90.91
+    assert result["meal_count"] == 2
+    assert result["surcharges"][0]["reason"] == "premium"
+    # Surcharges arrive in minor units and are exposed both ways.
+    assert result["surcharges"][0]["amount_cents"] == 1398
+    assert result["surcharges"][0]["amount"] == 13.98
+
+
+def test_preview_meal_price_rejects_unknown_recipes() -> None:
+    """An id that is not on the week (or has no course index) must fail loudly."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[HelloFreshRecipe(recipe_id="r-a", name="A", course_index=1)],
+    )
+
+    async def fake_get_subscription(_week):
+        return HelloFreshSubscription(subscription_id="sub-1", account_id="42", locale="en-US")
+
+    client._get_known_week_or_raise = lambda _week_id: week  # type: ignore[method-assign]
+    client._async_get_subscription_for_week = fake_get_subscription  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="Unknown recipes"):
+        loop.run_until_complete(
+            client.async_preview_meal_price("2026-W39", ["r-a", "nope"])
+        )
+
+
+def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
+    """Pricing more meals than the current box holds must upgrade the SKU, as a save does."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    groups = [
+        {
+            "handle": "US-CHARGE-0-0-0",
+            "boxSku": "US-CBU-3-2-0",
+            "quantityPerCourse": [{"index": 1, "quantity": 1}],
+            "recipeIndexes": ["1"],
+        }
+    ]
+
+    overridden = client._override_cart_selection_groups(
+        groups, {1: 1, 5: 1, 9: 1, 14: 1}, default_box_sku="US-CBU-3-2-0"
+    )
+
+    assert len(overridden) == 1
+    # 4 distinct meals -> the meal digit moves 3 -> 4.
+    assert overridden[0]["boxSku"] == "US-CBU-4-2-0"
+    assert overridden[0]["recipeIndexes"] == ["1", "5", "9", "14"]
+    assert overridden[0]["quantityPerCourse"] == [
+        {"index": 1, "quantity": 1},
+        {"index": 5, "quantity": 1},
+        {"index": 9, "quantity": 1},
+        {"index": 14, "quantity": 1},
+    ]
+
+
+def test_catalog_image_path_resolves_against_the_cdn_host() -> None:
+    """Catalog rows carry a bare `imagePath`; it must become a usable absolute URL.
+
+    The host is pinned by the menus-service payload, which returns the SAME "/image/…" path
+    in `imagePath` alongside a fully-qualified `imageLink` on this CloudFront distribution.
+    """
+    from custom_components.hellofresh.models import HelloFreshCatalogRecipe
+
+    recipe = HelloFreshCatalogRecipe.from_api(
+        {
+            "recipeId": "61f051cc17c4db690168e112",
+            "name": "Beef with Cheddar-Gouda Fondue",
+            "imagePath": "/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg",
+        },
+        image_base=HelloFreshClient._CATALOG_IMAGE_BASE,
+    )
+
+    assert recipe.image_url == (
+        "https://d3hvwccx09j84u.cloudfront.net/0,0"
+        "/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
+    )
+
+
+def test_catalog_absolute_image_url_is_left_alone() -> None:
+    """A row that already carries an absolute URL must not get the CDN host prefixed onto it."""
+    from custom_components.hellofresh.models import HelloFreshCatalogRecipe
+
+    recipe = HelloFreshCatalogRecipe.from_api(
+        {"recipeId": "abc", "name": "N", "imagePath": "https://cdn.example/image/x.jpg"},
+        image_base=HelloFreshClient._CATALOG_IMAGE_BASE,
+    )
+
+    assert recipe.image_url == "https://cdn.example/image/x.jpg"
+
+
+# ---------------------------------------------------------------------------
+# Recipe detail, profile completion, secondary favorites store
+# ---------------------------------------------------------------------------
+
+
+def _recipe_detail_payload() -> dict:
+    """Trimmed but structurally faithful copy of a real /gw/recipes/recipes/{id} response."""
+    return {
+        "id": "6819dfd55efe69a088447ef3",
+        "uuid": "6bbbdb6a-1c15-4724-9d97-5dd46c317b66",
+        "name": "Crispy Parmesan Chicken",
+        "headline": "with Pearl Couscous & Lemony Carrots",
+        "description": "Consider plain chicken a thing of the past.",
+        "slug": "crispy-parmesan-chicken",
+        "imageLink": "https://d3hvwccx09j84u.cloudfront.net/0,0/image/chicken.jpeg",
+        "videoLink": None,
+        "cardLink": "https://www.hellofresh.com/recipecards/card/6bbbdb6a-en-US-auto.pdf",
+        "websiteUrl": "https://www.hellofresh.com/recipes/crispy-parmesan-chicken-6819dfd5",
+        "difficulty": 2,
+        "prepTime": "PT40M",
+        "totalTime": "PT10M",
+        "averageRating": 3.6,
+        "ratingsCount": 1411,
+        "favoritesCount": 571,
+        "category": {"name": "Poultry", "slug": "poultry"},
+        "cuisines": [{"name": "North America", "slug": "american"}],
+        "tags": [{"name": "Protein Smart", "slug": "protein-smart"}],
+        "allergens": [{"name": "Milk", "slug": "milk"}, {"name": "Wheat", "slug": "wheat"}],
+        "utensils": [{"name": "Medium Pot"}, {"name": "Peeler"}],
+        "nutrition": [
+            {"name": "Calories", "amount": 720, "unit": "kcal"},
+            {"name": "Fat", "amount": 33, "unit": "g"},
+        ],
+        "ingredients": [
+            {
+                "id": "ing-sour-cream",
+                "name": "Sour Cream",
+                "imageLink": "https://cdn/ingredient/sour-cream.png",
+                "shipped": True,
+            },
+            {"id": "ing-salt", "name": "Salt", "shipped": False},
+        ],
+        "yields": [
+            {
+                "yields": 2,
+                "ingredients": [
+                    {"id": "ing-sour-cream", "amount": 1.5, "unit": "tablespoon"},
+                ],
+            },
+            {
+                "yields": 4,
+                "ingredients": [
+                    {"id": "ing-sour-cream", "amount": 3, "unit": "tablespoon"},
+                ],
+            },
+        ],
+        "steps": [
+            {"index": 1, "instructions": "\n\nPreheat oven to 425 degrees.\n\n\nWash produce.\n\n"},
+            {"index": 2, "instructions": "Cook the chicken."},
+        ],
+    }
+
+
+def test_recipe_detail_parses_steps_ingredients_and_metadata() -> None:
+    """The /gw/ recipe API carries everything the website's detail page shows."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    detail = HelloFreshRecipeDetail.from_api(_recipe_detail_payload())
+
+    assert detail.name == "Crispy Parmesan Chicken"
+    assert detail.prep_time_minutes == 40
+    assert detail.difficulty == 2
+    assert detail.category == "Poultry"
+    assert detail.allergens == ["Milk", "Wheat"]
+    assert detail.utensils == ["Medium Pot", "Peeler"]
+    assert detail.calories_kcal == 720
+    assert detail.nutrition["Fat"] == "33g"
+    assert detail.card_url.endswith(".pdf")
+    # Blank-line padding in the raw instructions is collapsed, not passed through.
+    assert detail.steps[0]["instructions"] == "Preheat oven to 425 degrees.\nWash produce."
+    assert len(detail.steps) == 2
+
+
+def test_recipe_detail_scales_ingredient_amounts_to_servings() -> None:
+    """Ingredient amounts come from the matching `yields` entry, so servings must scale them."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    two = HelloFreshRecipeDetail.from_api(_recipe_detail_payload())
+    four = HelloFreshRecipeDetail.from_api(_recipe_detail_payload(), servings=4)
+
+    assert two.available_yields == [2, 4]
+    # Defaults to the smallest yield (the standard 2-person box), matching the website.
+    assert two.servings == 2
+    assert two.ingredients[0] == {
+        "name": "Sour Cream",
+        "amount": 1.5,
+        "unit": "tablespoon",
+        "image_url": "https://cdn/ingredient/sour-cream.png",
+        "shipped": True,
+    }
+    assert four.servings == 4
+    assert four.ingredients[0]["amount"] == 3
+    # A pantry staple with no per-yield amount still appears, flagged as not shipped.
+    assert two.ingredients[1]["name"] == "Salt"
+    assert two.ingredients[1]["amount"] is None
+    assert two.ingredients[1]["shipped"] is False
+
+
+def test_recipe_detail_falls_back_when_requested_servings_unavailable() -> None:
+    """Asking for a serving count the recipe doesn't offer must not blank the ingredients."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    detail = HelloFreshRecipeDetail.from_api(_recipe_detail_payload(), servings=7)
+
+    assert detail.servings == 2
+    assert detail.ingredients[0]["amount"] == 1.5
+
+
+def test_recipe_detail_request_uses_the_gw_api_not_the_website() -> None:
+    """This endpoint must not depend on the scraped Next.js build id."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    called: dict[str, object] = {}
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        called["path"] = path
+        called["params"] = params
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return _recipe_detail_payload()
+
+    async def fake_search(_ids):
+        return {}, True
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+    client._async_search_favorites = fake_search  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    detail = loop.run_until_complete(
+        client.async_get_recipe_detail("6819dfd55efe69a088447ef3")
+    )
+
+    assert called["path"] == "/gw/recipes/recipes/6819dfd55efe69a088447ef3"
+    assert called["params"]["country"] == "US"
+    assert client._build_id is None  # no build-id scraping happened
+    assert detail.is_favorite is False
+
+
+def test_recipe_detail_leaves_favorite_unknown_when_cookbook_fails() -> None:
+    """A cookbook outage must not fail the recipe lookup or fake a not-favorited answer."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return _recipe_detail_payload()
+
+    async def fake_search(_ids):
+        return {}, False  # every batch failed
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+    client._async_search_favorites = fake_search  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    detail = loop.run_until_complete(client.async_get_recipe_detail("abc123"))
+
+    assert detail.is_favorite is None
+
+
+def test_recipe_detail_raises_clear_error_on_404() -> None:
+    """An unknown recipe id should say so rather than surfacing a generic failure."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        return _StubResponse(404)
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError, match="no recipe with id"):
+        loop.run_until_complete(client.async_get_recipe_detail("nope"))
+
+
+def test_profile_completion_parses_tiers_and_incomplete_fields() -> None:
+    """Completion flattens the p0/p1/p2 tiers and names what is still unanswered."""
+    from custom_components.hellofresh.models import HelloFreshProfileCompletion
+
+    completion = HelloFreshProfileCompletion.from_api(
+        {
+            "overall": {"rate": 0.8, "completed": 8, "total": 10},
+            "p0": {
+                "fields": [
+                    {"field": "taste.dietaryPreferences", "completed": True},
+                    {"field": "taste.exclusions", "completed": False},
+                ]
+            },
+            "p2": {"fields": [{"field": "goals.goals", "completed": False}]},
+        }
+    )
+
+    assert completion.completed == 8
+    assert completion.total == 10
+    assert completion.percent == 80
+    assert completion.as_dict()["incomplete_fields"] == ["goals.goals", "taste.exclusions"]
+
+
+def test_profile_completion_handles_zero_total_without_dividing_by_zero() -> None:
+    """A profile reporting no fields must yield 0%, not raise."""
+    from custom_components.hellofresh.models import HelloFreshProfileCompletion
+
+    completion = HelloFreshProfileCompletion.from_api(
+        {"overall": {"completed": 0, "total": 0}}
+    )
+
+    assert completion.rate == 0.0
+    assert completion.percent == 0
+
+
+def test_profile_completion_failure_is_non_fatal() -> None:
+    """Completion decorates the profile card, so a failure must return None, not raise."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def failing_get(*_args, **_kwargs):
+        raise HelloFreshError("profile-service down")
+
+    client._async_api_get = failing_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    assert loop.run_until_complete(client.async_get_food_profile_completion()) is None
+
+
+def test_cfs_favorites_reports_unavailable_rather_than_empty_on_failure() -> None:
+    """The secondary store's "empty" and "unreachable" answers must stay distinguishable."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def failing_get(*_args, **_kwargs):
+        raise HelloFreshError("cfs down")
+
+    client._async_api_get = failing_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client.async_get_cfs_favorites())
+
+    assert result == {"total": 0, "count": 0, "items": [], "available": False}
+
+
+def test_cfs_favorites_passes_through_rows_and_mirrors_the_ids_param() -> None:
+    """Row shape is unconfirmed (only ever seen empty), so rows pass through unmodelled."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    captured: dict[str, object] = {}
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        captured["path"] = path
+        captured["params"] = params
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return {"skip": 0, "take": 50, "total": 1, "count": 1, "items": [{"id": "x"}]}
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(client.async_get_cfs_favorites(["abc-en-US", "def"]))
+
+    assert captured["path"] == "/gw/cfs/v2/favorites/recipe"
+    # The website always sends `ids`; locale suffixes are stripped to bare recipe ids.
+    assert captured["params"]["ids"] == "abc,def"
+    assert result["available"] is True
+    assert result["items"] == [{"id": "x"}]
+
+
+def test_past_delivery_meal_fields_survive_an_empty_recipe_dict() -> None:
+    """Past-deliveries puts recipe fields on the MEAL and still emits `recipe: {}` beside them.
+
+    Preferring any dict-valued `recipe` picked that empty dict and silently blanked the name,
+    image and video for every delivered meal — so the nested node must only win when non-empty.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal(
+        {
+            "id": "6a0df034bff716338a6d6f90",
+            "name": "Seared Steelhead Trout over Garden Salad",
+            "headline": "with Lemon Vinaigrette",
+            "image": "https://img.hellofresh.com/q_auto/recipes/image/trout.jpg",
+            "videoLink": "https://media.hellofresh.com/dam/asset/791e35ee/clip.mp4",
+            "recipe": {},
+        }
+    )
+
+    assert recipe.name == "Seared Steelhead Trout over Garden Salad"
+    assert recipe.image_url == "https://img.hellofresh.com/q_auto/recipes/image/trout.jpg"
+    assert recipe.video_url == "https://media.hellofresh.com/dam/asset/791e35ee/clip.mp4"
+
+
+def test_nested_recipe_node_still_wins_when_populated() -> None:
+    """The normal nested shape must keep taking precedence over the meal wrapper."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal(
+        {
+            "name": "Wrapper name that must lose",
+            "recipe": {"id": "r-2", "name": "Nested name", "image": "https://img/nested.jpg"},
+        }
+    )
+
+    assert recipe.name == "Nested name"
+    assert recipe.image_url == "https://img/nested.jpg"
+
+
+def test_recipe_id_extraction_also_handles_the_empty_recipe_dict() -> None:
+    """The id-only fast path shares the same node resolution, so it must agree."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe_id = client._extract_recipe_id_from_raw_meal(
+        {"id": "6a0df034bff716338a6d6f90", "name": "Trout", "recipe": {}}
+    )
+
+    assert recipe_id == "6a0df034bff716338a6d6f90"
+
+
+# ---------------------------------------------------------------------------
+# Sold-out meals, per-meal pricing, delivery history / ratings, categories
+# ---------------------------------------------------------------------------
+
+
+def test_meal_price_is_parsed_from_units_and_nanos() -> None:
+    """HelloFresh sends money as protobuf {units, nanos}; 17 + 0.98 must become $17.98.
+
+    Distinct from `charge`, which the model already exposes as surcharge_* — that is only the
+    premium uplift, while itemPrice is what the serving actually costs.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal(
+        {
+            "index": 1,
+            "itemPrice": {
+                "group": "premium",
+                "pricePerUnit": {"currencyCode": "USD", "units": 17, "nanos": 980000000},
+            },
+            "charge": {"label": "+6.99/serving", "unitAmount": 699, "reason": "premium"},
+            "relatedCategory": "appetizers",
+            "recipe": {"id": "r1", "name": "Cajun Garlic Shrimp"},
+        }
+    )
+
+    assert recipe.price_cents == 1798
+    assert recipe.price == 17.98
+    assert recipe.currency == "USD"
+    assert recipe.price_group == "premium"
+    assert recipe.related_category == "appetizers"
+    # The pre-existing surcharge parse is untouched by the new price fields.
+    assert recipe.surcharge_cents == 699
+
+
+def test_meal_without_item_price_has_no_price_fields() -> None:
+    """menus-service omits itemPrice entirely, so absence must stay None, not 0."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal({"recipe": {"id": "r1", "name": "No price"}})
+
+    assert recipe.price_cents is None
+    assert recipe.price is None
+    assert recipe.price_group is None
+
+
+def test_sold_out_and_hidden_flags_are_read_from_the_course_wrapper() -> None:
+    """isSoldOut/isHidden sit on the course, not the recipe node (menus-service only)."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    sold_out = client._recipe_from_raw_meal(
+        {
+            "index": 39,
+            "isSoldOut": True,
+            "isHidden": True,
+            "recipe": {"id": "r1", "name": "Black Garlic Chicken & Roasted Beets"},
+        }
+    )
+    available = client._recipe_from_raw_meal(
+        {"index": 40, "recipe": {"id": "r2", "name": "Jalapeño-Lime Cheddar Chicken"}}
+    )
+
+    assert sold_out.is_sold_out is True
+    assert sold_out.is_hidden is True
+    # Absent flags must read as available, not unknown.
+    assert available.is_sold_out is False
+    assert available.is_hidden is False
+
+
+def test_selecting_a_sold_out_meal_warns_but_still_submits(caplog) -> None:
+    """A sold-out pick must WARN and proceed, not block.
+
+    The flag comes from the anonymous regional catalog, which is not confirmed to track
+    per-customer availability. Blocking on it would make a selection HelloFresh might well
+    accept impossible to build, so HelloFresh stays the authority on its own inventory.
+    """
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="ok-1", name="Available", course_index=1),
+            HelloFreshRecipe(
+                recipe_id="gone-1", name="Black Garlic Chicken", course_index=2, is_sold_out=True
+            ),
+        ],
+    )
+    client._get_known_week_or_raise = lambda _week_id: week  # type: ignore[method-assign]
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("reached the write path, which is what we want to prove")
+
+    client._async_get_subscription_for_week = boom  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(AssertionError, match="reached the write path"),
+    ):
+        loop.run_until_complete(client.async_select_meals("2026-W39", ["ok-1", "gone-1"]))
+    assert "Black Garlic Chicken" in caplog.text
+    assert "sold out" in caplog.text
+
+
+def test_selecting_available_meals_is_not_blocked_by_the_sold_out_check() -> None:
+    """The guard must only fire for meals positively known to be sold out."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="ok-1", name="Available", course_index=1),
+            HelloFreshRecipe(recipe_id="ok-2", name="Also available", course_index=2),
+            HelloFreshRecipe(recipe_id="gone-1", name="Sold out", course_index=3, is_sold_out=True),
+        ],
+    )
+    client._get_known_week_or_raise = lambda _week_id: week  # type: ignore[method-assign]
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("reached the write path, which is what we want to prove")
+
+    client._async_get_subscription_for_week = boom  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Selecting only available meals must get PAST the sold-out guard (and then hit our
+    # sentinel), rather than being rejected for the sold-out sibling it didn't ask for.
+    with pytest.raises(AssertionError, match="reached the write path"):
+        loop.run_until_complete(client.async_select_meals("2026-W39", ["ok-1", "ok-2"]))
+
+
+def _availability_client(payload, recorder=None):
+    """Build a client whose menus-service call returns `payload`, recording its params."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_get(path, params=None, **_kwargs):
+        if recorder is not None:
+            recorder.append((path, params))
+        return _StubResponse(200)
+
+    async def fake_json(_response):
+        return payload
+
+    client._async_api_get = fake_get  # type: ignore[method-assign]
+    client._async_response_json = fake_json  # type: ignore[method-assign]
+    return client
+
+
+def _editable_week(week_id="2026-W39", recipes=None):
+    return HelloFreshWeek(
+        week_id=week_id,
+        display_name=week_id,
+        subscription_id="sub-1",
+        allowed_actions={"mealSwap": True},
+        recipes=recipes if recipes is not None else [],
+    )
+
+
+def _menus_service_payload(week_id, courses):
+    return {"items": [{"id": week_id, "week": week_id, "courses": courses}]}
+
+
+def test_menu_availability_overlays_sold_out_onto_the_editable_week() -> None:
+    """The flags must reach recipes built by the primary endpoint, which never carries them."""
+    recipes = [
+        HelloFreshRecipe(recipe_id="r-1", name="Fine", course_index=1),
+        HelloFreshRecipe(recipe_id="r-2", name="Gone", course_index=2),
+    ]
+    week = _editable_week(recipes=recipes)
+    payload = _menus_service_payload(
+        "2026-W39",
+        [
+            {"id": "c1", "isSoldOut": False, "recipe": {"id": "r-1", "name": "Fine"}},
+            {"id": "c2", "isSoldOut": True, "isHidden": True, "recipe": {"id": "r-2", "name": "Gone"}},
+        ],
+    )
+    client = _availability_client(payload)
+    subscription = HelloFreshSubscription(subscription_id="sub-1")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(subscriptions=[subscription], weeks=[week])
+    )
+
+    assert recipes[0].is_sold_out is False
+    assert recipes[1].is_sold_out is True
+    assert recipes[1].is_hidden is True
+
+
+def test_menu_availability_preserves_the_primary_endpoints_fields() -> None:
+    """The overlay must touch ONLY availability — never swap the recipe list wholesale.
+
+    This is the bug the field-level merge exists to avoid: the fallback path replaces
+    recipes outright, which would drop the price/history the catalog does not carry.
+    """
+    recipe = HelloFreshRecipe(
+        recipe_id="r-1",
+        name="Cajun Garlic Shrimp",
+        course_index=1,
+        price_cents=1798,
+        is_selected=True,
+        delivered_count=2,
+    )
+    week = _editable_week(recipes=[recipe])
+    payload = _menus_service_payload(
+        "2026-W39",
+        [{"id": "c1", "isSoldOut": True, "recipe": {"id": "r-1", "name": "Different Name"}}],
+    )
+    client = _availability_client(payload)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert week.recipes[0] is recipe
+    assert recipe.is_sold_out is True
+    assert recipe.name == "Cajun Garlic Shrimp"
+    assert recipe.price_cents == 1798
+    assert recipe.delivered_count == 2
+    assert recipe.is_selected is True
+
+
+def test_menu_availability_skips_weeks_that_cannot_be_changed() -> None:
+    """Locked/past weeks must not trigger the request — the flag can't change an outcome."""
+    locked = HelloFreshWeek(
+        week_id="2026-W30",
+        display_name="W30",
+        subscription_id="sub-1",
+        allowed_actions={"mealSwap": False},
+        recipes=[HelloFreshRecipe(recipe_id="r-1", name="Delivered", course_index=1)],
+    )
+    calls: list = []
+    client = _availability_client({"items": []}, recorder=calls)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[locked]
+        )
+    )
+
+    assert calls == []
+    assert locked.recipes[0].is_sold_out is False
+
+
+def test_menu_availability_requests_only_the_editable_weeks() -> None:
+    """The `weeks` filter keeps the response to the week we care about, not the whole catalog."""
+    editable = _editable_week("2026-W39", [HelloFreshRecipe(recipe_id="r-1", name="A", course_index=1)])
+    locked = HelloFreshWeek(
+        week_id="2026-W30",
+        display_name="W30",
+        subscription_id="sub-1",
+        allowed_actions={"mealSwap": False},
+        recipes=[HelloFreshRecipe(recipe_id="r-2", name="B", course_index=1)],
+    )
+    calls: list = []
+    client = _availability_client({"items": []}, recorder=calls)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+            weeks=[editable, locked],
+        )
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["weeks"] == "2026-W39"
+
+
+def test_menu_availability_absence_from_the_catalog_is_not_sold_out() -> None:
+    """The payloads can disagree on membership; a missing row must leave the recipe alone."""
+    recipe = HelloFreshRecipe(recipe_id="only-in-primary", name="Mine", course_index=1)
+    week = _editable_week(recipes=[recipe])
+    payload = _menus_service_payload(
+        "2026-W39",
+        [{"id": "c1", "isSoldOut": True, "recipe": {"id": "someone-else", "name": "Other"}}],
+    )
+    client = _availability_client(payload)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert recipe.is_sold_out is False
+
+
+def test_menu_availability_failure_leaves_the_menu_intact() -> None:
+    """Best-effort: a failed catalog call must not degrade the week."""
+    recipe = HelloFreshRecipe(recipe_id="r-1", name="Fine", course_index=1)
+    week = _editable_week(recipes=[recipe])
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+
+    async def fake_get(*_args, **_kwargs):
+        raise HelloFreshError("menus-service unavailable")
+
+    client._async_api_get = fake_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert week.recipes == [recipe]
+    assert recipe.is_sold_out is False
+
+
+def test_menu_availability_never_aborts_the_poll() -> None:
+    """A transport-level failure must cost the flags and nothing else.
+
+    This overlay is cosmetic enrichment on an already-complete menu, so an unexpected
+    exception here must not propagate and take down the whole refresh.
+    """
+    recipe = HelloFreshRecipe(recipe_id="r-1", name="Fine", course_index=1)
+    week = _editable_week(recipes=[recipe])
+    client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # No session to talk to: the real transport raises AttributeError, standing in for any
+    # unexpected failure mode. It must be swallowed.
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert recipe.is_sold_out is False
+
+
+def test_delivery_history_feedback_is_parsed() -> None:
+    """`feedback` carries HelloFresh's own "you've had this before" counter."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal(
+        {
+            "recipe": {
+                "id": "r1",
+                "name": "Sweet Heat Shrimp Tempura Bowls",
+                "feedback": {"productDeliveryCount": 2, "lastDeliveryWeek": "2026-W22"},
+            }
+        }
+    )
+
+    assert recipe.delivered_count == 2
+    assert recipe.last_delivered_week == "2026-W22"
+    assert recipe.rating is None
+
+
+def test_rating_feedback_is_parsed_from_the_other_feedback_shape() -> None:
+    """`feedback` carries EITHER delivery history OR a star rating — never both."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    recipe = client._recipe_from_raw_meal(
+        {
+            "recipe": {
+                "id": "r1",
+                "name": "Spaghetti with Beef Bolognese",
+                "feedback": {"rating": 5, "ratingScale": 5},
+            }
+        }
+    )
+
+    assert recipe.rating == 5
+    assert recipe.rating_scale == 5
+    assert recipe.delivered_count is None
+    assert recipe.last_delivered_week is None

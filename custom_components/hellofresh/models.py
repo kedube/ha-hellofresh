@@ -8,12 +8,54 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+import re
 from typing import Any
 
 # Smallest valid box HelloFresh sells: a week with fewer distinct meals than this has no valid
 # box, so it genuinely still needs a selection. Mirrors the client's MIN_MEALS_PER_WEEK; kept as
 # a plain module constant here so models.py stays dependency-free (no import from client).
 MIN_MEALS_PER_WEEK = 2
+
+
+def _coerce_number(value: Any) -> float | None:
+    """Return a float for numeric input, else None. Bools are rejected (bool is an int)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _iso_duration_to_minutes(value: Any) -> int | None:
+    """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` to whole minutes.
+
+    Cookbook and catalog payloads express times this way, unlike the weekly menu which uses
+    plain integer minutes. Only hours and minutes appear in practice; anything unparseable
+    yields None rather than a misleading zero.
+    """
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(
+        r"P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:\d+S)?)?",
+        value.strip(),
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    days = int(match.group("days") or 0)
+    hours = int(match.group("hours") or 0)
+    minutes = int(match.group("minutes") or 0)
+    total = days * 1440 + hours * 60 + minutes
+    return total or None
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    """Parse an ISO-8601 timestamp, normalizing a trailing ``Z`` to UTC."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class HelloFreshError(Exception):
@@ -45,6 +87,13 @@ class HelloFreshRecipe:
     # building meal-selection writes and for a dashboard card to round-trip selections.
     course_index: int | None = None
     image_url: str | None = None
+    # Short promo clip for the dish, from the menu payload's `recipe.videoLink`. Only a handful
+    # of meals per week carry one (~5-20 of 400+), and the field is absent — not null — on meals
+    # without one. Past weeks CAN carry one: the past-deliveries payload puts the field on the
+    # meal itself rather than under `recipe` (see _recipe_node), so delivered meals keep their
+    # clip. The card must still always fall back to `image_url` — most meals have no video, and
+    # formats are mixed (.mp4 and .mov), with .mov unplayable in Chrome/Firefox.
+    video_url: str | None = None
     description: str | None = None
     ingredients: list[str] = field(default_factory=list)
     allergens: list[str] = field(default_factory=list)
@@ -73,6 +122,41 @@ class HelloFreshRecipe:
     # card can group a dish's variants together even when their names differ. None when the meal
     # is not part of any variant group.
     variation_group: int | None = None
+    # Sold out for this week, so it cannot be chosen. Only the menus-service catalog carries
+    # this (the delivery-menu endpoint omits it entirely), and HelloFresh sets `isHidden`
+    # alongside it — the website drops such meals from the grid rather than showing them
+    # greyed out. Surfaced rather than silently dropped so a card can explain why a meal it
+    # previously showed has gone, and so a selection write can refuse it up front instead of
+    # being rejected by the server.
+    is_sold_out: bool = False
+    is_hidden: bool = False
+    # Actual per-serving price of the meal, from the delivery menu's `itemPrice` (distinct
+    # from `surcharge_*`, which is only the premium *uplift* over a classic meal). HelloFresh
+    # sends money as protobuf-style {units, nanos}; both a cents integer and a display float
+    # are kept so callers don't have to reassemble it.
+    price_cents: int | None = None
+    price: float | None = None
+    currency: str | None = None
+    # "premium" / "classic" — HelloFresh's own pricing tier for the meal.
+    price_group: str | None = None
+    # Menu grouping for add-on style items ("appetizers", "desserts", ...).
+    related_category: str | None = None
+    # How many times this dish has previously been delivered to the customer, and the ISO week
+    # of the most recent one — HelloFresh's own "you've had this before" signal, from
+    # `recipe.feedback`. Absent for dishes never delivered.
+    delivered_count: int | None = None
+    last_delivered_week: str | None = None
+    # The customer's own star rating for the dish, when they have rated it. `feedback` carries
+    # EITHER the delivery-history pair above OR this rating pair, never both at once.
+    rating: int | None = None
+    rating_scale: int | None = None
+    # Whether this dish is bookmarked in the customer's cookbook. Resolved by cross-referencing
+    # the week's recipe ids against the cookbook search endpoint, which is a *filter* (you send
+    # candidate ids, it returns the subset that is bookmarked) rather than a list endpoint —
+    # so this is only populated when that lookup ran and succeeded. None means "not looked up",
+    # which is deliberately distinct from False ("looked up, not a favorite") so the card can
+    # hide the heart entirely rather than render a misleading empty one.
+    is_favorite: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize recipe data for Home Assistant state attributes."""
@@ -84,6 +168,7 @@ class HelloFreshRecipe:
             "selected_quantity": self.selected_quantity,
             "course_index": self.course_index,
             "image_url": self.image_url,
+            "video_url": self.video_url,
             "description": self.description,
             "ingredients": self.ingredients,
             "allergens": self.allergens,
@@ -100,6 +185,18 @@ class HelloFreshRecipe:
             "badge": self.badge,
             "variation_title": self.variation_title,
             "variation_group": self.variation_group,
+            "is_favorite": self.is_favorite,
+            "is_sold_out": self.is_sold_out,
+            "is_hidden": self.is_hidden,
+            "price_cents": self.price_cents,
+            "price": self.price,
+            "currency": self.currency,
+            "price_group": self.price_group,
+            "related_category": self.related_category,
+            "delivered_count": self.delivered_count,
+            "last_delivered_week": self.last_delivered_week,
+            "rating": self.rating,
+            "rating_scale": self.rating_scale,
         }
 
 
@@ -637,6 +734,452 @@ class HelloFreshDeliveryOption:
             "price_cents": self.price_cents,
             "price": (self.price_cents / 100) if self.price_cents is not None else None,
             "is_default": self.is_default,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshFavorite:
+    """A recipe bookmarked in the customer's cookbook (``/gw/cookbook/v1/internal-recipes``).
+
+    HelloFresh keys bookmarks by ``bookmark_id``, which is the recipe id suffixed with the
+    locale (``<recipeId>-en-US``) — the same 24-hex recipe id namespace the weekly menu uses,
+    so a menu recipe can be matched to a bookmark by stripping the suffix. ``favorite_id`` is a
+    separate server-assigned id returned when the bookmark is created; it identifies the
+    bookmark row itself and is what a delete would target.
+    """
+
+    bookmark_id: str
+    recipe_id: str
+    # Server-assigned id of the bookmark row. The search (filter) endpoint returns it alongside
+    # bookmark_id; the create endpoint returns it in a much richer body.
+    favorite_id: str | None = None
+    name: str | None = None
+    headline: str | None = None
+    description: str | None = None
+    image_url: str | None = None
+    url: str | None = None
+    total_time_minutes: int | None = None
+    prep_time_minutes: int | None = None
+    calories_kcal: float | None = None
+    protein_g: float | None = None
+    created_at: datetime | None = None
+
+    @staticmethod
+    def recipe_id_from_bookmark(bookmark_id: Any) -> str | None:
+        """Strip the ``-<locale>`` suffix off a bookmark id to get the bare recipe id.
+
+        Bookmark ids look like ``694053fe353e00bd89ba2d3e-en-US``. Only the locale tail is
+        removed: recipe ids are hex and never contain a hyphen, so splitting on the first
+        hyphen is safe and keeps this correct for locales like ``en-US`` that contain one.
+        """
+        if not isinstance(bookmark_id, str) or not bookmark_id.strip():
+            return None
+        return bookmark_id.strip().split("-", 1)[0] or None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> HelloFreshFavorite | None:
+        if not isinstance(raw, dict):
+            return None
+        bookmark_id = raw.get("bookmark_id")
+        if not isinstance(bookmark_id, str) or not bookmark_id.strip():
+            return None
+        recipe_id = cls.recipe_id_from_bookmark(bookmark_id)
+        if recipe_id is None:
+            return None
+        nutrition = raw.get("nutrition") if isinstance(raw.get("nutrition"), dict) else {}
+        return cls(
+            bookmark_id=bookmark_id.strip(),
+            recipe_id=recipe_id,
+            favorite_id=raw.get("id") if isinstance(raw.get("id"), str) else None,
+            name=raw.get("title") or raw.get("name"),
+            headline=raw.get("headline"),
+            description=raw.get("description"),
+            image_url=raw.get("thumbnail_url") or raw.get("image_url"),
+            url=raw.get("url"),
+            total_time_minutes=_iso_duration_to_minutes(raw.get("total_time")),
+            prep_time_minutes=_iso_duration_to_minutes(raw.get("prep_time")),
+            calories_kcal=_coerce_number(nutrition.get("calories")),
+            protein_g=_coerce_number(nutrition.get("protein")),
+            created_at=_parse_iso_datetime(raw.get("created_at")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "bookmark_id": self.bookmark_id,
+            "recipe_id": self.recipe_id,
+            "favorite_id": self.favorite_id,
+            "name": self.name,
+            "headline": self.headline,
+            "description": self.description,
+            "image_url": self.image_url,
+            "url": self.url,
+            "total_time_minutes": self.total_time_minutes,
+            "prep_time_minutes": self.prep_time_minutes,
+            "calories_kcal": self.calories_kcal,
+            "protein_g": self.protein_g,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshRecipeDetail:
+    """A complete recipe from ``/gw/recipes/recipes/{id}`` — steps, ingredients, the lot.
+
+    Distinct from :class:`HelloFreshRecipe` (a menu meal for one delivery week, carrying
+    selection state) and :class:`HelloFreshCatalogRecipe` (a browse-listing row). This is the
+    full cooking detail, and notably it comes from a plain ``/gw/`` API rather than the
+    website's Next.js data URLs — so unlike the browse catalog it needs no build-id scraping.
+
+    ``ingredients`` are merged with the amounts from the matching ``yields`` entry, so each
+    line already reads "1.5 tablespoon Sour Cream" for the requested serving count instead of
+    forcing every caller to join the two arrays itself.
+    """
+
+    recipe_id: str
+    name: str
+    headline: str | None = None
+    description: str | None = None
+    slug: str | None = None
+    image_url: str | None = None
+    video_url: str | None = None
+    # Printable recipe-card PDF, when HelloFresh has generated one.
+    card_url: str | None = None
+    url: str | None = None
+    difficulty: int | None = None
+    prep_time_minutes: int | None = None
+    total_time_minutes: int | None = None
+    rating: float | None = None
+    ratings_count: int | None = None
+    favorites_count: int | None = None
+    category: str | None = None
+    cuisines: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    allergens: list[str] = field(default_factory=list)
+    utensils: list[str] = field(default_factory=list)
+    nutrition: dict[str, str] = field(default_factory=dict)
+    calories_kcal: float | None = None
+    # Serving counts this recipe can be scaled to (from the `yields` array), e.g. [2, 4].
+    available_yields: list[int] = field(default_factory=list)
+    # The serving count `ingredients` amounts were resolved for.
+    servings: int | None = None
+    # Each entry: {name, amount, unit, image_url, shipped}.
+    ingredients: list[dict[str, Any]] = field(default_factory=list)
+    # Each entry: {index, instructions}. HTML is deliberately dropped — the cards render text.
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    is_favorite: bool | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any], *, servings: int | None = None) -> Any:
+        if not isinstance(raw, dict):
+            return None
+        recipe_id = raw.get("id")
+        name = raw.get("name")
+        if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
+            return None
+
+        yields = raw.get("yields") if isinstance(raw.get("yields"), list) else []
+        available = sorted(
+            {
+                int(entry["yields"])
+                for entry in yields
+                if isinstance(entry, dict) and isinstance(entry.get("yields"), (int, float))
+            }
+        )
+        # Pick the requested serving count when offered, else the smallest available — which
+        # is the standard 2-person box and matches what the website shows by default.
+        chosen = servings if servings in available else (available[0] if available else None)
+        amounts: dict[str, dict[str, Any]] = {}
+        for entry in yields:
+            if not isinstance(entry, dict) or entry.get("yields") != chosen:
+                continue
+            for line in entry.get("ingredients") or []:
+                if isinstance(line, dict) and isinstance(line.get("id"), str):
+                    amounts[line["id"]] = line
+
+        ingredients: list[dict[str, Any]] = []
+        for item in raw.get("ingredients") or []:
+            if not isinstance(item, dict):
+                continue
+            amount = amounts.get(str(item.get("id")), {})
+            ingredients.append(
+                {
+                    "name": item.get("name"),
+                    "amount": amount.get("amount"),
+                    "unit": amount.get("unit"),
+                    "image_url": item.get("imageLink"),
+                    # False marks a pantry staple you supply yourself (salt, oil, ...) rather
+                    # than something that arrives in the box.
+                    "shipped": bool(item.get("shipped")),
+                }
+            )
+
+        steps: list[dict[str, Any]] = []
+        for step in raw.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            text = step.get("instructions")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            # HelloFresh pads instructions with blank lines; collapse to tidy paragraphs.
+            cleaned = "\n".join(line.strip() for line in text.split("\n") if line.strip())
+            steps.append({"index": step.get("index"), "instructions": cleaned})
+
+        nutrition: dict[str, str] = {}
+        calories: float | None = None
+        for entry in raw.get("nutrition") or []:
+            if not isinstance(entry, dict):
+                continue
+            label = entry.get("name")
+            amount = entry.get("amount")
+            if not isinstance(label, str) or amount is None:
+                continue
+            nutrition[label] = f"{amount}{entry.get('unit') or ''}"
+            if label.lower() == "calories":
+                calories = _coerce_number(amount)
+
+        category = raw.get("category")
+        return cls(
+            recipe_id=recipe_id,
+            name=name.strip(),
+            headline=raw.get("headline"),
+            description=raw.get("description"),
+            slug=raw.get("slug"),
+            image_url=raw.get("imageLink"),
+            video_url=raw.get("videoLink") or None,
+            card_url=raw.get("cardLink"),
+            url=raw.get("websiteUrl") or raw.get("canonicalLink"),
+            difficulty=raw.get("difficulty") if isinstance(raw.get("difficulty"), int) else None,
+            prep_time_minutes=_iso_duration_to_minutes(raw.get("prepTime")),
+            total_time_minutes=_iso_duration_to_minutes(raw.get("totalTime")),
+            rating=_coerce_number(raw.get("averageRating")),
+            ratings_count=(
+                int(raw["ratingsCount"]) if isinstance(raw.get("ratingsCount"), int) else None
+            ),
+            favorites_count=(
+                int(raw["favoritesCount"]) if isinstance(raw.get("favoritesCount"), int) else None
+            ),
+            category=category.get("name") if isinstance(category, dict) else None,
+            cuisines=[
+                c["name"]
+                for c in raw.get("cuisines") or []
+                if isinstance(c, dict) and isinstance(c.get("name"), str)
+            ],
+            tags=[
+                t["name"]
+                for t in raw.get("tags") or []
+                if isinstance(t, dict) and isinstance(t.get("name"), str)
+            ],
+            allergens=[
+                a["name"]
+                for a in raw.get("allergens") or []
+                if isinstance(a, dict) and isinstance(a.get("name"), str)
+            ],
+            utensils=[
+                u["name"]
+                for u in raw.get("utensils") or []
+                if isinstance(u, dict) and isinstance(u.get("name"), str)
+            ],
+            nutrition=nutrition,
+            calories_kcal=calories,
+            available_yields=available,
+            servings=chosen,
+            ingredients=ingredients,
+            steps=steps,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "recipe_id": self.recipe_id,
+            "name": self.name,
+            "headline": self.headline,
+            "description": self.description,
+            "slug": self.slug,
+            "image_url": self.image_url,
+            "video_url": self.video_url,
+            "card_url": self.card_url,
+            "url": self.url,
+            "difficulty": self.difficulty,
+            "prep_time_minutes": self.prep_time_minutes,
+            "total_time_minutes": self.total_time_minutes,
+            "rating": self.rating,
+            "ratings_count": self.ratings_count,
+            "favorites_count": self.favorites_count,
+            "category": self.category,
+            "cuisines": self.cuisines,
+            "tags": self.tags,
+            "allergens": self.allergens,
+            "utensils": self.utensils,
+            "nutrition": self.nutrition,
+            "calories_kcal": self.calories_kcal,
+            "available_yields": self.available_yields,
+            "servings": self.servings,
+            "ingredients": self.ingredients,
+            "steps": self.steps,
+            "is_favorite": self.is_favorite,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshProfileCompletion:
+    """How complete the customer's food profile is (``/profile/completion``).
+
+    HelloFresh groups the fields into priority tiers (p0 = the ones it most wants answered),
+    each with its own rate; ``overall`` is the headline figure the card shows.
+    """
+
+    completed: int = 0
+    total: int = 0
+    # Field name -> whether it has been answered, flattened across all priority tiers.
+    fields: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def rate(self) -> float:
+        """Completion as a 0.0-1.0 fraction (0.0 when the profile reports no fields)."""
+        return (self.completed / self.total) if self.total else 0.0
+
+    @property
+    def percent(self) -> int:
+        return round(self.rate * 100)
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Any:
+        if not isinstance(raw, dict):
+            return None
+        overall = raw.get("overall")
+        if not isinstance(overall, dict):
+            return None
+        fields: dict[str, bool] = {}
+        for key, section in raw.items():
+            if key == "overall" or not isinstance(section, dict):
+                continue
+            for entry in section.get("fields") or []:
+                if isinstance(entry, dict) and isinstance(entry.get("field"), str):
+                    fields[entry["field"]] = bool(entry.get("completed"))
+        return cls(
+            completed=overall.get("completed") if isinstance(overall.get("completed"), int) else 0,
+            total=overall.get("total") if isinstance(overall.get("total"), int) else 0,
+            fields=fields,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "completed": self.completed,
+            "total": self.total,
+            "rate": self.rate,
+            "percent": self.percent,
+            # The fields still worth prompting the user about.
+            "incomplete_fields": sorted(k for k, done in self.fields.items() if not done),
+            "fields": self.fields,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshCatalogRecipe:
+    """A recipe from the public ``/recipes`` browse catalog (~10k recipes, all customers).
+
+    Distinct from :class:`HelloFreshRecipe`, which is a *menu* meal for a specific delivery week
+    and carries selection state. A catalog recipe is subscription-independent browse content, so
+    it has ratings and a canonical URL but no course index, selection, or surcharge.
+    """
+
+    recipe_id: str
+    name: str
+    headline: str | None = None
+    slug: str | None = None
+    image_url: str | None = None
+    url: str | None = None
+    rating: float | None = None
+    ratings_count: int | None = None
+    prep_time_minutes: int | None = None
+    is_favorite: bool | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any], *, image_base: str | None = None) -> Any:
+        if not isinstance(raw, dict):
+            return None
+        recipe_id = raw.get("recipeId") or raw.get("id")
+        name = raw.get("name")
+        if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
+            return None
+        # Catalog rows carry `imagePath` (a bare path like "/image/foo.jpg"), not a full URL;
+        # the CDN host has to be prefixed for it to be usable in an <img src>.
+        image_path = raw.get("imagePath")
+        image_url = None
+        if isinstance(image_path, str) and image_path.strip():
+            image_url = (
+                f"{image_base.rstrip('/')}{image_path}"
+                if image_base and image_path.startswith("/")
+                else image_path
+            )
+        return cls(
+            recipe_id=recipe_id.split("-", 1)[0],
+            name=name.strip(),
+            headline=raw.get("headline"),
+            slug=raw.get("slug"),
+            image_url=image_url,
+            url=raw.get("websiteUrl"),
+            rating=_coerce_number(raw.get("aggregateRating") or raw.get("averageRating")),
+            ratings_count=(
+                int(raw["aggregateRatingsCount"])
+                if isinstance(raw.get("aggregateRatingsCount"), (int, float))
+                else None
+            ),
+            prep_time_minutes=_iso_duration_to_minutes(raw.get("prepTime")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "recipe_id": self.recipe_id,
+            "name": self.name,
+            "headline": self.headline,
+            "slug": self.slug,
+            "image_url": self.image_url,
+            "url": self.url,
+            "rating": self.rating,
+            "ratings_count": self.ratings_count,
+            "prep_time_minutes": self.prep_time_minutes,
+            "is_favorite": self.is_favorite,
+        }
+
+
+@dataclass(slots=True)
+class HelloFreshRecipeCollection:
+    """A browsable category in the recipe catalog (e.g. "Chicken Recipes", "Hall of Fame")."""
+
+    slug: str
+    name: str
+    collection_id: str | None = None
+    thumbnail_url: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any], *, image_base: str | None = None) -> Any:
+        if not isinstance(raw, dict):
+            return None
+        slug = raw.get("slug")
+        name = raw.get("name")
+        if not isinstance(slug, str) or not isinstance(name, str):
+            return None
+        thumb = raw.get("thumbnail")
+        thumbnail_url = None
+        if isinstance(thumb, str) and thumb.strip():
+            thumbnail_url = (
+                f"{image_base.rstrip('/')}{thumb}"
+                if image_base and thumb.startswith("/")
+                else thumb
+            )
+        return cls(
+            slug=slug,
+            name=name,
+            collection_id=raw.get("id") if isinstance(raw.get("id"), str) else None,
+            thumbnail_url=thumbnail_url,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "slug": self.slug,
+            "name": self.name,
+            "collection_id": self.collection_id,
+            "thumbnail_url": self.thumbnail_url,
         }
 
 

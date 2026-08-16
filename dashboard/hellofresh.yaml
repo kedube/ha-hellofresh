@@ -26,7 +26,8 @@
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # • The custom cards — `custom:hellofresh-meal-planner-card`, `custom:hellofresh-market-card`,
 #   `custom:hellofresh-food-profile-card`, `custom:hellofresh-schedule-card`,
-#   `custom:hellofresh-subscription-card`, and `custom:hellofresh-cost-card` — are served and
+#   `custom:hellofresh-subscription-card`, `custom:hellofresh-cost-card`, and
+#   `custom:hellofresh-recipes-card` — are served and
 #   registered automatically when the
 #   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
 #   dashboards, add `/hellofresh/<card>.js` once under Settings → Dashboards → Resources
@@ -54,6 +55,17 @@ views:
     cards:
       - type: custom:hellofresh-market-card
         title: Market
+        logo: true
+    type: panel
+  - title: All Recipes
+    path: recipes
+    icon: mdi:book-open-page-variant
+    panel: true
+    cards:
+      # Browse content shared by every HelloFresh customer (~10,000 recipes) — unrelated to
+      # your subscription or delivery weeks. Favoriting here shows up as a ♥ in My Menu.
+      - type: custom:hellofresh-recipes-card
+        title: All Recipes
         logo: true
     type: panel
   - title: Food Profile

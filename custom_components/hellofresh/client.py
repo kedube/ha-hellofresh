@@ -19,14 +19,19 @@ from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY, api_country_code, api_loc
 from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
+    HelloFreshCatalogRecipe,
     HelloFreshDeliveryOption,
     HelloFreshError,
+    HelloFreshFavorite,
     HelloFreshFoodProfile,
     HelloFreshFoodProfileOptions,
     HelloFreshMarketItem,
     HelloFreshNotImplementedError,
     HelloFreshOrder,
+    HelloFreshProfileCompletion,
     HelloFreshRecipe,
+    HelloFreshRecipeCollection,
+    HelloFreshRecipeDetail,
     HelloFreshSubscription,
     HelloFreshWeek,
 )
@@ -105,6 +110,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         username: str | None = None,
         password: str | None = None,
         enable_public_menu_fallback: bool = True,
+        enable_favorites: bool = True,
         history_weeks: int | None = None,
         menu_grace_weeks: int | None = None,
         token_refresh_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -144,6 +150,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # to one HTTP fetch per poll instead of N+1.
         self._shared_get_tasks: dict[tuple[str, tuple[tuple[str, Any], ...]], asyncio.Task] = {}
         self._enable_public_menu_fallback = enable_public_menu_fallback
+        # Whether each poll spends one extra batched request resolving cookbook bookmark state
+        # for the menu's recipes. The favorite add/remove services work regardless.
+        self._enable_favorites = enable_favorites
         self._last_account_data: HelloFreshAccountData | None = None
         self._debug_trace: dict[str, list[dict[str, Any]]] = {}
         # Remembers which probed endpoint last produced a usable payload, keyed by
@@ -160,6 +169,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # this skips re-POSTing the same pricing request on every poll. Persists across polls;
         # FIFO-bounded to _CART_PRICE_CACHE_MAX so it can't grow without limit over time.
         self._cart_price_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # The public recipe catalog is served from Next.js data URLs that embed the site's
+        # current build id. It rotates on every HelloFresh web deploy, so it is scraped once
+        # and re-scraped only when a catalog request 404s (see _async_get_catalog_json).
+        self._build_id: str | None = None
 
     def _order_candidates_by_preference(
         self,
@@ -316,6 +329,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             past_delivery_weeks=data.past_delivery_weeks,
         )
 
+        # Sold-out availability is only reported by the menus-service catalog, which the
+        # primary per-week menu endpoint never carries. Overlay it for the weeks where it
+        # can actually change a decision — see _async_apply_menu_availability.
+        await self._async_apply_menu_availability(
+            subscriptions=subscriptions,
+            weeks=all_weeks,
+        )
+
         await self._async_enrich_order_tracking(
             subscriptions=subscriptions,
             orders=all_orders,
@@ -331,6 +352,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # system's auto-fill placeholders, so clear the selection (the catalog still shows for
         # browsing). Done last so it overrides whatever any merge path marked.
         self._clear_paused_week_selection(all_weeks)
+        # Universal pass: flag which meals are bookmarked in the customer's cookbook. Runs last
+        # so every assembled week is covered, and is best-effort — the cookbook is decoration,
+        # so an outage there leaves is_favorite as None (renders no heart) rather than failing.
+        await self._async_apply_favorites(all_weeks)
 
         data.weeks = all_weeks
         data.orders = all_orders
@@ -480,6 +505,28 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 raise HelloFreshError(
                     f"Quantity for recipe {recipe_id} must be a positive integer, got {quantity!r}"
                 )
+
+        # Warn (do not block) when a requested meal is flagged sold out. The flag comes from
+        # the menus-service catalog, which is the anonymous REGIONAL menu — it has not been
+        # confirmed to track per-customer availability, so a meal could read as sold out here
+        # while HelloFresh would still accept it for this subscription. Blocking on an
+        # unverified flag would be worse than the opaque server-side error it prevents: it
+        # would make a legitimate selection impossible with no way to override. Let the write
+        # proceed and let HelloFresh be the authority on its own inventory.
+        sold_out = {
+            recipe.recipe_id: recipe.name
+            for recipe in week.recipes
+            if recipe.is_sold_out and recipe.recipe_id in set(deduplicated_recipe_ids)
+        }
+        if sold_out:
+            names = ", ".join(f"{name} ({rid})" for rid, name in sorted(sold_out.items()))
+            _LOGGER.warning(
+                "Selecting meals for week %s that HelloFresh's menu catalog reports as "
+                "sold out: %s. Submitting anyway — HelloFresh will reject the write if they "
+                "are genuinely unavailable",
+                week_id,
+                names,
+            )
 
         def _qty(recipe_id: str) -> int:
             return quantities.get(recipe_id, 1)
@@ -660,6 +707,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     _PROFILE_OPTIONS_PATH = "/gw/profile-service/v2/profile/options"
     _PROFILE_PATH = "/gw/profile-service/v2/customers/me/profile"
+    _PROFILE_COMPLETION_PATH = "/gw/profile-service/v2/customers/me/profile/completion"
 
     def _profile_params(self, *, source: str | None = None) -> dict[str, str]:
         params = {
@@ -695,6 +743,27 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         payload = await self._async_response_json(response)
         return HelloFreshFoodProfile.from_api(payload)
 
+    async def async_get_food_profile_completion(self) -> HelloFreshProfileCompletion | None:
+        """Return how complete the food profile is, or None when unavailable.
+
+        Best-effort: this decorates the profile card with a progress figure, so a failure
+        should degrade to "no progress shown" rather than break the whole profile fetch.
+        """
+        try:
+            response = await self._async_api_get(
+                self._PROFILE_COMPLETION_PATH, params=self._profile_params()
+            )
+            if response.status >= 400:
+                raise HelloFreshError(f"HTTP {response.status}")
+            payload = await self._async_response_json(response)
+        except (HelloFreshError, ClientError) as err:
+            self._record_debug_attempt(
+                "profile_attempts",
+                {"path": self._PROFILE_COMPLETION_PATH, "error": str(err)},
+            )
+            return None
+        return HelloFreshProfileCompletion.from_api(payload)
+
     async def async_update_food_profile(
         self, changes: dict[str, Any]
     ) -> HelloFreshFoodProfile:
@@ -721,6 +790,548 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         payload = await self._async_response_json(response)
         _LOGGER.info("HelloFresh food-profile update succeeded")
         return HelloFreshFoodProfile.from_api(payload)
+
+    # ---- Cookbook (favorites) -------------------------------------------------
+    #
+    # HelloFresh bookmarks ("favorites") span two cookbook collections, all HAR-verified:
+    #   POST   /gw/cookbook/v1/internal-recipes/search   -> which of these ids are bookmarked
+    #   POST   /gw/cookbook/v1/internal-recipes          -> create a bookmark (HTTP 201)
+    #   GET    /gw/cookbook/v1/external-recipes          -> list ALL bookmarks (paginated)
+    #   DELETE /gw/cookbook/v1/external-recipes/{id}     -> remove one (HTTP 204)
+    #
+    # The naming is counter-intuitive and worth stating plainly: bookmarking a HelloFresh
+    # recipe is a POST to *internal*-recipes, but the resulting row is listed and deleted
+    # through *external*-recipes. The delete targets the server-assigned row id (the `id`
+    # field), not the `bookmark_id`.
+    #
+    # Two ways to read favorites, with different costs:
+    #   • search  — a FILTER: send candidate bookmark_ids, get back the subset that is
+    #     bookmarked as bare {id, bookmark_id} pairs (no title/image). Right for decorating a
+    #     week's menu, where the candidate ids are already in hand.
+    #   • external-recipes — the full list, with title, headline, thumbnail, times, and
+    #     nutrition, plus a `total_count`. Right for "show me my cookbook" with no candidates.
+
+    _COOKBOOK_PATH = "/gw/cookbook/v1/internal-recipes"
+    # Listing and deletion both live under the external-recipes collection (see above).
+    _COOKBOOK_LIST_PATH = "/gw/cookbook/v1/external-recipes"
+    # The website's cookbook page only ever renders a 3-item preview (limit=3), but the
+    # endpoint reports the true `total_count` and pages the rest via an opaque `cursor` —
+    # so the full cookbook IS reachable even though the UI caps at 3.
+    _COOKBOOK_LIST_PAGE = 50
+    # Backstop so a server that keeps returning has_more can't spin forever.
+    _COOKBOOK_LIST_MAX_PAGES = 20
+    # Bookmark ids are batched into one search call. HelloFresh's own web app sends ~40 ids per
+    # request; this cap keeps us in the same range rather than posting a 400-id week in one go.
+    _COOKBOOK_SEARCH_BATCH = 50
+
+    def _cookbook_params(self) -> dict[str, str]:
+        return {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+        }
+
+    def _bookmark_id(self, recipe_id: str) -> str:
+        """Build the ``<recipeId>-<locale>`` bookmark id HelloFresh keys cookbook rows by."""
+        bare = str(recipe_id).split("-", 1)[0]
+        return f"{bare}-{self._locale_for_country()}"
+
+    async def async_get_favorite_recipe_ids(
+        self, recipe_ids: Sequence[str]
+    ) -> dict[str, HelloFreshFavorite]:
+        """Return which of ``recipe_ids`` are bookmarked, keyed by bare recipe id.
+
+        Because the endpoint only echoes ids back, the returned favorites carry no title or
+        image — they answer "is this a favorite?", which is what a heart badge needs. An empty
+        input short-circuits without a request. Failures are non-fatal: this decorates existing
+        data, so a cookbook outage must not fail the whole poll.
+        """
+        favorites, _ = await self._async_search_favorites(recipe_ids)
+        return favorites
+
+    async def _async_search_favorites(
+        self, recipe_ids: Sequence[str]
+    ) -> tuple[dict[str, HelloFreshFavorite], bool]:
+        """Batched cookbook lookup. Returns ``(favorites, any_batch_answered)``.
+
+        The second element distinguishes "no bookmarks among these ids" from "every request
+        failed" — an empty dict alone cannot tell those apart, and callers that write a
+        definitive False need to know which one happened.
+        """
+        unique: list[str] = []
+        seen: set[str] = set()
+        for recipe_id in recipe_ids:
+            bare = str(recipe_id).split("-", 1)[0]
+            if bare and bare not in seen:
+                seen.add(bare)
+                unique.append(bare)
+        if not unique:
+            return {}, True
+
+        found: dict[str, HelloFreshFavorite] = {}
+        answered = False
+        for start in range(0, len(unique), self._COOKBOOK_SEARCH_BATCH):
+            batch = unique[start : start + self._COOKBOOK_SEARCH_BATCH]
+            payload = {"bookmark_ids": [self._bookmark_id(rid) for rid in batch]}
+            try:
+                response = await self._async_api_request(
+                    "POST",
+                    f"{self._COOKBOOK_PATH}/search",
+                    params=self._cookbook_params(),
+                    json_payload=payload,
+                )
+                if response.status >= 400:
+                    raise HelloFreshError(f"HTTP {response.status}")
+                body = await self._async_response_json(response)
+            except (HelloFreshError, ClientError) as err:
+                # Favorites are decoration layered onto already-fetched data, so a cookbook
+                # failure must never fail the poll — record it and leave the state unknown.
+                self._record_debug_attempt(
+                    "cookbook_attempts",
+                    {"path": f"{self._COOKBOOK_PATH}/search", "count": len(batch), "error": str(err)},
+                )
+                continue
+
+            answered = True
+            rows = body.get("recipes") if isinstance(body, dict) else None
+            for row in rows if isinstance(rows, list) else []:
+                favorite = HelloFreshFavorite.from_api(row)
+                if favorite is not None:
+                    found[favorite.recipe_id] = favorite
+
+        self._record_debug_attempt(
+            "cookbook_attempts",
+            {
+                "path": f"{self._COOKBOOK_PATH}/search",
+                "requested": len(unique),
+                "found": len(found),
+                "answered": answered,
+            },
+        )
+        return found, answered
+
+    async def _async_apply_favorites(self, weeks: Sequence[HelloFreshWeek]) -> None:
+        """Flag each week's recipes with their cookbook bookmark state.
+
+        Every distinct recipe id across all weeks is resolved in one batched pass, since the
+        same dish recurs across weeks and as portion variants. Best-effort by design: on failure
+        ``is_favorite`` stays None, which the card renders as "no heart" rather than "not a
+        favorite", so a cookbook outage never shows a misleading empty heart.
+        """
+        if not self._enable_favorites:
+            return
+        recipe_ids = {
+            recipe.recipe_id
+            for week in weeks
+            for recipe in week.recipes
+            if recipe.recipe_id
+        }
+        if not recipe_ids:
+            return
+        try:
+            favorites, answered = await self._async_search_favorites(sorted(recipe_ids))
+        except HelloFreshError as err:  # pragma: no cover - defensive; the call already guards
+            _LOGGER.debug("HelloFresh favorites lookup failed: %s", err)
+            return
+        if not answered:
+            # Every batch failed, so "not in favorites" would be a guess rather than an answer.
+            # Leave is_favorite as None so the card shows no heart at all.
+            return
+        for week in weeks:
+            for recipe in week.recipes:
+                bare = str(recipe.recipe_id).split("-", 1)[0]
+                recipe.is_favorite = bare in favorites
+
+    async def async_add_favorite(self, recipe_id: str) -> HelloFreshFavorite:
+        """Bookmark a recipe. Returns the created favorite (rich: title, image, nutrition)."""
+        payload = {
+            "bookmark_id": self._bookmark_id(recipe_id),
+            "bookmark_source": "hellofresh",
+        }
+        response = await self._async_api_request(
+            "POST",
+            self._COOKBOOK_PATH,
+            params=self._cookbook_params(),
+            json_payload=payload,
+        )
+        if response.status >= 400:
+            details = await response.text()
+            raise HelloFreshError(
+                f"HelloFresh add-favorite failed (HTTP {response.status}): {details[:300]}"
+            )
+        body = await self._async_response_json(response)
+        favorite = HelloFreshFavorite.from_api(body)
+        if favorite is None:
+            # A 2xx with an unparseable body still means the bookmark was created, so report
+            # success with what we know rather than raising.
+            favorite = HelloFreshFavorite(
+                bookmark_id=payload["bookmark_id"],
+                recipe_id=str(recipe_id).split("-", 1)[0],
+            )
+        _LOGGER.info("HelloFresh favorite added for recipe %s", favorite.recipe_id)
+        return favorite
+
+    async def async_list_favorites(self, limit: int | None = None) -> list[HelloFreshFavorite]:
+        """Return every recipe bookmarked in the customer's cookbook, newest first.
+
+        Unlike the search endpoint (a filter needing candidate ids), this is a genuine listing
+        and returns full detail — title, headline, thumbnail, times, nutrition. Pages until
+        ``has_more`` clears, or until ``limit`` rows have been collected.
+        """
+        favorites: list[HelloFreshFavorite] = []
+        seen: set[str] = set()
+        cursor: str | None = None
+        total_count: int | None = None
+        for _page in range(self._COOKBOOK_LIST_MAX_PAGES):
+            page_size = self._COOKBOOK_LIST_PAGE
+            if limit is not None:
+                remaining = limit - len(favorites)
+                if remaining <= 0:
+                    break
+                page_size = min(page_size, remaining)
+            params = {**self._cookbook_params(), "limit": str(page_size)}
+            # Paging is CURSOR-based, not offset-based: the response's `next_cursor` is an
+            # opaque token (base64 of the next row's id) that must be echoed back verbatim.
+            # An `offset` param is simply ignored, which would re-serve page one forever.
+            if cursor:
+                params["cursor"] = cursor
+            response = await self._async_api_request(
+                "GET", self._COOKBOOK_LIST_PATH, params=params
+            )
+            if response.status >= 400:
+                raise HelloFreshError(
+                    f"HelloFresh cookbook listing failed (HTTP {response.status})"
+                )
+            payload = await self._async_response_json(response)
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or not rows:
+                break
+            new_rows = 0
+            for row in rows:
+                favorite = HelloFreshFavorite.from_api(row)
+                # Belt and braces: if the cursor were ever ignored and page one re-served,
+                # this stops duplicates accumulating up to the page cap.
+                if favorite is not None and favorite.bookmark_id not in seen:
+                    seen.add(favorite.bookmark_id)
+                    favorites.append(favorite)
+                    new_rows += 1
+            pagination = payload.get("pagination") if isinstance(payload, dict) else None
+            if isinstance(pagination, dict):
+                if isinstance(pagination.get("total_count"), int):
+                    total_count = pagination["total_count"]
+                has_more = bool(pagination.get("has_more"))
+                next_cursor = pagination.get("next_cursor")
+            else:
+                has_more, next_cursor = False, None
+            # Stop unless the server both says there is more AND hands back a usable cursor;
+            # without one there is no way to advance, and re-requesting would loop.
+            if not has_more or not isinstance(next_cursor, str) or not next_cursor:
+                break
+            if not new_rows:
+                # The page advanced but contributed nothing new — treat as exhausted rather
+                # than burning the remaining page budget.
+                break
+            cursor = next_cursor
+
+        self._record_debug_attempt(
+            "cookbook_attempts",
+            {
+                "path": self._COOKBOOK_LIST_PATH,
+                "listed": len(favorites),
+                "total_count": total_count,
+            },
+        )
+        if total_count is not None and limit is None and len(favorites) < total_count:
+            # Surfaces a paging contract change instead of silently under-reporting.
+            _LOGGER.warning(
+                "HelloFresh cookbook listing returned %d of %d bookmarks; "
+                "pagination may have changed",
+                len(favorites),
+                total_count,
+            )
+        return favorites
+
+    async def async_remove_favorite(self, recipe_id: str) -> bool:
+        """Remove a bookmark. Returns True when HelloFresh accepted the delete.
+
+        The delete targets the server-assigned row id under the *external*-recipes collection
+        (``DELETE /gw/cookbook/v1/external-recipes/{id}`` → HTTP 204), even though the bookmark
+        was created under *internal*-recipes. That row id is not the bookmark id, so it has to
+        be resolved first via the search endpoint.
+        """
+        bare = str(recipe_id).split("-", 1)[0]
+        existing = await self.async_get_favorite_recipe_ids([bare])
+        favorite = existing.get(bare)
+        if favorite is None:
+            # Already not a favorite: report a no-op rather than erroring, so callers can call
+            # this idempotently without pre-checking.
+            _LOGGER.debug("HelloFresh recipe %s is not favorited; nothing to remove", bare)
+            return False
+        if not favorite.favorite_id:
+            raise HelloFreshError(
+                f"HelloFresh returned no cookbook row id for recipe {bare}; cannot remove it."
+            )
+
+        response = await self._async_api_request(
+            "DELETE",
+            f"{self._COOKBOOK_LIST_PATH}/{favorite.favorite_id}",
+            params=self._cookbook_params(),
+        )
+        if response.status >= 400:
+            details = await response.text()
+            raise HelloFreshError(
+                f"HelloFresh remove-favorite failed (HTTP {response.status}): {details[:300]}"
+            )
+        _LOGGER.info("HelloFresh favorite removed for recipe %s", bare)
+        return True
+
+    # ---- Recipe catalog (public browse content) -------------------------------
+    #
+    # The "All Recipes" browse catalog (~10k recipes) is served by the Next.js site rather than
+    # a /gw/ API: https://www.hellofresh.com/_next/data/<buildId>/recipes.json. The build id
+    # changes on every HelloFresh web deploy, so it is scraped from the page HTML on first use,
+    # cached, and re-scraped once when a request 404s (the signature of a stale id).
+
+    # Catalog rows carry a bare `imagePath` ("/image/foo.jpg") with no host. The paired
+    # imagePath/imageLink fields on the menus-service payload pin the host down: the same
+    # "/image/…" path resolves against this CloudFront distribution, whose "0,0" segment is
+    # the (no-op) crop transform the site uses for an unresized asset.
+    _CATALOG_IMAGE_BASE = "https://d3hvwccx09j84u.cloudfront.net/0,0"
+    _BUILD_ID_RE = re.compile(r'"buildId"\s*:\s*"([A-Za-z0-9._-]{1,64})"')
+
+    async def _async_get_build_id(self, *, force_refresh: bool = False) -> str | None:
+        """Return the site's current Next.js build id, scraping and caching it on demand."""
+        if self._build_id is not None and not force_refresh:
+            return self._build_id
+        try:
+            response = await self._async_api_request("GET", "/recipes")
+            if response.status >= 400:
+                raise HelloFreshError(f"HTTP {response.status}")
+            html = await response.text()
+        except HelloFreshError as err:
+            self._record_debug_attempt("catalog_attempts", {"path": "/recipes", "error": str(err)})
+            return None
+        match = self._BUILD_ID_RE.search(html)
+        if match is None:
+            self._record_debug_attempt(
+                "catalog_attempts", {"path": "/recipes", "error": "buildId not found in page"}
+            )
+            return None
+        self._build_id = match.group(1)
+        self._record_debug_attempt("catalog_attempts", {"build_id": self._build_id})
+        return self._build_id
+
+    async def _async_get_catalog_json(self, page: str, params: dict[str, str] | None = None) -> Any:
+        """Fetch one Next.js data document, refreshing a stale build id once on 404."""
+        for attempt in (0, 1):
+            build_id = await self._async_get_build_id(force_refresh=attempt == 1)
+            if build_id is None:
+                return None
+            path = f"/_next/data/{build_id}/{page}"
+            try:
+                response = await self._async_api_request("GET", path, params=params)
+            except HelloFreshError as err:
+                self._record_debug_attempt("catalog_attempts", {"path": path, "error": str(err)})
+                return None
+            if response.status == 404 and attempt == 0:
+                # Almost always a deploy rotating the build id: drop the cache and retry once.
+                _LOGGER.debug("HelloFresh catalog 404 for %s; refreshing build id", path)
+                continue
+            if response.status >= 400:
+                self._record_debug_attempt(
+                    "catalog_attempts", {"path": path, "status": response.status}
+                )
+                return None
+            return await self._async_response_json(response)
+        return None
+
+    async def async_get_recipe_collections(self) -> list[HelloFreshRecipeCollection]:
+        """Return the browsable recipe categories (Chicken, Carb Smart, Hall of Fame, ...)."""
+        payload = await self._async_get_catalog_json("recipes.json")
+        collection = self._nested_get(payload, "pageProps", "ssrPayload", "collection")
+        children = collection.get("children") if isinstance(collection, dict) else None
+        docs = children.get("docs") if isinstance(children, dict) else None
+        out: list[HelloFreshRecipeCollection] = []
+        for row in docs if isinstance(docs, list) else []:
+            parsed = HelloFreshRecipeCollection.from_api(
+                row, image_base=self._CATALOG_IMAGE_BASE
+            )
+            if parsed is not None:
+                out.append(parsed)
+        return out
+
+    # Full recipe detail comes from a plain /gw/ API — NOT the website's Next.js data URLs —
+    # so unlike the browse catalog it needs no build-id scraping and cannot break on a deploy.
+    # HAR-observed being called from the My Menu page for a single recipe id.
+    _RECIPE_DETAIL_PATH = "/gw/recipes/recipes"
+
+    async def async_get_recipe_detail(
+        self, recipe_id: str, *, servings: int | None = None, include_favorite: bool = True
+    ) -> HelloFreshRecipeDetail:
+        """Return one recipe's full detail: steps, ingredients, utensils, allergens, nutrition.
+
+        ``servings`` picks which ``yields`` entry the ingredient amounts are resolved against
+        (2, 4, ...); it falls back to the smallest the recipe offers. Works for any recipe id —
+        a meal on a delivery week or a row from the browse catalog — since both share the same
+        24-hex id namespace.
+        """
+        bare = str(recipe_id).split("-", 1)[0]
+        if not bare:
+            raise HelloFreshError("A recipe id is required")
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+        }
+        response = await self._async_api_get(
+            f"{self._RECIPE_DETAIL_PATH}/{bare}", params=params
+        )
+        if response.status == 404:
+            raise HelloFreshError(f"HelloFresh has no recipe with id {bare}")
+        if response.status >= 400:
+            raise HelloFreshError(
+                f"HelloFresh recipe-detail request failed (HTTP {response.status})"
+            )
+        payload = await self._async_response_json(response)
+        detail = HelloFreshRecipeDetail.from_api(payload, servings=servings)
+        if detail is None:
+            raise HelloFreshError(f"HelloFresh returned an unreadable recipe payload for {bare}")
+        if include_favorite:
+            # Best-effort: the heart is decoration on top of the recipe, so a cookbook outage
+            # leaves it unknown rather than failing the whole lookup.
+            found, answered = await self._async_search_favorites([bare])
+            if answered:
+                detail.is_favorite = bare in found
+        return detail
+
+    # A SECOND, separate favorites service HelloFresh also runs (`cfs`), backing its
+    # /recipes/favorites page. It is NOT the cookbook: different service, different paging
+    # (skip/take/total rather than a cursor), and in captured traffic it reported total=0 while
+    # the cookbook held six bookmarks — so the two stores are not synchronized. Only ever seen
+    # returning an empty list, so the row shape is unconfirmed; treated as a read-only
+    # supplement that must never override cookbook state.
+    _CFS_FAVORITES_PATH = "/gw/cfs/v2/favorites/recipe"
+
+    async def async_get_cfs_favorites(
+        self, recipe_ids: Sequence[str] | None = None
+    ) -> dict[str, Any]:
+        """Read HelloFresh's secondary ("cfs") favorites store.
+
+        Returns ``{"total", "count", "items", "available"}``. ``available`` is False when the
+        endpoint could not be read at all, which is distinct from an empty-but-working store.
+        Because no populated response has ever been captured, ``items`` are passed through as
+        raw dicts rather than being coerced into a model that might not match.
+        """
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+            # The website always sends `ids`, empty when it is not filtering to specific
+            # recipes; mirroring that keeps the request shape identical to a real one.
+            "ids": ",".join(str(r).split("-", 1)[0] for r in recipe_ids) if recipe_ids else "",
+        }
+        try:
+            response = await self._async_api_get(self._CFS_FAVORITES_PATH, params=params)
+            if response.status >= 400:
+                raise HelloFreshError(f"HTTP {response.status}")
+            payload = await self._async_response_json(response)
+        except (HelloFreshError, ClientError) as err:
+            self._record_debug_attempt(
+                "cookbook_attempts", {"path": self._CFS_FAVORITES_PATH, "error": str(err)}
+            )
+            return {"total": 0, "count": 0, "items": [], "available": False}
+
+        items = payload.get("items") if isinstance(payload, dict) else None
+        return {
+            "total": payload.get("total") if isinstance(payload, dict) else 0,
+            "count": payload.get("count") if isinstance(payload, dict) else 0,
+            "items": [item for item in items if isinstance(item, dict)]
+            if isinstance(items, list)
+            else [],
+            "available": True,
+        }
+
+    async def async_get_catalog_recipes(
+        self,
+        collection: str | None = None,
+        *,
+        limit: int = 40,
+        include_favorites: bool = True,
+    ) -> list[HelloFreshCatalogRecipe]:
+        """Return recipes from the browse catalog, optionally within one collection.
+
+        ``collection`` is a slug from :meth:`async_get_recipe_collections` (e.g.
+        ``chicken-recipes``); omit it for the top-level "best rated" listing. When
+        ``include_favorites`` is set, each recipe is flagged with its bookmark state in one
+        extra batched request.
+        """
+        if collection:
+            page = f"recipes/{collection}.json"
+            params = {"main-collection": collection}
+        else:
+            page = "recipes.json"
+            params = None
+        payload = await self._async_get_catalog_json(page, params)
+        rows = self._extract_catalog_rows(payload)
+
+        recipes: list[HelloFreshCatalogRecipe] = []
+        seen: set[str] = set()
+        for row in rows:
+            parsed = HelloFreshCatalogRecipe.from_api(row, image_base=self._CATALOG_IMAGE_BASE)
+            if parsed is None or parsed.recipe_id in seen:
+                continue
+            seen.add(parsed.recipe_id)
+            recipes.append(parsed)
+            if len(recipes) >= limit:
+                break
+
+        if include_favorites and recipes:
+            favorites = await self.async_get_favorite_recipe_ids([r.recipe_id for r in recipes])
+            for recipe in recipes:
+                recipe.is_favorite = recipe.recipe_id in favorites
+        return recipes
+
+    @staticmethod
+    def _extract_catalog_rows(payload: Any) -> list[dict[str, Any]]:
+        """Pull recipe rows out of a catalog page's react-query cache.
+
+        The listing lives in ``dehydratedState.queries`` under a ``foodContentHubRecipe.*`` key,
+        whose data is ``{"pages": [...]}`` — despite the name, ``pages`` is the flat recipe list,
+        not pagination. ``bestRatedRecipes`` on the page payload has the same shape and is used
+        as a fallback when the query cache layout shifts.
+        """
+        rows: list[dict[str, Any]] = []
+        ssr = HelloFreshClient._nested_get(payload, "pageProps", "ssrPayload")
+        if not isinstance(ssr, dict):
+            return rows
+
+        queries = HelloFreshClient._nested_get(ssr, "dehydratedState", "queries")
+        for query in queries if isinstance(queries, list) else []:
+            if not isinstance(query, dict):
+                continue
+            key = json.dumps(query.get("queryKey", ""), default=str)
+            if "foodContentHubRecipe" not in key or "Collection" in key:
+                continue
+            data = HelloFreshClient._nested_get(query, "state", "data")
+            if not isinstance(data, dict):
+                continue
+            for candidate in (data.get("pages"), data.get("docs")):
+                if isinstance(candidate, list):
+                    rows.extend(row for row in candidate if isinstance(row, dict))
+
+        if not rows:
+            fallback = ssr.get("bestRatedRecipes")
+            pages = fallback.get("pages") if isinstance(fallback, dict) else None
+            if isinstance(pages, list):
+                rows.extend(row for row in pages if isinstance(row, dict))
+        return rows
+
+    @staticmethod
+    def _nested_get(node: Any, *keys: str) -> Any:
+        """Walk a chain of dict keys, returning None if any level is missing or not a dict."""
+        current = node
+        for key in keys:
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+        return current
 
     # ---- Reference catalogs (read-only) --------------------------------------
     #
@@ -2460,6 +3071,113 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         ]
         return {"weeks": weeks, "available_labels": available_labels}
 
+    async def _async_apply_menu_availability(
+        self,
+        subscriptions: Sequence[HelloFreshSubscription],
+        weeks: Sequence[HelloFreshWeek],
+    ) -> None:
+        """Overlay ``isSoldOut``/``isHidden`` onto weeks the customer can still change.
+
+        The two menu sources are disjoint: the primary ``/gw/my-deliveries/menu`` endpoint
+        carries prices, ratings and delivery history but no availability flags, while
+        ``/gw/menus-service/menus`` carries the flags and none of the rest. The fallback path
+        in _async_get_account_menu_data swaps recipe lists wholesale, so a week can only ever
+        have one of the two sets. This overlays the flags FIELD-BY-FIELD instead, leaving
+        every other attribute of the existing recipes untouched.
+
+        Scoped to editable weeks (``is_editable``: meal swaps allowed, not skipped, deadline
+        still open) because that is the only place the flag can change an outcome — a past or
+        locked week's selection cannot be altered whether or not a meal is sold out. In a
+        normal account that is a single week, so this costs one extra request per poll, and
+        the ``weeks`` filter keeps the response to that week rather than the whole regional
+        catalog. Best-effort throughout: any failure leaves the flags unset (meals simply show
+        as available) rather than degrading the menu.
+        """
+        primary = subscriptions[0] if subscriptions else None
+        if primary is None:
+            return
+
+        editable_weeks = [
+            week for week in weeks if week.week_id and week.is_editable and week.recipes
+        ]
+        if not editable_weeks:
+            return
+
+        locale = next(
+            (s.locale for s in subscriptions if s.locale),
+            api_locale(self._country),
+        )
+        params: dict[str, Any] = {
+            "country": api_country_code(self._country),
+            "locale": locale,
+            "exclude": "",
+            "weeks": ",".join(sorted({week.week_id for week in editable_weeks})),
+        }
+
+        # Broad by intent: this overlay is a cosmetic enrichment on top of an already-complete
+        # menu, so NOTHING it does may abort the poll. A transport-level failure here must cost
+        # the sold-out flags and nothing else.
+        try:
+            response = await self._async_api_get("/gw/menus-service/menus", params=params)
+            payload = await self._async_response_json(response)
+        except (HelloFreshError, ClientError, AttributeError, ValueError, TypeError) as err:
+            self._record_debug_attempt(
+                "menu_availability_attempts",
+                {"path": "/gw/menus-service/menus", "params": params, "error": str(err)},
+            )
+            return
+
+        try:
+            raw_weeks = self._extract_menu_week_candidates(payload)
+            catalog_weeks = self._normalize_menu_weeks(raw_weeks, subscription=primary)
+        except (AttributeError, ValueError, TypeError, KeyError) as err:
+            self._record_debug_attempt(
+                "menu_availability_attempts",
+                {"path": "/gw/menus-service/menus", "parse_error": str(err)},
+            )
+            return
+
+        # As in _merge_menu_weeks_into_account_weeks, one week id can arrive as several
+        # product/preset variants; keep the richest so a small subset variant cannot shadow
+        # the full catalog and leave most recipes unmatched.
+        catalog_by_week: dict[str, HelloFreshWeek] = {}
+        for catalog_week in catalog_weeks:
+            existing = catalog_by_week.get(catalog_week.week_id)
+            if existing is None or len(catalog_week.recipes) > len(existing.recipes):
+                catalog_by_week[catalog_week.week_id] = catalog_week
+
+        marked = 0
+        for week in editable_weeks:
+            catalog_week = catalog_by_week.get(week.week_id)
+            if catalog_week is None:
+                continue
+            availability = {
+                recipe.recipe_id: (recipe.is_sold_out, recipe.is_hidden)
+                for recipe in catalog_week.recipes
+                if recipe.recipe_id
+            }
+            for recipe in week.recipes:
+                flags = availability.get(recipe.recipe_id)
+                if flags is None:
+                    # Absent from the catalog is NOT evidence of being sold out — the two
+                    # payloads can disagree on membership. Leave the recipe untouched.
+                    continue
+                recipe.is_sold_out, recipe.is_hidden = flags
+                if recipe.is_sold_out:
+                    marked += 1
+
+        self._record_debug_attempt(
+            "menu_availability_attempts",
+            {
+                "path": "/gw/menus-service/menus",
+                "params": params,
+                "status": self._response_status(response),
+                "editable_week_count": len(editable_weeks),
+                "catalog_week_count": len(catalog_by_week),
+                "sold_out_recipe_count": marked,
+            },
+        )
+
     async def _async_get_delivery_menu_week_data(
         self,
         subscription: HelloFreshSubscription,
@@ -2922,13 +3640,103 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "country": api_country_code(self._country),
         }
 
+    async def async_preview_meal_price(
+        self,
+        week_id: str,
+        recipe_ids: Sequence[str],
+        quantities: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Price a hypothetical meal selection without saving it.
+
+        Answers "what would this cost?" for a set of recipes the customer has not committed to,
+        so a planner UI can show the running total (and which meals carry a premium surcharge)
+        while they pick. Read-only: nothing is written to the account.
+        """
+        week = self._get_known_week_or_raise(week_id)
+        subscription = await self._async_get_subscription_for_week(week)
+        if subscription is None:
+            raise HelloFreshError(f"No HelloFresh subscription found for week {week_id}")
+
+        # Map recipe ids to the course indexes the cart is actually keyed by. The same dish can
+        # appear under several ids/indexes (portion variants), so resolve against this week.
+        by_id = {recipe.recipe_id: recipe for recipe in week.recipes}
+        course_quantities: dict[int, int] = {}
+        unknown: list[str] = []
+        for recipe_id in recipe_ids:
+            recipe = by_id.get(str(recipe_id))
+            if recipe is None or recipe.course_index is None:
+                unknown.append(str(recipe_id))
+                continue
+            requested = (quantities or {}).get(str(recipe_id), 1)
+            course_quantities[recipe.course_index] = max(1, int(requested))
+        if unknown:
+            raise HelloFreshError(
+                f"Unknown recipes for week {week_id} (or missing a course index): "
+                f"{', '.join(sorted(unknown))}"
+            )
+        if not course_quantities:
+            raise HelloFreshError("No recipes were provided to price")
+
+        payload = await self._async_get_cart_price_for_week(
+            subscription, week, course_quantities=course_quantities
+        )
+        if payload is None:
+            raise HelloFreshError(
+                f"HelloFresh did not return pricing for week {week_id}. Preview pricing needs "
+                "the week's full menu payload, which is only available for bookable weeks."
+            )
+        return self._summarize_cart_price(payload, course_quantities)
+
+    @staticmethod
+    def _summarize_cart_price(
+        payload: dict[str, Any], course_quantities: dict[int, int]
+    ) -> dict[str, Any]:
+        """Reduce a raw cart-pricing response to the figures a dashboard actually shows."""
+        surcharges: list[dict[str, Any]] = []
+        for product in payload.get("products") or []:
+            if not isinstance(product, dict):
+                continue
+            for charge in product.get("charges") or []:
+                if not isinstance(charge, dict):
+                    continue
+                amount = coerce_int(charge.get("amount"))
+                surcharges.append(
+                    {
+                        "reason": charge.get("reason"),
+                        "entity_id": charge.get("entity_id"),
+                        "entity_type": charge.get("entity_type"),
+                        "strategy": charge.get("strategy"),
+                        # HelloFresh returns surcharge amounts in minor units (cents).
+                        "amount_cents": amount,
+                        "amount": (amount / 100) if amount is not None else None,
+                    }
+                )
+        return {
+            "meal_count": len(course_quantities),
+            "course_quantities": {str(k): v for k, v in sorted(course_quantities.items())},
+            "grand_total": coerce_float(payload.get("grandTotal")),
+            "sub_total": coerce_float(payload.get("subTotal")),
+            "shipping_amount": coerce_float(payload.get("shippingAmount")),
+            "tax_amount": coerce_float(payload.get("taxAmount")),
+            "discount_amount": coerce_float(payload.get("discountAmount")),
+            "coupon_code": payload.get("couponCode") or None,
+            "surcharges": surcharges,
+        }
+
     async def _async_get_cart_price_for_week(
         self,
         subscription: HelloFreshSubscription,
         week: HelloFreshWeek,
+        course_quantities: dict[int, int] | None = None,
     ) -> dict[str, Any] | None:
         """Fetch exact pricing for a week from the cart pricing endpoint."""
-        json_payload = self._build_cart_price_payload(subscription, week)
+        # Only pass the override when there is one: the common path keeps the original
+        # two-argument call so existing callers/stubs of the builder are unaffected.
+        json_payload = (
+            self._build_cart_price_payload(subscription, week)
+            if course_quantities is None
+            else self._build_cart_price_payload(subscription, week, course_quantities)
+        )
         path = f"/gw/v1/carts/{week.week_id}/price"
         params = {
             "isFutureWeek": str(self._is_future_week(week)).lower(),
@@ -3022,8 +3830,16 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self,
         subscription: HelloFreshSubscription,
         week: HelloFreshWeek,
+        course_quantities: dict[int, int] | None = None,
     ) -> dict[str, Any] | None:
-        """Build a cart pricing payload from delivery and menu metadata."""
+        """Build a cart pricing payload from delivery and menu metadata.
+
+        ``course_quantities`` prices a HYPOTHETICAL selection ({course_index: servings}) instead
+        of the week's saved one, which is what makes a "what would this cost?" preview possible
+        without writing the selection first. The box SKU is recomputed for the requested meal
+        count, mirroring what a real selection write does — otherwise pricing more meals than
+        the current box holds is rejected the same way a save would be.
+        """
         menu_payload = week.raw.get("_menu_payload")
         if not isinstance(menu_payload, dict):
             return None
@@ -3046,6 +3862,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
         shipping_address = self._extract_shipping_address_payload(subscription.raw)
         selected_groups = self._extract_cart_selection_groups(menu_payload, box_sku)
+        if course_quantities is not None:
+            selected_groups = self._override_cart_selection_groups(
+                selected_groups, course_quantities, default_box_sku=box_sku
+            )
+            # The meal box SKU encodes how many meals it holds, so a hypothetical selection of a
+            # different size needs the matching SKU or HelloFresh rejects it (MEAL_SIZE_MISMATCH).
+            meal_count = len(course_quantities)
+            if isinstance(main_product_handle, str):
+                main_product_handle = self._sku_for_meal_count(main_product_handle, meal_count)
 
         if not all(
             (
@@ -3152,6 +3977,39 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             group["recipeIndexes"].append(str(index))
 
         return list(grouped.values())
+
+    def _override_cart_selection_groups(
+        self,
+        groups: list[dict[str, Any]],
+        course_quantities: dict[int, int],
+        *,
+        default_box_sku: str | None,
+    ) -> list[dict[str, Any]]:
+        """Replace the meals in ``groups`` with a hypothetical ``{course_index: quantity}`` set.
+
+        The group's ``handle``/``boxSku`` (which carry the premium-surcharge wiring) are reused
+        from the week's real selection so the priced cart stays structurally identical to one
+        HelloFresh would accept — only the chosen courses and their quantities change. The meal
+        SKU is resized for the new count, matching what a real selection write does.
+        """
+        meal_count = len(course_quantities)
+        template = groups[0] if groups else None
+        handle = (template or {}).get("handle")
+        box_sku = (template or {}).get("boxSku") or default_box_sku
+        if not handle or not box_sku:
+            return []
+        resized_sku = self._sku_for_meal_count(str(box_sku), meal_count)
+        ordered = sorted(course_quantities.items())
+        return [
+            {
+                "handle": str(handle),
+                "boxSku": resized_sku,
+                "quantityPerCourse": [
+                    {"index": index, "quantity": quantity} for index, quantity in ordered
+                ],
+                "recipeIndexes": [str(index) for index, _ in ordered],
+            }
+        ]
 
     def _find_cart_selection_candidates(self, node: Any) -> list[dict[str, Any]]:
         """Return raw selected menu items with cart-pricing metadata."""

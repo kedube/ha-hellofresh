@@ -198,6 +198,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       const response = (result && result.response) || {};
       this._options = response.options || {};
       this._saved = response.profile || { taste: {}, household: {}, goals: {} };
+      // How much of the profile HelloFresh considers filled in. Optional — the integration
+      // returns null when its profile-service didn't answer, and the hero just omits the bar.
+      this._completion = response.completion || null;
       this._draft = this._cloneProfile(this._saved);
     } catch (err) {
       this._error = (err && err.message) || String(err);
@@ -400,6 +403,20 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return `<img class="logo" src="${this._esc(logoUrl)}" alt="HelloFresh">`;
   }
 
+  // Progress toward a fully answered profile, straight from HelloFresh's own reckoning of
+  // which fields count. Hidden entirely when the figure is unavailable or already complete —
+  // a full bar is just noise once there is nothing left to fill in.
+  _renderCompletion() {
+    const c = this._completion;
+    if (!c || !c.total || c.completed >= c.total) return "";
+    const pct = Math.max(0, Math.min(100, Number(c.percent) || 0));
+    return `
+      <div class="completion">
+        <div class="cbar"><div class="cfill" style="width:${pct}%"></div></div>
+        <span class="ctext">Profile ${c.completed} of ${c.total} complete</span>
+      </div>`;
+  }
+
   _renderBody() {
     if (this._loading) return `<div class="state">Loading food profile…</div>`;
     if (this._error) {
@@ -415,6 +432,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         <h2 class="herotitle">Meals matched to your taste</h2>
         <p class="herosub">Your food profile helps HelloFresh set your meal picks and sort the menu by
           what's most relevant to you. You'll always have access to the full menu.</p>
+        ${this._renderCompletion()}
       </div>
       <div class="panelgrid top">
         ${this._renderDietPanel()}
@@ -755,6 +773,13 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       .hero { margin: 4px 4px 14px; }
       .herotitle { font-size: 1.35em; font-weight: 800; margin: 0 0 6px; }
       .herosub { color: var(--secondary-text-color); font-size: 0.9em; margin: 0; max-width: 60ch; }
+      .completion { display: flex; align-items: center; gap: 10px; margin-top: 12px; max-width: 60ch; }
+      .cbar {
+        flex: 1; height: 6px; border-radius: 3px; overflow: hidden;
+        background: var(--divider-color);
+      }
+      .cfill { height: 100%; background: var(--primary-color); transition: width 0.3s ease; }
+      .ctext { font-size: 0.8em; color: var(--secondary-text-color); white-space: nowrap; }
 
       .panelgrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
       .panelgrid.top { margin-bottom: 16px; }

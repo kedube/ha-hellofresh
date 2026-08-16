@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from custom_components.hellofresh import frontend as frontend_module
 from custom_components.hellofresh.frontend import (
     _CARDS,
     INTEGRATION_VERSION,
@@ -130,3 +131,15 @@ def test_diagnostics_survives_missing_lovelace() -> None:
 
     assert info["integration_version"] == INTEGRATION_VERSION
     assert info["registered_resources"] == []
+
+
+def test_every_registered_card_file_is_shipped() -> None:
+    """Each card in _CARDS must exist in www/.
+
+    Registration only guards on the meal-planner card's presence, so a card added to _CARDS
+    but missing from www/ would register a Lovelace resource pointing at a 404 with no error.
+    """
+    www_dir = Path(frontend_module.__file__).parent / "www"
+    missing = [filename for filename, _p, _r in _CARDS if not (www_dir / filename).is_file()]
+
+    assert not missing, f"registered cards missing from www/: {missing}"
