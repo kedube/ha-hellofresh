@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
+import json
 import logging
 from typing import cast
 
@@ -8176,6 +8177,120 @@ def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
         {"index": 9, "quantity": 1},
         {"index": 14, "quantity": 1},
     ]
+
+
+def _catalog_page_payload() -> dict:
+    """A category page's react-query cache, mirroring the real Next.js payload's shape.
+
+    A real category page carries THREE recipe queries: two scoped to the category by a
+    ``recipeCollectionTags.id`` filter, and one generic "best rated overall" query that is
+    identical on every category page.
+    """
+    def _query(name, where, pages):
+        return {
+            "queryKey": [name, {"searchParams": {"limit": len(pages), "where": where}}],
+            "state": {"data": {"pages": pages}},
+        }
+
+    tag = {"recipeCollectionTags.id": {"equals": "69e66c8781155241b64c0d33"}}
+    return {
+        "pageProps": {
+            "ssrPayload": {
+                "dehydratedState": {
+                    "queries": [
+                        # Collection METADATA (the category's own title) — not recipes.
+                        {
+                            "queryKey": ["foodContentHubRecipeCollection.search", {}],
+                            "state": {"data": {"docs": [{"name": "Indian Recipes"}]}},
+                        },
+                        _query(
+                            "foodContentHubRecipe.all",
+                            {**tag, "prepTime": {"in": ["PT20M"]}},
+                            [{"recipeId": "i1", "name": "Tandoori Chicken"}],
+                        ),
+                        _query(
+                            "foodContentHubRecipe.all",
+                            tag,
+                            [{"recipeId": "i2", "name": "Butter Chicken & Rice"}],
+                        ),
+                        # Generic cross-site listing: no collection tag.
+                        _query(
+                            "foodContentHubRecipe.all",
+                            {"ratingsCount": {"greater_than_equal": 100}},
+                            [
+                                {"recipeId": "g1", "name": "Beef with Cheddar-Gouda Fondue"},
+                                {"recipeId": "g2", "name": "Onion Crunch Chicken"},
+                            ],
+                        ),
+                    ]
+                },
+                "bestRatedRecipes": {
+                    "pages": [{"recipeId": "g1", "name": "Beef with Cheddar-Gouda Fondue"}]
+                },
+            }
+        }
+    }
+
+
+def test_category_listing_excludes_the_generic_best_rated_query() -> None:
+    """Picking a category must return THAT category's recipes.
+
+    Every category page also embeds a generic "best rated overall" query — the same top-20 on
+    every page. Concatenating it let it dominate (it is the largest and comes last), so
+    "Indian Recipes" rendered beef fondue and steak. Only collection-tagged queries count.
+    """
+    rows = HelloFreshClient._extract_catalog_rows(
+        _catalog_page_payload(), collection="indian-recipes"
+    )
+    names = [row["name"] for row in rows]
+
+    assert names == ["Tandoori Chicken", "Butter Chicken & Rice"]
+    assert not any("Fondue" in name for name in names)
+
+
+def test_collection_scoped_queries_are_not_dropped_as_metadata() -> None:
+    """The category queries must survive the collection-metadata exclusion.
+
+    The original code excluded any query whose SERIALIZED key contained "Collection" — but the
+    category queries carry `recipeCollectionTags` inside their `where` clause, so that test
+    discarded exactly the rows we want and left only the generic list. The exclusion must match
+    the query NAME, not the whole key.
+    """
+    rows = HelloFreshClient._extract_catalog_rows(
+        _catalog_page_payload(), collection="indian-recipes"
+    )
+
+    assert rows, "collection-tagged queries were dropped"
+    # The metadata query's payload must not leak in as if it were a recipe.
+    assert all(row.get("name") != "Indian Recipes" for row in rows)
+
+
+def test_top_level_listing_still_uses_the_generic_query() -> None:
+    """Without a collection, the generic best-rated list is exactly what we want."""
+    rows = HelloFreshClient._extract_catalog_rows(_catalog_page_payload())
+    names = [row["name"] for row in rows]
+
+    assert "Beef with Cheddar-Gouda Fondue" in names
+
+
+def test_category_listing_does_not_fall_back_to_best_rated() -> None:
+    """An empty category must render empty, not silently show unrelated recipes.
+
+    `bestRatedRecipes` IS the generic list, so falling back to it for a category would
+    reintroduce the very bug this guards against.
+    """
+    payload = _catalog_page_payload()
+    queries = payload["pageProps"]["ssrPayload"]["dehydratedState"]["queries"]
+    # Drop both collection-scoped queries, leaving metadata + the generic listing.
+    payload["pageProps"]["ssrPayload"]["dehydratedState"]["queries"] = [
+        q
+        for q in queries
+        if "recipeCollectionTags" not in json.dumps(q.get("queryKey"), default=str)
+    ]
+
+    rows = HelloFreshClient._extract_catalog_rows(payload, collection="indian-recipes")
+
+    assert rows == []
 
 
 def test_recipe_collections_are_not_truncated_or_filtered() -> None:
