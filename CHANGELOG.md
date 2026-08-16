@@ -10,7 +10,7 @@ version heading and publishes it as the release's Highlights.
   (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
   values (inf/nan) now coerce to None instead of reaching sensor states.
 
-## Unreleased
+## 2.56 — 2026-08-16
 - Fixed every category in the All Recipes card showing the same recipes: picking **Indian
   Recipes** listed beef fondue and steak, and so did every other category. A category page
   embeds several recipe queries — some scoped to that category, plus a generic "best rated
