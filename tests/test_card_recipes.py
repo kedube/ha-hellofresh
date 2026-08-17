@@ -28,6 +28,10 @@ import pytest
 WWW = Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "www"
 RECIPES_CARD = WWW / "hellofresh-recipes-card.js"
 SOURCE = RECIPES_CARD.read_text(encoding="utf-8")
+# The detail sheet now lives in a module shared by the Recipes, Meal planner and Market cards,
+# so the overlay guards below read it there rather than from any one card.
+DETAIL_MODULE = WWW / "hellofresh-recipe-detail.js"
+DETAIL_SOURCE = DETAIL_MODULE.read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 # Detail overlay structure as built by _renderDetail/_renderDetailBody: (name, class, parent).
@@ -45,9 +49,12 @@ DOM = [
 
 def _overlay_listener_body() -> str:
     match = re.search(
-        r'overlay\.addEventListener\("click", \(ev\) => \{(.*?)\n      \}\);', SOURCE, re.S
+        r'overlay\.addEventListener\("click", \(ev\) => \{(.*?)\n      \}\);',
+        DETAIL_SOURCE,
+        re.S,
     )
     assert match, "detail overlay click listener not found"
+    # The module calls `this.open(...)` / `this.close()`; the stub below supplies both.
     return match.group(1)
 
 
@@ -82,9 +89,9 @@ def _click_outcomes() -> dict[str, dict]:
     const overlay = nodes.overlay;
     let closed = 0, servings = null;
     const self = {{
-      _detailId: "r1",
-      _closeDetail: () => {{ closed++; }},
-      _openDetail: (id, s) => {{ servings = s; }},
+      _id: "r1",
+      close: () => {{ closed++; }},
+      open: (id, s) => {{ servings = s; }},
     }};
     const handler = (ev) => {{ {_overlay_listener_body().replace("this.", "self.")} }};
     const out = {{}};
@@ -132,20 +139,20 @@ def test_servings_switcher_still_works_and_does_not_dismiss() -> None:
 
 def test_detail_overlay_binds_its_own_listener() -> None:
     """Structural backstop: the overlay is outside <ha-card>, so it needs its own listener."""
-    render_detail = re.search(r"^  _renderDetail\(\) \{.*?^  \}", SOURCE, re.S | re.M)
-    assert render_detail, "_renderDetail not found"
-    assert 'overlay.addEventListener("click"' in render_detail.group(0)
+    render = re.search(r"^  _render\(\) \{.*?^  \}", DETAIL_SOURCE, re.S | re.M)
+    assert render, "_render not found in the detail module"
+    assert 'overlay.addEventListener("click"' in render.group(0)
 
 
 def test_no_blanket_stop_propagation_in_the_detail_sheet() -> None:
     """Swallowing every click in .detailbox also swallowed the ✕ inside it."""
-    assert not re.search(r"detailbox[\s\S]{0,160}stopPropagation", SOURCE)
+    assert not re.search(r"detailbox[\s\S]{0,160}stopPropagation", DETAIL_SOURCE)
 
 
 def test_detail_sheet_renders_the_recipe_image() -> None:
     """Bug 1's card half: the sheet must actually emit an <img> from image_url."""
-    body = re.search(r"^  _renderDetailBody\(\) \{.*?^  \}", SOURCE, re.S | re.M)
-    assert body, "_renderDetailBody not found"
+    body = re.search(r"^  _body\(\) \{.*?^  \}", DETAIL_SOURCE, re.S | re.M)
+    assert body, "_body not found in the detail module"
     assert "resizedImage(r.image_url" in body.group(0)
     assert 'class="detailimg"' in body.group(0)
 

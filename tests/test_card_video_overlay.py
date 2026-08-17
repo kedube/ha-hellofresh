@@ -127,6 +127,38 @@ def test_overlay_binds_its_own_listener() -> None:
     assert 'overlay.addEventListener("click"' in open_video.group(0)
 
 
+def test_video_source_is_declared_as_mp4() -> None:
+    """HelloFresh's `.mov` URLs are served as `video/mp4` and DO play.
+
+    An earlier revision assumed `.mov` was unplayable in Chrome/Firefox and left the browser to
+    guess from the suffix, which is why some clips appeared broken. Declaring the type
+    explicitly is what makes them play.
+    """
+    source = MEAL_PLANNER.read_text(encoding="utf-8")
+    open_video = re.search(r"^  _openVideo\(recipe\) \{.*?^  \}", source, re.S | re.M)
+    assert open_video, "_openVideo not found"
+    assert '<source src=' in open_video.group(0)
+    assert 'type="video/mp4"' in open_video.group(0)
+
+
+def test_video_failure_is_surfaced_not_silent() -> None:
+    """A clip that genuinely cannot play must say so, not show a black box."""
+    source = MEAL_PLANNER.read_text(encoding="utf-8")
+    open_video = re.search(r"^  _openVideo\(recipe\) \{.*?^  \}", source, re.S | re.M)
+    body = open_video.group(0)
+    assert 'class="videoerr"' in body
+    # <source> errors do not bubble to <video>, so BOTH need a listener.
+    assert 'videoEl.addEventListener("error"' in body
+    assert 'sourceEl.addEventListener("error"' in body
+
+
+def test_sold_out_ribbon_is_suppressed_on_past_weeks() -> None:
+    """A delivered week must not render a "Sold out" ribbon."""
+    source = MEAL_PLANNER.read_text(encoding="utf-8")
+    assert "showSoldOut: !this._isPast(week)" in source
+    assert "ctx.showSoldOut !== false" in source
+
+
 def test_no_blanket_stop_propagation_inside_the_player() -> None:
     """Guards fault 2: swallowing every click in .videobox also swallowed the ✕."""
     source = MEAL_PLANNER.read_text(encoding="utf-8")

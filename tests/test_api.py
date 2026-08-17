@@ -9094,6 +9094,71 @@ def _menus_service_payload(week_id, courses):
     return {"items": [{"id": week_id, "week": week_id, "courses": courses}]}
 
 
+def test_past_weeks_never_keep_a_sold_out_flag() -> None:
+    """A delivered week must never show "Sold out".
+
+    Sold-out is meaningless once the box has shipped, but a past week's own menu payload can
+    still carry a stale `isSoldOut`, and `is_editable` does not look at the delivery date — so
+    a past week with no deadline and a lingering `mealSwap` flag still read as editable and
+    kept the ribbon.
+    """
+    stale = HelloFreshRecipe(
+        recipe_id="r-1", name="Delivered meal", course_index=1, is_sold_out=True, is_hidden=True
+    )
+    past = HelloFreshWeek(
+        week_id="2026-W32",
+        display_name="W32",
+        subscription_id="sub-1",
+        delivery_date=date.today() - timedelta(days=14),
+        # Deliberately "editable"-looking: swaps allowed, no deadline recorded.
+        allowed_actions={"mealSwap": True},
+        recipes=[stale],
+    )
+    calls: list = []
+    client = _availability_client({"items": []}, recorder=calls)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[past]
+        )
+    )
+
+    assert stale.is_sold_out is False
+    assert stale.is_hidden is False
+    # ...and no request was spent on a week whose availability cannot matter.
+    assert calls == []
+
+
+def test_future_week_still_receives_sold_out_flags() -> None:
+    """The past-week guard must not disable the feature for upcoming weeks."""
+    recipe = HelloFreshRecipe(recipe_id="r-2", name="Gone", course_index=1)
+    upcoming = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        delivery_date=date.today() + timedelta(days=7),
+        allowed_actions={"mealSwap": True},
+        recipes=[recipe],
+    )
+    payload = _menus_service_payload(
+        "2026-W39",
+        [{"id": "c1", "isSoldOut": True, "recipe": {"id": "r-2", "name": "Gone"}}],
+    )
+    client = _availability_client(payload)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[upcoming]
+        )
+    )
+
+    assert recipe.is_sold_out is True
+
+
 def test_menu_availability_overlays_sold_out_onto_the_editable_week() -> None:
     """The flags must reach recipes built by the primary endpoint, which never carries them."""
     recipes = [

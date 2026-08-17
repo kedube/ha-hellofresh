@@ -210,6 +210,11 @@ class HelloFreshMarketItem:
 
     item_id: str
     name: str
+    # The underlying HelloFresh recipe id, when the add-on has one — market items DO carry a
+    # normal 24-hex recipe id, so the full recipe (ingredients, steps) can be looked up like a
+    # meal's. Distinct from `item_id`, which falls back to the SKU or index and therefore
+    # cannot be handed to the recipe-detail API.
+    recipe_id: str | None = None
     # Cart selection unit for extras (mirrors a meal's course_index).
     index: int | None = None
     sku: str | None = None
@@ -237,6 +242,7 @@ class HelloFreshMarketItem:
         """Serialize market-item data for the get_weeks response / dashboard card."""
         return {
             "item_id": self.item_id,
+            "recipe_id": self.recipe_id,
             "name": self.name,
             "index": self.index,
             "sku": self.sku,

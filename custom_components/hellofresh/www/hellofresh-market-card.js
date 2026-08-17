@@ -22,6 +22,17 @@
 // so the banner reports exactly which build the browser actually loaded.
 const MARKET_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
+// Shared recipe-detail sheet, also used by the Meal planner and Recipes cards. Loaded via a
+// dynamic import carrying this card's own ?v=: a static "./…js" specifier resolves to the bare
+// filename, which Lovelace never stamps, so a browser holding an old copy would keep serving
+// it after an upgrade while the card itself refreshed.
+const detailModule = import(
+  new URL(
+    `./hellofresh-recipe-detail.js?v=${encodeURIComponent(MARKET_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 function resizedImage(url, width) {
   // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
   // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
@@ -89,6 +100,9 @@ class HelloFreshMarketCard extends HTMLElement {
     // Also drop the toast itself: with the timer cancelled, a toast shown just before
     // disconnect would otherwise repaint forever once the card reconnects.
     this._toast = null;
+    // The recipe sheet lives beside the card in the shadow root and registers a document-level
+    // Escape handler, so it must be torn down explicitly.
+    if (this._detailOverlay) this._detailOverlay.close();
   }
 
   setConfig(config) {
@@ -802,6 +816,18 @@ class HelloFreshMarketCard extends HTMLElement {
         return;
       }
 
+      // Tapping the tile opens the full recipe. Market items are chosen with the ± steppers
+      // (handled above, which stop propagation), so the tile itself is free for this on every
+      // week — editable or not.
+      const tile = ev.target.closest(".item");
+      if (tile) {
+        const item = week && (week.market_items || []).find(
+          (i) => i.item_id === tile.getAttribute("data-id")
+        );
+        if (item) this._openRecipeDetail(item);
+        return;
+      }
+
       const actionEl = ev.target.closest("[data-action]");
       if (!actionEl) return;
       const action = actionEl.getAttribute("data-action");
@@ -814,6 +840,41 @@ class HelloFreshMarketCard extends HTMLElement {
       else if (action === "toggle-filter") this._toggleShowSelectedOnly();
       else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });
+  }
+
+  // Open the shared recipe sheet for a market add-on. Add-ons carry a normal HelloFresh
+  // recipe id, so the same detail API serves them; an item without one (identified only by
+  // SKU) simply has nothing to show.
+  async _openRecipeDetail(item) {
+    const recipeId = item && item.recipe_id;
+    if (!recipeId || !this._hass) return;
+    try {
+      if (!this._detailOverlay) {
+        const { RecipeDetailOverlay } = await detailModule;
+        this._detailOverlay = new RecipeDetailOverlay({
+          getRoot: () => this.shadowRoot,
+          callService: (service, data) => this._callResponseService(service, data),
+        });
+      }
+      await this._detailOverlay.open(recipeId);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: recipe detail unavailable", err);
+    }
+  }
+
+  async _callResponseService(service, data) {
+    const payload = { ...(data || {}) };
+    if (this._config.config_entry_id) payload.config_entry_id = this._config.config_entry_id;
+    const result = await this._hass.callService(
+      "hellofresh",
+      service,
+      payload,
+      undefined,
+      false,
+      true,
+    );
+    return (result && result.response) || {};
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -883,6 +944,16 @@ class HelloFreshMarketCard extends HTMLElement {
     if (!this.__sheet) {
       this.__sheet = new CSSStyleSheet();
       this.__sheet.replaceSync(this._styles());
+      // The detail sheet's CSS ships with its module, which loads asynchronously. Append it on
+      // arrival: this stylesheet object is already adopted by every instance, so mutating it
+      // styles overlays opened later without re-adopting anything.
+      detailModule
+        .then(({ DETAIL_STYLES }) => {
+          this.__sheet.replaceSync(this._styles() + DETAIL_STYLES);
+        })
+        .catch(() => {
+          /* The overlay stays unavailable; the rest of the card is unaffected. */
+        });
     }
     return this.__sheet;
   }
@@ -951,6 +1022,8 @@ class HelloFreshMarketCard extends HTMLElement {
       .item {
         border: 2px solid transparent; border-radius: 10px; overflow: hidden;
         background: var(--secondary-background-color);
+        /* Tapping the tile opens the full recipe (quantity is changed with the ± steppers). */
+        cursor: pointer;
       }
       .item.selected { border-color: var(--primary-color); }
       .imgwrap { position: relative; aspect-ratio: 1 / 1; background: var(--divider-color); }
