@@ -64,10 +64,19 @@ export function formatMinutes(minutes) {
 }
 
 export const DETAIL_STYLES = `
+  /* FIXED, not absolute. \`position: absolute\` resolves against the nearest positioned
+     ancestor, and the host cards do not create one — so the sheet escaped its card, and the
+     planner's \`ha-card { overflow: hidden }\` then clipped the panel away entirely. The result
+     was a grey backdrop with nothing in it. Fixed positioning needs no positioned ancestor and
+     cannot be clipped by an ancestor's overflow, so the sheet centres on the viewport in every
+     card regardless of its layout. */
   .detailwrap {
-    position: absolute; inset: 0; z-index: 20;
+    position: fixed; inset: 0; z-index: 20;
     display: flex; align-items: center; justify-content: center;
     background: rgba(0, 0, 0, 0.55); padding: 16px;
+    /* Its own stacking context, so a card's positioned descendants can't paint over the sheet
+       (the planner's video lightbox sits at z-index 9). */
+    isolation: isolate;
   }
   .detailbox {
     background: var(--card-background-color, #fff); border-radius: 12px;

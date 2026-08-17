@@ -40,6 +40,44 @@ def test_shared_module_exists_and_exports_what_consumers_use() -> None:
     assert "export const DETAIL_STYLES" in source
 
 
+def test_overlay_is_fixed_positioned_not_absolute() -> None:
+    """The sheet must not depend on its host card creating a positioned ancestor.
+
+    With `position: absolute` the overlay resolved against the nearest positioned ancestor —
+    which the Meal planner and Market cards do not create (neither sets any `:host` rule) — so
+    the sheet escaped its card and the planner's `ha-card { overflow: hidden }` clipped the
+    panel away. The backdrop painted, the content did not: a grey screen with no popup.
+    `position: fixed` needs no positioned ancestor and is not clipped by ancestor overflow.
+    """
+    source = _source(DETAIL_MODULE)
+    wrap = re.search(r"\.detailwrap \{(.*?)\}", source, re.S)
+    assert wrap, ".detailwrap rule not found"
+    body = wrap.group(1)
+    assert "position: fixed" in body, "the overlay must be fixed-positioned"
+    assert "position: absolute" not in body
+
+
+def test_no_consumer_clips_a_fixed_overlay() -> None:
+    """A `transform`/`filter`/`perspective` on the CARD ITSELF would trap `position: fixed`.
+
+    Those properties create a containing block for fixed descendants, which would reintroduce
+    the clipping this fix removes. Hover states and inner elements are fine — only a rule on
+    the host or the card root matters.
+    """
+    for name, path in CONSUMERS.items():
+        source = _source(path)
+        for selector in ("ha-card", ":host"):
+            rule = re.search(rf"^\s*{re.escape(selector)} \{{(.*?)\}}", source, re.S | re.M)
+            if not rule:
+                continue
+            body = rule.group(1)
+            for prop in ("transform:", "filter:", "perspective:", "backdrop-filter:"):
+                assert prop not in body, (
+                    f"{name}: `{prop}` on {selector} creates a containing block that would "
+                    "clip the fixed-positioned recipe sheet"
+                )
+
+
 def test_every_consumer_imports_the_shared_module_with_a_cache_bust() -> None:
     """A bare "./hellofresh-recipe-detail.js" would go stale across upgrades."""
     for name, path in CONSUMERS.items():

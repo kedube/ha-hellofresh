@@ -7544,6 +7544,38 @@ class _StubResponse:
         return self._text
 
 
+def test_video_link_is_read_from_the_meal_wrapper_too() -> None:
+    """`videoLink` sits on the RECIPE node in menu payloads but on the MEAL in past-deliveries.
+
+    Reading only the recipe node silently dropped the clip for any meal that carries it on the
+    wrapper alongside a non-empty nested recipe — the play button simply never appeared. The
+    same trap as the empty-`recipe` bug: which node holds a field varies by endpoint.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+
+    on_wrapper = client._recipe_from_raw_meal(
+        {
+            "name": "Sweet Heat Shrimp Tempura Bowls",
+            "recipe": {"id": "r1", "name": "Sweet Heat Shrimp Tempura Bowls"},
+            "videoLink": "https://media.hellofresh.com/dam/asset/AAA/clip.mp4",
+        }
+    )
+    assert on_wrapper.video_url == "https://media.hellofresh.com/dam/asset/AAA/clip.mp4"
+
+    # The recipe node stays authoritative when BOTH carry one.
+    both = client._recipe_from_raw_meal(
+        {
+            "name": "X",
+            "videoLink": "https://media.hellofresh.com/dam/asset/WRAP/clip.mp4",
+            "recipe": {"id": "r2", "name": "X", "videoLink": "https://media.hellofresh.com/dam/asset/REC/clip.mp4"},
+        }
+    )
+    assert both.video_url == "https://media.hellofresh.com/dam/asset/REC/clip.mp4"
+
+    # A meal with no clip anywhere must stay None, not gain an empty string.
+    assert client._recipe_from_raw_meal({"name": "X", "recipe": {"id": "r3", "name": "X"}}).video_url is None
+
+
 def test_recipe_video_link_is_parsed_from_menu_payload() -> None:
     """`videoLink` on a menu recipe must surface as video_url (HAR: 2026-W36)."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
