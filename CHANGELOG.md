@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.63 — 2026-08-17
 - Fixed the **Market card** treating locked and delivered weeks as editable. Its copy of the
   "can this week still be changed?" check omitted the `allowed_actions.mealSwap` test and returned
   true by default, so a week HelloFresh had closed — or one already delivered, which carries no
