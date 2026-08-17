@@ -37,7 +37,7 @@ version heading and publishes it as the release's Highlights.
   they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
   message instead of a silent black box.
 
-## Unreleased
+## 2.61 — 2026-08-17
 - **Full recipe view in the Meal planner and Market cards** — the tap-through recipe sheet the
   Recipes card offers (ingredients with amounts, a servings switcher, step-by-step
   instructions, utensils, allergens, nutrition and the printable PDF) now works there too.
