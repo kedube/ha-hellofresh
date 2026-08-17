@@ -26,7 +26,7 @@ version heading and publishes it as the release's Highlights.
   `/recipes/ramen-noodles` redirects away — so `get_catalog_recipes` now reports each child's
   full `path` alongside its slug.
 
-## Unreleased
+## 2.60 — 2026-08-17
 - Fixed "Sold out" ribbons appearing on **past** weeks. Sold-out is meaningless once a box has
   shipped, but a delivered week's menu payload can still carry a stale flag, and the
   "can this week still be changed?" check never looked at the delivery date — so a past week
