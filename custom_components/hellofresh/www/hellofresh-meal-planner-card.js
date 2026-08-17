@@ -756,7 +756,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // Re-render a single recipe tile in place (selected state, qty badge, stepper).
   _updateTile(week, recipe) {
-    const idxAttr = String(recipe.course_index);
+    // Same key the tiles are rendered with (see _findRenderedRecipe): course_index alone is
+    // null for every meal of a delivered week, so it cannot identify a tile there.
+    const idxAttr = String(this._selKey(recipe));
     const tile = this._shell.content.querySelector(`.recipe[data-index="${CSS.escape(idxAttr)}"]`);
     if (!tile) return;
     const replacement = this._fragment(this._renderRecipeTile(week, recipe, this._tileContext(week)));
@@ -1384,7 +1386,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
     const qty = isSelected ? this._displayedQuantity(week, r) : 0;
     const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
-    const idxAttr = this._esc(String(r.course_index));
+    // Stable per-tile key: course_index when HelloFresh gives one, else the recipe id. A
+    // delivered week's meals have NO index, so keying on it alone collapsed every tile onto
+    // the week's first meal.
+    const idxAttr = this._esc(String(this._selKey(r)));
     const currency = this._account?.selected_plan_total_price_currency;
     // Only a handful of meals per week carry a promo clip (past weeks included — delivered
     // meals keep theirs), so the still image is always the base layer and the play affordance
@@ -1560,10 +1565,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return (result && result.response) || {};
   }
 
-  _findRenderedRecipe(index) {
+  // Resolve a tile's DOM key back to the recipe it was rendered from.
+  //
+  // Keyed on _selKey, NOT course_index: past-delivery meals carry no `index` at all, so every
+  // recipe in a delivered week has course_index === null. Matching on that made every tile
+  // resolve to the FIRST meal of the week — tapping the second meal played the first meal's
+  // video and opened the first meal's recipe. _selKey falls back to the recipe id, which is
+  // always present and unique, so each tile maps to its own meal.
+  _findRenderedRecipe(key) {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     const list = this._renderedRecipes || (week && week.recipes) || [];
-    return list.find((r) => String(r.course_index) === index);
+    return list.find((r) => String(this._selKey(r)) === key);
   }
 
   // ---- recipe video overlay -------------------------------------------------
