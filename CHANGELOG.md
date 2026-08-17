@@ -37,7 +37,7 @@ version heading and publishes it as the release's Highlights.
   they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
   message instead of a silent black box.
 
-## Unreleased
+## 2.62 — 2026-08-17
 - Fixed every meal on a **delivered** week opening the wrong recipe and playing the wrong
   video. Past-delivery meals carry no course index, so all of a delivered week's meals shared
   the same (null) tile key and every tap resolved to the week's *first* meal — tapping the
