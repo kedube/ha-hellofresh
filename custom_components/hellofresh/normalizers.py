@@ -613,8 +613,13 @@ class HelloFreshPayloadNormalizer:
         )
         is_selected = bool(selected_quantity and selected_quantity > 0)
 
+        # `item_id` falls back to the SKU or index when no recipe id is present, so it cannot
+        # be handed to the recipe-detail API. Keep the real recipe id separately (None when
+        # absent) so a caller can tell "look this up" from "there is nothing to look up".
+        raw_recipe_id = recipe_data.get("id")
         return HelloFreshMarketItem(
             item_id=str(recipe_data.get("id") or raw_item.get("sku") or index),
+            recipe_id=str(raw_recipe_id) if isinstance(raw_recipe_id, str) and raw_recipe_id else None,
             name=name,
             index=index,
             sku=raw_item.get("sku"),

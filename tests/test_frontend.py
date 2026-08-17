@@ -143,3 +143,34 @@ def test_every_registered_card_file_is_shipped() -> None:
     missing = [filename for filename, _p, _r in _CARDS if not (www_dir / filename).is_file()]
 
     assert not missing, f"registered cards missing from www/: {missing}"
+
+
+def test_modules_imported_by_cards_are_shipped() -> None:
+    """A card's own imports must exist in www/ too.
+
+    Shared modules (e.g. the recipe-detail sheet) are NOT in _CARDS — they are dependencies,
+    not Lovelace resources, and are served by the same static mount. That means nothing else
+    checks they were shipped: a missing one would 404 at import time and silently break every
+    card that depends on it.
+    """
+    www_dir = Path(frontend_module.__file__).parent / "www"
+    import re
+
+    missing = []
+    for js in sorted(www_dir.glob("*.js")):
+        source = js.read_text(encoding="utf-8")
+        # Both static (`from "./x.js"`) and dynamic (`import(... "./x.js?v=" ...)`) forms.
+        for ref in re.findall(r"""["'`]\./([A-Za-z0-9._-]+\.js)""", source):
+            if not (www_dir / ref).is_file():
+                missing.append(f"{js.name} -> {ref}")
+
+    assert not missing, f"card imports missing from www/: {missing}"
+
+
+def test_shared_detail_module_is_not_registered_as_a_card() -> None:
+    """The shared sheet is a dependency, not a card.
+
+    Registering it as a Lovelace resource would load a module that defines no custom element,
+    which does nothing useful and shows up as a phantom card resource for users.
+    """
+    assert not any("recipe-detail" in filename for filename, _p, _r in _CARDS)

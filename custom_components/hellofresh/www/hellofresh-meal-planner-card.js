@@ -25,6 +25,19 @@
 // so the banner reports exactly which build the browser actually loaded.
 const CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
+// Shared recipe-detail sheet, also used by the Recipes and Market cards.
+//
+// Loaded via a DYNAMIC import carrying this card's own ?v=. A static `./…js` specifier would
+// resolve to the bare filename, which Lovelace never stamps — so a browser holding an old copy
+// would keep serving it after an upgrade while the card itself refreshed. Propagating the
+// version keeps the two in lockstep.
+const detailModule = import(
+  new URL(
+    `./hellofresh-recipe-detail.js?v=${encodeURIComponent(CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 // HelloFresh recipe images are Cloudinary URLs containing a `/q_auto/` transform segment.
 // Inserting a width transform keeps grid thumbnails small/fast instead of loading full-size
 // hero JPEGs. Unknown URL shapes are returned unchanged.
@@ -114,6 +127,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // The video overlay lives beside the card in the shadow root and holds a document-level
     // key listener, so it has to be torn down explicitly rather than with the card's markup.
     this._closeVideo();
+    // Same for the recipe sheet — it also registers an Escape handler on `document`.
+    if (this._detailOverlay) this._detailOverlay.close();
   }
 
   setConfig(config) {
@@ -1236,6 +1251,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       editable: this._canEdit(week),
       display,
       nameCounts,
+      // Sold-out is only meaningful for a box you can still change. A delivered week already
+      // arrived, so a lingering flag on its payload must never surface as a "Sold out" ribbon.
+      showSoldOut: !this._isPast(week),
       // A tile is selected if its own key OR any collapsed-duplicate index is chosen. Uses the
       // same key as _savedSelection (course_index, or recipe_id when the meal has no index).
       sel: (r) =>
@@ -1370,15 +1388,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const currency = this._account?.selected_plan_total_price_currency;
     // Only a handful of meals per week carry a promo clip (past weeks included — delivered
     // meals keep theirs), so the still image is always the base layer and the play affordance
-    // is purely additive. Formats are mixed .mp4/.mov —
-    // .mov will not play in Chrome/Firefox, which the player surfaces as a fallback link
-    // rather than a silently dead <video>.
+    // is purely additive. URLs end in both .mp4 and .mov, but HelloFresh's CDN serves both as
+    // `video/mp4`, so the player declares that type explicitly rather than letting the browser
+    // reject a ".mov" it would actually have played.
+    //
+    // NOTE: HelloFresh attaches ONE clip to a whole recipe family, so every protein variant of
+    // a dish points at the same video — a Rib-Eye clip plays for the Sirloin and Bavette
+    // versions too. That is their data, not a mismatch introduced here.
     const videoUrl = safeMediaUrl(r.video_url);
     // A sold-out meal is greyed with a ribbon but stays tappable. The flag comes from the
     // anonymous regional catalog, which has not been confirmed to track per-customer
     // availability — so it is shown as advice, not enforced. Blocking on it would make a
     // selection HelloFresh might well accept impossible to build, with no override.
-    const soldOut = r.is_sold_out === true;
+    const soldOut = r.is_sold_out === true && ctx.showSoldOut !== false;
     return `
       <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""} ${soldOut ? "soldout" : ""}"
            data-index="${idxAttr}">
@@ -1389,6 +1411,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
           ${videoUrl
             ? `<button class="playbtn" data-video="${idxAttr}" title="Play recipe video" aria-label="Play video for ${this._esc(r.name)}">▶</button>`
+            : ""}
+          ${ctx.editable
+            ? `<button class="infobtn" data-info="${idxAttr}" title="Full recipe" aria-label="Full recipe for ${this._esc(r.name)}">ⓘ</button>`
             : ""}
           ${r.is_favorite === true ? `<div class="fav" title="In your HelloFresh cookbook">♥</div>` : ""}
           ${isSelected ? `<div class="check">✓</div>` : ""}
@@ -1452,6 +1477,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // NOTE: the video overlay is dismissed by its own listener in _openVideo, not here — it
       // lives beside <ha-card> in the shadow root, so its clicks never reach this handler.
 
+      // Tapping a tile on a week you CAN'T change opens the full recipe instead. On an
+      // editable week the tap still toggles the selection (below) — changing the meal is the
+      // point there, and the ⓘ button opens the recipe without touching the selection.
+      const infoBtn = ev.target.closest(".infobtn");
+      if (infoBtn) {
+        ev.stopPropagation();
+        const recipe = this._findRenderedRecipe(infoBtn.getAttribute("data-info"));
+        if (recipe) this._openRecipeDetail(recipe);
+        return;
+      }
+      const readOnlyTile = ev.target.closest(".recipe:not(.editable)");
+      if (readOnlyTile) {
+        const recipe = this._findRenderedRecipe(readOnlyTile.getAttribute("data-index"));
+        if (recipe) this._openRecipeDetail(recipe);
+        return;
+      }
+
       // Recipe tile tap (only meaningful on editable weeks).
       const tile = ev.target.closest(".recipe.editable");
       if (tile) {
@@ -1481,6 +1523,43 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     });
   }
 
+  // Open the shared recipe sheet for one meal. The module is loaded on demand, so the first
+  // open may wait a moment for it; failures are swallowed because this is additive detail on
+  // top of a menu that already rendered.
+  async _openRecipeDetail(recipe) {
+    const recipeId = recipe && recipe.recipe_id;
+    if (!recipeId || !this._hass) return;
+    try {
+      if (!this._detailOverlay) {
+        const { RecipeDetailOverlay } = await detailModule;
+        this._detailOverlay = new RecipeDetailOverlay({
+          getRoot: () => this.shadowRoot,
+          callService: (service, data) => this._callResponseService(service, data),
+        });
+      }
+      await this._detailOverlay.open(recipeId);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: recipe detail unavailable", err);
+    }
+  }
+
+  // Response-returning service call shaped for the detail module (which knows nothing about
+  // this card's config or hass handle).
+  async _callResponseService(service, data) {
+    const payload = { ...(data || {}) };
+    if (this._config.config_entry_id) payload.config_entry_id = this._config.config_entry_id;
+    const result = await this._hass.callService(
+      "hellofresh",
+      service,
+      payload,
+      undefined,
+      false,
+      true,
+    );
+    return (result && result.response) || {};
+  }
+
   _findRenderedRecipe(index) {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     const list = this._renderedRecipes || (week && week.recipes) || [];
@@ -1499,19 +1578,40 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
     const overlay = document.createElement("div");
     overlay.className = "videowrap";
-    // HelloFresh serves both .mp4 and .mov. Chrome/Firefox cannot play .mov, so an explicit
-    // "open in a new tab" fallback sits under the player instead of a silently black box.
+    // HelloFresh's URLs end in both .mp4 and .mov, but the CDN serves BOTH as `video/mp4`
+    // (verified: a .mov URL responds `content-type: video/mp4`) — they are H.264 in a
+    // QuickTime-named container, which browsers play fine. So the source is declared as
+    // video/mp4 explicitly rather than letting the browser guess from the ".mov" suffix and
+    // refuse it. An earlier revision assumed .mov was simply unplayable and only offered a
+    // link; that was wrong, and it is why some clips appeared broken.
     overlay.innerHTML = `
       <div class="videobox">
         <div class="videohead">
           <span class="videotitle">${this._esc(recipe.name)}</span>
           <button class="videoclose" title="Close" aria-label="Close video">✕</button>
         </div>
-        <video class="videoel" src="${this._esc(url)}" controls autoplay playsinline></video>
+        <video class="videoel" controls autoplay playsinline>
+          <source src="${this._esc(url)}" type="video/mp4">
+        </video>
+        <div class="videoerr" hidden>
+          This clip could not be played here.
+        </div>
         <a class="videofallback" href="${this._esc(url)}" target="_blank" rel="noopener noreferrer">
           Video not playing? Open it directly
         </a>
       </div>`;
+    // Surface a real failure instead of a silent black box: <source> errors do not bubble to
+    // the <video>, so listen on the element itself and on the source node.
+    const videoEl = overlay.querySelector("video");
+    const errEl = overlay.querySelector(".videoerr");
+    const showError = () => {
+      if (errEl) errEl.hidden = false;
+    };
+    if (videoEl) {
+      videoEl.addEventListener("error", showError);
+      const sourceEl = videoEl.querySelector("source");
+      if (sourceEl) sourceEl.addEventListener("error", showError);
+    }
     // The overlay is a SIBLING of <ha-card> in the shadow root, so the card's delegated click
     // listener never sees these clicks — it must bind its own. (An earlier revision relied on
     // that delegated handler and additionally stopped propagation on .videobox, which contains
@@ -1672,6 +1772,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (!this.__sheet) {
       this.__sheet = new CSSStyleSheet();
       this.__sheet.replaceSync(this._styles());
+      // The detail sheet's CSS lives in its own module, which loads asynchronously. Append it
+      // when it arrives: the stylesheet object is already adopted by every instance, so
+      // mutating it here styles overlays opened later without re-adopting anything.
+      detailModule
+        .then(({ DETAIL_STYLES }) => {
+          this.__sheet.replaceSync(this._styles() + DETAIL_STYLES);
+        })
+        .catch(() => {
+          /* The overlay simply stays unavailable; the rest of the card is unaffected. */
+        });
     }
     return this.__sheet;
   }
@@ -1850,6 +1960,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .playbtn:hover { background: rgba(0, 0, 0, 0.75); }
       .playbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      /* On an editable week the tile tap toggles the selection, so opening the full recipe
+         needs its own affordance. Bottom-left keeps it clear of the ♥ (top-right), the
+         sold-out ribbon (top-left) and the centred ▶. */
+      .infobtn {
+        position: absolute; left: 6px; bottom: 6px;
+        width: 24px; height: 24px; border: none; border-radius: 50%; cursor: pointer;
+        background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 0.85em; line-height: 1;
+        padding: 0; display: flex; align-items: center; justify-content: center;
+      }
+      .infobtn:hover { background: rgba(0, 0, 0, 0.75); }
+      .infobtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      /* A read-only tile is now tappable (it opens the recipe), so it should say so. */
+      .recipe:not(.editable) { cursor: pointer; }
       .videowrap {
         position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.75);
         display: flex; align-items: center; justify-content: center; padding: 16px;
@@ -1869,6 +1992,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .videoclose:hover { background: var(--divider-color); }
       .videoel { display: block; width: 100%; max-height: 70vh; background: #000; }
+      .videoerr {
+        padding: 8px 12px 0; font-size: 0.85em; color: var(--error-color, #db4437);
+      }
       .videofallback {
         display: block; padding: 8px 12px; font-size: 0.82em;
         color: var(--secondary-text-color); text-decoration: none;

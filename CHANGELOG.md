@@ -26,6 +26,27 @@ version heading and publishes it as the release's Highlights.
   `/recipes/ramen-noodles` redirects away — so `get_catalog_recipes` now reports each child's
   full `path` alongside its slug.
 
+## Unreleased
+- Fixed "Sold out" ribbons appearing on **past** weeks. Sold-out is meaningless once a box has
+  shipped, but a delivered week's menu payload can still carry a stale flag, and the
+  "can this week still be changed?" check never looked at the delivery date — so a past week
+  with no recorded deadline still counted as editable. Delivered weeks now have the flag
+  cleared, the card refuses to draw the ribbon on them, and no request is spent on them.
+- Fixed some recipe videos not playing. HelloFresh's clip URLs end in both `.mp4` and `.mov`,
+  and the player assumed `.mov` was unplayable — but the CDN serves both as `video/mp4`, so
+  they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
+  message instead of a silent black box.
+
+## Unreleased
+- **Full recipe view in the Meal planner and Market cards** — the tap-through recipe sheet the
+  Recipes card offers (ingredients with amounts, a servings switcher, step-by-step
+  instructions, utensils, allergens, nutrition and the printable PDF) now works there too.
+  In My Menu, tapping a meal on a week you can no longer change opens it; on an editable week
+  the tap still changes your selection, so the recipe opens from a small **ⓘ** button instead.
+  In Market, tapping any item opens it — quantities are changed with the ± steppers, so the
+  tile itself is free. Market add-ons turn out to carry ordinary HelloFresh recipe ids, so they
+  get the same detail as a meal. The sheet is now one shared module rather than three copies.
+
 ## 2.57 — 2026-08-16
 - Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.
   HelloFresh began returning 404 for every `_next/data` catalog URL — on every build id,

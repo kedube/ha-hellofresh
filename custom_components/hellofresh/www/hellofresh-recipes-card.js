@@ -28,6 +28,17 @@
 // so the banner reports exactly which build the browser actually loaded.
 const RECIPES_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
+// Shared recipe-detail sheet, also used by the Meal planner and Market cards. Loaded via a
+// dynamic import carrying this card's own ?v=: a static "./…js" specifier resolves to the bare
+// filename, which Lovelace never stamps, so a browser holding an old copy would keep serving
+// it after an upgrade while the card itself refreshed.
+const detailModule = import(
+  new URL(
+    `./hellofresh-recipe-detail.js?v=${encodeURIComponent(RECIPES_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 const LOGO_URL = "/hellofresh/hellofresh-logo.png";
 const DEFAULT_LIMIT = 50;
 // Sentinel "collection" for the customer's own cookbook, which comes from a different service
@@ -403,159 +414,27 @@ class HelloFreshRecipesCard extends HTMLElement {
 
   // ---- recipe detail overlay ------------------------------------------------
 
-  // Full detail (steps, ingredients, utensils) is fetched on demand rather than with the
-  // listing: it is one request per recipe, and the grid shows dozens. The overlay is appended
-  // to the shadow root so the grid's layout can't clip it.
+  // Full detail is fetched on demand (one request per recipe, and the grid shows dozens) and
+  // rendered by the shared overlay module, which the Meal planner and Market cards use too.
   async _openDetail(recipeId, servings) {
     if (!this._hass || !recipeId) return;
-    this._detailId = recipeId;
-    this._detailServings = servings || null;
-    this._detail = null;
-    this._detailError = null;
-    this._detailLoading = true;
-    this._renderDetail();
     try {
-      const payload = await this._call("get_recipe_detail", {
-        recipe_id: recipeId,
-        ...(servings ? { servings } : {}),
-      });
-      // Ignore a response for a recipe the user has already navigated away from.
-      if (this._detailId !== recipeId) return;
-      this._detail = payload.recipe || null;
+      if (!this._detail) {
+        const { RecipeDetailOverlay } = await detailModule;
+        this._detail = new RecipeDetailOverlay({
+          getRoot: () => this.shadowRoot,
+          callService: (service, data) => this._call(service, data),
+        });
+      }
+      await this._detail.open(recipeId, servings);
     } catch (err) {
-      if (this._detailId !== recipeId) return;
-      this._detailError = (err && err.message) || String(err);
-    } finally {
-      this._detailLoading = false;
-      this._renderDetail();
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: recipe detail unavailable", err);
     }
   }
 
   _closeDetail() {
-    this._detailId = null;
-    this._detail = null;
-    this._detailError = null;
-    this._detailLoading = false;
-    if (this._detailKeyHandler) {
-      document.removeEventListener("keydown", this._detailKeyHandler);
-      this._detailKeyHandler = null;
-    }
-    if (this._detailOverlay) {
-      this._detailOverlay.remove();
-      this._detailOverlay = null;
-    }
-  }
-
-  _renderDetail() {
-    if (!this.shadowRoot) return;
-    if (!this._detailId) {
-      this._closeDetail();
-      return;
-    }
-    if (!this._detailOverlay) {
-      const overlay = document.createElement("div");
-      overlay.className = "detailwrap";
-      // The overlay is a sibling of the <ha-card>, so the card's delegated listener never
-      // sees its clicks — it needs its own. The servings switcher refetches at the chosen
-      // yield; backdrop and ✕ dismiss.
-      //
-      // The backdrop is matched by IDENTITY, not by a marker attribute on the overlay:
-      // closest() walks *up* from the event target, so a marker there matches every click
-      // inside the panel and would dismiss the sheet when you picked a serving size or
-      // selected recipe text.
-      overlay.addEventListener("click", (ev) => {
-        const servingsBtn = ev.target.closest("[data-servings]");
-        if (servingsBtn) {
-          this._openDetail(this._detailId, Number(servingsBtn.getAttribute("data-servings")));
-          return;
-        }
-        if (ev.target === overlay || ev.target.closest(".detailclose")) this._closeDetail();
-      });
-      this.shadowRoot.appendChild(overlay);
-      this._detailOverlay = overlay;
-      this._detailKeyHandler = (ev) => {
-        if (ev.key === "Escape") this._closeDetail();
-      };
-      document.addEventListener("keydown", this._detailKeyHandler);
-    }
-    // No propagation guard on .detailbox: the ✕ lives inside it, so swallowing every click
-    // there also swallowed the close button. The handler above distinguishes the backdrop by
-    // identity instead, which needs no guard — and attaching one here would re-bind on every
-    // render anyway, since this innerHTML assignment replaces the node it was bound to.
-    this._detailOverlay.innerHTML = this._renderDetailBody();
-  }
-
-  _renderDetailBody() {
-    const close = `<button class="detailclose" title="Close" aria-label="Close recipe">✕</button>`;
-    if (this._detailLoading && !this._detail) {
-      return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg">Loading recipe…</div></div>`;
-    }
-    if (this._detailError) {
-      return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg err">${this._esc(this._detailError)}</div></div>`;
-    }
-    const r = this._detail;
-    if (!r) return `<div class="detailbox"><div class="detailhead">${close}</div></div>`;
-
-    const facts = [];
-    if (r.total_time_minutes || r.prep_time_minutes) {
-      facts.push(formatMinutes(r.prep_time_minutes || r.total_time_minutes));
-    }
-    if (r.calories_kcal) facts.push(`${Math.round(r.calories_kcal)} kcal`);
-    if (r.difficulty) facts.push(`Difficulty ${r.difficulty}`);
-    if (r.rating) facts.push(`★ ${r.rating.toFixed(1)}`);
-
-    // Serving switcher: amounts are resolved server-side per yield, so changing this refetches.
-    const yields = Array.isArray(r.available_yields) ? r.available_yields : [];
-    const servingsBar = yields.length > 1
-      ? `<div class="servings">
-           <span class="slabel">Servings</span>
-           ${yields.map((y) => `<button class="sbtn ${y === r.servings ? "active" : ""}"
-                data-servings="${y}">${y}</button>`).join("")}
-         </div>`
-      : "";
-
-    const ingredients = (r.ingredients || []).map((i) => {
-      const amount = i.amount != null ? `${i.amount}${i.unit ? " " + i.unit : ""} ` : "";
-      // Pantry staples you supply yourself are called out; everything else ships in the box.
-      const pantry = i.shipped === false ? ` <span class="pantry">(not in box)</span>` : "";
-      return `<li>${this._esc(amount)}${this._esc(i.name || "")}${pantry}</li>`;
-    }).join("");
-
-    // A step's instructions can span several lines; escape first, then turn the newlines into
-    // <br> so the break markup survives escaping rather than being escaped away.
-    const steps = (r.steps || []).map(
-      (s) => `<li>${this._esc(s.instructions || "").replace(/\n/g, "<br>")}</li>`
-    ).join("");
-
-    const img = resizedImage(r.image_url, 640);
-    const link = safeLinkUrl(r.url);
-    const card = safeLinkUrl(r.card_url);
-    return `
-      <div class="detailbox">
-        <div class="detailhead">
-          <span class="detailtitle">${this._esc(r.name)}</span>
-          ${close}
-        </div>
-        <div class="detailscroll">
-          ${img ? `<img class="detailimg" src="${this._esc(img)}" alt="${this._esc(r.name)}">` : ""}
-          ${r.headline ? `<div class="detailheadline">${this._esc(r.headline)}</div>` : ""}
-          ${facts.length ? `<div class="facts">${this._esc(facts.join(" · "))}</div>` : ""}
-          ${(r.allergens || []).length
-            ? `<div class="allerg">Allergens: ${this._esc(r.allergens.join(", "))}</div>` : ""}
-          ${servingsBar}
-          ${ingredients ? `<h4>Ingredients</h4><ul class="ing">${ingredients}</ul>` : ""}
-          ${(r.utensils || []).length
-            ? `<h4>You'll need</h4><div class="utensils">${this._esc(r.utensils.join(" · "))}</div>`
-            : ""}
-          ${steps ? `<h4>Instructions</h4><ol class="steps">${steps}</ol>` : ""}
-          <div class="detaillinks">
-            ${card ? `<a href="${this._esc(card)}" target="_blank" rel="noopener noreferrer">Printable recipe card (PDF)</a>` : ""}
-            ${link ? `<a href="${this._esc(link)}" target="_blank" rel="noopener noreferrer">View on hellofresh.com</a>` : ""}
-          </div>
-        </div>
-      </div>`;
+    if (this._detail) this._detail.close();
   }
 
   _esc(value) {
@@ -571,7 +450,7 @@ class HelloFreshRecipesCard extends HTMLElement {
   static _sheet() {
     if (!HelloFreshRecipesCard.__sheet) {
       const sheet = new CSSStyleSheet();
-      sheet.replaceSync(`
+      const css = `
         :host { display: block; }
         /* Header sizing is deliberately identical to the other HelloFresh cards (planner,
            market, food profile): 12px gap, a 40px square logo and a 1.5em/500 title. The
@@ -644,57 +523,21 @@ class HelloFreshRecipesCard extends HTMLElement {
         .stats { font-size: 0.76em; color: var(--secondary-text-color); }
         .recipe { cursor: pointer; }
         .recipe:hover { border-color: var(--primary-color); }
-        .detailwrap {
-          position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.7);
-          display: flex; align-items: center; justify-content: center; padding: 16px;
-        }
-        .detailbox {
-          background: var(--card-background-color, #fff); border-radius: 12px;
-          max-width: min(640px, 94vw); width: 100%; max-height: 88vh;
-          display: flex; flex-direction: column; overflow: hidden;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-        }
-        .detailhead {
-          display: flex; align-items: center; justify-content: space-between; gap: 8px;
-          padding: 10px 8px 10px 14px; border-bottom: 1px solid var(--divider-color);
-        }
-        .detailtitle { font-weight: 600; }
-        .detailclose {
-          border: none; background: transparent; cursor: pointer; font-size: 1.1em;
-          color: var(--secondary-text-color); padding: 4px 8px; border-radius: 6px;
-        }
-        .detailclose:hover { background: var(--divider-color); }
-        /* The panel itself is capped at 88vh; only the body scrolls, so the title and close
-           button stay reachable on a long recipe. */
-        .detailscroll { overflow-y: auto; padding: 12px 14px 16px; }
-        .detailimg { width: 100%; border-radius: 8px; display: block; margin-bottom: 10px; }
-        .detailheadline { color: var(--secondary-text-color); font-size: 0.9em; }
-        .facts { margin-top: 6px; font-size: 0.85em; color: var(--secondary-text-color); }
-        .allerg { margin-top: 4px; font-size: 0.8em; color: var(--secondary-text-color); }
-        .servings { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-        .slabel { font-size: 0.82em; color: var(--secondary-text-color); }
-        .sbtn {
-          border: 1px solid var(--divider-color); background: transparent; cursor: pointer;
-          border-radius: 12px; min-width: 30px; padding: 3px 9px; font-size: 0.82em;
-          color: var(--primary-text-color);
-        }
-        .sbtn.active {
-          background: var(--primary-color); border-color: var(--primary-color);
-          color: var(--text-primary-color, #fff);
-        }
-        .detailbox h4 { margin: 14px 0 6px; font-size: 0.92em; }
-        .ing, .steps { margin: 0; padding-left: 20px; font-size: 0.87em; line-height: 1.5; }
-        .steps li { margin-bottom: 8px; }
-        .pantry { color: var(--secondary-text-color); font-size: 0.9em; }
-        .utensils { font-size: 0.85em; color: var(--secondary-text-color); }
-        .detaillinks { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
-        .detaillinks a { font-size: 0.85em; color: var(--primary-color); }
         .msg { padding: 8px 16px 20px; color: var(--secondary-text-color); }
         .msg.err { color: var(--error-color, #db4437); }
         .toast { margin: 0 16px 14px; padding: 8px 10px; border-radius: 8px;
           background: var(--divider-color); font-size: 0.85em; }
         .toast.err { background: var(--error-color, #db4437); color: #fff; }
-      `);
+      `;
+      sheet.replaceSync(css);
+      // The overlay's CSS ships with its module, which loads asynchronously. Re-write the sheet
+      // with it appended on arrival; the object is already adopted by every instance, so this
+      // styles overlays opened later without re-adopting anything.
+      detailModule
+        .then(({ DETAIL_STYLES }) => sheet.replaceSync(css + DETAIL_STYLES))
+        .catch(() => {
+          /* The overlay stays unstyled/unavailable; the rest of the card is unaffected. */
+        });
       HelloFreshRecipesCard.__sheet = sheet;
     }
     return HelloFreshRecipesCard.__sheet;

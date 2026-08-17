@@ -3278,8 +3278,25 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if primary is None:
             return
 
+        # Sold-out is meaningless once a box has shipped, but a delivered week's own menu
+        # payload can still carry a stale `isSoldOut` from whenever it was last served — and
+        # `is_editable` does not look at the delivery date, so a past week whose deadline is
+        # absent and whose `mealSwap` flag lingers still reads as editable. Clear the flag on
+        # anything already delivered so no "Sold out" ribbon can appear on a past week.
+        today = date.today()
+        for week in weeks:
+            if week.delivery_date is not None and week.delivery_date < today:
+                for recipe in week.recipes:
+                    recipe.is_sold_out = False
+                    recipe.is_hidden = False
+
         editable_weeks = [
-            week for week in weeks if week.week_id and week.is_editable and week.recipes
+            week
+            for week in weeks
+            if week.week_id
+            and week.is_editable
+            and week.recipes
+            and (week.delivery_date is None or week.delivery_date >= today)
         ]
         if not editable_weeks:
             return
