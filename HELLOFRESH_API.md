@@ -657,6 +657,14 @@ The `<buildId>` rotates on **every** HelloFresh web deploy. The integration scra
 
 Row shape: `{id, recipeId, name, headline, slug, imagePath, websiteUrl, aggregateRating, aggregateRatingsCount, prepTime}`.
 
+**Two row sources per page, and both are needed.** A category page's react-query cache (`dehydratedState.queries`) holds the category's **canonical recipe list** *and* a couple of small curated rails ("Quick & Easy …", "Most Recent …"). Reading only the rails under-reports badly — Noodle Recipes returned 10 where the site shows 30, Chicken 14 where it shows 30. The extractor merges both and dedupes by recipe id (Noodle 10 → 34, Chicken 14 → 42).
+
+**Telling the right rows from the wrong ones.** The same cache also holds the generic top-rated listing that every page carries, so a category request must not fall back to it — doing so silently returned "best rated overall" while the UI showed the chosen category's chip as active. Collection-scoped queries are identified by their `recipeCollectionTags.id`; when a `collection` is requested, the untagged generic query is skipped rather than used as a fallback. Metadata queries are excluded **by name**, not by matching text in the serialized cache key, which had discarded legitimate rows whose key merely contained the word.
+
+**Sub-categories.** A category page also lists its **children** (Noodle → Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …), which never appear in the top-level category list — this data URL is the only route to them. A child cannot be fetched by its bare slug (`/recipes/ramen-noodles` redirects away), so each child reports the full `path` (`noodle-recipes/ramen-noodles`) that must be passed back as `collection`.
+
+**Fallback when the data URL is unavailable.** If the `_next/data` request fails, the same payload is recovered from the page HTML's `__NEXT_DATA__` script blob (unwrapping its `props` envelope), so a rotated build id or a data-URL change degrades rather than breaks.
+
 **Image host.** Catalog rows carry a bare `imagePath` (`/image/foo.jpg`) with no host. The correct host is Cloudinary:
 
 ```
@@ -1246,7 +1254,7 @@ Current UI-facing labels that differ from the raw entity ids:
 
 Entity behavior notes:
 
-- `sensor.selected_meal_count` reads only weeks that still need selection (`needs_selection = True`) and returns 0 when no such week exists; it does not include market or add-on item quantities
+- `sensor.selected_meal_count` reads `next_configurable_week` — the next selection week when there is one, otherwise the soonest non-skipped upcoming week carrying selection context — and returns 0 when no such week exists; it does not include market or add-on item quantities
 - `sensor.required_meal_count` uses the next pending week's `meals_required` value and falls back to the subscription plan meal count when the delivery payload is sparse
 - `sensor.next_payment_date` is the delivery date of the soonest upcoming order, not the order creation date; it falls back to `next_cutoff_date + 1s` if no upcoming order is found
 - `sensor.selected_plan` is sourced from normalized subscription plan/display fields
@@ -1264,6 +1272,13 @@ The integration ships seven custom Lovelace cards (`www/hellofresh-meal-planner-
 - because this uses `hass.http`, `http` is declared in `manifest.json`'s `dependencies`
 
 The cards are pure read+write clients of existing services — they define no new entities or endpoints. The week-data cards call `get_weeks` to render and `select_meals` / `select_market_items` / `skip_week` / `unskip_week` / `reschedule_week` to act; the Food Profile card uses `get_food_profile` / `set_food_profile`, the Subscription card `get_account_summary`, the Cost card `get_spending`, and the Recipes card `get_recipe_collections` / `get_catalog_recipes` / `get_recipe_detail` / `get_favorites` / `add_favorite` / `remove_favorite`.
+
+**Shared recipe-detail module.** `www/hellofresh-recipe-detail.js` is a module, not a card: it is not registered as a Lovelace resource and is imported dynamically by the Recipes, Meal planner and Market cards, which each render the same tap-through recipe sheet (ingredients scaled to a servings switcher, steps, utensils, allergens, nutrition, printable PDF) from `get_recipe_detail`. It exports `RecipeDetailOverlay`, `DETAIL_STYLES`, and the `escapeHtml` / `safeHttpUrl` / `resizedImage` / `formatMinutes` helpers, replacing what had been three divergent copies.
+
+Two layout constraints are load-bearing and were both discovered by the sheet failing to appear at all:
+
+- The overlay must be `position: fixed`, not `absolute`. `absolute` resolves against the nearest *positioned* ancestor, and the host cards create none — so the sheet escaped its card, and the meal planner's `ha-card { overflow: hidden }` then clipped it away entirely.
+- Because the overlay is appended as a **sibling of `<ha-card>`** in the shadow root, a card's delegated click listener (bound to `<ha-card>`) never sees clicks inside it. The overlay binds its own listener, and matches its backdrop **by identity** rather than with `closest()` — `closest()` walks *up* from the target, so a dismiss marker on the overlay would match every click inside it and close the sheet when the user touched its own controls.
 
 ### Diagnostics redaction
 

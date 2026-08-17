@@ -9410,3 +9410,47 @@ def test_rating_feedback_is_parsed_from_the_other_feedback_shape() -> None:
     assert recipe.rating_scale == 5
     assert recipe.delivered_count is None
     assert recipe.last_delivered_week is None
+
+
+def test_history_auth_failure_propagates_for_reauth() -> None:
+    """An expired token during history loading must reach the coordinator, not be swallowed.
+
+    `_async_get_past_delivery_weeks` walks a list of candidate endpoints, and a plain
+    HelloFreshError on one means "try the next". Auth is different: every candidate will fail
+    the same way, so treating a dead token as a failed candidate silently produced EMPTY
+    history with no reauth prompt. Its sibling `_async_get_upcoming_deliveries` — which runs in
+    the same asyncio.gather and shares this fetch helper — always re-raised here.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+
+    async def fake_shared_get(path: str, params=None):
+        raise HelloFreshAuthError("token expired")
+
+    client._async_api_get_json_shared = fake_shared_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshAuthError):
+        loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+
+
+def test_history_non_auth_failure_still_tries_the_next_candidate() -> None:
+    """Guards the over-correction: a plain transport error must NOT abort the whole walk."""
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+
+    attempts: list[str] = []
+
+    async def fake_shared_get(path: str, params=None):
+        attempts.append(path)
+        raise HelloFreshError("endpoint unavailable")
+
+    client._async_api_get_json_shared = fake_shared_get  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+
+    assert weeks == []
+    assert len(attempts) > 1, "a non-auth failure should fall through to other candidates"

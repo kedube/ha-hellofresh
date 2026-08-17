@@ -5,37 +5,78 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## 2.48 — 2026-08-10
-- Fixed a regression from the comma-decimal work: scientific-notation amount strings
-  (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
-  values (inf/nan) now coerce to None instead of reaching sensor states.
-
-## 2.58 — 2026-08-16
-- Fixed categories in the All Recipes card showing far fewer recipes than the website: Noodle
-  Recipes listed 10 where the site shows 30, Chicken 14 where the site shows 30. The page
-  carries the category's canonical recipe list *and* a couple of small "Quick & Easy" /
-  "Most Recent" rails, and only the rails were being read. Both are now merged and deduped —
-  Noodle goes 10 → 34, Chicken 14 → 42.
-- The All Recipes card now loads **50** recipes per category by default (was 40), so the
-  larger categories are no longer clipped — Chicken has 42. Still configurable via the card's
-  `limit` option and the `get_catalog_recipes` service (1–200).
-- **Sub-categories are now browsable** — selecting a category that has children (Noodle →
-  Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) shows a
-  second "Refine" chip row. These children never appear in HelloFresh's top-level category
-  list, so they were previously unreachable. They also cannot be fetched by their bare slug —
-  `/recipes/ramen-noodles` redirects away — so `get_catalog_recipes` now reports each child's
-  full `path` alongside its slug.
-
-## 2.60 — 2026-08-17
-- Fixed "Sold out" ribbons appearing on **past** weeks. Sold-out is meaningless once a box has
-  shipped, but a delivered week's menu payload can still carry a stale flag, and the
-  "can this week still be changed?" check never looked at the delivery date — so a past week
-  with no recorded deadline still counted as editable. Delivered weeks now have the flag
-  cleared, the card refuses to draw the ribbon on them, and no request is spent on them.
-- Fixed some recipe videos not playing. HelloFresh's clip URLs end in both `.mp4` and `.mov`,
-  and the player assumed `.mov` was unplayable — but the CDN serves both as `video/mp4`, so
-  they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
-  message instead of a silent black box.
+## Unreleased
+- Fixed the **Market card** treating locked and delivered weeks as editable. Its copy of the
+  "can this week still be changed?" check omitted the `allowed_actions.mealSwap` test and returned
+  true by default, so a week HelloFresh had closed — or one already delivered, which carries no
+  `allowed_actions` at all — showed an "Editable" chip with live ± steppers, letting you build a
+  cart the server would then reject. `HelloFreshWeek.is_editable` documents that the backend and
+  all three cards stay in lockstep; the Market card was the only one out of step.
+- Fixed delivery statuses rendering inconsistently between cards. HelloFresh sends
+  SCREAMING_SNAKE (`DELIVERED`, `ON_THE_WAY`), and the Schedule card's title-caser was missing its
+  `.toLowerCase()` — so the same week read "DELIVERED" there and "Delivered" in the Meal planner
+  and Market cards. A missing status also rendered as the literal "Null" in two cards.
+- Added parity tests that execute the real `_isEditable` and `_titleCase` from every card that has
+  a copy and assert they agree, plus tests for the coordinator's token-refresh escalation (an
+  unrecoverable auth failure must stop the refresh timer and start reauth; a transient one must do
+  neither) — that path was the untested gap that let the history-endpoint auth bug hide.
+- Fixed favoriting a recipe in the **Recipes card** never refreshing the Meal planner's hearts on
+  a multi-account setup. The cross-card event was dispatched with an empty `detail`, and every
+  listener drops an event whose `detail.accountKey || "default"` doesn't match its own key — so
+  an empty detail didn't mean "all accounts", it meant "the single-account case only", and was
+  silently discarded by any card configured with a `config_entry_id`. Nothing errored, which is
+  why it went unnoticed.
+- Added contract tests for the cross-card sync protocol (event names, the
+  `hellofresh:selected-week:<accountKey>` storage key, and how `accountKey` is derived), asserted
+  across all cards at once. The protocol is hand-copied into six card files and its correctness
+  condition is exact agreement, so drift is now a test failure rather than silence.
+- Fixed `image_width` doing **nothing** in the Meal planner and Market cards — the two cards that
+  actually offer the option. Both carried a one-line copy of the image-resize helper that only
+  rewrote a `/q_auto/` transform, but every image URL HelloFresh really serves is a
+  `hellofresh_s3` form (`f_auto,fl_lossy,h_300,q_auto,w_450/hellofresh_s3/…`), which it returned
+  untouched. So each tile downloaded the full-size hero JPEG (~1.7 MB) on a grid showing dozens,
+  while the setting looked like it was working. The full implementation already existed in the
+  Recipes card and the shared module; all four copies are now pinned to identical behaviour by
+  test, so the next edit can't fix one and miss the others.
+- Fixed the **Subscription card** showing stale data for up to 3 hours after a sibling card saved
+  a change. It had the code to drain a queued follow-up fetch, but nothing ever set the flag —
+  dead code — so a `hellofresh-data-changed` event arriving while a fetch was already in flight
+  was dropped, and that in-flight response predated the write. Now queues like the Schedule and
+  Cost cards. Added tests covering all three.
+- Fixed an **expired token during history loading being swallowed instead of triggering reauth**.
+  `_async_get_past_delivery_weeks` walks candidate endpoints and treats an error as "try the next
+  one", but an auth failure fails every candidate identically — so a dead token silently produced
+  empty past weeks with no reauth prompt, for the whole poll interval. Its sibling running in the
+  same `asyncio.gather` had always re-raised. Fixed in the candidate walk and in the pagination
+  loop underneath it, both of which could hide the expiry.
+- Fixed the delivery **calendar** dropping deliveries. `async_get_events` returned only events
+  that *started* inside the requested window, but Home Assistant's contract is overlap — and a
+  delivery is an all-day event starting at midnight, so any window that didn't begin exactly at
+  00:00 returned nothing for that day. Also fixed a latent `TypeError` from comparing the naive
+  datetimes built out of all-day dates against Home Assistant's timezone-aware bounds, in both
+  the event lookup and the next-event sort.
+- The calendar platform had **no tests at all** (0% coverage, now 84%) — which is how both defects
+  survived. Added nine covering overlap, half-open window boundaries, all-day handling, next-event
+  selection, and undated orders.
+- Documentation: the **All Recipes** view and the Recipes card are now covered in the README's
+  dashboard and scope sections (the card shipped but was missing from both lists, which still
+  said "five views" and "six packaged cards"). Added the catalog's two-row-source merge,
+  collection-tag discrimination, sub-category `path` requirement and `__NEXT_DATA__` fallback to
+  the API reference, along with the shared `hellofresh-recipe-detail.js` module and the two
+  layout constraints (fixed positioning, identity-matched backdrop) that its overlay depends on.
+- Corrected a long-standing documentation error: `.mov` clips were described as unplayable in
+  Chrome and Firefox. They play fine — the CDN serves both `.mp4` and `.mov` as `video/mp4`, and
+  declaring that type explicitly is what fixed the "broken" videos in 2.60.
+- Corrected the past-history claim. Three places promised "a full calendar year of past boxes"
+  while the **Weeks of past history** option has defaulted to 26 weeks (~6 months) since it
+  became configurable — the README contradicted itself, since the options section documented 26
+  correctly and even suggested ~56 for a year. All three now state the real default and range.
+- Fixed the YAML-mode resource note, which listed only five of the seven cards to register (Cost
+  and Recipes were missing), and refreshed the `?v=2.06` version examples to the current release.
+- Corrected the API reference's `selected_meal_count` note: it claimed the sensor reads only weeks
+  with `needs_selection = True`, but it reads `next_configurable_week`, which also covers the
+  soonest non-skipped upcoming week carrying selection context.
+- Reordered this changelog newest-first; 2.48 had been sitting above 2.58, and 2.61 above 2.62.
 
 ## 2.62 — 2026-08-17
 - Fixed every meal on a **delivered** week opening the wrong recipe and playing the wrong
@@ -60,6 +101,33 @@ version heading and publishes it as the release's Highlights.
   (Fixed before release: the sheet was absolutely positioned, which needs a positioned ancestor
   that neither of the two new cards creates — so it escaped its card and was clipped away,
   showing a grey backdrop with no panel. It is fixed-positioned now, like the video lightbox.)
+
+## 2.60 — 2026-08-17
+- Fixed "Sold out" ribbons appearing on **past** weeks. Sold-out is meaningless once a box has
+  shipped, but a delivered week's menu payload can still carry a stale flag, and the
+  "can this week still be changed?" check never looked at the delivery date — so a past week
+  with no recorded deadline still counted as editable. Delivered weeks now have the flag
+  cleared, the card refuses to draw the ribbon on them, and no request is spent on them.
+- Fixed some recipe videos not playing. HelloFresh's clip URLs end in both `.mp4` and `.mov`,
+  and the player assumed `.mov` was unplayable — but the CDN serves both as `video/mp4`, so
+  they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
+  message instead of a silent black box.
+
+## 2.58 — 2026-08-16
+- Fixed categories in the All Recipes card showing far fewer recipes than the website: Noodle
+  Recipes listed 10 where the site shows 30, Chicken 14 where the site shows 30. The page
+  carries the category's canonical recipe list *and* a couple of small "Quick & Easy" /
+  "Most Recent" rails, and only the rails were being read. Both are now merged and deduped —
+  Noodle goes 10 → 34, Chicken 14 → 42.
+- The All Recipes card now loads **50** recipes per category by default (was 40), so the
+  larger categories are no longer clipped — Chicken has 42. Still configurable via the card's
+  `limit` option and the `get_catalog_recipes` service (1–200).
+- **Sub-categories are now browsable** — selecting a category that has children (Noodle →
+  Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) shows a
+  second "Refine" chip row. These children never appear in HelloFresh's top-level category
+  list, so they were previously unreachable. They also cannot be fetched by their bare slug —
+  `/recipes/ramen-noodles` redirects away — so `get_catalog_recipes` now reports each child's
+  full `path` alongside its slug.
 
 ## 2.57 — 2026-08-16
 - Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.
@@ -217,6 +285,11 @@ version heading and publishes it as the release's Highlights.
   account loaded now says so instead of claiming multiple accounts exist.
 - Date handling: all delivery-date past/future gating now uses local time
   consistently (was mixed local/UTC, which could misclassify weeks near midnight UTC).
+
+## 2.48 — 2026-08-10
+- Fixed a regression from the comma-decimal work: scientific-notation amount strings
+  (e.g. "1.5e3") were silently mangled (1.53) instead of parsing as 1500; non-finite
+  values (inf/nan) now coerce to None instead of reaching sensor states.
 
 ## 2.47 — 2026-08-09
 - The "Show data-quality repair warnings" toggle now actually clears existing

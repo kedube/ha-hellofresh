@@ -33,13 +33,33 @@ const detailModule = import(
   ).href
 );
 
+// Insert/replace a Cloudinary width transform so grid thumbnails download small instead of
+// pulling the full-size hero JPEG (~1.7 MB each, on a grid showing dozens).
+//
+// This must handle every URL shape HelloFresh actually serves, not just `/q_auto/`. An earlier
+// version only did `url.replace("/q_auto/", …)`, which silently returned the URL UNCHANGED for
+// every `hellofresh_s3` form — and those are the forms the real API emits
+// (`f_auto,fl_lossy,h_300,q_auto,w_450/hellofresh_s3/…`). So `image_width` was a no-op on this
+// card while appearing to work. Kept in sync with `resizedImage` in hellofresh-recipe-detail.js.
 function resizedImage(url, width) {
   // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
   // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
   // attacker-chosen scheme/host has no business in the DOM at all.
   if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  if (!width) return url;
-  return url.replace("/q_auto/", `/q_auto,w_${width}/`);
+  const raw = String(url);
+  if (!width) return raw;
+  if (raw.includes("/hellofresh_s3/")) {
+    // An existing w_NNN (comma- or slash-delimited) is retargeted rather than duplicated.
+    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
+    // A transform segment is already present: append the width to it.
+    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
+      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
+    }
+    // Bare `hellofresh_s3` path with no transform at all: insert a full one.
+    return raw.replace("/hellofresh_s3/", `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`);
+  }
+  if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
+  return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
 }
 
 // Pretty labels for HelloFresh's internal group slugs.
@@ -380,12 +400,23 @@ class HelloFreshMarketCard extends HTMLElement {
     this._applySyncedWeekId(detail.weekId);
   }
 
+  // Whether HelloFresh will still accept a change to this week. Must match the meal-planner and
+  // schedule cards and `HelloFreshWeek.is_editable` in models.py — that docstring states all
+  // three are kept in lockstep.
+  //
+  // This copy used to omit the `allowed_actions.mealSwap` check and `return true` by default, so
+  // a week HelloFresh had LOCKED (mealSwap false) with no recorded deadline — and a delivered
+  // week, for the same reason — was labelled "Editable" here, kept its ± steppers live, and let
+  // the user build a cart that the server then rejected. Absent allowed_actions now reads as
+  // locked (the safe direction) rather than editable.
   _isEditable(week) {
     if (!week) return false;
+    const actions = week.allowed_actions || {};
+    if (actions.mealSwap === false) return false;
     if (week.is_skipped) return false;
     const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
     if (deadline && deadline < Date.now()) return false;
-    return true;
+    return Boolean(actions.mealSwap);
   }
 
   // A week whose delivery date is before today (undated weeks are not treated as past). Mirrors
@@ -890,7 +921,8 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _titleCase(value) {
-    return String(value)
+    // `|| ""` so a null/undefined status renders empty rather than the literal "Null".
+    return String(value || "")
       .replace(/[_-]+/g, " ")
       .toLowerCase()
       .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -912,11 +944,18 @@ class HelloFreshMarketCard extends HTMLElement {
     return weeks === 1 ? "next week" : `in ${weeks} weeks`;
   }
 
+  // Defensive only: `delivery_date` is a typed date serialized with isoformat(), so this
+  // receives a valid ISO string or nothing. Matches the schedule card's guard anyway —
+  // toLocaleDateString on an Invalid Date returns the literal string "Invalid Date" *without*
+  // throwing, so a catch alone would never fire if that ever changed.
   _fmtDate(iso) {
+    if (!iso) return "—";
     try {
-      return this._parseLocalDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const d = this._parseLocalDate(iso);
+      if (Number.isNaN(d.getTime())) return "—";
+      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch (_e) {
-      return iso;
+      return iso || "—";
     }
   }
 
