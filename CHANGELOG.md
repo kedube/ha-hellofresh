@@ -37,6 +37,17 @@ version heading and publishes it as the release's Highlights.
   they play fine once the type is declared explicitly. A clip that genuinely fails now shows a
   message instead of a silent black box.
 
+## Unreleased
+- Fixed every meal on a **delivered** week opening the wrong recipe and playing the wrong
+  video. Past-delivery meals carry no course index, so all of a delivered week's meals shared
+  the same (null) tile key and every tap resolved to the week's *first* meal — tapping the
+  Korean-Style Wing Feast opened the Grass-Fed Rib-Eye, and a meal whose neighbour had no clip
+  appeared to have a broken video link. Tiles now fall back to the recipe id, which is always
+  present and unique. Editable weeks, which do have course indexes, are unchanged.
+- Recipe clips are also read from the meal wrapper, not just the recipe node: `videoLink` sits
+  on the recipe in menu payloads but on the meal in delivery history, so one payload shape
+  silently lost its ▶ button.
+
 ## 2.61 — 2026-08-17
 - **Full recipe view in the Meal planner and Market cards** — the tap-through recipe sheet the
   Recipes card offers (ingredients with amounts, a servings switcher, step-by-step

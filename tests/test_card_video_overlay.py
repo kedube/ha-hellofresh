@@ -127,6 +127,77 @@ def test_overlay_binds_its_own_listener() -> None:
     assert 'overlay.addEventListener("click"' in open_video.group(0)
 
 
+def _tile_lookup_outcomes() -> list[dict]:
+    """Run the card's real tile-key logic over a delivered week's meals.
+
+    Past-delivery meals carry NO `index`, so every recipe in such a week has
+    `course_index === null`. This exercises the key the tiles are rendered with and the lookup
+    that resolves a tap back to a recipe.
+    """
+    source = MEAL_PLANNER.read_text(encoding="utf-8")
+    sel_key = re.search(r"^  _selKey\(recipe\) \{.*?^  \}", source, re.S | re.M)
+    assert sel_key, "_selKey not found"
+    finder = re.search(r"^  _findRenderedRecipe\(key\) \{.*?^  \}", source, re.S | re.M)
+    assert finder, "_findRenderedRecipe not found"
+
+    script = f"""
+    class Card {{
+      constructor(list) {{ this._renderedRecipes = list; this._weeks = null; this._cursor = 0; }}
+      {sel_key.group(0).strip()}
+      {finder.group(0).strip()}
+    }}
+    // Real 2026-W21 meals from a live capture: three distinct dishes, no course indexes.
+    const week = [
+      {{ name: "Grass-Fed Rib-Eye", course_index: null, recipe_id: "69a5e5b5b83c0c3e7ed548aa", video_url: "f0700e02" }},
+      {{ name: "Korean-Style Wing Feast", course_index: null, recipe_id: "68d655cd681e58ed6e5b3544", video_url: "fa84c70a" }},
+      {{ name: "Cobb Salad", course_index: null, recipe_id: "68e5117a908d7cf716b7971b", video_url: null }},
+    ];
+    const card = new Card(week);
+    const out = week.map((r) => {{
+      const hit = card._findRenderedRecipe(String(card._selKey(r)));
+      return {{ tapped: r.name, resolved: hit ? hit.name : null, video: hit ? hit.video_url : null }};
+    }});
+    console.log(JSON.stringify(out));
+    """
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=True
+    )
+    return json.loads(result.stdout)
+
+
+
+def test_each_tile_resolves_to_its_own_meal_on_a_delivered_week() -> None:
+    """The reported bug: tapping one meal played another's video and opened its recipe.
+
+    Past-delivery meals have no `index`, so keying tiles on `course_index` alone gave every
+    tile in a delivered week the same key (`"null"`) — and the lookup returned the FIRST match,
+    i.e. the week's first meal. Tapping the Wing Feast opened the Rib-Eye. The tile key falls
+    back to the recipe id, which is always present and unique.
+    """
+    for outcome in _tile_lookup_outcomes():
+        assert outcome["resolved"] == outcome["tapped"], (
+            f"tapping {outcome['tapped']!r} resolved to {outcome['resolved']!r}"
+        )
+
+
+
+def test_each_tile_keeps_its_own_video_on_a_delivered_week() -> None:
+    """A meal with no clip must not inherit a sibling's, and vice versa."""
+    outcomes = {o["tapped"]: o["video"] for o in _tile_lookup_outcomes()}
+    assert outcomes["Grass-Fed Rib-Eye"] == "f0700e02"
+    assert outcomes["Korean-Style Wing Feast"] == "fa84c70a"
+    # This one genuinely has no video; resolving to a sibling would fabricate one.
+    assert outcomes["Cobb Salad"] is None
+
+
+def test_tile_keys_are_not_derived_from_course_index_alone() -> None:
+    """Structural backstop for every place the tile key is emitted or read."""
+    source = MEAL_PLANNER.read_text(encoding="utf-8")
+    assert "String(recipe.course_index)" not in source
+    assert "this._esc(String(r.course_index))" not in source
+    assert 'list.find((r) => String(r.course_index) === index)' not in source
+
+
 def test_video_source_is_declared_as_mp4() -> None:
     """HelloFresh's `.mov` URLs are served as `video/mp4` and DO play.
 
