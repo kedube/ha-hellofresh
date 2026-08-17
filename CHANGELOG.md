@@ -5,6 +5,34 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- Fixed the **All Recipes** card showing a "Refine" row that duplicated its own filter list.
+  Selecting "Top rated" fetches the root catalog page, whose child collections *are* the
+  top-level categories, so they were offered a second time as sub-categories — pick "Top rated"
+  and "Chinese Recipes" appeared in both rows. Only a real category has sub-categories to refine
+  by, so the root listing now reports none.
+- Fixed the per-serving meal price losing its currency formatting in the Meal planner. The card
+  defined `_fmtPrice` **twice**; a class body can't hold two methods of the same name, so the
+  later generic one silently replaced the per-serving one and Canadian/Australian users saw
+  "CA$9.99"/"A$9.99" where "$9.99" was intended. The per-serving formatter is now named
+  distinctly.
+- **Extracted the shared card helpers into `hellofresh-shared.js`.** Escaping, URL safety, image
+  resizing, local-date parsing, relative/absolute date formatting, status title-casing, money
+  formatting, week editable/past state and the whole cross-card sync protocol had been
+  hand-copied into up to seven card files. That duplication was the direct cause of most bugs
+  fixed in 2.63 — each was one copy drifting from the others, with no error, just cards quietly
+  disagreeing. There is now one definition of each.
+- Added module-load smoke tests for all seven cards. `node --check` only *parses*, so it happily
+  accepts a reference to an undefined variable — exactly the mistake made while migrating (a card
+  whose version constant is `CARD_VERSION` got an import interpolating `MEAL_PLANNER_CARD_VERSION`).
+  That parses fine and then throws `ReferenceError` in the browser, so the card silently fails to
+  register and simply never appears. The new tests import each card as a real ES module and assert
+  it registers its custom element.
+- Added tests for the service dispatch layer (`__init__.py` 17% → 39%), covering account targeting
+  for all 22 services: implicit single-account, explicit `config_entry_id`, unknown entry ids,
+  no-account-loaded, refusal to guess between several accounts, and client errors surfacing as
+  Home Assistant errors rather than vanishing.
+
 ## 2.63 — 2026-08-17
 - Fixed the **Market card** treating locked and delivered weeks as editable. Its copy of the
   "can this week still be changed?" check omitted the `allowed_actions.mealSwap` test and returned
