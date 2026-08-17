@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.64 — 2026-08-17
 - Fixed the **All Recipes** card showing a "Refine" row that duplicated its own filter list.
   Selecting "Top rated" fetches the root catalog page, whose child collections *are* the
   top-level categories, so they were offered a second time as sub-categories — pick "Top rated"
