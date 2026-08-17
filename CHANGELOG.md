@@ -46,6 +46,9 @@ version heading and publishes it as the release's Highlights.
   In Market, tapping any item opens it — quantities are changed with the ± steppers, so the
   tile itself is free. Market add-ons turn out to carry ordinary HelloFresh recipe ids, so they
   get the same detail as a meal. The sheet is now one shared module rather than three copies.
+  (Fixed before release: the sheet was absolutely positioned, which needs a positioned ancestor
+  that neither of the two new cards creates — so it escaped its card and was clipped away,
+  showing a grey backdrop with no panel. It is fixed-positioned now, like the video lightbox.)
 
 ## 2.57 — 2026-08-16
 - Fixed the All Recipes card reporting **"No recipes found"** for the entire catalog.

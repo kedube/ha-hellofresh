@@ -402,10 +402,13 @@ class HelloFreshPayloadNormalizer:
             image_url=recipe_data.get("imagePath")
             or recipe_data.get("image")
             or recipe_data.get("imageUrl"),
-            # `videoLink` (my-deliveries/menu, menus-service) is the only spelling HelloFresh
-            # uses for the promo clip; it is simply absent on the majority of meals and on every
-            # past-delivery payload, so a missing value is normal rather than an error.
-            video_url=clean_optional_str(recipe_data.get("videoLink")),
+            # `videoLink` is the only spelling HelloFresh uses for the promo clip, and it is
+            # simply absent on most meals, so a missing value is normal rather than an error.
+            # It appears on the RECIPE node in my-deliveries/menu and menus-service, but on the
+            # MEAL wrapper in past-deliveries — so both are checked, recipe node first. Reading
+            # only one of them silently drops the clip for the other payload shape.
+            video_url=clean_optional_str(recipe_data.get("videoLink"))
+            or clean_optional_str(raw_meal.get("videoLink")),
             description=recipe_data.get("description") or recipe_data.get("headline"),
             ingredients=ingredients,
             allergens=allergens,
