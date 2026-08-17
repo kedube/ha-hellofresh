@@ -27,6 +27,21 @@
 // The integration stamps its release version onto the resource URL as ?v= (cache-bust),
 // so the banner reports exactly which build the browser actually loaded.
 const FOOD_PROFILE_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
+// Shared card helpers. AWAITED AT TOP LEVEL: they are called synchronously during the first
+// render, and an un-awaited dynamic import is still a Promise then. The dynamic form carries
+// this card's ?v= cache-bust onto the shared module (a static specifier is never stamped).
+const {
+  esc,
+  accountKey,
+  broadcastDataChanged,
+  DATA_CHANGED_EVENT,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(FOOD_PROFILE_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 // Sub-card titles, matching the labels HelloFresh's web food-profile page uses (which differ
 // from the raw API slugs, e.g. exclusions -> "Exclude", goals -> "Personal").
@@ -126,11 +141,11 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   static get DATA_CHANGED_EVENT() {
-    return "hellofresh-data-changed";
+    return DATA_CHANGED_EVENT;
   }
 
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   // Another HelloFresh card wrote account data. Re-pull the profile so this card stays
@@ -145,11 +160,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   // Tell sibling cards a write changed account data, so they re-pull immediately instead of
   // waiting for their next interval refresh (same contract as the planner/market cards).
   _broadcastDataChanged() {
-    window.dispatchEvent(
-      new CustomEvent(HelloFreshFoodProfileCard.DATA_CHANGED_EVENT, {
-        detail: { accountKey: this._accountKey() },
-      })
-    );
+    broadcastDataChanged(this._config);
   }
 
   set hass(hass) {
@@ -725,13 +736,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   _esc(value) {
-    return String(value ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   static _sheet() {

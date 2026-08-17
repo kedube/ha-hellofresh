@@ -35,6 +35,31 @@
 // The integration stamps its release version onto the resource URL as ?v= (cache-bust),
 // so the banner reports exactly which build the browser actually loaded.
 const SCHEDULE_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
+// Shared card helpers. AWAITED AT TOP LEVEL: they are called synchronously during the first
+// render, and an un-awaited dynamic import is still a Promise then. The dynamic form carries
+// this card's ?v= cache-bust onto the shared module (a static specifier is never stamped).
+const {
+  esc,
+  safeUrl,
+  parseLocalDate,
+  relativeWeek,
+  fmtDate,
+  titleCase,
+  fmtPrice,
+  accountKey,
+  syncStorageKey,
+  loadSyncedWeekId,
+  broadcastWeek,
+  broadcastDataChanged,
+  WEEK_SYNC_EVENT,
+  DATA_CHANGED_EVENT,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(SCHEDULE_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 class HelloFreshScheduleCard extends HTMLElement {
   constructor() {
@@ -203,31 +228,27 @@ class HelloFreshScheduleCard extends HTMLElement {
   // (calendar/timeline clicks) and receives (highlighting the selected week's calendar day).
 
   static get WEEK_SYNC_EVENT() {
-    return "hellofresh-week-selected";
+    return WEEK_SYNC_EVENT;
   }
 
   // Fired by the editing cards after a successful write (meal save, market save, skip) so
   // read-only siblings like this card re-pull instead of showing stale data until their
   // next interval refresh.
   static get DATA_CHANGED_EVENT() {
-    return "hellofresh-data-changed";
+    return DATA_CHANGED_EVENT;
   }
 
   // Only cards for the SAME account sync, so multi-account dashboards don't cross-drive.
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   _syncStorageKey() {
-    return `hellofresh:selected-week:${this._accountKey()}`;
+    return syncStorageKey(this._config);
   }
 
   _loadSyncedWeekId() {
-    try {
-      return window.localStorage.getItem(this._syncStorageKey()) || null;
-    } catch (_e) {
-      return null;
-    }
+    return loadSyncedWeekId(this._config);
   }
 
   // Persist + announce a week selection (calendar day / timeline row click) and highlight it.
@@ -271,11 +292,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   _broadcastDataChanged() {
-    window.dispatchEvent(
-      new CustomEvent(HelloFreshScheduleCard.DATA_CHANGED_EVENT, {
-        detail: { accountKey: this._accountKey(), source: this._instanceId },
-      })
-    );
+    broadcastDataChanged(this._config, this._instanceId);
   }
 
   // ---- skip/unskip -----------------------------------------------------------
@@ -390,9 +407,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
   // strings (selection deadlines) parse normally.
   _parseLocalDate(value) {
-    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return new Date(value);
+    return parseLocalDate(value);
   }
 
   _dateKey(week) {
@@ -1010,17 +1025,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   _relativeWeek(week) {
-    if (!week.delivery_date) return "";
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const d = this._parseLocalDate(week.delivery_date);
-    d.setHours(0, 0, 0, 0);
-    const days = Math.round((d - today) / 86400000);
-    if (days === 0) return "today";
-    if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
-    if (days < 7) return `in ${days} days`;
-    const weeks = Math.round(days / 7);
-    return weeks === 1 ? "next week" : `in ${weeks} weeks`;
+    return relativeWeek(week);
   }
 
   // Compact countdown to a deadline/date, e.g. "2d 4h", "5h", "passed".
@@ -1046,14 +1051,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // via _renderRow. toLocaleDateString on an Invalid Date returns the literal string
   // "Invalid Date" WITHOUT throwing, so the catch alone never fired — guard explicitly.
   _fmtDate(iso) {
-    if (!iso) return "—";
-    try {
-      const d = this._parseLocalDate(iso);
-      if (Number.isNaN(d.getTime())) return "—";
-      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    } catch (_e) {
-      return iso || "—";
-    }
+    return fmtDate(iso);
   }
 
   _fmtDateShort(iso) {
@@ -1082,13 +1080,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   _fmtPrice(amount, currency) {
-    const num = Number(amount);
-    if (!Number.isFinite(num)) return String(amount);
-    try {
-      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
-    } catch (_e) {
-      return `${num.toFixed(2)} ${currency || ""}`.trim();
-    }
+    return fmtPrice(amount, currency);
   }
 
   // Normalize an API status like "ON_THE_WAY" / "on_the_way" to "On The Way". The .toLowerCase()
@@ -1096,29 +1088,18 @@ class HelloFreshScheduleCard extends HTMLElement {
   // this rendered "DELIVERED" here while the meal-planner and market cards showed "Delivered" for
   // the same week. Keep in step with those two.
   _titleCase(value) {
-    return String(value || "")
-      .replace(/[_-]+/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return titleCase(value);
   }
 
   _esc(value) {
-    return String(value ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   // Escape a value for use in an href/src. HTML-escaping alone does NOT neutralize a
   // javascript:/data: scheme (a tracking_url from the API is untrusted), so allow only
   // http(s) and return "" otherwise — an empty href renders a dead link, never executes.
   _safeUrl(value) {
-    const raw = String(value ?? "").trim();
-    if (!/^https?:\/\//i.test(raw)) return "";
-    return this._esc(raw);
+    return safeUrl(value);
   }
 
   static get STATE_META() {

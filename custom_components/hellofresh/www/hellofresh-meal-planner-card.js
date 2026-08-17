@@ -38,34 +38,32 @@ const detailModule = import(
   ).href
 );
 
-// Insert/replace a Cloudinary width transform so grid thumbnails download small instead of
-// pulling the full-size hero JPEG (~1.7 MB each, on a grid showing dozens).
-//
-// This must handle every URL shape HelloFresh actually serves, not just `/q_auto/`. An earlier
-// version only did `url.replace("/q_auto/", …)`, which silently returned the URL UNCHANGED for
-// every `hellofresh_s3` form — and those are the forms the real API emits
-// (`f_auto,fl_lossy,h_300,q_auto,w_450/hellofresh_s3/…`). So `image_width` was a no-op on this
-// card while appearing to work. Kept in sync with `resizedImage` in hellofresh-recipe-detail.js.
-function resizedImage(url, width) {
-  // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
-  // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
-  // attacker-chosen scheme/host has no business in the DOM at all.
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  const raw = String(url);
-  if (!width) return raw;
-  if (raw.includes("/hellofresh_s3/")) {
-    // An existing w_NNN (comma- or slash-delimited) is retargeted rather than duplicated.
-    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
-    // A transform segment is already present: append the width to it.
-    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
-      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
-    }
-    // Bare `hellofresh_s3` path with no transform at all: insert a full one.
-    return raw.replace("/hellofresh_s3/", `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`);
-  }
-  if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
-  return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
-}
+// Shared card helpers. AWAITED AT TOP LEVEL: they are called synchronously during the first
+// render, and an un-awaited dynamic import is still a Promise then. The dynamic form carries
+// this card's ?v= cache-bust onto the shared module (a static specifier is never stamped).
+const {
+  esc,
+  safeUrl,
+  parseLocalDate,
+  relativeWeek,
+  fmtDate,
+  titleCase,
+  fmtPrice,
+  isEditable,
+  accountKey,
+  syncStorageKey,
+  loadSyncedWeekId,
+  broadcastWeek,
+  broadcastDataChanged,
+  WEEK_SYNC_EVENT,
+  resizedImage,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 // Recipe promo clips are served from media.hellofresh.com. Same gate as resizedImage: only
 // plain http(s) URLs may reach a media sink, so a payload-supplied scheme can never become a
@@ -268,9 +266,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
   // strings (selection deadlines) parse normally.
   _parseLocalDate(value) {
-    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return new Date(value);
+    return parseLocalDate(value);
   }
 
   // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
@@ -292,13 +288,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   _isEditable(week) {
-    if (!week) return false;
-    const actions = week.allowed_actions || {};
-    if (actions.mealSwap === false) return false;
-    if (week.is_skipped) return false;
-    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
-    if (deadline && deadline < Date.now()) return false;
-    return Boolean(actions.mealSwap);
+    return isEditable(week);
   }
 
   // A paused week never shipped, so its preselected/auto-fill picks are not a real selection.
@@ -414,26 +404,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // The window event both HelloFresh cards use to keep their selected week in step.
   static get WEEK_SYNC_EVENT() {
-    return "hellofresh-week-selected";
+    return WEEK_SYNC_EVENT;
   }
 
   // The config entry (account) this card is bound to, if pinned. Only cards for the SAME account
   // sync with each other, so a multi-account dashboard doesn't cross-drive unrelated cards.
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   _syncStorageKey() {
-    return `hellofresh:selected-week:${this._accountKey()}`;
+    return syncStorageKey(this._config);
   }
 
   // The week id a sibling card last selected (from shared storage), or null.
   _loadSyncedWeekId() {
-    try {
-      return window.localStorage.getItem(this._syncStorageKey()) || null;
-    } catch (_e) {
-      return null;
-    }
+    return loadSyncedWeekId(this._config);
   }
 
   // Announce + persist the currently displayed week so a sibling card follows to it — now (live
@@ -441,26 +427,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _broadcastWeek() {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     if (!week) return;
-    try {
-      window.localStorage.setItem(this._syncStorageKey(), week.week_id);
-    } catch (_e) {
-      /* storage unavailable: fall back to the live event only */
-    }
-    window.dispatchEvent(
-      new CustomEvent(HelloFreshMealPlannerCard.WEEK_SYNC_EVENT, {
-        detail: { weekId: week.week_id, accountKey: this._accountKey() },
-      })
-    );
+    broadcastWeek(this._config, week.week_id);
   }
 
   // Tell read-only sibling cards (the schedule card) that a write changed account data, so
   // they re-pull immediately instead of waiting for their next interval refresh.
   _broadcastDataChanged() {
-    window.dispatchEvent(
-      new CustomEvent("hellofresh-data-changed", {
-        detail: { accountKey: this._accountKey() },
-      })
-    );
+    broadcastDataChanged(this._config);
   }
 
   // Move to a synced week id if this card carries it. Returns true if it handled the id.
@@ -1448,7 +1421,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
           ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
           ${r.price != null
-            ? `<div class="price">${this._esc(this._fmtPrice(r.price, r.currency || currency))}<span class="perserving"> / serving</span></div>`
+            ? `<div class="price">${this._esc(this._fmtPerServingPrice(r.price, r.currency || currency))}<span class="perserving"> / serving</span></div>`
             : ""}
           ${r.badge || isVeggie || tags.length
             ? `<div class="chips">
@@ -1712,7 +1685,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // The meal's actual per-serving price (distinct from the surcharge badge, which shows only
   // the premium uplift). Prefers the price's own currency — HelloFresh sends it per item —
   // over the account default.
-  _fmtPrice(amount, currency) {
+  //
+  // Named distinctly from the generic `_fmtPrice` below ON PURPOSE: both were called
+  // `_fmtPrice`, so the later definition silently replaced this one and the per-serving price
+  // lost its `narrowSymbol` display — Canadian and Australian users saw "CA$9.99"/"A$9.99"
+  // where this intends "$9.99". A class body cannot hold two methods of the same name.
+  _fmtPerServingPrice(amount, currency) {
     if (typeof amount !== "number" || !Number.isFinite(amount)) return "";
     try {
       return amount.toLocaleString(undefined, {
@@ -1728,17 +1706,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   _relativeWeek(week) {
-    if (!week.delivery_date) return "";
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const d = this._parseLocalDate(week.delivery_date);
-    d.setHours(0, 0, 0, 0);
-    const days = Math.round((d - today) / 86400000);
-    if (days === 0) return "today";
-    if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
-    if (days < 7) return `in ${days} days`;
-    const weeks = Math.round(days / 7);
-    return weeks === 1 ? "next week" : `in ${weeks} weeks`;
+    return relativeWeek(week);
   }
 
   // Defensive only: `delivery_date`/`delivered_at` are typed date/datetime objects serialized
@@ -1746,14 +1714,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // card's guard anyway — toLocaleDateString on an Invalid Date returns the literal string
   // "Invalid Date" *without* throwing, so a catch alone would never fire if that ever changed.
   _fmtDate(iso) {
-    if (!iso) return "—";
-    try {
-      const d = this._parseLocalDate(iso);
-      if (Number.isNaN(d.getTime())) return "—";
-      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    } catch (_e) {
-      return iso || "—";
-    }
+    return fmtDate(iso);
   }
 
   _fmtDateTime(d) {
@@ -1766,42 +1727,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // Format a numeric price with its currency (falls back to a bare number for unknown codes).
   _fmtPrice(amount, currency) {
-    const num = Number(amount);
-    if (!Number.isFinite(num)) return String(amount);
-    try {
-      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
-    } catch (_e) {
-      return num.toFixed(2);
-    }
+    return fmtPrice(amount, currency);
   }
 
   // Normalize an API status like "ON_THE_WAY" / "on_the_way" to "On The Way".
   _titleCase(value) {
-    // `|| ""` so a null/undefined status renders empty rather than the literal "Null".
-    return String(value || "")
-      .replace(/[_-]+/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return titleCase(value);
   }
 
   _esc(value) {
-    if (value === null || value === undefined) return "";
-    return String(value).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   // Escape a value for use in an href/src. HTML-escaping alone does NOT neutralize a
   // javascript:/data: scheme (a tracking_url from the API is untrusted), so allow only
   // http(s) and return "" otherwise — an empty href renders a dead link, never executes.
   _safeUrl(value) {
-    const raw = String(value ?? "").trim();
-    if (!/^https?:\/\//i.test(raw)) return "";
-    return this._esc(raw);
+    return safeUrl(value);
   }
 
   // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).

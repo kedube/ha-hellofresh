@@ -27,6 +27,21 @@
 // The integration stamps its release version onto the resource URL as ?v= (cache-bust),
 // so the banner reports exactly which build the browser actually loaded.
 const RECIPES_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
+// Shared card helpers. AWAITED AT TOP LEVEL: they are called synchronously during the first
+// render, and an un-awaited dynamic import is still a Promise then. The dynamic form carries
+// this card's ?v= cache-bust onto the shared module (a static specifier is never stamped).
+const {
+  esc,
+  accountKey,
+  broadcastDataChanged,
+  resizedImage,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(RECIPES_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 // Shared recipe-detail sheet, also used by the Meal planner and Market cards. Loaded via a
 // dynamic import carrying this card's own ?v=: a static "./…js" specifier resolves to the bare
@@ -45,36 +60,6 @@ const DEFAULT_LIMIT = 50;
 // than the browse catalog. The "@" prefix cannot collide with a real HelloFresh category slug.
 const COOKBOOK_SLUG = "@cookbook";
 
-// Rewrite a HelloFresh image URL to the width we actually display. This matters more than it
-// looks: the catalog's hero JPEGs are ~1.7 MB untransformed and ~73 KB at w_640, and the grid
-// shows dozens at once.
-//
-// Three URL shapes occur across HelloFresh's payloads:
-//   1. Cloudinary WITH a transform — img.hellofresh.com/f_auto,q_auto,w_450/hellofresh_s3/image/…
-//      Rewrite an existing w_<n>, or append one to the transform segment when absent.
-//   2. Cloudinary WITHOUT a transform — img.hellofresh.com/hellofresh_s3/image/…
-//      Insert a transform segment before `hellofresh_s3`. Skipping this is what serves the
-//      full 1.7 MB asset.
-//   3. CloudFront crop form — …/<w>,<h>/image/… , where "0,0" means unresized.
-// Only plain http(s) URLs may reach an <img src>, so an attacker-chosen scheme never lands in
-// the DOM; an unrecognized shape is returned unchanged rather than mangled.
-function resizedImage(url, width) {
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  const raw = String(url);
-  if (!width) return raw;
-  if (raw.includes("/hellofresh_s3/")) {
-    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
-    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
-      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
-    }
-    return raw.replace(
-      "/hellofresh_s3/",
-      `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`,
-    );
-  }
-  if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
-  return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
-}
 
 function safeLinkUrl(url) {
   return url && /^https?:\/\//i.test(String(url)) ? String(url) : "";
@@ -160,7 +145,7 @@ class HelloFreshRecipesCard extends HTMLElement {
   // Which HelloFresh account this card is bound to. Sibling cards filter cross-card events on
   // this, so it must be spelled identically everywhere: `config_entry_id` or "default".
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   async _call(service, extra) {
@@ -453,13 +438,7 @@ class HelloFreshRecipesCard extends HTMLElement {
   }
 
   _esc(value) {
-    return String(value ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   static _sheet() {

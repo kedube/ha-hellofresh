@@ -1273,6 +1273,22 @@ The integration ships seven custom Lovelace cards (`www/hellofresh-meal-planner-
 
 The cards are pure read+write clients of existing services — they define no new entities or endpoints. The week-data cards call `get_weeks` to render and `select_meals` / `select_market_items` / `skip_week` / `unskip_week` / `reschedule_week` to act; the Food Profile card uses `get_food_profile` / `set_food_profile`, the Subscription card `get_account_summary`, the Cost card `get_spending`, and the Recipes card `get_recipe_collections` / `get_catalog_recipes` / `get_recipe_detail` / `get_favorites` / `add_favorite` / `remove_favorite`.
 
+**Shared helper module.** `www/hellofresh-shared.js` holds one definition each of the helpers every card needs: `esc` / `safeUrl`, `resizedImage`, `parseLocalDate` / `relativeWeek` / `fmtDate`, `titleCase`, `fmtPrice`, `isEditable` / `isPast`, and the entire cross-card sync protocol (`WEEK_SYNC_EVENT`, `DATA_CHANGED_EVENT`, `accountKey`, `syncStorageKey`, `loadSyncedWeekId`, `eventMatchesAccount`, `broadcastWeek`, `broadcastDataChanged`). These were previously hand-copied into up to seven card files, which is how a fix could land in one copy and silently miss the rest — the failure mode being not an error but cards disagreeing with each other.
+
+Cards import it with a **dynamic import awaited at module top level**:
+
+```js
+const { esc, fmtPrice } = await import(
+  new URL(`./hellofresh-shared.js?v=${CARD_VERSION}`, import.meta.url).href
+);
+```
+
+Both halves are load-bearing. The import must be **dynamic** so the integration's `?v=` cache-bust reaches the shared module — Lovelace never stamps a static `./…js` specifier, so a browser would keep serving a stale copy after an upgrade. And it must be **awaited at top level**, because these helpers are called synchronously during the first render while an un-awaited dynamic import is still a Promise (`TypeError: esc is not a function`). Neither this module nor `hellofresh-recipe-detail.js` is registered as a Lovelace resource; both are reachable because the whole `www/` directory is served at `/hellofresh/`.
+
+Three helpers stay card-local because they are genuine specializations, not drift: the schedule card's `_isEditable` (its `_isSkipped` also treats `PAUSED` as skipped) and `_broadcastDataChanged` (tags its own broadcasts with an instance id so it can ignore them coming back), and the cost card's `_fmtDate` (includes the year, since its rows span months). The last is expressed by passing options to the shared `fmtDate`.
+
+> **`node --check` is not enough for these files.** It only parses, so it accepts a reference to an undefined variable — which in a browser means the card throws at module scope, never registers, and simply does not appear on the dashboard. [tests/test_card_modules_load.py](tests/test_card_modules_load.py) imports every card as a real ES module with stubbed browser globals and asserts it defines its custom element.
+
 **Shared recipe-detail module.** `www/hellofresh-recipe-detail.js` is a module, not a card: it is not registered as a Lovelace resource and is imported dynamically by the Recipes, Meal planner and Market cards, which each render the same tap-through recipe sheet (ingredients scaled to a servings switcher, steps, utensils, allergens, nutrition, printable PDF) from `get_recipe_detail`. It exports `RecipeDetailOverlay`, `DETAIL_STYLES`, and the `escapeHtml` / `safeHttpUrl` / `resizedImage` / `formatMinutes` helpers, replacing what had been three divergent copies.
 
 Two layout constraints are load-bearing and were both discovered by the sheet failing to appear at all:

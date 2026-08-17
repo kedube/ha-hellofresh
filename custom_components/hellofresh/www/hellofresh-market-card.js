@@ -33,34 +33,34 @@ const detailModule = import(
   ).href
 );
 
-// Insert/replace a Cloudinary width transform so grid thumbnails download small instead of
-// pulling the full-size hero JPEG (~1.7 MB each, on a grid showing dozens).
-//
-// This must handle every URL shape HelloFresh actually serves, not just `/q_auto/`. An earlier
-// version only did `url.replace("/q_auto/", …)`, which silently returned the URL UNCHANGED for
-// every `hellofresh_s3` form — and those are the forms the real API emits
-// (`f_auto,fl_lossy,h_300,q_auto,w_450/hellofresh_s3/…`). So `image_width` was a no-op on this
-// card while appearing to work. Kept in sync with `resizedImage` in hellofresh-recipe-detail.js.
-function resizedImage(url, width) {
-  // Only plain web URLs may reach <img src> — same defense the anchor sinks get from
-  // _safeUrl. javascript:/data: in img src is inert in modern browsers, but an
-  // attacker-chosen scheme/host has no business in the DOM at all.
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  const raw = String(url);
-  if (!width) return raw;
-  if (raw.includes("/hellofresh_s3/")) {
-    // An existing w_NNN (comma- or slash-delimited) is retargeted rather than duplicated.
-    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
-    // A transform segment is already present: append the width to it.
-    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
-      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
-    }
-    // Bare `hellofresh_s3` path with no transform at all: insert a full one.
-    return raw.replace("/hellofresh_s3/", `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`);
-  }
-  if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
-  return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
-}
+// Shared card helpers (escaping, dates, money, week state, the cross-card sync protocol).
+// AWAITED AT TOP LEVEL on purpose: these are called synchronously during the first render, and
+// an un-awaited dynamic import is still a Promise at that point. The dynamic form (rather than a
+// static specifier) is what carries this card's ?v= cache-bust onto the shared module.
+const {
+  esc,
+  parseLocalDate,
+  relativeWeek,
+  fmtDate,
+  titleCase,
+  fmtPrice,
+  isEditable,
+  isPast,
+  accountKey,
+  syncStorageKey,
+  loadSyncedWeekId,
+  eventMatchesAccount,
+  broadcastWeek,
+  broadcastDataChanged,
+  WEEK_SYNC_EVENT,
+  resizedImage,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(MARKET_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 // Pretty labels for HelloFresh's internal group slugs.
 const GROUP_LABELS = {
@@ -260,9 +260,7 @@ class HelloFreshMarketCard extends HTMLElement {
   // PREVIOUS day anywhere west of UTC — a Monday delivery rendered as Sunday. Full datetime
   // strings (selection deadlines) parse normally.
   _parseLocalDate(value) {
-    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return new Date(value);
+    return parseLocalDate(value);
   }
 
   // Chronological sort key for a week (undated weeks sink to the end so they don't gate earlier
@@ -326,26 +324,24 @@ class HelloFreshMarketCard extends HTMLElement {
   // (tabs), so a live event alone is not enough — the other card may be unmounted when you
   // navigate. The selected week is PERSISTED in localStorage (keyed by account) and restored on
   // load; the live event is an optimization for when both cards are mounted on the same view.
-  // Event name, storage key, and accountKey scheme must match the meal-planner card exactly.
+  // Event name, storage key and accountKey scheme are defined once in hellofresh-shared.js —
+  // their whole correctness condition is that every card agrees, so none of them is spelled
+  // literally here any more.
 
   static get WEEK_SYNC_EVENT() {
-    return "hellofresh-week-selected";
+    return WEEK_SYNC_EVENT;
   }
 
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   _syncStorageKey() {
-    return `hellofresh:selected-week:${this._accountKey()}`;
+    return syncStorageKey(this._config);
   }
 
   _loadSyncedWeekId() {
-    try {
-      return window.localStorage.getItem(this._syncStorageKey()) || null;
-    } catch (_e) {
-      return null;
-    }
+    return loadSyncedWeekId(this._config);
   }
 
   // Announce + persist the currently displayed week so a sibling card follows — now (live event)
@@ -353,26 +349,13 @@ class HelloFreshMarketCard extends HTMLElement {
   _broadcastWeek() {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     if (!week) return;
-    try {
-      window.localStorage.setItem(this._syncStorageKey(), week.week_id);
-    } catch (_e) {
-      /* storage unavailable: fall back to the live event only */
-    }
-    window.dispatchEvent(
-      new CustomEvent(HelloFreshMarketCard.WEEK_SYNC_EVENT, {
-        detail: { weekId: week.week_id, accountKey: this._accountKey() },
-      })
-    );
+    broadcastWeek(this._config, week.week_id);
   }
 
   // Tell read-only sibling cards (the schedule card) that a write changed account data, so
   // they re-pull immediately instead of waiting for their next interval refresh.
   _broadcastDataChanged() {
-    window.dispatchEvent(
-      new CustomEvent("hellofresh-data-changed", {
-        detail: { accountKey: this._accountKey() },
-      })
-    );
+    broadcastDataChanged(this._config);
   }
 
   // Move to a synced week id if this card carries it. Returns true if it handled the id.
@@ -410,23 +393,14 @@ class HelloFreshMarketCard extends HTMLElement {
   // the user build a cart that the server then rejected. Absent allowed_actions now reads as
   // locked (the safe direction) rather than editable.
   _isEditable(week) {
-    if (!week) return false;
-    const actions = week.allowed_actions || {};
-    if (actions.mealSwap === false) return false;
-    if (week.is_skipped) return false;
-    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
-    if (deadline && deadline < Date.now()) return false;
-    return Boolean(actions.mealSwap);
+    return isEditable(week);
   }
 
   // A week whose delivery date is before today (undated weeks are not treated as past). Mirrors
   // the meal-planner card. For a past week the market catalog is history, so only the items that
   // were actually selected/ordered are shown — never the full browsable catalog.
   _isPast(week) {
-    if (!week || !week.delivery_date) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return this._parseLocalDate(week.delivery_date).getTime() < today.getTime();
+    return isPast(week);
   }
 
   // Whether the user can change the cart right now: the week must be editable AND the grid must
@@ -911,37 +885,17 @@ class HelloFreshMarketCard extends HTMLElement {
   // ---- helpers -------------------------------------------------------------
 
   _fmtPrice(amount, currency) {
-    const num = Number(amount);
-    if (!Number.isFinite(num)) return String(amount);
-    try {
-      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
-    } catch (_e) {
-      return num.toFixed(2);
-    }
+    return fmtPrice(amount, currency);
   }
 
   _titleCase(value) {
-    // `|| ""` so a null/undefined status renders empty rather than the literal "Null".
-    return String(value || "")
-      .replace(/[_-]+/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return titleCase(value);
   }
 
   // How far the week's delivery is from today, in words (e.g. "in 3 days", "2 weeks ago").
   // Mirrors the meal-planner card so both headers read identically.
   _relativeWeek(week) {
-    if (!week.delivery_date) return "";
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const d = this._parseLocalDate(week.delivery_date);
-    d.setHours(0, 0, 0, 0);
-    const days = Math.round((d - today) / 86400000);
-    if (days === 0) return "today";
-    if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
-    if (days < 7) return `in ${days} days`;
-    const weeks = Math.round(days / 7);
-    return weeks === 1 ? "next week" : `in ${weeks} weeks`;
+    return relativeWeek(week);
   }
 
   // Defensive only: `delivery_date` is a typed date serialized with isoformat(), so this
@@ -949,14 +903,7 @@ class HelloFreshMarketCard extends HTMLElement {
   // toLocaleDateString on an Invalid Date returns the literal string "Invalid Date" *without*
   // throwing, so a catch alone would never fire if that ever changed.
   _fmtDate(iso) {
-    if (!iso) return "—";
-    try {
-      const d = this._parseLocalDate(iso);
-      if (Number.isNaN(d.getTime())) return "—";
-      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    } catch (_e) {
-      return iso || "—";
-    }
+    return fmtDate(iso);
   }
 
   _fmtDateTime(d) {
@@ -968,14 +915,7 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _esc(value) {
-    if (value === null || value === undefined) return "";
-    return String(value).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   // Lazily build and cache the shared CSSStyleSheet (parsed once, reused by every instance).

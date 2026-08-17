@@ -26,20 +26,30 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 S3 = "/hellofresh_s3/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
 
-# Every file carrying its own copy of `resizedImage`. The Market and Meal planner cards are the
-# two that expose an `image_width` option, and both once carried a one-line stub that only
-# handled `/q_auto/` — so `image_width` silently did nothing on the `hellofresh_s3` URLs the real
-# API emits, and each tile pulled the full-size hero JPEG. Every copy is now held to the same
-# behaviour here, so a future divergence fails instead of quietly regressing one card.
-CARDS_WITH_RESIZE = (
-    "hellofresh-recipes-card.js",
-    "hellofresh-recipe-detail.js",
-    "hellofresh-market-card.js",
-    "hellofresh-meal-planner-card.js",
+# Files that still define their own `resizedImage`. The canonical copy now lives in
+# hellofresh-shared.js; a card that imports it from there has no local definition and is not
+# listed (importing it is verified in tests/test_card_shared_module.py instead).
+#
+# The Market and Meal planner cards are the two exposing an `image_width` option, and both once
+# carried a one-line stub that only handled `/q_auto/` — so `image_width` silently did nothing on
+# the `hellofresh_s3` URLs the real API emits, and each tile pulled the full-size hero JPEG.
+# Every remaining copy is held to the same behaviour here so a divergence fails loudly.
+CARDS_WITH_RESIZE = tuple(
+    name
+    for name in (
+        "hellofresh-shared.js",
+        "hellofresh-recipes-card.js",
+        "hellofresh-recipe-detail.js",
+        "hellofresh-market-card.js",
+        "hellofresh-meal-planner-card.js",
+    )
+    if re.search(
+        r"^(?:export )?function resizedImage\(", (WWW / name).read_text(encoding="utf-8"), re.M
+    )
 )
 
 
-def _extract_resized_image(filename: str = "hellofresh-recipes-card.js") -> str:
+def _extract_resized_image(filename: str = "hellofresh-shared.js") -> str:
     """Pull the real `resizedImage` definition out of a card source.
 
     The cards are browser modules that register custom elements on import, so they cannot be
@@ -55,7 +65,7 @@ def _extract_resized_image(filename: str = "hellofresh-recipes-card.js") -> str:
 
 
 def _resize(
-    cases: list[tuple[str, int | None]], filename: str = "hellofresh-recipes-card.js"
+    cases: list[tuple[str, int | None]], filename: str = "hellofresh-shared.js"
 ) -> list[str]:
     """Run resizedImage over `cases` in Node and return its outputs."""
     script = f"""
@@ -155,4 +165,5 @@ def test_resize_copies_agree_across_cards(filename: str) -> None:
         ("javascript:alert(1)", 320),
         (f"https://img.hellofresh.com{S3}", None),
     ]
-    assert _resize(cases, filename) == _resize(cases, "hellofresh-recipe-detail.js")
+    # hellofresh-shared.js is the canonical copy every other one must match.
+    assert _resize(cases, filename) == _resize(cases, "hellofresh-shared.js")

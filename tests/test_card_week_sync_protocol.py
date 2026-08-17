@@ -102,12 +102,20 @@ def test_listeners_agree_on_the_account_key_fallback(filename: str) -> None:
 
 @pytest.mark.parametrize("filename", BROADCASTERS + LISTENERS)
 def test_account_key_is_derived_the_same_way_everywhere(filename: str) -> None:
-    """`_accountKey` must be config_entry_id or "default" — no other spelling."""
+    """`_accountKey` must be config_entry_id or "default" — no other spelling.
+
+    A card may either delegate to the shared module (preferred — one definition) or, until it is
+    migrated, spell out the same expression inline. Anything else is drift.
+    """
     source = _source(filename)
     match = re.search(r"_accountKey\(\) \{\s*return ([^;]+);", source)
     assert match, f"{filename}: no _accountKey() helper"
     body = " ".join(match.group(1).split())
-    assert body == '(this._config && this._config.config_entry_id) || "default"', (
+    accepted = {
+        "accountKey(this._config)",  # delegates to hellofresh-shared.js
+        '(this._config && this._config.config_entry_id) || "default"',  # not yet migrated
+    }
+    assert body in accepted, (
         f"{filename}: _accountKey() derives the key differently: {body!r}"
     )
 
@@ -125,12 +133,20 @@ def test_event_names_are_identical_across_every_card() -> None:
                 )
 
 
-def test_storage_key_format_is_identical_across_every_card() -> None:
-    """The week-sync storage key is read by cards that never write it."""
-    users = [f for f in BROADCASTERS + LISTENERS if STORAGE_KEY_TEMPLATE in _source(f)]
-    assert users, "no card references the week-sync storage key"
-    for filename in users:
+def test_storage_key_format_is_defined_once_in_the_shared_module() -> None:
+    """The week-sync storage key must have exactly one definition.
+
+    It was previously spelled out in several cards (and one bypassed the accessor with a
+    hardcoded literal). It now lives only in hellofresh-shared.js; a card re-introducing its own
+    copy is the drift this guards against.
+    """
+    shared = (WWW / "hellofresh-shared.js").read_text(encoding="utf-8")
+    assert "`hellofresh:selected-week:${accountKey(config)}`" in shared, (
+        "the shared module must own the week-sync storage key format"
+    )
+    for filename in BROADCASTERS + LISTENERS:
         for literal in re.findall(r"`(hellofresh:[^`]*)`", _source(filename)):
-            assert literal == "hellofresh:selected-week:${this._accountKey()}", (
-                f"{filename}: week-sync storage key is built differently: {literal!r}"
+            raise AssertionError(
+                f"{filename}: builds the week-sync storage key itself ({literal!r}); "
+                "use syncStorageKey() from hellofresh-shared.js"
             )

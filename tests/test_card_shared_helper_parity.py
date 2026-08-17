@@ -44,6 +44,9 @@ TITLECASE_CARDS = (
 )
 
 
+SHARED = WWW / "hellofresh-shared.js"
+
+
 def _method(filename: str, name: str) -> str:
     """Lift a method body out of a card source as a standalone function."""
     source = (WWW / filename).read_text(encoding="utf-8")
@@ -52,11 +55,25 @@ def _method(filename: str, name: str) -> str:
     return match.group(0).strip()
 
 
+def _shared_prelude() -> str:
+    """Import the shared module so a card method that DELEGATES to it still runs.
+
+    A migrated card's `_isEditable` is just `return isEditable(week)`, so the lifted method needs
+    the shared bindings in scope. Cards not yet migrated ignore these.
+    """
+    return (
+        "import { esc, parseLocalDate, relativeWeek, fmtDate, titleCase, fmtPrice, "
+        "isEditable, isPast, accountKey, syncStorageKey, loadSyncedWeekId, resizedImage } "
+        f"from {json.dumps(SHARED.as_uri())};"
+    )
+
+
 def _run_editable(filename: str, weeks: list[dict]) -> list[bool]:
     """Evaluate a card's real _isEditable over `weeks`."""
     # The schedule card delegates the skip check to _isSkipped; supply the same semantics the
     # other two express inline so the three are compared on equal terms.
     script = f"""
+    {_shared_prelude()}
     class Card {{
       _isSkipped(week) {{ return Boolean(week && week.is_skipped); }}
       {_method(filename, "_isEditable")}
@@ -65,19 +82,28 @@ def _run_editable(filename: str, weeks: list[dict]) -> list[bool]:
     console.log(JSON.stringify({json.dumps(weeks)}.map((w) => card._isEditable(w))));
     """
     out = subprocess.run(
-        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=True
+        [NODE, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
     )
     return json.loads(out.stdout)
 
 
 def _run_titlecase(filename: str, values: list[object]) -> list[str]:
     script = f"""
+    {_shared_prelude()}
     class Card {{ {_method(filename, "_titleCase")} }}
     const card = new Card();
     console.log(JSON.stringify({json.dumps(values)}.map((v) => card._titleCase(v))));
     """
     out = subprocess.run(
-        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=True
+        [NODE, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
     )
     return json.loads(out.stdout)
 

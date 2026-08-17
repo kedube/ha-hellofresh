@@ -9454,3 +9454,86 @@ def test_history_non_auth_failure_still_tries_the_next_candidate() -> None:
 
     assert weeks == []
     assert len(attempts) > 1, "a non-auth failure should fall through to other candidates"
+
+
+def _catalog_payload_with_children(children: list[dict]) -> dict:
+    """A catalog page carrying both a recipe list and a `children` collection list."""
+    return {
+        "pageProps": {
+            "ssrPayload": {
+                "collection": {
+                    "children": {"docs": children},
+                    # `collection.recipes` is a flat list, not a {docs: [...]} wrapper.
+                    "recipes": [
+                        {
+                            "id": "r1",
+                            "name": "Top Rated Thing",
+                            "slug": "top-rated-thing",
+                            "imagePath": "/image/top.jpg",
+                        }
+                    ],
+                }
+            }
+        }
+    }
+
+
+# The top-level page's `children` ARE the browsable categories that
+# async_get_recipe_collections returns — not sub-categories of anything.
+_TOP_LEVEL_CATEGORIES = [
+    {"id": "c1", "name": "Chinese Recipes", "slug": "chinese-recipes"},
+    {"id": "c2", "name": "Chicken Recipes", "slug": "chicken-recipes"},
+]
+
+
+def _catalog_page(client, collection):
+    """Run async_get_catalog_page with favorites disabled (no extra request)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(
+        client.async_get_catalog_page(collection, include_favorites=False)
+    )
+
+
+def test_top_level_listing_reports_no_subcollections() -> None:
+    """The reported bug: selecting "Top rated" showed a Refine row duplicating the filters.
+
+    The root page's `collection.children.docs` are the TOP-LEVEL categories themselves, so
+    surfacing them as "subcollections" made the card render a second chip row identical to its
+    main one — "Chinese Recipes" appeared in both, under a "Refine" label.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+
+    async def fake_catalog_json(page, params=None):
+        return _catalog_payload_with_children(_TOP_LEVEL_CATEGORIES)
+
+    client._async_get_catalog_json = fake_catalog_json  # type: ignore[method-assign]
+
+    result = _catalog_page(client, None)
+
+    assert result["subcollections"] == [], (
+        "the root listing has nothing to refine by; its children are the main filter list"
+    )
+    assert result["recipes"], "the recipe list itself must still be returned"
+
+
+def test_a_real_category_still_reports_its_subcollections() -> None:
+    """Guards the over-correction: Noodle -> Ramen/Udon must keep working.
+
+    These children are absent from the top-level category list, so this row is the ONLY route
+    to them — suppressing them everywhere would make sub-categories unreachable again.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    children = [
+        {"id": "s1", "name": "Ramen Noodles", "slug": "ramen-noodles"},
+        {"id": "s2", "name": "Udon Noodles", "slug": "udon-noodles"},
+    ]
+
+    async def fake_catalog_json(page, params=None):
+        return _catalog_payload_with_children(children)
+
+    client._async_get_catalog_json = fake_catalog_json  # type: ignore[method-assign]
+
+    result = _catalog_page(client, "noodle-recipes")
+
+    assert [c.name for c in result["subcollections"]] == ["Ramen Noodles", "Udon Noodles"]

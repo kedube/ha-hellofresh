@@ -1402,7 +1402,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         return {
             "collection": collection,
             "recipes": recipes,
-            "subcollections": self._extract_subcollections(payload),
+            # Only a real category has sub-categories to refine by. The ROOT listing
+            # ("Top rated", no collection) reads recipes.json, whose
+            # `collection.children.docs` are the top-level categories themselves — the exact
+            # rows `async_get_recipe_collections` returns — so reporting them here made the
+            # card draw a "Refine" row that duplicated its own main filter list (pick
+            # "Top rated" and "Chinese Recipes" appeared in both).
+            "subcollections": self._extract_subcollections(payload) if collection else [],
         }
 
     def _extract_subcollections(self, payload: Any) -> list[HelloFreshRecipeCollection]:

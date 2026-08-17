@@ -31,6 +31,23 @@
 // The integration stamps its release version onto the resource URL as ?v= (cache-bust), so the
 // banner reports exactly which build the browser actually loaded.
 const COST_CARD_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
+// Shared card helpers. AWAITED AT TOP LEVEL: they are called synchronously during the first
+// render, and an un-awaited dynamic import is still a Promise then. The dynamic form carries
+// this card's ?v= cache-bust onto the shared module (a static specifier is never stamped).
+const {
+  esc,
+  parseLocalDate,
+  fmtDate,
+  fmtPrice,
+  accountKey,
+  DATA_CHANGED_EVENT,
+} = await import(
+  new URL(
+    `./hellofresh-shared.js?v=${encodeURIComponent(COST_CARD_VERSION)}`,
+    import.meta.url,
+  ).href
+);
+
 
 class HelloFreshCostCard extends HTMLElement {
   constructor() {
@@ -152,11 +169,11 @@ class HelloFreshCostCard extends HTMLElement {
   }
 
   static get DATA_CHANGED_EVENT() {
-    return "hellofresh-data-changed";
+    return DATA_CHANGED_EVENT;
   }
 
   _accountKey() {
-    return (this._config && this._config.config_entry_id) || "default";
+    return accountKey(this._config);
   }
 
   _receiveDataChanged(ev) {
@@ -430,19 +447,12 @@ class HelloFreshCostCard extends HTMLElement {
   // Parse a date anchored to LOCAL midnight — bare "YYYY-MM-DD" strings otherwise parse as UTC
   // midnight and render as the previous day west of UTC.
   _parseLocalDate(value) {
-    const m = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return new Date(value);
+    return parseLocalDate(value);
   }
 
+  // Keeps a year in the label: cost rows span months and years.
   _fmtDate(iso) {
-    try {
-      return this._parseLocalDate(iso).toLocaleDateString(undefined, {
-        month: "short", day: "numeric", year: "numeric",
-      });
-    } catch (_e) {
-      return iso || "—";
-    }
+    return fmtDate(iso, { month: "short", day: "numeric", year: "numeric" });
   }
 
   // "2026-06" -> "Jun 2026".
@@ -464,14 +474,7 @@ class HelloFreshCostCard extends HTMLElement {
   }
 
   _fmtPrice(amount, currency) {
-    if (amount == null) return "—";
-    const num = Number(amount);
-    if (!Number.isFinite(num)) return String(amount);
-    try {
-      return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
-    } catch (_e) {
-      return `${num.toFixed(2)} ${currency || ""}`.trim();
-    }
+    return fmtPrice(amount, currency);
   }
 
   // Compact whole-dollar price for on-bar chart labels (e.g. "$183") — drops the cents so the
@@ -491,13 +494,7 @@ class HelloFreshCostCard extends HTMLElement {
   }
 
   _esc(value) {
-    return String(value ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]));
+    return esc(value);
   }
 
   static _sheet() {
