@@ -157,6 +157,12 @@ class HelloFreshRecipesCard extends HTMLElement {
     return data;
   }
 
+  // Which HelloFresh account this card is bound to. Sibling cards filter cross-card events on
+  // this, so it must be spelled identically everywhere: `config_entry_id` or "default".
+  _accountKey() {
+    return (this._config && this._config.config_entry_id) || "default";
+  }
+
   async _call(service, extra) {
     const result = await this._hass.callService(
       "hellofresh",
@@ -233,7 +239,16 @@ class HelloFreshRecipesCard extends HTMLElement {
       }
       this._flash(makeFavorite ? "Added to your cookbook." : "Removed from your cookbook.");
       // Let the meal-planner card re-read its hearts without a full page refresh.
-      window.dispatchEvent(new CustomEvent("hellofresh-data-changed", { detail: {} }));
+      //
+      // The detail MUST carry accountKey: every listener drops an event whose
+      // `detail.accountKey || "default"` doesn't match its own key, so an empty detail read as
+      // "default" and was silently discarded by any card configured with a config_entry_id —
+      // i.e. favoriting never reached the planner on a multi-account setup.
+      window.dispatchEvent(
+        new CustomEvent("hellofresh-data-changed", {
+          detail: { accountKey: this._accountKey() },
+        })
+      );
     } catch (err) {
       this._flash(
         `${makeFavorite ? "Add" : "Remove"} failed: ${(err && err.message) || err}`,

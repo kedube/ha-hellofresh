@@ -195,7 +195,17 @@ class HelloFreshSubscriptionCard extends HTMLElement {
   _receiveDataChanged(ev) {
     const detail = (ev && ev.detail) || {};
     if ((detail.accountKey || "default") !== this._accountKey()) return;
-    if (this._fetched && !this._loading) this._fetch();
+    if (!this._fetched) return;
+    if (this._loading) {
+      // An in-flight fetch was issued BEFORE the write this event announces, so its response
+      // predates the change and dropping the event left pre-write data on screen until the next
+      // interval (up to 3 hours). Queue one follow-up fetch, drained in _fetch's finally block.
+      // That drain already existed here but nothing ever set the flag, so it was dead code and
+      // this card still had the staleness bug the schedule and cost cards fixed.
+      this._refetchQueued = true;
+      return;
+    }
+    this._fetch();
   }
 
   // Broadcast a week selection over the shared cross-card channel (localStorage key +

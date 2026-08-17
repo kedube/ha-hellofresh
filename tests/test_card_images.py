@@ -26,23 +26,40 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 S3 = "/hellofresh_s3/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
 
+# Every file carrying its own copy of `resizedImage`. The Market and Meal planner cards are the
+# two that expose an `image_width` option, and both once carried a one-line stub that only
+# handled `/q_auto/` — so `image_width` silently did nothing on the `hellofresh_s3` URLs the real
+# API emits, and each tile pulled the full-size hero JPEG. Every copy is now held to the same
+# behaviour here, so a future divergence fails instead of quietly regressing one card.
+CARDS_WITH_RESIZE = (
+    "hellofresh-recipes-card.js",
+    "hellofresh-recipe-detail.js",
+    "hellofresh-market-card.js",
+    "hellofresh-meal-planner-card.js",
+)
 
-def _extract_resized_image() -> str:
-    """Pull the real `resizedImage` definition out of the card source.
 
-    The card is a browser module that registers custom elements on import, so it cannot be
-    imported under Node directly; this lifts out the one pure function under test.
+def _extract_resized_image(filename: str = "hellofresh-recipes-card.js") -> str:
+    """Pull the real `resizedImage` definition out of a card source.
+
+    The cards are browser modules that register custom elements on import, so they cannot be
+    imported under Node directly; this lifts out the one pure function under test. The shared
+    module exports it, so `export ` is tolerated and stripped.
     """
-    source = RECIPES_CARD.read_text(encoding="utf-8")
-    match = re.search(r"^function resizedImage\(url, width\) \{.*?^\}", source, re.S | re.M)
-    assert match, "resizedImage function not found in the recipes card"
-    return match.group(0)
+    source = (WWW / filename).read_text(encoding="utf-8")
+    match = re.search(
+        r"^(?:export )?function resizedImage\(url, width\) \{.*?^\}", source, re.S | re.M
+    )
+    assert match, f"resizedImage function not found in {filename}"
+    return match.group(0).replace("export function", "function", 1)
 
 
-def _resize(cases: list[tuple[str, int | None]]) -> list[str]:
+def _resize(
+    cases: list[tuple[str, int | None]], filename: str = "hellofresh-recipes-card.js"
+) -> list[str]:
     """Run resizedImage over `cases` in Node and return its outputs."""
     script = f"""
-    {_extract_resized_image()}
+    {_extract_resized_image(filename)}
     const cases = {json.dumps(cases)};
     console.log(JSON.stringify(cases.map(([url, width]) => resizedImage(url, width))));
     """
@@ -104,3 +121,38 @@ def test_absent_width_returns_the_url_unchanged() -> None:
     url = f"https://img.hellofresh.com{S3}"
     (out,) = _resize([(url, None)])
     assert out == url
+
+
+@pytest.mark.parametrize("filename", CARDS_WITH_RESIZE)
+def test_every_card_actually_resizes_the_urls_the_api_emits(filename: str) -> None:
+    """The reported class of bug: `image_width` silently doing nothing.
+
+    The stub these two cards carried only rewrote `/q_auto/`. Real HelloFresh image URLs are
+    `hellofresh_s3` forms, which it left untouched — so the card requested the full-size asset
+    while the option appeared to be honoured. Asserting the output *differs* from the input is
+    the check that a no-op stub cannot pass.
+    """
+    url = f"https://img.hellofresh.com/f_auto,fl_lossy,h_300,q_auto,w_450{S3}"
+    (out,) = _resize([(url, 320)])
+    assert out != url, f"{filename}: image_width had no effect on a real API image URL"
+    assert "w_320" in out
+    assert "w_450" not in out
+
+
+@pytest.mark.parametrize("filename", CARDS_WITH_RESIZE)
+def test_resize_copies_agree_across_cards(filename: str) -> None:
+    """Every copy must produce byte-identical output for the same input.
+
+    Four hand-maintained copies of one transform is exactly how the stub survived; this pins
+    them together so the next edit to one has to be made to all.
+    """
+    cases: list[tuple[str, int | None]] = [
+        (f"https://img.hellofresh.com{S3}", 320),
+        (f"https://img.hellofresh.com/f_auto,fl_lossy,h_300,q_auto,w_450{S3}", 320),
+        (f"https://img.hellofresh.com/f_auto,q_auto{S3}", 320),
+        (f"https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640{S3}", 320),
+        ("https://example.cloudfront.net/0,0/image/foo.jpg", 320),
+        ("javascript:alert(1)", 320),
+        (f"https://img.hellofresh.com{S3}", None),
+    ]
+    assert _resize(cases, filename) == _resize(cases, "hellofresh-recipe-detail.js")

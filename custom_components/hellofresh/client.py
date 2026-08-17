@@ -2743,6 +2743,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 # Shared fetch: the ranged deliveries candidate is the same request the
                 # upcoming-deliveries path already made this poll — reuse that download.
                 status, payload = await self._async_api_get_json_shared(path, params)
+            except HelloFreshAuthError:
+                # An expired/rejected token must reach the coordinator so it can start reauth.
+                # Treating it as "this candidate didn't work" and trying the next one turned a
+                # dead token into silently empty history: every candidate fails the same way, so
+                # the customer just lost their past weeks with no reauth prompt. The sibling
+                # _async_get_upcoming_deliveries — which runs in the same asyncio.gather and
+                # shares this very fetch helper — has always re-raised here.
+                raise
             except HelloFreshError as err:
                 self._record_debug_attempt(
                     "history_attempts",
@@ -2854,6 +2862,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             try:
                 response = await self._async_api_get(path, params=page_params)
                 page_payload = await self._async_response_json(response)
+            except HelloFreshAuthError:
+                # Same contract as the caller: a dead token has to reach the coordinator. Keeping
+                # the pages already collected and breaking would hide the expiry behind a
+                # plausible-looking (but truncated) history for the whole poll interval.
+                raise
             except HelloFreshError as err:
                 self._record_debug_attempt(
                     "history_attempts",

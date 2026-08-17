@@ -1091,9 +1091,14 @@ class HelloFreshScheduleCard extends HTMLElement {
     }
   }
 
+  // Normalize an API status like "ON_THE_WAY" / "on_the_way" to "On The Way". The .toLowerCase()
+  // is load-bearing: HelloFresh sends SCREAMING_SNAKE ("DELIVERED", "ON_THE_WAY"), and without it
+  // this rendered "DELIVERED" here while the meal-planner and market cards showed "Delivered" for
+  // the same week. Keep in step with those two.
   _titleCase(value) {
     return String(value || "")
       .replace(/[_-]+/g, " ")
+      .toLowerCase()
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
