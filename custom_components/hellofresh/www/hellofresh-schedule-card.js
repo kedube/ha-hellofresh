@@ -956,6 +956,11 @@ class HelloFreshScheduleCard extends HTMLElement {
   _rowTracking(week) {
     const order = week.order || {};
     const parts = [];
+    // When the box actually ARRIVED, from the carrier handover timestamp. Only delivered
+    // weeks carry it, so upcoming weeks are unaffected. Leads the line because it is the
+    // fact you look for on a past box; carrier/number stay for the shipment itself.
+    const arrived = this._fmtArrival(week.delivered_at);
+    if (arrived) parts.push(`<span class="arrived" title="When the box was delivered">Delivered ${this._esc(arrived)}</span>`);
     if (order.carrier) parts.push(this._esc(order.carrier));
     if (order.tracking_number) {
       const num = this._esc(order.tracking_number);
@@ -1070,6 +1075,25 @@ class HelloFreshScheduleCard extends HTMLElement {
       return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
     } catch (_e) {
       return String(d);
+    }
+  }
+
+  // Arrival stamp for a delivered box: "Aug 17, 6:53 PM". `delivered_at` is a full ISO
+  // datetime WITH offset (unlike the bare-date `delivery_date`), so it parses unambiguously
+  // and renders in the viewer's timezone — an evening ET handover stays on its local day.
+  _fmtArrival(iso) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch (_e) {
+      return "";
     }
   }
 
@@ -1223,6 +1247,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       .rowsub { font-size: 0.82em; color: var(--primary-text-color); margin-top: 2px; }
       .rowtrack { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
       .rowtrack a { color: inherit; }
+      .rowtrack .arrived { color: var(--primary-text-color); font-weight: 500; }
       .holiday { flex: none; font-size: 0.9em; cursor: help; }
       .dayopts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
       .dayopt {

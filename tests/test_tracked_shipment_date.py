@@ -115,3 +115,40 @@ def test_uses_the_most_recent_delivered_week() -> None:
         delivered_at=datetime(2026, 5, 12, 9, 0, tzinfo=UTC),
     )
     assert _value(older, _week()) == datetime(2026, 6, 23, 14, 37, 34, tzinfo=UTC)
+
+
+def test_backfills_the_carrier_timestamp_onto_a_past_deliveries_week() -> None:
+    """Regression: the sensor read Unknown for a box the web UI showed as delivered.
+
+    ``last_delivery_week`` prefers the past-deliveries history, but that endpoint reports no
+    carrier timestamp — only the ranged deliveries payload carries ``tracking.delivery_date``.
+    The winning week therefore had ``delivered_at`` unset even though the same week's account
+    entry knew exactly when the box arrived. The real arrival time is now back-filled from the
+    matching account week.
+    """
+    account_week = _week(delivered_at=datetime(2026, 6, 23, 14, 37, 34, tzinfo=UTC))
+    history_week = _week(delivered_at=None, status="delivered", source="past_deliveries")
+
+    data = HelloFreshAccountData(
+        weeks=[account_week], past_delivery_weeks=[history_week]
+    ).finalize()
+
+    assert data.last_delivery_week is history_week
+    assert sensor_native_value("tracked_shipment_date", data, "https://x") == datetime(
+        2026, 6, 23, 14, 37, 34, tzinfo=UTC
+    )
+
+
+def test_backfill_does_not_cross_subscriptions() -> None:
+    """With two subscriptions the same ISO week is two different boxes — a timestamp from
+    another subscription's week must not be stamped onto this one."""
+    other_sub_week = _week(
+        subscription_id="sub-2", delivered_at=datetime(2026, 6, 23, 14, 37, 34, tzinfo=UTC)
+    )
+    history_week = _week(subscription_id="sub-1", delivered_at=None, source="past_deliveries")
+
+    data = HelloFreshAccountData(
+        weeks=[other_sub_week], past_delivery_weeks=[history_week]
+    ).finalize()
+
+    assert sensor_native_value("tracked_shipment_date", data, "https://x") is None
