@@ -2132,9 +2132,20 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     ) -> None:
         """Change the recurring delivery option/interval for a subscription's plan.
 
-        HAR-verified: ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails`` with body
+        ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails`` with body
         ``{"deliveryOption", "deliveryInterval"}``. This affects **all** future deliveries
         for the plan, not a single week.
+
+        **Not HAR-verified.** This is the one write path no capture exercises (checked against
+        all 15 retained captures: the only observed ``/gw/api/plans`` traffic is the ``GET``
+        reads). The shape is *inferred*, though on solid ground: ``deliveryOption`` and
+        ``deliveryInterval`` are the field names HelloFresh itself uses in the plan/subscription
+        read payloads, and ``customerPlanId`` is confirmed to be exactly the id the
+        ``/gw/api/plans/{id}`` path takes. What is genuinely unknown is the query-param set --
+        the sibling ``/gw/api/subscriptions/*`` writes send ``country`` *and* ``locale`` while the
+        ``/gw/api/plans`` reads send neither, so the ``country``-only choice here matches no
+        observed request. If this call 400s, that is the first thing to try. See the Evidence Gaps
+        section of HELLOFRESH_API.md.
         """
         if not delivery_option or not delivery_option.strip():
             raise HelloFreshError("A delivery_option handle is required")

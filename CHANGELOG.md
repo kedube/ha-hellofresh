@@ -6,6 +6,16 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+- **Corrected a false verification claim.** `async_change_delivery_weekday`'s docstring said
+  "HAR-verified", but the endpoint (`POST /gw/api/plans/{id}/changePlanDeliveryDetails`) appears in
+  **none** of the 15 retained captures — the only observed `/gw/api/plans` traffic is `GET` reads.
+  Re-audited every other `HAR-verified` claim in the source and the rest hold up. The docstring and
+  the API reference now separate what is confirmed (`customerPlanId` is byte-identical to the id
+  the plans path takes; `deliveryOption`/`deliveryInterval` are HelloFresh's own field names from
+  the read payloads) from what is still guessed: the query params. The integration sends `country`
+  only, while the sibling `/gw/api/subscriptions/*` writes send `country` **and** `locale` and the
+  `/gw/api/plans` reads send neither — so the current choice matches no observed request and is the
+  first thing to try if the call 400s.
 - **Closed the last major evidence gap: SCM shipment tracking is confirmed working (HAR 41).**
   `GET /gw/scm/tracking-ids/track/public-id/{public_id}` had never appeared in any capture, and
   since HelloFresh's delivery payload carries no carrier field at all, it was unclear whether
