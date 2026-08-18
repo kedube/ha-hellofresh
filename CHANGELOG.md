@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.67 — 2026-08-18
 - **New: change your box size from Home Assistant (HAR 43).** Capture 43 exposed the web app's
   "change plan" flow, which the integration did not implement at all. Two new services:
   `hellofresh.get_plan_options` lists every box you can switch to (2–6 meals × 2/3/4/6 servings,
