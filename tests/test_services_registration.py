@@ -97,3 +97,93 @@ def test_no_handler_is_bound_to_two_services() -> None:
     handlers = [ast.unparse(call.args[2]) for call in _registration_calls()]
     duplicates = sorted({h for h in handlers if handlers.count(h) > 1})
     assert not duplicates, f"handlers bound to more than one service: {duplicates}"
+
+# --- registration <-> services.yaml <-> strings.json parity ------------------------
+
+SERVICES_YAML = INIT_PATH.parent / "services.yaml"
+STRINGS_JSON = INIT_PATH.parent / "strings.json"
+EN_JSON = INIT_PATH.parent / "translations" / "en.json"
+
+
+def _registered_service_names() -> set[str]:
+    """Service names as registered, resolved from the SERVICE_* constants in const.py."""
+    import ast as _ast
+
+    const_path = INIT_PATH.parent / "const.py"
+    consts: dict[str, str] = {}
+    for node in _ast.walk(_ast.parse(const_path.read_text())):
+        if isinstance(node, _ast.Assign) and isinstance(node.value, _ast.Constant):
+            for target in node.targets:
+                if isinstance(target, _ast.Name) and target.id.startswith("SERVICE_"):
+                    consts[target.id] = node.value.value
+
+    names: set[str] = set()
+    for call in _registration_calls():
+        if len(call.args) < 2:
+            continue
+        second = call.args[1]
+        if isinstance(second, _ast.Name) and second.id in consts:
+            names.add(consts[second.id])
+    return names
+
+
+def test_every_registered_service_is_documented_in_services_yaml() -> None:
+    """A service missing from services.yaml still runs, but has no UI form in HA.
+
+    That is a silent, user-visible gap: the service appears in Developer Tools with no fields,
+    so nobody can discover its arguments.
+    """
+    import yaml
+
+    documented = set(yaml.safe_load(SERVICES_YAML.read_text()))
+    registered = _registered_service_names()
+    assert registered, "no service registrations were resolved -- the parser is broken"
+    assert registered - documented == set(), (
+        f"registered but undocumented in services.yaml: {sorted(registered - documented)}"
+    )
+
+
+def test_services_yaml_has_no_entries_for_unregistered_services() -> None:
+    """The reverse: a documented service that no longer exists is a broken UI entry."""
+    import yaml
+
+    documented = set(yaml.safe_load(SERVICES_YAML.read_text()))
+    registered = _registered_service_names()
+    assert documented - registered == set(), (
+        f"documented in services.yaml but not registered: {sorted(documented - registered)}"
+    )
+
+
+@pytest.mark.parametrize("path", [STRINGS_JSON, EN_JSON])
+def test_translations_cover_every_registered_service(path: Path) -> None:
+    """Missing translations render as raw keys in the HA UI."""
+    import json
+
+    translated = set(json.loads(path.read_text()).get("services", {}))
+    registered = _registered_service_names()
+    assert registered - translated == set(), (
+        f"{path.name} is missing service translations for: {sorted(registered - translated)}"
+    )
+
+
+@pytest.mark.parametrize("path", [STRINGS_JSON, EN_JSON])
+def test_translated_service_fields_match_services_yaml(path: Path) -> None:
+    """Each service's documented fields must line up with its translated fields.
+
+    A field present in one but not the other shows up in the UI as an untranslated key or an
+    undocumented input -- both are silent, and neither breaks any other test.
+    """
+    import json
+
+    import yaml
+
+    documented = yaml.safe_load(SERVICES_YAML.read_text())
+    translated = json.loads(path.read_text()).get("services", {})
+
+    for name in _registered_service_names():
+        yaml_fields = set((documented.get(name) or {}).get("fields") or {})
+        json_fields = set((translated.get(name) or {}).get("fields") or {})
+        assert yaml_fields == json_fields, (
+            f"{name}: services.yaml fields {sorted(yaml_fields)} != "
+            f"{path.name} fields {sorted(json_fields)}"
+        )

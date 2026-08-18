@@ -1708,7 +1708,7 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 
 ## Evidence Gaps — what a new HAR capture would settle
 
-Audited against every capture currently on disk (`www.hellofresh.com.26` … `.39`). These are the
+Audited against every capture currently on disk (`www.hellofresh.com.26` … `.43`). These are the
 endpoints the integration calls that **no retained capture exercises**, ranked by what a capture
 would actually buy. Each entry names the exact UI action needed, since the value is entirely in
 performing the right action while recording.
@@ -1723,22 +1723,82 @@ Capture 40 also showed **zero response-shape drift** against captures 34–39 ac
 
 ### Still open
 
-1. **Change recurring delivery weekday.** `POST /gw/api/plans/{id}/changePlanDeliveryDetails`.
-   Drives `hellofresh.change_delivery_weekday`. Re-checked against **all 15 retained captures**
-   (`.26` … `.41`): the endpoint appears in none of them, and the only observed `/gw/api/plans`
-   traffic is the `GET` reads (`/gw/api/plans?includeCanceled=false` and
-   `/gw/api/plans/{id}`). Captures 40/41 covered the *one-off* reschedule but not the recurring
-   change, so this is now the **only** unverified write path in the integration.
+**None.** Every endpoint the integration calls is now backed by observed traffic. Capture 42 closed
+the last gap — see below.
 
-   The inference is well grounded but not complete:
+### New in capture 43 — plan (box size) change
 
-   | Element | Status |
-   | --- | --- |
-   | `customerPlanId` → path id | ✅ Confirmed — the value in the subscription payload is byte-identical to the id used by the observed `GET /gw/api/plans/{id}` |
-   | `deliveryOption`, `deliveryInterval` body keys | ✅ Attested — both are HelloFresh's own field names, appearing throughout the plan/subscription read payloads in all 15 captures |
-   | Query params | ❓ **Unknown** — the integration sends `country` only. The sibling `/gw/api/subscriptions/*` writes send `country` **and** `locale`; the `/gw/api/plans` reads send **neither**. The current choice matches no observed request, and is the first thing to change if this call 400s. |
+Capture 43 records the web app's "change plan" screen and exposed two endpoints the integration
+did not implement. Both are now wired to services (`hellofresh.get_plan_options`,
+`hellofresh.change_plan`).
 
-   *To capture:* change the plan's standing delivery day (not a single week's).
+**Read the catalog**
+
+```http
+GET /gw/api/subscriptions/{subscriptionId}/product_options?country=US&locale=en-US
+```
+
+Returns one entry per product family; each `products[]` item is a switchable box:
+
+```json
+{"handle": "US-CBU-3-2-0", "name": "Classic - 3 meals per week for 2 people",
+ "specs": {"meals": 3, "size": 2, "recurrency": 0}, "price": 6594}
+```
+
+`price` is integer **cents** ($65.94) for the whole box. 20 options were returned (2–6 meals ×
+2/3/4/6 servings). Note this is the same path that once served `unifiedPreferences`; it now serves
+the catalog, which the plan-preference resolver already accounts for.
+
+**Change the box**
+
+```http
+PATCH /gw/api/plans/{planId}?country=US&locale=en-US
+{"productHandle": "US-CBU-3-3-0"}
+→ 204 No Content
+```
+
+Verified: the capture switches 3-meals/2-people → 3-meals/3-people and back, and the
+`GET /gw/api/customers/me/subscriptions` immediately after shows `product.sku` updated. This is a
+**recurring, billing-affecting** change — distinct from the per-week box resize the cart write
+performs via the SKU's meal digit.
+
+| Detail | Observed |
+| --- | --- |
+| `country` param | Uppercase `US` — the weekday PATCH on `/gw/api/subscriptions/{id}` sends lowercase `us` |
+| Response | `204 No Content` — nothing to merge into state |
+| Pairing | The UI submits this alongside the weekday PATCH, but they are independent requests |
+
+Capture 43 also **re-confirms the capture-42 weekday change** independently (same envelope, same
+lowercase `country=us`), and shows **zero response-shape drift** against capture 40 across
+subscriptions, deliveries, menus, and profile.
+
+Two further endpoints appear that the integration deliberately does not implement:
+`PATCH /gw/api/addresses/{id}` (delivery address) and `PATCH /gw/api/customers/{id}` (name, email,
+birthday). Both are account-identity writes with no automation value and real blast radius.
+
+### Closed by capture 42
+
+- **Change recurring delivery weekday** — ✅ confirmed, and the previous implementation was
+  **wrong endpoint**. The integration inferred
+  `POST /gw/api/plans/{planId}/changePlanDeliveryDetails`; the live web app instead sends:
+
+  ```http
+  PATCH /gw/api/subscriptions/{subscriptionId}?country=us&locale=en-US
+  {"subscription": {"id": "6959884", "deliveryTime": "US-2-0800-2000"}}
+  ```
+
+  Capture 42 performs the change twice (Tuesday → Monday and back), both `200`. Notes:
+
+  | Detail | Observed |
+  | --- | --- |
+  | `country` param | Lowercase `us` — unlike every other endpoint, which sends uppercase |
+  | `deliveryInterval` | **Not sent.** The request carries only the `deliveryTime` handle |
+  | Response body | Echoes the **pre-change** `deliveryTime`; a `GET` 1s later shows the new value |
+  | Handle source | `/gw/api/delivery_dates_options` (`US-{weekday}-{from}-{to}`, weekday 1=Mon) |
+
+  The stale response is why the client discards the body and lets the coordinator re-poll: adopting
+  it would revert the weekday in the UI until the next refresh. The legacy plans endpoint is kept
+  as a fallback only — no capture proves it dead, but none exercises it either.
 
 ### Low value — legacy candidates, likely deletable
 

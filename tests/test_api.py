@@ -5974,8 +5974,14 @@ def test_reschedule_week_blocked_when_capability_absent() -> None:
         )
 
 
-def test_change_delivery_weekday_posts_plan_details() -> None:
-    """Weekday change should POST changePlanDeliveryDetails for the plan."""
+def test_change_delivery_weekday_patches_the_subscription() -> None:
+    """Weekday change PATCHes the subscription (HAR 42), not the inferred plans endpoint.
+
+    This test previously asserted ``POST /gw/api/plans/{id}/changePlanDeliveryDetails``, a shape
+    that had never been observed in any capture. Capture 42 recorded the real web app making this
+    change and it uses ``PATCH /gw/api/subscriptions/{id}``. Full contract lives in
+    ``test_delivery_weekday_har42.py``; this keeps the original call site covered.
+    """
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     client._cached_subscriptions = [
         HelloFreshSubscription(
@@ -5998,11 +6004,10 @@ def test_change_delivery_weekday_posts_plan_details() -> None:
         client.async_change_delivery_weekday("US-1-0800-2000", 1)
     )
 
-    assert captured["method"] == "POST"
-    assert captured["path"] == "/gw/api/plans/plan-1/changePlanDeliveryDetails"
+    assert captured["method"] == "PATCH"
+    assert captured["path"] == "/gw/api/subscriptions/6959884"
     assert captured["json_payload"] == {
-        "deliveryOption": "US-1-0800-2000",
-        "deliveryInterval": 1,
+        "subscription": {"id": "6959884", "deliveryTime": "US-1-0800-2000"}
     }
 
 

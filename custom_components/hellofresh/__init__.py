@@ -26,6 +26,7 @@ from .const import (
     ATTR_GOALS,
     ATTR_HOUSEHOLD,
     ATTR_LIMIT,
+    ATTR_PRODUCT_HANDLE,
     ATTR_QUANTITIES,
     ATTR_RECIPE_ID,
     ATTR_RECIPE_IDS,
@@ -59,11 +60,13 @@ from .const import (
     PLATFORMS,
     SERVICE_ADD_FAVORITE,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
+    SERVICE_CHANGE_PLAN,
     SERVICE_GET_ACCOUNT_SUMMARY,
     SERVICE_GET_CATALOG_RECIPES,
     SERVICE_GET_DELIVERY_OPTIONS,
     SERVICE_GET_FAVORITES,
     SERVICE_GET_FOOD_PROFILE,
+    SERVICE_GET_PLAN_OPTIONS,
     SERVICE_GET_PLANS,
     SERVICE_GET_PRESETS,
     SERVICE_GET_RECIPE_COLLECTIONS,
@@ -849,6 +852,37 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             ),
         )
 
+    async def async_get_plan_options(service_call: ServiceCall) -> ServiceResponse:
+        """Return the box sizes this subscription can switch to.
+
+        Read-only, fetched live (the plan catalog is not part of the regular poll). Pairs with
+        ``change_plan``: the ``handle`` of any returned option is what that service accepts.
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
+        options = await coordinators[0].client.async_list_plan_options(subscription_id)
+        return {"options": options}
+
+    async def async_change_plan(service_call: ServiceCall) -> None:
+        """Change the recurring box size (meals per week x servings).
+
+        This changes what the account is billed for every future box, so it is deliberately a
+        separate service from the per-week meal selection.
+        """
+        product_handle = service_call.data[ATTR_PRODUCT_HANDLE]
+        subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
+        await _for_each_coordinator(
+            service_call,
+            lambda coordinator, _: _async_mutation(
+                coordinator,
+                coordinator.client.async_change_plan(product_handle, subscription_id),
+            ),
+        )
+
     async def async_change_delivery_weekday(service_call: ServiceCall) -> None:
         """Change the recurring delivery option/interval for a subscription's plan."""
         delivery_option = service_call.data[ATTR_DELIVERY_OPTION]
@@ -932,6 +966,30 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             }
         ),
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_PLAN_OPTIONS,
+        async_get_plan_options,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Optional(ATTR_SUBSCRIPTION_ID): str,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CHANGE_PLAN,
+        async_change_plan,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_PRODUCT_HANDLE): str,
+                vol.Optional(ATTR_SUBSCRIPTION_ID): str,
+            }
+        ),
     )
     hass.services.async_register(
         DOMAIN,

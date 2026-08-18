@@ -200,6 +200,42 @@ change_delivery_weekday:
       selector:
         text:
 
+get_plan_options:
+  name: Get plan options
+  description: >-
+    List the box sizes this subscription can switch to (meals per week x servings),
+    with prices. Returns a response; the "handle" of any option is what change_plan
+    accepts. Read-only.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    subscription_id:
+      required: false
+      selector:
+        text:
+
+change_plan:
+  name: Change plan
+  description: >-
+    Change the recurring box size (meals per week x servings). This affects all future
+    boxes and changes what you are billed. Use get_plan_options to list valid handles.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    product_handle:
+      required: true
+      example: US-CBU-3-2-0
+      selector:
+        text:
+    subscription_id:
+      required: false
+      selector:
+        text:
+
 get_delivery_options:
   name: Get delivery options
   description: >-
