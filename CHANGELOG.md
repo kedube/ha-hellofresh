@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.69 — 2026-08-18
 - **New sensor: `sensor.tracked_shipment_date`** — when the most recent box **actually arrived**,
   as a `TIMESTAMP` entity. Sourced from the delivered week's carrier handover timestamp
   (`tracking.delivery_date`), which the integration already parsed into `HelloFreshWeek.delivered_at`
