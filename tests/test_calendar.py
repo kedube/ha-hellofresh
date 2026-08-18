@@ -55,11 +55,10 @@ def _calendar(orders: list[SimpleNamespace]) -> HelloFreshDeliveryCalendar:
 
 def _get_events(cal: HelloFreshDeliveryCalendar, start: datetime, end: datetime):
     """Drive the async API from a sync test without leaking an event loop."""
+    # Not closed on purpose: HA's autouse `verify_cleanup` fixture touches the current event
+    # loop at teardown, and a closed one raises there. Matches the rest of the suite.
     loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(cal.async_get_events(None, start, end))
-    finally:
-        loop.close()
+    return loop.run_until_complete(cal.async_get_events(None, start, end))
 
 
 def test_delivery_is_returned_when_window_starts_after_midnight() -> None:

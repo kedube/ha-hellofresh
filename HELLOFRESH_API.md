@@ -892,7 +892,19 @@ This endpoint is called for a **second, narrower** purpose: it is the only sourc
 
 — and the fallback path replaces a week's recipe list wholesale, so a week can only ever carry one set. To get both, `_async_apply_menu_availability` fetches this endpoint once per poll with `weeks=` narrowed to the weeks the customer can still change (`is_editable`: meal swaps allowed, not skipped, deadline open) and overlays **only** `isSoldOut`/`isHidden` onto the existing recipes, field by field. Delivered and past-cutoff weeks are skipped — the flag cannot change an outcome there — which in a typical account means one extra request covering a single week. A recipe absent from the catalog is left untouched rather than assumed sold out; the whole pass is best-effort and swallows transport and parse failures, since it is cosmetic enrichment on an already-complete menu.
 
+**Bandwidth caveat, measured.** Narrowing `weeks=` bounds the request *count*, not the response *size*: across the captures a single-week `weeks=2026-W38` response was **3.0–3.8 MB** (five samples, always >3 MB). So the sold-out overlay costs roughly 3–7 MB per poll for one or two editable weeks. At the default 180-minute interval that is ~25–55 MB/day — acceptable, but it is by far the largest single cost in a poll, and it buys only an advisory ribbon. Anyone on a metered connection should know the tradeoff; if this ever needs trimming, the lever is dropping the overlay rather than narrowing the query further, since the per-week floor is already >3 MB.
+
+For scale, the largest `/gw/` responses observed anywhere in the captures:
+
+| Endpoint | Largest observed |
+| --- | --- |
+| `/gw/menus-service/menus` (one week) | 3.79 MB |
+| `/gw/my-deliveries/menu` | 1.21 MB |
+| `/gw/api/customers/me/orders` | 0.97 MB |
+
 **Trust caveat:** this is the *anonymous regional* catalog. It has not been confirmed to track per-customer availability, so the flag is treated as advisory — `select_meals` logs a warning and submits anyway rather than blocking a selection HelloFresh might well accept.
+
+**`mealsReady`.** `/gw/my-deliveries/menu` gained a top-level `mealsReady` boolean between captures 26 and 38. It is `true` in all 14 observed responses, so what `false` signifies (menu not yet published for that week?) cannot be determined from the captures and nothing reads it. Noted here so a future reader knows it was seen and deliberately left alone rather than missed.
 
 ### Public menu fallback
 
@@ -1158,6 +1170,71 @@ The US authenticated deliveries HAR also exposed snake_case tracking fields on d
 | `tracking_status` | `tracking_status`, `internal_status`, `state` |
 
 Carrier names are not inferred from `tracking_link_type`. In practice, the most reliable carrier value comes from explicit carrier fields in the delivery payload or the SCM tracking response.
+
+> **What the delivery payload actually contains** (surveyed across every HAR capture: 59 non-null `tracking` nodes out of 409 weeks, the rest `null`). A non-null node has **exactly six** keys, and no more:
+>
+> ```json
+> {
+>   "tracking_id": "",
+>   "tracking_link": "https://www.hellofresh.com/delivery-tracking/<uuid>",
+>   "tracking_code": "1Z16F8B3P200030044",
+>   "tracking_link_type": "hf",
+>   "estimated_delivery_time": "2026-06-23T14:37:34+0000",
+>   "delivery_date": "2026-06-23T14:37:34+0000"
+> }
+> ```
+>
+> Consequences worth knowing:
+>
+> - **There is no carrier field here.** None of the `carrier` / `carrierName` / `deliveryPartner` / `provider` / `shippingProvider` names the extractor probes for has ever been observed in a delivery payload. `sensor.tracked_shipment_carrier` therefore populates **only** from the SCM response, which needs `tracking_link` present *and* the SCM call to succeed. Capture 41 confirms that path works end to end and does return a real carrier — see [SCM shipment tracking](#scm-shipment-tracking-carrier-detail).
+> - **`tracking_id` is always the empty string**; the usable identifier is `tracking_code`. Observed prefixes (`1Z…` UPS, `HF01…`, `DUS…`) are the only carrier hint the payload offers, and the integration deliberately does not guess from them.
+> - **`tracking` is null for ~86% of weeks**, including delivered ones — it is populated around the in-transit window and not retained. A week showing `DELIVERED` with no tracking data is normal, not a parse failure.
+> - `estimated_delivery_time` is **redundant with `delivery_date`**: across every capture the two are byte-identical in all 45 samples that carry both, so it is deliberately not surfaced as its own entity. `delivered_at` already reads this timestamp (preferring `delivery_date`, falling back to `estimated_delivery_time`) and is the actual carrier arrival time, distinct from the week's scheduled-noon `deliveryDate` anchor.
+
+#### SCM shipment tracking (carrier detail)
+
+**HAR-verified (capture 41).** The only source of carrier information anywhere in the API.
+
+| Purpose | Method | Path | Params |
+| --- | --- | --- | --- |
+| Carrier-level shipment detail | `GET` | `/gw/scm/tracking-ids/track/public-id/{public_id}` | `country=<CC>`, `locale=<locale>` |
+
+The `{public_id}` is the UUID at the end of the delivery payload's `tracking_link`
+(`…/delivery-tracking/<uuid>`) — `extract_tracking_public_id` recovers it, so this lookup is only
+possible for weeks whose `tracking` node is populated.
+
+Response is `{"boxes": [...]}`; an observed box (trimmed):
+
+```json
+{
+  "external_id": "H4234151270",
+  "tracking_id": "",
+  "carrier": "VEHO",
+  "delivery_date": "2026-08-17T12:00:00Z",
+  "tracking_code": "HF01000042767022",
+  "lane": "NJ_VEHO-SOMPA",
+  "public_url": "https://track.shipveho.com/#/trackingId/HF01000042767022",
+  "carrier_tracking_url": "https://track.shipveho.com/#/trackingId/HF01000042767022",
+  "hf_tracking_url": "https://www.hellofresh.com/delivery-tracking/<uuid>",
+  "internal_status": "delivered",
+  "last_status": { "status": "delivered", "datetime": "2026-08-17T22:53:06Z", … },
+  "statuses": [ … full history, newest first … ]
+}
+```
+
+Notes that matter:
+
+- **`carrier` is present and real** (`"VEHO"`). This is what makes `sensor.tracked_shipment_carrier` viable; it is `None` whenever this lookup does not happen or does not resolve.
+- The **carrier's own** URL (`carrier_tracking_url` / `public_url`) is preferred over `hf_tracking_url`, so the tracking link points at the courier rather than HelloFresh's wrapper page.
+- `tracking_id` is `""` here too — the usable identifier is `tracking_code`.
+- **Status vocabulary** observed in one box's history: `pre_transit` (`label_created`) → `in_transit` (`received_at_origin_facility`) → `out_for_delivery` → `delivered`. `humanize_status` renders these as "Pre transit", "In transit", "Out for delivery", "Delivered" — which is exactly the value the README's "box on the way" automation triggers on.
+- `last_status` is the current state; `statuses` is the newest-first history. The integration reads `last_status`.
+- Boxes are matched to orders by `delivery_date` (`_select_tracking_box_for_order`), so that field must parse — it is a full `Z`-suffixed timestamp, not a bare date.
+
+Only one carrier value (`VEHO`) has ever been observed across every capture, so `_CARRIER_LABELS` maps what is known (`UPS`, `FedEx`, `DoorDash`, `OnTrac`, `LaserShip`, `Veho`) and passes anything else through unchanged rather than guessing.
+
+Pinned by [tests/test_scm_tracking_har41.py](tests/test_scm_tracking_har41.py).
+
 
 Pricing notes:
 
@@ -1475,7 +1552,7 @@ Implementation notes:
 
 ### Skip / unskip week
 
-**HAR-verified.** A later capture showed that HelloFresh models skip/unskip as setting a week's **delivery status**, not a dedicated `/skip` verb:
+**HAR-verified, re-confirmed in capture 40.** HelloFresh models skip/unskip as setting a week's **delivery status**, not a dedicated `/skip` verb. Capture 40 contains both directions on the same week (`PAUSED` then `RUNNING`), each returning `201`, with the request body exactly as documented below — so this is confirmed against evidence still on disk, and pinned by [tests/test_write_contracts_har40.py](tests/test_write_contracts_har40.py).
 
 | Action | Method | Path | Body `status` |
 | --- | --- | --- | --- |
@@ -1497,6 +1574,8 @@ Query params: `country=<CC>&locale=<locale>`. Both return `201`. Verified reques
 ```
 
 `cutoffDate` / `deliveryDate` are taken from the week's raw delivery payload (preserving the exact server timestamp format), falling back to the normalized `selection_deadline` / `delivery_date`. `_async_patch_delivery_status` builds this request; `is_skipped` is the live `status == "PAUSED"` state, so a no-op skip/unskip is short-circuited before any request.
+
+> **The response is a stub — do not adopt it.** Both this PATCH and the one-off POST below return `{count: 1, items: [week]}` where the week is mostly hollow: every `allowedActions` flag is `false`/`null`, `cutoffDate` is `null`, `availableOneOffOptions` is `null`, and the `/oneoff` response additionally carries **no `status` and no `deliveryDate`**. Merging any of that into the week the client holds would leave it looking permanently locked and undated until the next poll. Both writes therefore discard the response body entirely and rely on `_async_mutation`'s post-write refresh. Regression coverage: `test_write_responses_are_not_merged_into_week_state`.
 
 #### Legacy fallback paths
 
@@ -1527,6 +1606,13 @@ If all candidates fail, the client raises `HelloFreshNotImplementedError` with a
 | `POST` | `/gw/api/subscriptions/{subscription_id}/oneoff` | `country=<CC>&locale=<locale>` | `{"id":"<subscription_id>","delivery_option":"<handle>","week":"<week_id>","source":"reschedule-delivery-feature"}` |
 
 `async_change_one_off_delivery(week_id, delivery_option)` gates on the week's `allowed_actions["oneOffChange"]` before sending. Exposed as the `hellofresh.reschedule_week` service.
+
+Confirmed in capture 40 (two successful reschedules of `2026-W39`, both `201`), which also settles two details worth stating explicitly:
+
+- **`source` is load-bearing enough to keep.** The web app sends the literal `"reschedule-delivery-feature"`; it looks decorative but there is no evidence the endpoint tolerates its absence, so it is sent verbatim rather than trimmed.
+- **`delivery_option` is a `handle` from the week's own `availableOneOffOptions`**, e.g. `US-2-0800-2000` paired with `deliveryDate: "2026-09-22"`. The handle encodes country, weekday index and the 0800–2000 window; the integration passes handles through unaltered rather than constructing them.
+
+Pinned by [tests/test_write_contracts_har40.py](tests/test_write_contracts_har40.py).
 
 ### Change recurring delivery weekday/interval
 
@@ -1619,6 +1705,48 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 - **Past-week selection comes from `past-deliveries`, not the menu.** A past week's menu still carries auto-fill picks; only the `past-deliveries` `meals[]` reflect what actually shipped. Paused weeks shipped nothing and must show no selection. See [Selection-state resolution](#selection-state-resolution).
 - Public menu scraping does not expose personal selections, dates, or shipment data.
 - Because the API is reverse-engineered, adding new regions or supporting future payload drift will likely require updating the key fallback lists in [client.py](custom_components/hellofresh/client.py) / [normalizers.py](custom_components/hellofresh/normalizers.py) and the region map in [const.py](custom_components/hellofresh/const.py).
+
+## Evidence Gaps — what a new HAR capture would settle
+
+Audited against every capture currently on disk (`www.hellofresh.com.26` … `.39`). These are the
+endpoints the integration calls that **no retained capture exercises**, ranked by what a capture
+would actually buy. Each entry names the exact UI action needed, since the value is entirely in
+performing the right action while recording.
+
+### Closed by captures 40 and 41
+
+- **Skip / unskip a week** — ✅ re-confirmed. Both directions on `2026-W39`, each `201`, body exactly as documented in [Skip / unskip week](#skip--unskip-week). Now pinned by tests.
+- **SCM shipment tracking** — ✅ confirmed by capture 41. The endpoint is live, returns `{boxes: [...]}`, and a box carries a real `carrier` (`VEHO`) plus a full status history. `sensor.tracked_shipment_carrier` is viable after all. See [SCM shipment tracking](#scm-shipment-tracking-carrier-detail).
+- **Reschedule a week (one-off)** — ✅ confirmed for the first time. Two successful `POST …/oneoff` calls; the request the integration builds matches the capture field for field, including the `source` literal. See [Reschedule a single week](#reschedule-a-single-week-one-off-delivery-change).
+
+Capture 40 also showed **zero response-shape drift** against captures 34–39 across every shared endpoint, and revealed that both write endpoints return a **stub week** that must not be adopted (documented above).
+
+### Still open
+
+1. **Change recurring delivery weekday.** `POST /gw/api/plans/{id}/changePlanDeliveryDetails`.
+   Drives `hellofresh.change_delivery_weekday` and still appears in no capture, so its payload
+   shape is inferred. Captures 40/41 covered the *one-off* reschedule but not the recurring change.
+   *To capture:* change the plan's standing delivery day (not a single week's).
+
+### Low value — legacy candidates, likely deletable
+
+4. `/gw/my-menu`, `/gw/my-menu/weeks`, `/gw/my-deliveries/deliveries`,
+   `/gw/my-deliveries/upcoming-deliveries`, and
+   `/gw/api/customers/me/subscriptions/{id}/weeks/{id}/{selection,skip}` are all probed as
+   candidates but appear in no capture, while the endpoints that *do* appear
+   (`/gw/my-deliveries/menu`, `/gw/my-deliveries/past-deliveries`,
+   `/gw/api/customers/me/deliveries`) already win the preference ordering. They cost a failed
+   round-trip on first poll before `_preferred_endpoints` learns the winner.
+   *No capture needed* — a normal browsing capture that never touches them is itself weak evidence
+   they are dead. Removing them is a judgement call about older accounts/regions, not a data gap.
+
+### Not a gap
+
+The captures give good coverage of everything else: auth (`/gw/login`, `/gw/refresh`), the menu and
+history reads, cart price and cart write (`PUT /gw/v1/carts/{week}`), cookbook add/search/delete,
+the profile `PATCH`, plans/presets, balance, and the public catalog's Next.js data URLs. A shape
+diff across all 70 observed `/gw/` paths from the oldest capture to the newest found **two additive
+fields and zero removals**, so re-capturing already-covered endpoints has low marginal value.
 
 ## Related Files
 

@@ -27,6 +27,9 @@ _CARRIER_LABELS = {
     "USPS": "USPS",
     "ONTRAC": "OnTrac",
     "LASERSHIP": "LaserShip",
+    # Confirmed in a live SCM tracking response ("carrier": "VEHO", lane "NJ_VEHO-SOMPA");
+    # the company brands itself "Veho", so the raw code would otherwise shout on the dashboard.
+    "VEHO": "Veho",
 }
 
 _RECIPE_HEADING_DISALLOWED = {
