@@ -12,7 +12,23 @@ It is derived from the integration source and its normalization tests:
 - Setup / reauth (email + password, or pasted token) — [config_flow.py](custom_components/hellofresh/config_flow.py)
 - Normalization tests — [tests/test_api.py](tests/test_api.py)
 
-> **Module layout note:** the integration was originally a single `api.py`. It is now split across the modules above, with [api.py](custom_components/hellofresh/api.py) kept as a thin re-export shim so `from .api import ...` keeps working. Import from the specific modules in new code.
+> **Module layout:** [api.py](custom_components/hellofresh/api.py) is a thin re-export shim, kept so `from .api import ...` keeps working. Import from the specific modules above in new code.
+
+## Contents
+
+| Section | Covers |
+| --- | --- |
+| [Overview](#overview) | How the client is structured, at a glance |
+| [Regional base URLs](#regional-base-urls) | Supported markets and their hosts |
+| [Authentication](#authentication) | Login, refresh, token lifecycle, bot protection |
+| [Request efficiency](#request-efficiency) | Caching, coalescing, sticky endpoints |
+| **Read endpoints** — [account & deliveries](#read-endpoints--account-and-deliveries), [catalogs & recipes](#read-endpoints--catalogs-and-recipes), [pricing](#read-endpoints--pricing), [menus](#read-endpoints--menus) | Every endpoint the integration reads |
+| [Mutation endpoints](#mutation-endpoints) | Every endpoint that writes |
+| [Normalized data model](#normalized-data-model) | How payloads map to internal models |
+| [Home Assistant exposure](#home-assistant-exposure) | Entities, services, cards, diagnostics |
+| [Error handling](#error-handling) | Exception types and HTTP behavior |
+| [Account aggregation behavior](#account-aggregation-behavior) | Multi-subscription resolution |
+| [Endpoints not implemented](#endpoints-not-implemented) | What is excluded, and why |
 
 ## Overview
 
@@ -28,7 +44,7 @@ It is derived from the integration source and its normalization tests:
   - `HelloFreshOrder`
   - `HelloFreshAccountData`
 - Home Assistant entities are derived from normalized account data rather than directly exposing raw API payloads.
-- Write actions for meal selection and HelloFresh Market add-ons (both `PUT /gw/v1/carts/{week}`) and skip/unskip (`PATCH …/delivery_dates/{week}`) are HAR-verified; each keeps a set of older guessed endpoints as a fallback only.
+- Write actions are confirmed against live traffic. Meal selection and Market add-ons share `PUT /gw/v1/carts/{week}`; skip/unskip uses `PATCH …/delivery_dates/{week}`. Each keeps older candidate endpoints as fallbacks only.
 
 ## Regional Base URLs
 
@@ -132,7 +148,7 @@ base-URL selector and is not always the ISO 3166 code the API wants. The mapping
 
 The `uk → GB` mapping is essential: sending `country=UK` makes `/gw/login` and
 `/gw/refresh` fail, which is why the integration previously only worked in the US.
-Confirmed from a UK HAR where the site posts `{"country":"GB"}` to `/gw/auth/email/status`.
+Confirmed from UK traffic where the site posts `{"country":"GB"}` to `/gw/auth/email/status`.
 A subscription's own `locale` from the account payload overrides the default locale once
 loaded.
 
@@ -147,7 +163,7 @@ A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`) i
 - because the block raises `HelloFreshError` (not `HelloFreshAuthError`), the refresh-then-login fallback does **not** fire — the integration will not hammer the same WAF with a credential login, and the existing refresh token is preserved
 - a `401`/`403` with a JSON body is still a genuine credential/refresh-token rejection and raises `HelloFreshAuthError` as before
 
-**Regional Cloudflare differences (why some regions block even with perfect headers).** Every HelloFresh property is fronted by **Cloudflare** (confirmed by `server: cloudflare` / `cf-ray` on all six regional HARs). The bot-management *aggressiveness*, however, differs per region. The US property accepts the integration's requests; **`www.hellofresh.co.uk` returns an HTML `403`** to the same header set. Because Cloudflare evaluates the **TLS (JA3/JA4) and HTTP/2 fingerprint** of the connection *before* the application headers, and `aiohttp` (Python + OpenSSL) has a fingerprint no `User-Agent` can disguise, **no header change fixes a region tuned to block on transport fingerprint** — the request is rejected before the headers matter. Options if a region stays blocked:
+**Regional Cloudflare differences (why some regions block even with perfect headers).** Every HelloFresh property is fronted by **Cloudflare** (confirmed by `server: cloudflare` / `cf-ray` on all six regional properties). The bot-management *aggressiveness*, however, differs per region. The US property accepts the integration's requests; **`www.hellofresh.co.uk` returns an HTML `403`** to the same header set. Because Cloudflare evaluates the **TLS (JA3/JA4) and HTTP/2 fingerprint** of the connection *before* the application headers, and `aiohttp` (Python + OpenSSL) has a fingerprint no `User-Agent` can disguise, **no header change fixes a region tuned to block on transport fingerprint** — the request is rejected before the headers matter. Options if a region stays blocked:
 
 - **TLS-impersonating transport (implemented)** — the auth POSTs **and the data XHRs** now go through `curl_cffi` when it is installed, giving the whole request flow a real Chrome JA3/JA4 + HTTP/2 fingerprint. See below.
 - **Accept the retry behavior** — if `curl_cffi` is unavailable (or still blocked), the block is treated as transient (above), so the integration keeps retrying; it will succeed in windows where the region's rules are relaxed, but may stay blocked indefinitely if they are not.
@@ -184,8 +200,8 @@ A full login runs in two steps, mirroring the web app:
 Notes:
 
 - The `client_id` is `senf` (the web app's `NEXT_PUBLIC_GW_CLIENT_ID`), defined as `GW_CLIENT_ID` in [const.py](custom_components/hellofresh/const.py).
-- Step 1's response is **not retained** — the app token only primes the gateway. The request is best-effort: any failure is logged and ignored. A later fresh-login capture showed the web app reaching `/gw/login` **without** a preceding `/gw/auth/token` call and **without** an `Authorization` header, so step 1 appears optional; it is kept as harmless defensive priming.
-- Step 2 is HAR-verified: `POST /gw/login?country=<CC>&locale=<locale>` with body exactly `{"username", "password"}`, no `Authorization` header. It returns the auth object below. A `401`/`403` raises `HelloFreshAuthError` (bad credentials); any other `>= 400` raises `HelloFreshError`. (The login *response* body was redacted from the capture, but its field shape is the same auth object returned by `/gw/refresh`, which we do have.)
+- Step 1's response is **not retained** — the app token only primes the gateway. The request is best-effort: any failure is logged and ignored. The web app has been observed reaching `/gw/login` **without** a preceding `/gw/auth/token` call and **without** an `Authorization` header, so step 1 appears optional; it is kept as harmless defensive priming.
+- Step 2 is confirmed against live traffic: `POST /gw/login?country=<CC>&locale=<locale>` with body exactly `{"username", "password"}`, no `Authorization` header. It returns the auth object below. A `401`/`403` raises `HelloFreshAuthError` (bad credentials); any other `>= 400` raises `HelloFreshError`. (The login *response* body is redacted in transit logs, but its field shape is the same auth object returned by `/gw/refresh`.)
 
 ### Auth object
 
@@ -287,7 +303,7 @@ X-Food-Categorization: v1
 x-sort-variations-by-quantity: true
 ```
 
-They pin the API/categorization variant the server replies with, so the integration's traffic matches the browser's and is guarded against payload-shape drift from an un-negotiated default. Per-endpoint headers (e.g. `x-requested-by: client-platform` / `shopping-experience-web` / `shipping-and-tracking`) are layered on top of these for the specific calls that the HAR showed using them.
+They pin the API/categorization variant the server replies with, so the integration's traffic matches the browser's and is guarded against payload-shape drift from an un-negotiated default. Per-endpoint headers (e.g. `x-requested-by: client-platform` / `shopping-experience-web` / `shipping-and-tracking`) are layered on top of these for the specific calls that use them.
 
 ## Request Efficiency
 
@@ -301,9 +317,13 @@ Two more efficiency measures cut per-poll work:
 - **Concurrent, grace-gated per-week menu fetches.** The authenticated `/gw/my-deliveries/menu` catalog is fetched **once per subscribed week**, and those fetches now run **bounded-concurrent** (`_async_gather_bounded`, cap `_MENU_FETCH_CONCURRENCY = 6`) instead of one round-trip at a time — the poll's critical path was previously ~N sequential TLS round-trips per subscription. The fetch is also **skipped for weeks older than the menu grace window**: those weeks' recipes are unconditionally replaced by the delivered-only set (see [Selection-state resolution](#selection-state-resolution)), so downloading their (often multi-MB aggregate) menu only to discard it is pure waste. Weeks with no date, or dated within the grace window, still fetch. A single week's fetch failure resolves to an empty result rather than sinking the batch, while a genuine `HelloFreshAuthError` still propagates to trigger reauth.
 - **Dropped dead menu payloads.** After the merge replaces an old week's catalog with the delivered set, its stashed `raw['_menu_payload']` (which for old weeks is the bloated aggregate) is dropped — nothing reads it back for a past week, and keeping it would pin MBs for the whole poll interval.
 
-> ETag / `If-None-Match` conditional GETs are **not** implemented: the existing HAR captures don't confirm the server sends `ETag`s on these endpoints, and a correct implementation would require the request layer to own response decoding (a `304` has no body). This is worth revisiting if a fresh capture shows `ETag` headers.
+> ETag / `If-None-Match` conditional GETs are **not** implemented: the server has not been observed sending `ETag`s on these endpoints, and a correct implementation would require the request layer to own response decoding (a `304` has no body).
 
-## Endpoint Matrix
+## Read Endpoints — Account and Deliveries
+
+Every read the integration performs, grouped by what it answers. Endpoints listed as *fallbacks*
+are tried only when the preferred one fails; the [sticky-endpoint cache](#request-efficiency) means
+the winner is reused on later polls rather than re-walking each list.
 
 ### Verified auth check
 
@@ -337,15 +357,15 @@ Expected top-level shape (`{count, total, take, skip, items[]}`, simplified):
 }
 ```
 
-> **Status is derived, not a field.** The live payload carries **no** `status` / `subscriptionStatus` / `state` key (confirmed from US HARs). Plan-level status is reconstructed by `_derive_subscription_status`: `canceledAt` → `cancelled`, else `pausedAt` → `paused`, else `isActive` → `active`/`inactive`. An explicit `status`/`state` field, if a region ever provides one, still wins. `endlessPausedAt` is deliberately ignored — it carries a stale historical date even on active accounts. This backs the `subscription_status` sensor.
+> **Status is derived, not a field.** The live payload carries **no** `status` / `subscriptionStatus` / `state` key (confirmed from US traffic). Plan-level status is reconstructed by `_derive_subscription_status`: `canceledAt` → `cancelled`, else `pausedAt` → `paused`, else `isActive` → `active`/`inactive`. An explicit `status`/`state` field, if a region ever provides one, still wins. `endlessPausedAt` is deliberately ignored — it carries a stale historical date even on active accounts. This backs the `subscription_status` sensor.
 
 ### Upcoming deliveries
 
-The client tries these read endpoints in order for each subscription until one returns a payload that can be normalized into weeks. The **ranged `/gw/api/customers/me/deliveries`** is the HAR-verified endpoint the live US site uses (it returns past + future weeks in one call) and is tried first; the rest got zero hits in the capture and are retained only as drift/other-region fallbacks. The sticky-endpoint cache (see [Request Efficiency](#request-efficiency)) means the winner is reused on later polls instead of re-walking this list.
+The client tries these read endpoints in order for each subscription until one returns a payload that can be normalized into weeks. The **ranged `/gw/api/customers/me/deliveries`** is the endpoint the live US site uses (it returns past + future weeks in one call) and is tried first; the rest are never served in practice and are retained only as drift/other-region fallbacks. The sticky-endpoint cache (see [Request Efficiency](#request-efficiency)) means the winner is reused on later polls instead of re-walking this list.
 
 | Priority | Method | Path | Params | Status |
 | --- | --- | --- | --- | --- |
-| 1 | `GET` | `/gw/api/customers/me/deliveries` | `rangeStart=<YYYY-Www>&rangeEnd=<YYYY-Www>` | HAR-verified (US) |
+| 1 | `GET` | `/gw/api/customers/me/deliveries` | `rangeStart=<YYYY-Www>&rangeEnd=<YYYY-Www>` | Confirmed (US) |
 | 2 | `GET` | `/gw/my-deliveries/upcoming-deliveries` | `subscription=<id>` | fallback |
 | 3 | `GET` | `/gw/my-deliveries/upcoming-deliveries` | `subscription=<id>&from=<YYYY-Www>` | fallback |
 | 4 | `GET` | `/gw/my-deliveries/deliveries` | `subscription=<id>` | fallback |
@@ -362,7 +382,7 @@ Recognized top-level arrays:
 
 The ranged deliveries payload carries per-week **counts, dates, deadlines, `allowedActions`, and tracking** but **no recipe list** — the chosen recipes are not in this response. Recipe data and the per-recipe selection state come from the authenticated menu endpoint instead (see [Selection-state resolution](#selection-state-resolution)). When a delivery payload *does* list recipes (some account shapes), they are still parsed as a fallback.
 
-**Actual delivered timestamp.** Each week's `tracking` node carries `delivery_date` / `estimated_delivery_time` — once the box has arrived (effective status `DELIVERED`), that is the **real carrier delivery moment** in UTC (HAR-verified, e.g. `2026-06-29T22:20:50+0000`), unlike the week's `deliveryDate`, which is a scheduled-noon anchor. Before delivery the same field holds a scheduled placeholder, so `_delivered_at_from_raw` only trusts it on DELIVERED weeks (respecting the stale-status guard: `status="DELIVERED"` with a live non-delivered `state` doesn't count). It is stored as `HelloFreshWeek.delivered_at` and serialized with its full offset, so the cards render the delivered **date in the viewer's timezone** — an evening ET delivery is already the next day in UTC (`test_delivered_at_extracted_from_tracking_for_delivered_weeks_only`). The meal-planner card's order-strip "Delivered" field and the schedule card's past rows and calendar marks all prefer `delivered_at` over the scheduled date. (The same node also appears on `GET /gw/api/subscriptions/{id}/delivery_dates/{week}`.)
+**Actual delivered timestamp.** Each week's `tracking` node carries `delivery_date` / `estimated_delivery_time` — once the box has arrived (effective status `DELIVERED`), that is the **real carrier delivery moment** in UTC (e.g. `2026-06-29T22:20:50+0000`), unlike the week's `deliveryDate`, which is a scheduled-noon anchor. Before delivery the same field holds a scheduled placeholder, so `_delivered_at_from_raw` only trusts it on DELIVERED weeks (respecting the stale-status guard: `status="DELIVERED"` with a live non-delivered `state` doesn't count). It is stored as `HelloFreshWeek.delivered_at` and serialized with its full offset, so the cards render the delivered **date in the viewer's timezone** — an evening ET delivery is already the next day in UTC (`test_delivered_at_extracted_from_tracking_for_delivered_weeks_only`). It is exposed as `sensor.tracked_shipment_date` (the newest delivered week's value), and the meal-planner card's order-strip "Delivered" field and the schedule card's past rows and calendar marks all prefer `delivered_at` over the scheduled date. (The same node also appears on `GET /gw/api/subscriptions/{id}/delivery_dates/{week}`.)
 
 ### Order history and payment dates
 
@@ -385,7 +405,7 @@ Observed response shape:
   "count": 200,
   "items": [
     {
-      "orderNr": "29236713642",
+      "orderNr": "10000000001",
       "createdAt": "2026-06-04T00:13:06-0700",
       "grandTotal": 76.93,
       "shippingAmount": 0,
@@ -394,7 +414,7 @@ Observed response shape:
           "deliveryDate": "2026-06-15T00:00:00-0700",
           "deliveryTime": "US-1-0800-2000",
           "subscription": {
-            "id": "6959884"
+            "id": "1234567"
           }
         }
       ]
@@ -461,13 +481,13 @@ Observed params for `/gw/api/customers/me/info`:
 /gw/api/customers/me/info?country=US&locale=en-US
 ```
 
-Observed request header (confirmed from HAR capture):
+Observed request header:
 
 ```http
 x-requested-by: client-platform
 ```
 
-Current normalization is intentionally narrow. The client extracts stable account-level metrics such as:
+Normalization is deliberately narrow. Only stable account-level metrics are extracted:
 
 - `boxesReceived`
 - `boxes_received`
@@ -495,7 +515,7 @@ Rather than returning the first endpoint that answers, the integration **accumul
 
 **History window.** Both the ranged display range and the `past-deliveries` pagination floor are driven by the **configurable** history depth — the `history_weeks` option (`CONF_HISTORY_WEEKS` in [const.py](custom_components/hellofresh/const.py)), default **`DEFAULT_HISTORY_WEEKS` = 26** (~6 months), range **1–104** (`MIN_HISTORY_WEEKS`/`MAX_HISTORY_WEEKS`). The client reads it as `self._history_weeks` (the `history_weeks` constructor arg, falling back to the `_HISTORY_LOOKBACK_WEEKS = 26` class default when unset). Lowering it shrinks the per-poll deliveries payload; raising it browses further back.
 
-> Set the window to a bit more than a calendar year (**~56**) to safely include the box from ~12 months ago: `today − 52 weeks` lands 364 days back, so a 12-month-old box sits exactly on the boundary and ISO-week rounding dropped it (`get_weeks` returned `[]` for the ~370-days-ago week) when the window was exactly 52. The pagination floor is set **two weeks past** `self._history_weeks` (`weeks=self._history_weeks + 2`) so the oldest *visible* week always has its delivered recipes fetched, and the cursor floor is compared by `(year, week)` (not raw string) so a year boundary like `2026-W01` vs `2025-W52` is ordered chronologically.
+> **Use ~56, not 52, for a full year of history.** `today − 52 weeks` lands 364 days back, so a 12-month-old box sits exactly on the boundary and ISO-week rounding can drop it. Two related rules: the pagination floor is set **two weeks past** `self._history_weeks` (`weeks=self._history_weeks + 2`) so the oldest *visible* week always has its delivered recipes fetched, and the cursor floor is compared by `(year, week)` rather than raw string, so `2026-W01` orders after `2025-W52`.
 
 Recognized top-level arrays include:
 
@@ -504,7 +524,7 @@ Recognized top-level arrays include:
 - `deliveries`
 - `weeks` (the `past-deliveries` shape: `{ "weeks": [...], "nextWeek": "YYYY-Www" }`)
 
-Recent US HAR captures showed `/gw/api/customers/me/deliveries` returning both delivered and future weeks in a single ranged response. Useful fields on those records include:
+On the US site, `/gw/api/customers/me/deliveries` returns both delivered and future weeks in a single ranged response. Useful fields on those records include:
 
 - `tracking.tracking_link`
 - `tracking.tracking_code`
@@ -570,7 +590,9 @@ If that endpoint doesn't carry the plan, the **profile-service** payload (priori
 
 The subscription `preset` is the last resort. Both API sources are more reliable than `preset`, which is a distinct field that can diverge from the active preference.
 
-> **Endpoint history.** The very first version read this from `GET /gw/api/subscriptions/{subscription_id}/product_options` at `unifiedPreferences.plans[...]`; the site later stopped returning `unifiedPreferences` there (with `all=1` it now serves the product catalog `{count, items[]}`), so that call was dropped. It was replaced by the profile-service `taste.plans` source, and then the dedicated `/gw/v1/profile/me/unified-preferences` endpoint was adopted as the canonical priority-1 source (with profile-service kept as the fallback). All HAR-confirmed.
+> **Note on `product_options`.** An earlier revision of this endpoint served `unifiedPreferences.plans[...]`; it no longer does — with `all=1` it serves the product catalog `{count, items[]}` instead, which is what [Change plan](#change-plan-box-size) reads. Plan preference now comes from the dedicated `/gw/v1/profile/me/unified-preferences` endpoint, with profile-service as the fallback.
+
+## Read Endpoints — Catalogs and Recipes
 
 ### Reference catalogs (read-only)
 
@@ -582,6 +604,7 @@ These additional read endpoints the web app uses are exposed as optional read-on
 | `hellofresh.get_plans` | `GET` | `/gw/api/plans` | `includeCanceled=false` | `{plans: [...]}` |
 | `hellofresh.get_presets` | `GET` | `/gw/api/presets` (fallback `/gw/menus-service/presets`) | `country=<cc>&locale=<locale>&sort=-weight` | `{presets: [...]}` |
 | `hellofresh.get_spending` | `GET` | `/gw/api/customers/me/orders` | `country=<CC>&locale=<locale>&limit=200` | `{weeks: [...], months: [...], total: {...}}` |
+| `hellofresh.preview_meal_price` | `POST` | `/gw/v1/carts/{week}/price` | see [Exact cart pricing](#exact-cart-pricing) | priced breakdown for a hypothetical selection |
 
 - **`get_delivery_options`** is the richer delivery-day picker — a **superset** of a week's `availableOneOffOptions` (which carries only `{handle, delivery_date}`). Each option carries the weekday name/number, price, and default flag, normalized into `HelloFreshDeliveryOption`. The `family` (`productType.family.handle`, e.g. `classic-box-unified`) and `zip` (`shippingAddress.postcode`) come from the primary subscription; options are deduped across items by `handle` and sorted by weekday. Returns `[]` (no request) when either is missing.
 
@@ -591,8 +614,9 @@ These additional read endpoints the web app uses are exposed as optional read-on
    "deliveryFrom": "08:00", "deliveryTo": "20:00", "priceInCents": 0, "isDefault": true}
   ```
 
+- **`preview_meal_price`** answers "what would this cost?" for a set of recipes the customer has **not** committed to. It reuses the same cart-pricing request as the real write path but never saves, so a dashboard can price a hypothetical box before the user confirms it.
 - **`get_plans`** returns the account's plans (a bare JSON list) with `planItems[].productHandle`, `legacyContractPrice`, `planType`, and status.
-- **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`. Two paths serve the identical catalog (HAR-confirmed); the account-context `/gw/api/presets` (sorted by weight) is tried first, with `/gw/menus-service/presets` as the fallback.
+- **`get_presets`** returns the region's plan presets (`{items:[…]}`) — the human-readable names (Chef's Choice, Veggie, Quick & Easy, …) behind a plan's `preset` slug: `{handle, name, description, weight, maxDefault}`. Two paths serve the identical catalog; the account-context `/gw/api/presets` (sorted by weight) is tried first, with `/gw/menus-service/presets` as the fallback.
 
 `get_plans` / `get_presets` are returned as decoded dicts (reference data, not normalized into account models).
 
@@ -676,7 +700,27 @@ Two details are load-bearing and easy to get wrong:
 - The **`hellofresh_s3`** path segment is required; without it the CDN answers 404.
 - The **transform segment controls size**. Untransformed, one hero JPEG is ~1.7 MB; at `w_640` it is ~73 KB, and ~20 KB for a grid thumbnail. A catalog grid without a transform downloads tens of megabytes.
 
-Note that these images do **not** appear in HAR exports of a normal browsing session — the browser serves them from cache — so the host cannot be confirmed from a capture alone. It was verified against the live site.
+Note that these images do **not** appear in the network log of a normal browsing session — the browser serves them from cache — so the host was verified against the live site directly.
+
+### Food profile (taste preferences)
+
+The meal-preselection preferences HelloFresh uses to auto-pick meals — taste tags, household size,
+cooking goals. Three endpoints under `profile-service`, all taking the same query params
+(`brand=BRAND_HELLOFRESH`, `exclusion=v2`, `regionCode=<CC>`); the write adds `source=food-profile`.
+
+| Purpose | Method | Path |
+| --- | --- | --- |
+| Current profile | `GET` | `/gw/profile-service/v2/customers/me/profile` |
+| Catalog of selectable options | `GET` | `/gw/profile-service/v2/profile/options` |
+| Save changes | `PATCH` | `/gw/profile-service/v2/customers/me/profile` |
+
+The options catalog is what makes the profile editable rather than read-only: the profile itself
+returns chosen option **ids**, and only the catalog maps those to display names. The `PATCH` is a
+partial update — only the sections supplied (`taste`, `household`, `goals`) are changed.
+
+Exposed as the `hellofresh.get_food_profile` and `hellofresh.set_food_profile` services, which back
+the [Food profile card](README.md#food-profile-card). The same `GET` doubles as the fallback source
+for [plan preference](#plan-preference).
 
 ### Food profile completion (`/gw/profile-service/v2/…/profile/completion`)
 
@@ -686,9 +730,11 @@ Note that these images do **not** appear in HAR exports of a normal browsing ses
 
 Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](README.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
 
+## Read Endpoints — Pricing
+
 ### Exact cart pricing
 
-HAR captures from the logged-in US site also showed a dedicated cart-pricing request for the subscribed week:
+The logged-in US site issues a dedicated cart-pricing request for the subscribed week:
 
 | Purpose | Method | Path | Params |
 | --- | --- | --- | --- |
@@ -700,9 +746,9 @@ Observed request shape:
 {
   "boxSize": 2,
   "isFirstOrder": false,
-  "customerID": 15259216,
+  "customerID": 7654321,
   "isRecurring": true,
-  "subscriptionID": 6959884,
+  "subscriptionID": 1234567,
   "planID": "<customerPlanId>",
   "products": [
     {
@@ -722,8 +768,8 @@ Observed request shape:
     }
   ],
   "shippingAddress": {
-    "address1": "62 Leonard St",
-    "postcode": "01930",
+    "address1": "1 Example Street",
+    "postcode": "02101",
     "region": "MA"
   },
   "locale": "en-US",
@@ -752,7 +798,7 @@ When the cart-price request above cannot be built or returns no recognizable tot
 | --- | --- | --- |
 | Lightweight box total | `POST` | `/gw/calculate` |
 
-HAR-confirmed request shape:
+Confirmed request shape:
 
 ```json
 {
@@ -760,9 +806,9 @@ HAR-confirmed request shape:
   "products": [{"handle": "US-CBU-3-2-0", "deliveryOption": "US-1-0800-2000"}],
   "skipOneOffCalculation": true,
   "isRecurring": true,
-  "subscriptionID": 6959884,
-  "customerID": 15259216,
-  "shippingAddress": {"postcode": "01930"},
+  "subscriptionID": 1234567,
+  "customerID": 7654321,
+  "shippingAddress": {"postcode": "02101"},
   "planID": "<customerPlanId>",
   "couponCode": null,
   "locale": "en-US",
@@ -770,7 +816,7 @@ HAR-confirmed request shape:
 }
 ```
 
-HAR-confirmed response shape (the total is the top-level `grandTotal`, which `_extract_total_price` reads first):
+Confirmed response shape (the total is the top-level `grandTotal`, which `_extract_total_price` reads first):
 
 ```json
 {
@@ -790,7 +836,7 @@ Responses are cached by request fingerprint like the cart-price endpoint. (Riche
 1. **Per-week fallback** (above): priced for a specific delivery week, overlaying `next_box_total_price`.
 2. **Plan-level recurring price**: called once per refresh for the primary subscription with **no week** (`_build_calculate_payload(subscription, week=None)`), drawing the product handle and delivery option from the subscription itself. This is the standing weekly plan price shown in plan settings; its `grandTotal` (shipping included) backs the **`selected_plan_total_price`** sensor (`HelloFreshAccountData.selected_plan_total_price` / `_currency`, populated by `_async_enrich_selected_plan_price`). Best-effort: an unbuildable payload or missing total leaves the sensor unavailable.
 
-If that endpoint cannot be built or does not return a recognizable payload, the client still probes older candidate menu endpoints before the structured-JSON and public-HTML menu fallbacks. These got **zero hits** in the US HAR (the live site uses `/gw/my-deliveries/menu`), so they are retained only as drift/other-region fallbacks and are tried last:
+If that endpoint cannot be built or does not return a recognizable payload, the client still probes older candidate menu endpoints before the structured-JSON and public-HTML menu fallbacks. These are never served on the US site (which uses `/gw/my-deliveries/menu`), so they are retained only as drift/other-region fallbacks and are tried last:
 
 | Priority | Method | Path | Params |
 | --- | --- | --- | --- |
@@ -867,15 +913,17 @@ The week's Market add-ons (extras: appetizers, breakfast, desserts, proteins, si
 }
 ```
 
-Key points (HAR-verified):
+Key points:
 
 - An add-on is **selected** when it has a `selection` object; unselected add-ons have `selection: null`. The chosen quantity is `oneOffQuantity + preselectedQuantity` — **not** `quantity` (which is the meals field). `preselectedQuantity` is the recurring portion (carried week to week); `oneOffQuantity` is the this-week addition.
 - `priceCatalog.basePrice` is the single-unit price in **cents**.
 - The `modularity` pseudo-group inside `addOns.groups` carries no orderable add-on entries (it backs the meal-variation system above) and is ignored when building the market catalog.
 
+## Read Endpoints — Menus
+
 ### Structured menu catalog (`/gw/menus-service/menus`)
 
-Before scraping HTML, the integration tries the structured-JSON menu catalog the live web app uses (HAR-confirmed):
+Before scraping HTML, the integration tries the structured-JSON menu catalog the live web app uses (confirmed against live traffic):
 
 | Purpose | Method | Path | Params |
 | --- | --- | --- | --- |
@@ -892,9 +940,9 @@ This endpoint is called for a **second, narrower** purpose: it is the only sourc
 
 — and the fallback path replaces a week's recipe list wholesale, so a week can only ever carry one set. To get both, `_async_apply_menu_availability` fetches this endpoint once per poll with `weeks=` narrowed to the weeks the customer can still change (`is_editable`: meal swaps allowed, not skipped, deadline open) and overlays **only** `isSoldOut`/`isHidden` onto the existing recipes, field by field. Delivered and past-cutoff weeks are skipped — the flag cannot change an outcome there — which in a typical account means one extra request covering a single week. A recipe absent from the catalog is left untouched rather than assumed sold out; the whole pass is best-effort and swallows transport and parse failures, since it is cosmetic enrichment on an already-complete menu.
 
-**Bandwidth caveat, measured.** Narrowing `weeks=` bounds the request *count*, not the response *size*: across the captures a single-week `weeks=2026-W38` response was **3.0–3.8 MB** (five samples, always >3 MB). So the sold-out overlay costs roughly 3–7 MB per poll for one or two editable weeks. At the default 180-minute interval that is ~25–55 MB/day — acceptable, but it is by far the largest single cost in a poll, and it buys only an advisory ribbon. Anyone on a metered connection should know the tradeoff; if this ever needs trimming, the lever is dropping the overlay rather than narrowing the query further, since the per-week floor is already >3 MB.
+**Bandwidth caveat, measured.** Narrowing `weeks=` bounds the request *count*, not the response *size*: a single-week `weeks=2026-W38` response measures **3.0–3.8 MB** (five samples, always >3 MB). So the sold-out overlay costs roughly 3–7 MB per poll for one or two editable weeks. At the default 180-minute interval that is ~25–55 MB/day — acceptable, but it is by far the largest single cost in a poll, and it buys only an advisory ribbon. Anyone on a metered connection should know the tradeoff; if this ever needs trimming, the lever is dropping the overlay rather than narrowing the query further, since the per-week floor is already >3 MB.
 
-For scale, the largest `/gw/` responses observed anywhere in the captures:
+For scale, the largest `/gw/` responses observed anywhere:
 
 | Endpoint | Largest observed |
 | --- | --- |
@@ -904,17 +952,33 @@ For scale, the largest `/gw/` responses observed anywhere in the captures:
 
 **Trust caveat:** this is the *anonymous regional* catalog. It has not been confirmed to track per-customer availability, so the flag is treated as advisory — `select_meals` logs a warning and submits anyway rather than blocking a selection HelloFresh might well accept.
 
-**`mealsReady`.** `/gw/my-deliveries/menu` gained a top-level `mealsReady` boolean between captures 26 and 38. It is `true` in all 14 observed responses, so what `false` signifies (menu not yet published for that week?) cannot be determined from the captures and nothing reads it. Noted here so a future reader knows it was seen and deliberately left alone rather than missed.
+**`mealsReady`.** `/gw/my-deliveries/menu` gained a top-level `mealsReady` boolean at some point. It is `true` in all 14 observed responses, so what `false` signifies (menu not yet published for that week?) cannot be determined from observed traffic, and nothing reads it. Noted here so a future reader knows it was seen and deliberately left alone rather than missed.
 
-### Public menu fallback
+### Public menu fallback (last resort)
 
-If the authenticated and structured-JSON menu sources are both unavailable and fallback is enabled:
+Used only when the authenticated and structured-JSON menu sources are both unavailable *and*
+fallback is enabled. It exposes no personal data — no selections, dates, or shipment info.
 
 | Purpose | Method | Path |
 | --- | --- | --- |
 | Fetch public menu HTML | `GET` | `/menus` |
 
-This is HTML, not JSON. Recipe names and visible menu labels are extracted from the page. Because it is a **top-level document load** rather than a CORS XHR, this request overrides the shared XHR headers with the navigation values a real browser sends for a page (`Accept: text/html,…`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: none`, `Sec-Fetch-User: ?1`, `Upgrade-Insecure-Requests: 1`) while keeping the same `User-Agent` and Client Hints.
+This is HTML, not JSON. Because it is a **top-level document load** rather than a CORS XHR, the
+request overrides the shared XHR headers with the navigation values a real browser sends for a page
+(`Accept: text/html,…`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`,
+`Sec-Fetch-Site: none`, `Sec-Fetch-User: ?1`, `Upgrade-Insecure-Requests: 1`) while keeping the
+same `User-Agent` and Client Hints.
+
+Parsing is intentionally shallow:
+
+- the first visible `<h1>` or `<title>` becomes the menu label
+- `h2`/`h3`/`h4` headings that look like recipe titles become recipe names, de-duplicated
+- each name is slugified into a synthetic `recipe_id`
+- menu labels are also matched from page text (`Menu for <date-range>`, `<Mon dd-dd>`,
+  `<Mon-Mon dd-dd>`)
+
+The result is a single `HelloFreshWeek` with `source = "public_menu"`, recipe names only, and no
+delivery metadata.
 
 ## Normalized Data Model
 
@@ -1161,7 +1225,7 @@ Recognized tracking keys:
 
 Market items are attached to each week (`HelloFreshWeek.market_items`) by a normalization pass that reads `addOns` from the week's payload or its merged `_menu_payload`, mirroring how `variation_title` is resolved.
 
-The US authenticated deliveries HAR also exposed snake_case tracking fields on delivered weeks:
+The US authenticated deliveries payload also exposes snake_case tracking fields on delivered weeks:
 
 | Normalized field | Additional source keys |
 | --- | --- |
@@ -1171,7 +1235,7 @@ The US authenticated deliveries HAR also exposed snake_case tracking fields on d
 
 Carrier names are not inferred from `tracking_link_type`. In practice, the most reliable carrier value comes from explicit carrier fields in the delivery payload or the SCM tracking response.
 
-> **What the delivery payload actually contains** (surveyed across every HAR capture: 59 non-null `tracking` nodes out of 409 weeks, the rest `null`). A non-null node has **exactly six** keys, and no more:
+> **What the delivery payload actually contains** (surveyed across observed traffic: 59 non-null `tracking` nodes out of 409 weeks, the rest `null`). A non-null node has **exactly six** keys, and no more:
 >
 > ```json
 > {
@@ -1186,14 +1250,15 @@ Carrier names are not inferred from `tracking_link_type`. In practice, the most 
 >
 > Consequences worth knowing:
 >
-> - **There is no carrier field here.** None of the `carrier` / `carrierName` / `deliveryPartner` / `provider` / `shippingProvider` names the extractor probes for has ever been observed in a delivery payload. `sensor.tracked_shipment_carrier` therefore populates **only** from the SCM response, which needs `tracking_link` present *and* the SCM call to succeed. Capture 41 confirms that path works end to end and does return a real carrier — see [SCM shipment tracking](#scm-shipment-tracking-carrier-detail).
+> - **There is no carrier field here.** None of the `carrier` / `carrierName` / `deliveryPartner` / `provider` / `shippingProvider` names the extractor probes for has ever been observed in a delivery payload. `sensor.tracked_shipment_carrier` therefore populates **only** from the SCM response, which needs `tracking_link` present *and* the SCM call to succeed. That path is confirmed to work end to end and does return a real carrier — see [SCM shipment tracking](#scm-shipment-tracking-carrier-detail).
 > - **`tracking_id` is always the empty string**; the usable identifier is `tracking_code`. Observed prefixes (`1Z…` UPS, `HF01…`, `DUS…`) are the only carrier hint the payload offers, and the integration deliberately does not guess from them.
 > - **`tracking` is null for ~86% of weeks**, including delivered ones — it is populated around the in-transit window and not retained. A week showing `DELIVERED` with no tracking data is normal, not a parse failure.
-> - `estimated_delivery_time` is **redundant with `delivery_date`**: across every capture the two are byte-identical in all 45 samples that carry both, so it is deliberately not surfaced as its own entity. `delivered_at` already reads this timestamp (preferring `delivery_date`, falling back to `estimated_delivery_time`) and is the actual carrier arrival time, distinct from the week's scheduled-noon `deliveryDate` anchor.
+> - `estimated_delivery_time` (on the **week's `tracking` node**) is **redundant with `delivery_date`**: the two are byte-identical in all **69** observed samples that carry both, and `estimated_delivery_time` never appears without `delivery_date`. It is therefore deliberately not surfaced as its own entity. `delivered_at` already reads this timestamp (preferring `delivery_date`, falling back to `estimated_delivery_time`) and is the actual carrier arrival time, distinct from the week's scheduled-noon `deliveryDate` anchor.
+>   **Do not confuse this with `est_delivery_time`** on the SCM tracking lookup's status entries — a different field from a different endpoint, which *is* surfaced as `sensor.tracked_shipment_estimate` (see [SCM shipment tracking](#scm-shipment-tracking-carrier-detail)).
 
 #### SCM shipment tracking (carrier detail)
 
-**HAR-verified (capture 41).** The only source of carrier information anywhere in the API.
+**Confirmed against live traffic.** The only source of carrier information anywhere in the API.
 
 | Purpose | Method | Path | Params |
 | --- | --- | --- | --- |
@@ -1207,33 +1272,47 @@ Response is `{"boxes": [...]}`; an observed box (trimmed):
 
 ```json
 {
-  "external_id": "H4234151270",
+  "external_id": "H0000000001",
   "tracking_id": "",
   "carrier": "VEHO",
   "delivery_date": "2026-08-17T12:00:00Z",
-  "tracking_code": "HF01000042767022",
+  "tracking_code": "HF01000000000000",
   "lane": "NJ_VEHO-SOMPA",
-  "public_url": "https://track.shipveho.com/#/trackingId/HF01000042767022",
-  "carrier_tracking_url": "https://track.shipveho.com/#/trackingId/HF01000042767022",
+  "public_url": "https://track.shipveho.com/#/trackingId/HF01000000000000",
+  "carrier_tracking_url": "https://track.shipveho.com/#/trackingId/HF01000000000000",
   "hf_tracking_url": "https://www.hellofresh.com/delivery-tracking/<uuid>",
   "internal_status": "delivered",
-  "last_status": { "status": "delivered", "datetime": "2026-08-17T22:53:06Z", … },
-  "statuses": [ … full history, newest first … ]
+  "last_status": {
+    "status": "delivered",
+    "datetime": "2026-08-17T22:53:06Z",
+    "est_delivery_time": "2026-08-17T00:00:00Z",
+    …
+  },
+  "statuses": [ … full history, newest first, each entry carrying est_delivery_time … ]
 }
 ```
 
 Notes that matter:
 
 - **`carrier` is present and real** (`"VEHO"`). This is what makes `sensor.tracked_shipment_carrier` viable; it is `None` whenever this lookup does not happen or does not resolve.
+- Four fields are consumed from each box: `carrier`, `tracking_code`, the status, and `est_delivery_time` — feeding `sensor.tracked_shipment_carrier`, `sensor.shipment_tracking_number`, `sensor.shipment_tracking_status`, and `sensor.tracked_shipment_estimate` respectively.
 - The **carrier's own** URL (`carrier_tracking_url` / `public_url`) is preferred over `hf_tracking_url`, so the tracking link points at the courier rather than HelloFresh's wrapper page.
 - `tracking_id` is `""` here too — the usable identifier is `tracking_code`.
 - **Status vocabulary** observed in one box's history: `pre_transit` (`label_created`) → `in_transit` (`received_at_origin_facility`) → `out_for_delivery` → `delivered`. `humanize_status` renders these as "Pre transit", "In transit", "Out for delivery", "Delivered" — which is exactly the value the README's "box on the way" automation triggers on.
-- `last_status` is the current state; `statuses` is the newest-first history. The integration reads `last_status`.
+- `last_status` is the current state; `statuses` is the newest-first history. The integration reads `last_status` for the status itself, and for the estimate falls back to the newest `statuses[]` entry carrying one — only `statuses` is guaranteed present.
+- **`est_delivery_time` is the carrier's own delivery estimate**, and is the source for `sensor.tracked_shipment_estimate`. Every entry in the observed history repeats the same value (`2026-08-17T00:00:00Z`). Note it is **midnight** — date precision — while the box's own `delivery_date` is the scheduled **noon** anchor (`2026-08-17T12:00:00Z`), so the two deliberately disagree by 12 hours on the same box. Do not confuse it with the week `tracking` node's `estimated_delivery_time`, which is redundant with `delivery_date` and is not surfaced.
 - Boxes are matched to orders by `delivery_date` (`_select_tracking_box_for_order`), so that field must parse — it is a full `Z`-suffixed timestamp, not a bare date.
 
-Only one carrier value (`VEHO`) has ever been observed across every capture, so `_CARRIER_LABELS` maps what is known (`UPS`, `FedEx`, `DoorDash`, `OnTrac`, `LaserShip`, `Veho`) and passes anything else through unchanged rather than guessing.
+The two similarly-named estimate fields, since confusing them is the easy mistake:
 
-Pinned by [tests/test_scm_tracking_har41.py](tests/test_scm_tracking_har41.py).
+| Field | Endpoint | Surfaced? |
+| --- | --- | --- |
+| `estimated_delivery_time` | week `tracking` node | **No** — byte-identical to `delivery_date` in all 69 samples |
+| `est_delivery_time` | SCM `statuses[]` / `last_status` | **Yes** — `sensor.tracked_shipment_estimate` |
+
+Only one carrier value (`VEHO`) has ever been observed, so `_CARRIER_LABELS` maps what is known (`UPS`, `FedEx`, `DoorDash`, `OnTrac`, `LaserShip`, `Veho`) and passes anything else through unchanged rather than guessing.
+
+Pinned by [tests/test_scm_tracking_har41.py](tests/test_scm_tracking_har41.py) and [tests/test_tracked_shipment_estimate.py](tests/test_tracked_shipment_estimate.py).
 
 
 Pricing notes:
@@ -1248,7 +1327,7 @@ Tracking enrichment:
 - delivered-week payloads may include a HelloFresh-hosted tracking page URL such as `tracking.tracking_link`
 - when the URL path matches `/delivery-tracking/{public_id}`, the integration can call:
   - `GET /gw/scm/tracking-ids/track/public-id/{public_id}?country=US&locale=en-US`
-  - request header seen in the HAR: `x-requested-by: shipping-and-tracking`
+  - request header: `x-requested-by: shipping-and-tracking`
 - the SCM response returns `boxes[]` entries with richer shipment details such as:
   - `tracking_code`
   - `carrier`
@@ -1385,35 +1464,23 @@ Sensitive values are stripped by `async_redact_data(diagnostics, TO_REDACT)`, wh
 - **Tracking:** `tracking_number`, `tracking_url`, `public_id` (the tracking id that reconstructs the unauthenticated tracking page).
 - **Billing:** `coupon_code` / `couponCode` (an active voucher a shared export could otherwise expose).
 
-The `debug_trace` params motivated several of these: PII like the user's postcode and the per-account `customerPlanId` ride along in the captured `/gw/my-deliveries/menu` query string even though they aren't fields on the serialized models, so they are redacted by key name (regression coverage in [tests/test_diagnostics.py](tests/test_diagnostics.py): `test_debug_trace_params_redact_pii_and_identifiers`, `test_new_identifier_keys_redacted`, `test_tokens_and_credentials_still_redacted`). Box codes that are **not** PII — `product-sku`, `delivery-option` — are intentionally left unredacted so endpoint behavior stays diagnosable.
+The `debug_trace` params motivated several of these: PII like the user's postcode and the per-account `customerPlanId` ride along in the `/gw/my-deliveries/menu` query string even though they aren't fields on the serialized models, so they are redacted by key name (regression coverage in [tests/test_diagnostics.py](tests/test_diagnostics.py): `test_debug_trace_params_redact_pii_and_identifiers`, `test_new_identifier_keys_redacted`, `test_tokens_and_credentials_still_redacted`). Box codes that are **not** PII — `product-sku`, `delivery-option` — are intentionally left unredacted so endpoint behavior stays diagnosable.
 
-**Key-name redaction can't reach an id baked into a path string** (e.g. `/gw/api/subscriptions/6959884/oneoff`), because the value is part of the string, not a dict key. So before a debug attempt is stored, `_record_debug_attempt` ([normalizers.py](custom_components/hellofresh/normalizers.py)) runs its `path` through `_template_debug_path`, which replaces known identifier segments (`/subscriptions/<id>`, `/plans/<id>`, `/customers/<uuid>/balance`, `/public-id/<uuid>`) with `{id}` placeholders. This is the single choke point every recorded attempt flows through, so it covers current and future call sites uniformly (regression coverage: `test_template_debug_path_strips_account_identifiers`, `test_record_debug_attempt_templates_path`).
-
-## Public Menu Scraping
-
-The public menu fallback is intentionally shallow:
-
-- fetches `<base_url>/menus`
-- reads the first visible `<h1>` or `<title>` as the main menu label
-- scans `h2`, `h3`, and `h4` headings for strings that look like recipe titles
-- de-duplicates recipe names
-- slugifies each public recipe name into a synthetic `recipe_id`
-
-Visible menu labels are also extracted from page text with regex patterns such as:
-
-- `Menu for <date-range>`
-- `<Mon dd-dd>`
-- `<Mon-Mon dd-dd>`
-
-The fallback returns a single `HelloFreshWeek` with:
-
-- `source = "public_menu"`
-- no delivery metadata
-- recipe names only
+**Key-name redaction can't reach an id baked into a path string** (e.g. `/gw/api/subscriptions/1234567/oneoff`), because the value is part of the string, not a dict key. So before a debug attempt is stored, `_record_debug_attempt` ([normalizers.py](custom_components/hellofresh/normalizers.py)) runs its `path` through `_template_debug_path`, which replaces known identifier segments (`/subscriptions/<id>`, `/plans/<id>`, `/customers/<uuid>/balance`, `/public-id/<uuid>`) with `{id}` placeholders. This is the single choke point every recorded attempt flows through, so it covers current and future call sites uniformly (regression coverage: `test_template_debug_path_strips_account_identifiers`, `test_record_debug_attempt_templates_path`).
 
 ## Mutation Endpoints
 
-Write operations are still conservative in the integration code, but HAR captures from the live US site do show one verified cart update endpoint family.
+Write operations are conservative in the integration code. The live US site uses one cart-update
+endpoint family (meals and Market add-ons share it), plus separate endpoints for delivery status,
+rescheduling, and plan changes — all documented below.
+
+Every write is exposed as a Home Assistant service, and each one discards its response body and
+lets the coordinator re-poll rather than merging the reply into state. Several of these endpoints
+return a stub or pre-change object, so adopting the response would corrupt what the UI shows until
+the next poll.
+
+`hellofresh.refresh_data` is the one service that calls no endpoint of its own — it forces an
+immediate coordinator poll, and is what the `button.<account>_refresh_data` entity triggers.
 
 ### Select meals
 
@@ -1434,7 +1501,7 @@ Payload variants:
 {"subscriptionId":"<subscription_id>","weekId":"<week_id>","selectedRecipeIds":["<recipe_id>"]}
 ```
 
-**HAR-verified** live site request for changing weekly selections (a later capture confirmed the exact request body and query params the integration sends — `{"extras":[],"meals":[{"index":N,"quantity":1},...]}` matched byte-for-byte):
+**Confirmed against live traffic** — the request body and query params the integration sends match the web app's byte for byte (`{"extras":[],"meals":[{"index":N,"quantity":1},...]}`):
 
 | Method | Path |
 | --- | --- |
@@ -1482,7 +1549,7 @@ A week's box is **not fixed to the base plan's meal count** — choosing more or
 HTTP 400 (MEAL_SIZE_MISMATCH: Product 'US-CBU-3-2-0' requires 3 meals but 4 meals were selected)
 ```
 
-Box SKUs encode the plan as `<PREFIX>-<MEALS>-<SERVINGS>-<N>` (e.g. `US-CBU-3-2-0` = **3 meals × 2 servings**). The web app resizes by swapping the **meal digit** to the number of **distinct meals** selected, leaving the servings digit alone — HAR-confirmed in both directions:
+Box SKUs encode the plan as `<PREFIX>-<MEALS>-<SERVINGS>-<N>` (e.g. `US-CBU-3-2-0` = **3 meals × 2 servings**). The web app resizes by swapping the **meal digit** to the number of **distinct meals** selected, leaving the servings digit alone — confirmed in both directions:
 
 | Selection on a 3-meal plan | `product-sku` sent | Observed box price |
 | --- | --- | --- |
@@ -1513,7 +1580,7 @@ Validation rules before sending:
 
 ### Select market items
 
-**HAR-verified** (single- and multi-item writes captured). Market add-ons (extras) are written through the **same** `PUT /gw/v1/carts/{week}` cart endpoint and query params as meals, but populate the `extras` array. The integration preserves the week's existing `meals` selection in the same request.
+**Confirmed against live traffic** (single- and multi-item writes). Market add-ons (extras) are written through the **same** `PUT /gw/v1/carts/{week}` cart endpoint and query params as meals, but populate the `extras` array. The integration preserves the week's existing `meals` selection in the same request.
 
 The `extras` array is **grouped by `groupType` + `sku`**, each group carrying a `selection` list of `{index, oneOffQuantity, preselectedQuantity, courses}`. Two selected items in different groups produce two separate entries:
 
@@ -1552,7 +1619,7 @@ Implementation notes:
 
 ### Skip / unskip week
 
-**HAR-verified, re-confirmed in capture 40.** HelloFresh models skip/unskip as setting a week's **delivery status**, not a dedicated `/skip` verb. Capture 40 contains both directions on the same week (`PAUSED` then `RUNNING`), each returning `201`, with the request body exactly as documented below — so this is confirmed against evidence still on disk, and pinned by [tests/test_write_contracts_har40.py](tests/test_write_contracts_har40.py).
+**Confirmed against live traffic.** HelloFresh models skip/unskip as setting a week's **delivery status**, not a dedicated `/skip` verb. Both directions on the same week (`PAUSED` then `RUNNING`) return `201`, with the request body exactly as documented below.
 
 | Action | Method | Path | Body `status` |
 | --- | --- | --- | --- |
@@ -1579,7 +1646,7 @@ Query params: `country=<CC>&locale=<locale>`. Both return `201`. Verified reques
 
 #### Legacy fallback paths
 
-If the verified PATCH can't be built (the week lacks both raw and normalized date fields) or is rejected, the client falls back to the older guessed endpoints below. These were never observed in a HAR and remain only as a safety net:
+If the verified PATCH can't be built (the week lacks both raw and normalized date fields) or is rejected, the client falls back to the older guessed endpoints below. These have never been observed in live traffic and remain only as a safety net:
 
 | Method(s) | Skip path | Unskip path |
 | --- | --- | --- |
@@ -1599,7 +1666,7 @@ If all candidates fail, the client raises `HelloFreshNotImplementedError` with a
 
 ### Reschedule a single week (one-off delivery change)
 
-**HAR-verified.** Moves one week's delivery to a different delivery option without changing the recurring schedule. Maps to the `oneOffChange` capability.
+**Confirmed against live traffic.** Moves one week's delivery to a different delivery option without changing the recurring schedule. Maps to the `oneOffChange` capability.
 
 | Method | Path | Params | Body |
 | --- | --- | --- | --- |
@@ -1607,26 +1674,93 @@ If all candidates fail, the client raises `HelloFreshNotImplementedError` with a
 
 `async_change_one_off_delivery(week_id, delivery_option)` gates on the week's `allowed_actions["oneOffChange"]` before sending. Exposed as the `hellofresh.reschedule_week` service.
 
-Confirmed in capture 40 (two successful reschedules of `2026-W39`, both `201`), which also settles two details worth stating explicitly:
+Two successful reschedules of `2026-W39` (both `201`) settle two details worth stating explicitly:
 
 - **`source` is load-bearing enough to keep.** The web app sends the literal `"reschedule-delivery-feature"`; it looks decorative but there is no evidence the endpoint tolerates its absence, so it is sent verbatim rather than trimmed.
 - **`delivery_option` is a `handle` from the week's own `availableOneOffOptions`**, e.g. `US-2-0800-2000` paired with `deliveryDate: "2026-09-22"`. The handle encodes country, weekday index and the 0800–2000 window; the integration passes handles through unaltered rather than constructing them.
 
 Pinned by [tests/test_write_contracts_har40.py](tests/test_write_contracts_har40.py).
 
-### Change recurring delivery weekday/interval
+### Change recurring delivery weekday
 
-**HAR-verified.** Changes the recurring delivery option and interval for a plan — affects **all** future deliveries. Maps to the `updateDeliveryWeekday` capability.
+Changes the standing delivery day for a subscription — affects **all** future deliveries, unlike
+the [one-off reschedule](#reschedule-a-single-week-one-off-delivery-change) which moves a single
+week. Maps to the `updateDeliveryWeekday` capability.
 
 | Method | Path | Params | Body |
 | --- | --- | --- | --- |
-| `POST` | `/gw/api/plans/{customerPlanId}/changePlanDeliveryDetails` | `country=<CC>` | `{"deliveryOption":"<handle>","deliveryInterval":<weeks>}` |
+| `PATCH` | `/gw/api/subscriptions/{subscriptionId}` | `country=<cc>`, `locale=<locale>` | `{"subscription": {"id": "<id>", "deliveryTime": "<handle>"}}` |
 
-`async_change_delivery_weekday(delivery_option, delivery_interval, subscription_id)` resolves `customerPlanId` from the subscription. Exposed as the `hellofresh.change_delivery_weekday` service.
+Returns `200` with the full subscription object. Three details matter:
+
+- **`country` is lowercase here** (`country=us`), unlike the plan endpoints below, which send
+  uppercase. Both forms are as observed; normalizing them to match would be untested.
+- **The response echoes the *pre-change* `deliveryTime`.** A `GET` a second later already reflects
+  the new value, so the write commits immediately and only the response body is stale. The client
+  discards it and lets the coordinator re-poll; adopting it would revert the weekday in the UI.
+- **No `deliveryInterval` is sent.** The request carries only the delivery-option handle, so a
+  non-default interval cannot be honoured on this path and is warned about rather than dropped
+  silently.
+
+The handle comes from `/gw/api/delivery_dates_options` (`US-{weekday}-{from}-{to}`, weekday
+`1` = Monday) and is passed through unaltered.
+
+`async_change_delivery_weekday(delivery_option, delivery_interval, subscription_id)`, exposed as
+the `hellofresh.change_delivery_weekday` service.
+
+> **Legacy fallback, not observed in live traffic:**
+> `POST /gw/api/plans/{customerPlanId}/changePlanDeliveryDetails` with
+> `{"deliveryOption":"<handle>","deliveryInterval":<weeks>}`. The integration originally used this
+> inferred endpoint as its primary path; the live web app does not call it. It is retained as a
+> fallback only — nothing proves it dead — and is the one path that can carry an interval. An
+> explicit `HelloFreshNotImplementedError` from the PATCH is **not** retried against it, since that
+> error means the account lacks the capability entirely.
+
+### Change plan (box size)
+
+Changes the recurring box — meals per week × servings. This is **billing-affecting** and distinct
+from the per-week box resize the cart write performs via the SKU's meal digit
+(see [Select meals](#select-meals)).
+
+**Read the switchable catalog**
+
+| Method | Path | Params |
+| --- | --- | --- |
+| `GET` | `/gw/api/subscriptions/{subscriptionId}/product_options` | `country=<CC>`, `locale=<locale>` |
+
+Returns one entry per product family; each `products[]` item is a switchable box:
+
+```json
+{"handle": "US-CBU-3-2-0", "name": "Classic - 3 meals per week for 2 people",
+ "specs": {"meals": 3, "size": 2, "recurrency": 0}, "price": 6594}
+```
+
+`price` is integer **cents** ($65.94) for the whole box, not per serving. The catalog is
+**per-subscription and varies** — one account has been seen offering meal counts 2–6 at one time
+and 1–12 at another — so no upper bound on box size is hardcoded anywhere in the integration.
+
+Note this is the same path that once served `unifiedPreferences`; it now serves the catalog, which
+the plan-preference resolver already accounts for.
+
+**Change the box**
+
+| Method | Path | Params | Body |
+| --- | --- | --- | --- |
+| `PATCH` | `/gw/api/plans/{customerPlanId}` | `country=<CC>`, `locale=<locale>` | `{"productHandle": "<sku>"}` |
+
+Returns **`204 No Content`** — there is no body to merge into state; the subscription's
+`product.sku` reflects the change on the next read. `country` is **uppercase** here, unlike the
+weekday PATCH above.
+
+The web app's "change plan" screen submits this alongside the weekday PATCH, but the two are
+independent requests and either works alone.
+
+`async_list_plan_options(subscription_id)` and `async_change_plan(product_handle, subscription_id)`,
+exposed as the `hellofresh.get_plan_options` and `hellofresh.change_plan` services.
 
 ### Update delivery address — not implemented
 
-The web app updates the shipping address via `PATCH /gw/api/addresses/{addressId}` (HAR-verified request), **but** the full address object — 20+ fields including numeric `country`/`region` codes (e.g. `"country":"231","region":"17"`) — is only present in that PATCH's own response. There is **no GET** that returns the current address object, and the delivery/subscription payloads don't carry it, so the integration cannot safely fetch-modify-resend it. Because a wrong write here changes a real shipping destination, this action is intentionally **left unimplemented** pending a read endpoint that exposes the address object.
+The web app updates the shipping address via `PATCH /gw/api/addresses/{addressId}`, **but** the full address object — 20+ fields including numeric `country`/`region` codes (e.g. `"country":"231","region":"17"`) — is only present in that PATCH's own response. There is **no GET** that returns the current address object, and the delivery/subscription payloads don't carry it, so the integration cannot safely fetch-modify-resend it. Because a wrong write here changes a real shipping destination, this action is intentionally **left unimplemented** pending a read endpoint that exposes the address object.
 
 ## Error Handling
 
@@ -1698,6 +1832,74 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 - `serialized_past_delivery_weeks`
 - `serialized_subscriptions`
 
+## Endpoints not implemented
+
+The site calls **95 distinct `/gw` paths**; the integration implements roughly a third of them.
+Everything it does call is documented above. This section covers what it deliberately does not,
+and why — so the same questions don't get re-investigated.
+
+### Rewards / loyalty — no API exists yet
+
+HelloFresh is preparing a Rewards program, but there is **nothing to call**. The `/achievements`
+page issues no authenticated requests at all: it renders entirely from static configuration and
+translations, and exposes no `/gw/` loyalty path. `GET /gw/configurations` carries the decisive
+flag:
+
+```json
+"features": {"loyaltyProgram": {"enabled": false}, "showLoyaltyBetaAwareness": {"enabled": true}}
+```
+
+The program's shape is nonetheless visible in that config, and **two mutually inconsistent tier
+ladders ship side by side**:
+
+| Scheme | Thresholds (boxes) |
+| --- | --- |
+| `loyalty.levels` (current) | Apprentice 3, Sous Chef 10, Master Chef 20 |
+| `features.loyaltyBadges` (unreleased) | newbie 0, freshie 2, foodie 5, junior-cook 10, head-cook 25, master-cook 50 |
+
+Both key off box count, so either could be derived from `sensor.boxes_received` — but they disagree
+on thresholds *and* names, so an account with 30 boxes is "Master Chef" under one and "head-cook"
+under the other. **No tier sensor is exposed**: shipping one means picking a scheme HelloFresh has
+not committed to. When `loyaltyProgram.enabled` flips to `true`, the thresholds can be read at
+runtime from `/gw/configurations` rather than hardcoded.
+
+Also present in that config: `features.loyaltyChallenge` (12-week challenges,
+`loyaltyChallengeApiV2.enabled = true`) and claim-flow UI copy — the strongest hint that a real API
+will appear at launch.
+
+### Account-identity writes — intentionally excluded
+
+| Endpoint | Why not |
+| --- | --- |
+| `PATCH /gw/api/addresses/{addressId}` | Changes a real shipping destination. The full address object — 20+ fields including numeric `country`/`region` codes (e.g. `"country":"231","region":"17"`) — is only ever returned by this PATCH's *own* response. There is **no GET** exposing it, so a fetch-modify-resend cannot be done safely. |
+| `PATCH /gw/api/customers/{customerId}` | Name, email, birthday. No automation value; a wrong write is account-level. |
+| `POST /gw/payments/us/change` | Billing address and payment-token data. |
+
+These are excluded on judgement, not capability — each has a knowable request shape. The blast
+radius of a misfiring automation is not justified by the benefit.
+
+### Read endpoints with no Home Assistant analogue
+
+- **Complaint eligibility** — `GET /gw/customer-complaints/users/me/eligibility` returns
+  `{"is_eligible": true, "is_logistics_eligible": false}`. Gates a support-request flow the
+  integration does not implement.
+- **Wallet / benefit distribution** — `POST /gw/customer-wallet/v2/benefit-distribution` returns
+  per-week `promiseId` + `status` entries. This is the free-box/credit promise machinery; its
+  user-visible outcome (account credit) is already `sensor.account_credit`.
+- Onboarding, referrals, checkout, cancellation, experimentation, and storefront-screen endpoints
+  are site-UI concerns with no HA equivalent.
+
+### Legacy candidate paths — likely removable
+
+`/gw/my-menu`, `/gw/my-menu/weeks`, `/gw/my-deliveries/deliveries`,
+`/gw/my-deliveries/upcoming-deliveries`, and
+`/gw/api/customers/me/subscriptions/{id}/weeks/{id}/{selection,skip}` are probed as candidates but
+never observed in live traffic, while the endpoints that *are* served
+(`/gw/my-deliveries/menu`, `/gw/my-deliveries/past-deliveries`, `/gw/api/customers/me/deliveries`)
+already win the preference ordering. They cost one failed round-trip on the first poll before
+`_preferred_endpoints` learns the winner. Whether to drop them is a judgement call about older
+accounts and other regions, not a question about the current API.
+
 ## Practical Caveats
 
 - The read surface is more trustworthy than the write surface.
@@ -1705,192 +1907,6 @@ For diagnostics and entity attributes, the account aggregate also serializes:
 - **Past-week selection comes from `past-deliveries`, not the menu.** A past week's menu still carries auto-fill picks; only the `past-deliveries` `meals[]` reflect what actually shipped. Paused weeks shipped nothing and must show no selection. See [Selection-state resolution](#selection-state-resolution).
 - Public menu scraping does not expose personal selections, dates, or shipment data.
 - Because the API is reverse-engineered, adding new regions or supporting future payload drift will likely require updating the key fallback lists in [client.py](custom_components/hellofresh/client.py) / [normalizers.py](custom_components/hellofresh/normalizers.py) and the region map in [const.py](custom_components/hellofresh/const.py).
-
-## Evidence Gaps — what a new HAR capture would settle
-
-Audited against every capture currently on disk (`www.hellofresh.com.26` … `.43`). These are the
-endpoints the integration calls that **no retained capture exercises**, ranked by what a capture
-would actually buy. Each entry names the exact UI action needed, since the value is entirely in
-performing the right action while recording.
-
-### Closed by captures 40 and 41
-
-- **Skip / unskip a week** — ✅ re-confirmed. Both directions on `2026-W39`, each `201`, body exactly as documented in [Skip / unskip week](#skip--unskip-week). Now pinned by tests.
-- **SCM shipment tracking** — ✅ confirmed by capture 41. The endpoint is live, returns `{boxes: [...]}`, and a box carries a real `carrier` (`VEHO`) plus a full status history. `sensor.tracked_shipment_carrier` is viable after all. See [SCM shipment tracking](#scm-shipment-tracking-carrier-detail).
-- **Reschedule a week (one-off)** — ✅ confirmed for the first time. Two successful `POST …/oneoff` calls; the request the integration builds matches the capture field for field, including the `source` literal. See [Reschedule a single week](#reschedule-a-single-week-one-off-delivery-change).
-
-Capture 40 also showed **zero response-shape drift** against captures 34–39 across every shared endpoint, and revealed that both write endpoints return a **stub week** that must not be adopted (documented above).
-
-### Still open
-
-**None.** Every endpoint the integration calls is now backed by observed traffic. Capture 42 closed
-the last gap — see below.
-
-### New in capture 43 — plan (box size) change
-
-Capture 43 records the web app's "change plan" screen and exposed two endpoints the integration
-did not implement. Both are now wired to services (`hellofresh.get_plan_options`,
-`hellofresh.change_plan`).
-
-**Read the catalog**
-
-```http
-GET /gw/api/subscriptions/{subscriptionId}/product_options?country=US&locale=en-US
-```
-
-Returns one entry per product family; each `products[]` item is a switchable box:
-
-```json
-{"handle": "US-CBU-3-2-0", "name": "Classic - 3 meals per week for 2 people",
- "specs": {"meals": 3, "size": 2, "recurrency": 0}, "price": 6594}
-```
-
-`price` is integer **cents** ($65.94) for the whole box. 20 options were returned (2–6 meals ×
-2/3/4/6 servings). Note this is the same path that once served `unifiedPreferences`; it now serves
-the catalog, which the plan-preference resolver already accounts for.
-
-**Change the box**
-
-```http
-PATCH /gw/api/plans/{planId}?country=US&locale=en-US
-{"productHandle": "US-CBU-3-3-0"}
-→ 204 No Content
-```
-
-Verified: the capture switches 3-meals/2-people → 3-meals/3-people and back, and the
-`GET /gw/api/customers/me/subscriptions` immediately after shows `product.sku` updated. This is a
-**recurring, billing-affecting** change — distinct from the per-week box resize the cart write
-performs via the SKU's meal digit.
-
-| Detail | Observed |
-| --- | --- |
-| `country` param | Uppercase `US` — the weekday PATCH on `/gw/api/subscriptions/{id}` sends lowercase `us` |
-| Response | `204 No Content` — nothing to merge into state |
-| Pairing | The UI submits this alongside the weekday PATCH, but they are independent requests |
-
-Capture 43 also **re-confirms the capture-42 weekday change** independently (same envelope, same
-lowercase `country=us`), and shows **zero response-shape drift** against capture 40 across
-subscriptions, deliveries, menus, and profile.
-
-Two further endpoints appear that the integration deliberately does not implement:
-`PATCH /gw/api/addresses/{id}` (delivery address) and `PATCH /gw/api/customers/{id}` (name, email,
-birthday). Both are account-identity writes with no automation value and real blast radius.
-
-### Closed by capture 42
-
-- **Change recurring delivery weekday** — ✅ confirmed, and the previous implementation was
-  **wrong endpoint**. The integration inferred
-  `POST /gw/api/plans/{planId}/changePlanDeliveryDetails`; the live web app instead sends:
-
-  ```http
-  PATCH /gw/api/subscriptions/{subscriptionId}?country=us&locale=en-US
-  {"subscription": {"id": "6959884", "deliveryTime": "US-2-0800-2000"}}
-  ```
-
-  Capture 42 performs the change twice (Tuesday → Monday and back), both `200`. Notes:
-
-  | Detail | Observed |
-  | --- | --- |
-  | `country` param | Lowercase `us` — unlike every other endpoint, which sends uppercase |
-  | `deliveryInterval` | **Not sent.** The request carries only the `deliveryTime` handle |
-  | Response body | Echoes the **pre-change** `deliveryTime`; a `GET` 1s later shows the new value |
-  | Handle source | `/gw/api/delivery_dates_options` (`US-{weekday}-{from}-{to}`, weekday 1=Mon) |
-
-  The stale response is why the client discards the body and lets the coordinator re-poll: adopting
-  it would revert the weekday in the UI until the next refresh. The legacy plans endpoint is kept
-  as a fallback only — no capture proves it dead, but none exercises it either.
-
-### Seen but not implemented — what a capture would need to settle
-
-Across all 16 captures the site calls **95 distinct `/gw` paths**; the integration implements ~31.
-Of the 64 it does not call, **29 have no response body captured anywhere** (the browser recorded
-the request but not the payload), so they cannot be implemented without a targeted capture. The
-rest are visible but out of scope. Ranked by what they would actually buy:
-
-**0. Rewards / loyalty — confirmed NOT shippable yet (capture 44).** A capture of the
-`/achievements` page made **zero authenticated requests** — 52 requests to `hellofresh.com`, none
-carrying an `Authorization` header, despite the page holding a valid `serverAuth` token. There is
-no loyalty API to call: the page is rendered entirely from static config and translations, and no
-`/gw/` loyalty path appears anywhere in its 760 KB Next.js payload. The decisive flag is in
-`/gw/configurations`:
-
-```json
-"features": {"loyaltyProgram": {"enabled": false}, "showLoyaltyBetaAwareness": {"enabled": true}}
-```
-
-The unreleased program's shape is nonetheless fully visible, and it **contradicts the older ladder
-documented below** — two mutually inconsistent schemes ship in the same config blob:
-
-| Scheme | Thresholds (boxes) |
-| --- | --- |
-| `loyalty.levels` (old, live) | Apprentice 3, Sous Chef 10, Master Chef 20 |
-| `features.loyaltyBadges` (new, dark) | newbie 0, freshie 2, foodie 5, junior-cook 10, head-cook 25, master-cook 50 |
-
-Both key off box count, so both would read from `sensor.boxes_received`, but they disagree on
-thresholds *and* names — an account with 30 boxes is "Master Chef" under one and "head-cook" under
-the other. Also present: `features.loyaltyChallenge` (12-week challenges, experiment handles
-`loyalty_challenge_v2_us` / `v2_3_us`, `loyaltyChallengeApiV2.enabled = true`) and UI copy for
-claimable rewards ("Claim", "Activated", "One more box to get your final reward").
-
-**Do not implement a tier sensor from this.** Shipping either ladder means picking a scheme
-HelloFresh has not committed to, and the flag says the new one is off. The useful takeaway is that
-`GET /gw/configurations` — which the integration does not currently call — is where the thresholds
-live, so whenever the program launches, the correct ladder can be read at runtime rather than
-hardcoded. Re-capture `/achievements` once `loyaltyProgram.enabled` flips to `true`; that is when
-a real API should appear.
-
-**1. Loyalty tier (older `loyalty.levels` scheme) — superseded by the above.**
-`GET /gw/loyalty/enrollments` returns per-challenge progress (`progress`, `total_steps`, `state`,
-`challenge_name`), and `GET /gw/configurations` carries the tier thresholds:
-
-```json
-"loyalty": {"levels": {"Apprentice": 3, "Sous Chef": 10, "Master Chef": 20}}
-```
-
-Two findings make this less useful than it looks. The `loyalty` block already rides along in
-`/gw/api/customers/me/subscriptions` — which the integration **already fetches** — but its `label`
-is **empty in all 7 captures that contain it**, while `value` is populated and rises over time
-(340 → 345). And that `value` is simply `boxesReceived` from `/gw/api/customers/me/info`, which is
-already exposed as `sensor.boxes_received`. So the tier is derivable from data on hand
-(345 boxes ≥ 20 → "Master Chef", matching the one captured label), but that derivation rests on
-**a single account at the top tier**. A capture from an account below 20 boxes would confirm the
-threshold semantics (are they box counts or points? is the boundary inclusive?) before shipping a
-tier sensor on an inferred rule.
-
-**2. Complaint eligibility.** `GET /gw/customer-complaints/users/me/eligibility` →
-`{"is_eligible": true, "is_logistics_eligible": false}`. A clean, tiny payload, but it gates a
-support-request flow the integration does not implement and would not act on.
-
-**3. Wallet / benefit distribution.** `POST /gw/customer-wallet/v2/benefit-distribution` returns
-per-week `promiseId` + `status` (`available`) entries. This is the free-box/credit promise
-machinery. The user-visible outcome — account credit — is already surfaced as
-`sensor.account_credit`, so this adds internal bookkeeping rather than new information.
-
-**Deliberately out of scope** (captured, understood, not implemented): `PATCH /gw/api/addresses/{id}`
-and `PATCH /gw/api/customers/{id}` are account-identity writes; `POST /gw/payments/us/change`
-carries billing-address and payment-token data. These change money or identity and have no
-automation value that justifies the blast radius. Onboarding, referrals, checkout, cancellation,
-experimentation, and storefront-screen endpoints are all site-UI concerns with no HA analogue.
-
-### Low value — legacy candidates, likely deletable
-
-4. `/gw/my-menu`, `/gw/my-menu/weeks`, `/gw/my-deliveries/deliveries`,
-   `/gw/my-deliveries/upcoming-deliveries`, and
-   `/gw/api/customers/me/subscriptions/{id}/weeks/{id}/{selection,skip}` are all probed as
-   candidates but appear in no capture, while the endpoints that *do* appear
-   (`/gw/my-deliveries/menu`, `/gw/my-deliveries/past-deliveries`,
-   `/gw/api/customers/me/deliveries`) already win the preference ordering. They cost a failed
-   round-trip on first poll before `_preferred_endpoints` learns the winner.
-   *No capture needed* — a normal browsing capture that never touches them is itself weak evidence
-   they are dead. Removing them is a judgement call about older accounts/regions, not a data gap.
-
-### Not a gap
-
-The captures give good coverage of everything else: auth (`/gw/login`, `/gw/refresh`), the menu and
-history reads, cart price and cart write (`PUT /gw/v1/carts/{week}`), cookbook add/search/delete,
-the profile `PATCH`, plans/presets, balance, and the public catalog's Next.js data URLs. A shape
-diff across all 70 observed `/gw/` paths from the oldest capture to the newest found **two additive
-fields and zero removals**, so re-capturing already-covered endpoints has low marginal value.
 
 ## Related Files
 

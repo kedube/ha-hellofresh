@@ -5,7 +5,53 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **New sensor: `sensor.tracked_shipment_date`** — when the most recent box **actually arrived**,
+  as a `TIMESTAMP` entity. Sourced from the delivered week's carrier handover timestamp
+  (`tracking.delivery_date`), which the integration already parsed into `HelloFreshWeek.delivered_at`
+  but had never exposed as an entity.
+- Note this is a third, distinct delivery time — the area has three similarly-named values, and they
+  disagree on purpose: `last_delivery_date` is the **scheduled** day (a noon anchor),
+  `tracked_shipment_estimate` is the carrier's **estimate**, and the new sensor is the **actual**
+  arrival. A box handed over at 22:53 ET is already the next day in UTC.
+- Gated on delivery: before a box arrives the same field holds a scheduled placeholder, so the
+  sensor stays unknown rather than claiming an arrival that has not happened. It never falls back to
+  the scheduled date, which would misreport a booking as a delivery.
+- **New sensor: `sensor.tracked_shipment_estimate`** — the carrier's own estimated delivery time
+  for the box currently in transit, as a `TIMESTAMP` entity.
+- Worth knowing which field this is: the `estimated_delivery_time` on the week's `tracking` node is
+  **not** usable — re-measured across all 17 captures, it is byte-identical to `delivery_date` in
+  all **69** samples carrying both, and never appears without it. The sensor instead reads
+  `est_delivery_time` from the SCM tracking lookup's status history, which is a different field
+  from a different endpoint and carries a genuinely independent value.
+- The estimate is **date precision**: the carrier reports midnight of the estimated day, where
+  HelloFresh's `delivery_date` is a scheduled noon anchor — `2026-08-17T00:00:00Z` vs
+  `2026-08-17T12:00:00Z` on the same box. So it answers "which day does the carrier now think this
+  arrives?", not "which day was it booked for". Values are tz-aware, as `TIMESTAMP` requires.
+- Absent estimates read as unknown rather than silently falling back to the scheduled date, and a
+  later poll whose box omits the field does not clear an already-resolved value.
+
 ## 2.68 — 2026-08-18
+- **Reworked the documentation.** `HELLOFRESH_API.md` read like an investigation log rather than a
+  reference: a 635-line "Endpoint Matrix" held 20 unrelated subsections, and an "Evidence Gaps"
+  section was organized around which HAR capture revealed what. Read endpoints are now split into
+  four purpose-based sections (account/deliveries, catalogs/recipes, pricing, menus), the
+  capture-organized material is reorganized as "Endpoints not implemented" (grouped by *why*), and a
+  Contents table was added.
+- Removed all real account data from `HELLOFRESH_API.md` — address, postcode, customer and
+  subscription IDs, order number, and tracking codes are now consistent fake values. Removed all
+  HAR/capture references, keeping the verified-vs-inferred distinction they carried.
+- Corrected the API reference's weekday-change section, which still documented the superseded
+  `POST …/changePlanDeliveryDetails` as the primary endpoint and marked it "HAR-verified"; added
+  sections for the plan-change and food-profile endpoints, which backed shipped services but were
+  undocumented.
+- Tightened `README.md`: rewrote "Current Scope" from 21 bullets of implementation narrative into
+  four short paragraphs plus a **Known limitations** list, documented the two previously missing
+  services (`get_plan_options`, `change_plan`), fixed a stale card-version example, and removed
+  implementation trivia from the user-facing card sections.
+- Reordered the README's card sections to match the dashboard's actual render order (Recipes sits
+  between Market and Food Profile, not last), along with the three other places that listed cards in
+  sequence — including `dashboard/hellofresh.yaml`'s own header comment.
 - **Audited every implemented write path against the captures; fixed three real defects.**
 - `change_delivery_weekday` **swallowed `HelloFreshNotImplementedError`**. That type subclasses
   `HelloFreshError`, so the broad `except` driving the legacy fallback caught it — meaning when

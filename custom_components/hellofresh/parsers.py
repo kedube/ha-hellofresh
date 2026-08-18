@@ -607,6 +607,19 @@ def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, str | None]:
         return None
 
     tracking_url = pick(box, "carrier_tracking_url", "public_url") or pick(box, "hf_tracking_url")
+    # The carrier's own delivery estimate. It lives on each status entry rather than on the box,
+    # so read the most recent status first and fall back to the newest entry that carries one --
+    # in the capture every entry repeats the same value, but only ``statuses`` is guaranteed
+    # ordered, so a box whose ``last_status`` omits it still resolves.
+    estimated_delivery = pick(last_status, "est_delivery_time")
+    if estimated_delivery is None:
+        statuses = box.get("statuses")
+        if isinstance(statuses, list):
+            for entry in statuses:
+                if isinstance(entry, dict):
+                    estimated_delivery = pick(entry, "est_delivery_time")
+                    if estimated_delivery is not None:
+                        break
     return {
         "tracking_url": tracking_url,
         "tracking_number": pick(box, "tracking_code", "tracking_id"),
@@ -614,4 +627,5 @@ def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, str | None]:
             pick(last_status, "status", "internal_status") or pick(box, "status", "internal_status")
         ),
         "carrier": normalize_carrier_name(pick(box, "carrier")),
+        "estimated_delivery": estimated_delivery,
     }
