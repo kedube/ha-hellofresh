@@ -1724,8 +1724,20 @@ Capture 40 also showed **zero response-shape drift** against captures 34–39 ac
 ### Still open
 
 1. **Change recurring delivery weekday.** `POST /gw/api/plans/{id}/changePlanDeliveryDetails`.
-   Drives `hellofresh.change_delivery_weekday` and still appears in no capture, so its payload
-   shape is inferred. Captures 40/41 covered the *one-off* reschedule but not the recurring change.
+   Drives `hellofresh.change_delivery_weekday`. Re-checked against **all 15 retained captures**
+   (`.26` … `.41`): the endpoint appears in none of them, and the only observed `/gw/api/plans`
+   traffic is the `GET` reads (`/gw/api/plans?includeCanceled=false` and
+   `/gw/api/plans/{id}`). Captures 40/41 covered the *one-off* reschedule but not the recurring
+   change, so this is now the **only** unverified write path in the integration.
+
+   The inference is well grounded but not complete:
+
+   | Element | Status |
+   | --- | --- |
+   | `customerPlanId` → path id | ✅ Confirmed — the value in the subscription payload is byte-identical to the id used by the observed `GET /gw/api/plans/{id}` |
+   | `deliveryOption`, `deliveryInterval` body keys | ✅ Attested — both are HelloFresh's own field names, appearing throughout the plan/subscription read payloads in all 15 captures |
+   | Query params | ❓ **Unknown** — the integration sends `country` only. The sibling `/gw/api/subscriptions/*` writes send `country` **and** `locale`; the `/gw/api/plans` reads send **neither**. The current choice matches no observed request, and is the first thing to change if this call 400s. |
+
    *To capture:* change the plan's standing delivery day (not a single week's).
 
 ### Low value — legacy candidates, likely deletable
