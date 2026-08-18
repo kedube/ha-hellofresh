@@ -2124,6 +2124,123 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "HelloFresh week %s rescheduled to delivery option %s", week_id, delivery_option
         )
 
+    async def async_list_plan_options(
+        self,
+        subscription_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the box sizes this subscription can switch to.
+
+        HAR-verified (capture 43): ``GET /gw/api/subscriptions/{id}/product_options``. The
+        response nests one entry per product family, each with a ``products`` list whose handles
+        are the plan SKUs (``US-CBU-<meals>-<servings>-0``) accepted by
+        :meth:`async_change_plan`.
+
+        Note this endpoint used to serve ``unifiedPreferences`` and no longer does -- see
+        ``_async_resolve_plan_preference``, which dropped it for that purpose. It now serves the
+        product catalog, which is what this reads.
+
+        Prices are integer **cents** (``6594`` = $65.94) and are the full box price, not
+        per-serving.
+        """
+        subscription = await self._async_resolve_subscription(subscription_id)
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+        }
+        response = await self._async_api_get(
+            f"/gw/api/subscriptions/{subscription.subscription_id}/product_options",
+            params=params,
+        )
+        payload = await self._async_response_json(response)
+
+        options: list[dict[str, Any]] = []
+        for family in payload.get("items") or []:
+            if not isinstance(family, dict):
+                continue
+            family_handle = family.get("handle")
+            family_name = family.get("name")
+            for product in family.get("products") or []:
+                if not isinstance(product, dict):
+                    continue
+                handle = product.get("handle")
+                if not handle:
+                    continue
+                specs = product.get("specs") or {}
+                price_cents = product.get("price")
+                options.append(
+                    {
+                        "handle": handle,
+                        "name": product.get("name") or product.get("productName"),
+                        "family_handle": family_handle,
+                        "family_name": family_name,
+                        "meals": specs.get("meals"),
+                        "servings": specs.get("size"),
+                        "price_cents": price_cents,
+                        "price": (
+                            round(price_cents / 100, 2)
+                            if isinstance(price_cents, (int, float))
+                            else None
+                        ),
+                    }
+                )
+        # Smallest box first reads far better than the API's own ordering, which starts at the
+        # largest and is not monotonic.
+        options.sort(
+            key=lambda option: (
+                option["meals"] if isinstance(option["meals"], int) else 99,
+                option["servings"] if isinstance(option["servings"], int) else 99,
+            )
+        )
+        return options
+
+    async def async_change_plan(
+        self,
+        product_handle: str,
+        subscription_id: str | None = None,
+    ) -> None:
+        """Change the subscription's recurring box size (meals per week × servings).
+
+        HAR-verified (capture 43): ``PATCH /gw/api/plans/{planId}`` with body
+        ``{"productHandle": "US-CBU-3-2-0"}``, returning **204 No Content**.
+
+        This is a **recurring** change affecting all future boxes, and it changes what you are
+        billed. It is distinct from the per-week box resize in ``_sku_for_meal_count``, which only
+        rewrites the SKU on a single week's cart write to match that week's meal count.
+
+        The capture pairs this with the delivery-weekday PATCH (the web app's "change plan" screen
+        submits both), but the two are independent requests and either works alone.
+
+        Note the query params here are **uppercase** ``country=US``, unlike the weekday PATCH on
+        ``/gw/api/subscriptions/{id}`` which sends lowercase ``country=us``. Both are as captured.
+        """
+        if not product_handle or not product_handle.strip():
+            raise HelloFreshError("A product_handle is required to change the plan")
+
+        handle = product_handle.strip()
+        subscription = await self._async_resolve_subscription(subscription_id)
+        plan_id = subscription.raw.get("customerPlanId")
+        if not plan_id:
+            raise HelloFreshNotImplementedError(
+                "The subscription does not expose a customerPlanId, so its plan cannot be changed."
+            )
+
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+        }
+        # 204 No Content: there is no body to read, and nothing to merge into state.
+        await self._async_api_request(
+            "PATCH",
+            f"/gw/api/plans/{plan_id}",
+            params=params,
+            json_payload={"productHandle": handle},
+        )
+        _LOGGER.info(
+            "HelloFresh plan %s changed to product %s",
+            plan_id,
+            handle,
+        )
+
     async def async_change_delivery_weekday(
         self,
         delivery_option: str,
@@ -2132,25 +2249,84 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     ) -> None:
         """Change the recurring delivery option/interval for a subscription's plan.
 
-        ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails`` with body
-        ``{"deliveryOption", "deliveryInterval"}``. This affects **all** future deliveries
-        for the plan, not a single week.
+        HAR-verified (capture 42): ``PATCH /gw/api/subscriptions/{subscriptionId}`` with body
+        ``{"subscription": {"id", "deliveryTime"}}``. This affects **all** future deliveries for
+        the subscription, not a single week.
 
-        **Not HAR-verified.** This is the one write path no capture exercises (checked against
-        all 15 retained captures: the only observed ``/gw/api/plans`` traffic is the ``GET``
-        reads). The shape is *inferred*, though on solid ground: ``deliveryOption`` and
-        ``deliveryInterval`` are the field names HelloFresh itself uses in the plan/subscription
-        read payloads, and ``customerPlanId`` is confirmed to be exactly the id the
-        ``/gw/api/plans/{id}`` path takes. What is genuinely unknown is the query-param set --
-        the sibling ``/gw/api/subscriptions/*`` writes send ``country`` *and* ``locale`` while the
-        ``/gw/api/plans`` reads send neither, so the ``country``-only choice here matches no
-        observed request. If this call 400s, that is the first thing to try. See the Evidence Gaps
-        section of HELLOFRESH_API.md.
+        This replaced an inferred ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails``, which
+        appears in **none** of the 16 retained captures -- the live web app changes the standing
+        delivery day through the subscription PATCH above. The old call is kept as a fallback only
+        for the case where the PATCH is rejected, since no capture proves the plans endpoint is
+        dead (see HELLOFRESH_API.md, Evidence Gaps).
+
+        Two properties of the verified response are worth knowing, both pinned by tests:
+
+        * The 200 body echoes the **pre-change** ``deliveryTime``, not the new one. A ``GET`` one
+          second later in the capture already shows the new value, so the write commits
+          immediately and only the response is stale. Adopting that body would roll the UI back to
+          the old weekday until the next poll, so it is discarded here.
+        * ``deliveryInterval`` is **not** part of this request. The web app sends only the
+          ``deliveryTime`` handle. The parameter is still accepted for backward compatibility and
+          is forwarded to the fallback, but a non-default value cannot be honoured by the verified
+          path -- callers are warned rather than silently misled.
         """
         if not delivery_option or not delivery_option.strip():
             raise HelloFreshError("A delivery_option handle is required")
 
+        handle = delivery_option.strip()
         subscription = await self._async_resolve_subscription(subscription_id)
+        if delivery_interval != 1:
+            _LOGGER.warning(
+                "HelloFresh delivery_interval=%s cannot be applied: the verified weekday change "
+                "sends only the delivery option handle. The interval is ignored unless the "
+                "legacy plans endpoint is reached as a fallback.",
+                delivery_interval,
+            )
+
+        path = f"/gw/api/subscriptions/{subscription.subscription_id}"
+        params = {
+            "country": api_country_code(self._country).lower(),
+            "locale": self._locale_for_country(),
+        }
+        json_payload = {
+            "subscription": {"id": subscription.subscription_id, "deliveryTime": handle}
+        }
+        try:
+            # The response body is deliberately discarded: it carries the pre-change value.
+            await self._async_api_request(
+                "PATCH", path, params=params, json_payload=json_payload
+            )
+        except HelloFreshAuthError:
+            raise
+        except HelloFreshError:
+            _LOGGER.debug(
+                "HelloFresh subscription delivery PATCH failed for %s; trying the legacy plans "
+                "endpoint",
+                subscription.subscription_id,
+            )
+            await self._async_change_delivery_weekday_via_plan(
+                subscription, handle, delivery_interval
+            )
+            return
+
+        _LOGGER.info(
+            "HelloFresh subscription %s delivery option changed to %s",
+            subscription.subscription_id,
+            handle,
+        )
+
+    async def _async_change_delivery_weekday_via_plan(
+        self,
+        subscription: HelloFreshSubscription,
+        delivery_option: str,
+        delivery_interval: int,
+    ) -> None:
+        """Legacy, never-captured fallback for the recurring weekday change.
+
+        Inferred rather than observed: no capture exercises this endpoint. Retained only because
+        the verified subscription PATCH is US-observed, and an older account or another region
+        could conceivably still need this path.
+        """
         plan_id = subscription.raw.get("customerPlanId")
         if not plan_id:
             raise HelloFreshNotImplementedError(
@@ -2161,7 +2337,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         path = f"/gw/api/plans/{plan_id}/changePlanDeliveryDetails"
         params = {"country": api_country_code(self._country)}
         json_payload = {
-            "deliveryOption": delivery_option.strip(),
+            "deliveryOption": delivery_option,
             "deliveryInterval": delivery_interval,
         }
         await self._async_api_request("POST", path, params=params, json_payload=json_payload)

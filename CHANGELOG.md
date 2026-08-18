@@ -5,7 +5,47 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-<<<<<<< HEAD
+## Unreleased
+- **New: change your box size from Home Assistant (HAR 43).** Capture 43 exposed the web app's
+  "change plan" flow, which the integration did not implement at all. Two new services:
+  `hellofresh.get_plan_options` lists every box you can switch to (2–6 meals × 2/3/4/6 servings,
+  20 options, with prices), and `hellofresh.change_plan` switches to one via
+  `PATCH /gw/api/plans/{planId}` → `204`. Verified against the capture, which switches
+  3-meals/2-people → 3-meals/3-people and back, with the subscription SKU reflecting it on the
+  next read. This is a recurring, billing-affecting change, deliberately kept separate from the
+  per-week box resize that already happens during meal selection.
+- Prices from the plan catalog are integer cents in the API (`6594`); the service returns both
+  `price_cents` and a converted `price` (65.94), and sorts smallest box first — the API's own
+  ordering starts at the largest and is not monotonic.
+- Pinned a cross-endpoint inconsistency that would be easy to "clean up" wrongly: the plan PATCH
+  sends uppercase `country=US`, while the delivery-weekday PATCH sends lowercase `country=us`.
+  Both are exactly as captured.
+- **Backfilled seven services that had no UI translations at all** — `get_account_summary`,
+  `get_delivery_options`, `get_food_profile`, `get_plans`, `get_presets`, `get_spending` and
+  `set_food_profile` were registered and documented in `services.yaml` but missing from
+  `strings.json`/`en.json`, so Home Assistant rendered them as raw keys. Found by a new parity
+  test that cross-checks service registrations against `services.yaml` and both translation files,
+  including per-field coverage; this class of gap was previously invisible to the whole suite.
+- Capture 43 re-confirms the capture-42 weekday change independently and shows zero response-shape
+  drift against capture 40 across subscriptions, deliveries, menus, and profile.
+- **Fixed the recurring delivery-weekday change: it was calling the wrong endpoint entirely
+  (HAR 42).** `hellofresh.change_delivery_weekday` sent an inferred
+  `POST /gw/api/plans/{planId}/changePlanDeliveryDetails` that appears in **none** of the 16
+  retained captures. Capture 42 records the real web app making this change, and it uses
+  `PATCH /gw/api/subscriptions/{id}` with a `{"subscription": {"id", "deliveryTime"}}` envelope.
+  The service now sends the verified request; the old call is retained as a fallback only, since no
+  capture proves the plans endpoint is dead. This supersedes the 2.66 note below, which documented
+  the uncertainty rather than resolving it.
+- Three details of that write are easy to get wrong and are now pinned by tests: the `country`
+  param is lowercase `us` (every other endpoint sends uppercase); the request carries **no**
+  `deliveryInterval`, so a non-default interval now logs a warning instead of being silently
+  dropped; and the `200` response echoes the **pre-change** `deliveryTime` while a `GET` one second
+  later already shows the new value — so the body is discarded rather than merged, which would
+  otherwise revert the weekday in the UI until the next poll.
+- **All evidence gaps are now closed.** Every endpoint the integration calls is backed by observed
+  traffic. Retargeted the one pre-existing test that had pinned the inferred plans shape as though
+  it were verified.
+
 ## 2.66 — 2026-08-18
 - **Corrected a false verification claim.** `async_change_delivery_weekday`'s docstring said
   "HAR-verified", but the endpoint (`POST /gw/api/plans/{id}/changePlanDeliveryDetails`) appears in
@@ -17,9 +57,8 @@ version heading and publishes it as the release's Highlights.
   only, while the sibling `/gw/api/subscriptions/*` writes send `country` **and** `locale` and the
   `/gw/api/plans` reads send neither — so the current choice matches no observed request and is the
   first thing to try if the call 400s.
-=======
+
 ## 2.65 — 2026-08-18
->>>>>>> 44886833e99049a5339bde8676fe7b232423f90c
 - **Closed the last major evidence gap: SCM shipment tracking is confirmed working (HAR 41).**
   `GET /gw/scm/tracking-ids/track/public-id/{public_id}` had never appeared in any capture, and
   since HelloFresh's delivery payload carries no carrier field at all, it was unclear whether

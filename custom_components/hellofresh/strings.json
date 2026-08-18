@@ -510,6 +510,120 @@
           "description": "Which serving count to scale ingredient amounts to (2, 4, ...). Defaults to the smallest the recipe offers."
         }
       }
+    },
+    "get_plan_options": {
+      "name": "Get plan options",
+      "description": "List the box sizes this subscription can switch to (meals per week × servings), with prices. The handle of any option is what Change plan accepts. Read-only.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "subscription_id": {
+          "name": "Subscription ID",
+          "description": "Which subscription to change when multiple exist. Defaults to the primary subscription."
+        }
+      }
+    },
+    "change_plan": {
+      "name": "Change plan",
+      "description": "Change the recurring box size (meals per week × servings). Affects all future boxes and changes what you are billed.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "product_handle": {
+          "name": "Product handle",
+          "description": "The plan SKU to switch to (e.g. US-CBU-3-2-0). Use Get plan options to list valid handles."
+        },
+        "subscription_id": {
+          "name": "Subscription ID",
+          "description": "Which subscription to change when multiple exist. Defaults to the primary subscription."
+        }
+      }
+    },
+    "get_account_summary": {
+      "name": "Get account summary",
+      "description": "Return the account and subscription headline values (plan, credit, upcoming counts, coupon, payment date, holiday notice) in one call — the same values the corresponding sensors report. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_delivery_options": {
+      "name": "Get delivery options",
+      "description": "Return the plan's selectable delivery days (weekday, name, price, and which is the current default) — the full delivery-day picker the website uses. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_food_profile": {
+      "name": "Get food profile",
+      "description": "Return the customer's food profile (the preferences HelloFresh uses to auto-preselect future meals) together with the full catalog of selectable options. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_plans": {
+      "name": "Get plans",
+      "description": "Return the account's plan catalog (product handle, price, status). Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Get presets",
+      "description": "Return the region's menu presets (Chef's Choice, Veggie, Quick & Easy, …) with their handle, name, and description. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_spending": {
+      "name": "Get spending",
+      "description": "Return the customer's HelloFresh spending ledger from the full billing history: per-box weeks, a per-month rollup, and a running lifetime total of past deliveries. Read-only; returns a response. Powers the cost card.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "set_food_profile": {
+      "name": "Set food profile",
+      "description": "Update the customer's food profile. Provide any of taste, household, or goals; only the sections supplied are changed. Returns the saved profile.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "taste": {
+          "name": "Taste",
+          "description": "Taste preferences to set, as a list of option ids from Get food profile."
+        },
+        "household": {
+          "name": "Household",
+          "description": "Household details to set (e.g. adults, children), as returned by Get food profile."
+        },
+        "goals": {
+          "name": "Goals",
+          "description": "Cooking goals to set, as a list of option ids from Get food profile."
+        }
+      }
     }
   }
 }
