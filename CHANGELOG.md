@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.70 — 2026-08-18
 - **Fixed `sensor.tracked_shipment_date` reading Unknown for a box the web UI showed as
   delivered.** The sensor resolves the most recent delivered week via `last_delivery_week`, which
   prefers the past-deliveries history endpoint — but that endpoint reports no carrier timestamp.
