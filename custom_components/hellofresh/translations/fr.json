@@ -1,0 +1,635 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connexion à HelloFresh",
+        "description": "Choisissez comment connecter votre compte HelloFresh :\n\n- **E-mail et mot de passe (recommandé)** — Home Assistant se connecte pour vous et maintient la connexion à jour automatiquement.\n- **Jeton d'accès (avancé)** — collez un jeton issu de votre session de navigateur. À utiliser uniquement si la connexion par e-mail et mot de passe ne fonctionne pas.",
+        "menu_options": {
+          "credentials": "E-mail et mot de passe (recommandé)",
+          "token": "Jeton d'accès (avancé)"
+        }
+      },
+      "credentials": {
+        "title": "Connexion à HelloFresh",
+        "description": "Connectez-vous avec l'e-mail et le mot de passe de votre compte HelloFresh. Home Assistant les utilise pour se connecter et maintenir la connexion à jour automatiquement.\n\n**Pays** est la région HelloFresh de votre compte (par exemple US, GB, AU). HelloFresh gère un site distinct par pays : ce choix sélectionne le bon site pour vous connecter et récupérer votre formule, vos livraisons et votre menu.",
+        "data": {
+          "country": "Pays",
+          "username": "E-mail",
+          "password": "Mot de passe"
+        }
+      },
+      "token": {
+        "title": "Connexion à HelloFresh",
+        "description": "Option de secours avancée lorsque la connexion par e-mail et mot de passe est bloquée. Elle fonctionne jusqu'à environ 60 jours, jusqu'à l'expiration du jeton — un nouveau vous sera alors demandé.\n\nPour obtenir votre jeton `apiV2Auth` :\n1. Dans un navigateur sur ordinateur, connectez-vous à votre site HelloFresh ({site_example}) jusqu'à votre page de compte.\n2. Ouvrez les outils de développement : clic droit sur la page puis **Inspecter**, ou touche **F12** (Windows) / **⌥⌘I** (Mac).\n3. Ouvrez la vue des cookies de votre site HelloFresh :\n   - **Chrome / Edge :** onglet **Application** → dans le panneau de gauche, développez **Cookies** → sélectionnez votre site HelloFresh.\n   - **Firefox :** onglet **Stockage** → développez **Cookies** → sélectionnez votre site HelloFresh.\n   - **Safari :** activez le menu Développement (Réglages → Avancés → \"Afficher les fonctionnalités pour les développeurs web\"), puis onglet **Stockage** → **Cookies** → votre site HelloFresh.\n4. Trouvez le cookie nommé **`apiV2Auth`** et copiez l'intégralité de sa **valeur**.\n5. Collez-la ci-dessous. (Un simple jeton d'accès fonctionne aussi, mais une valeur `apiV2Auth` complète inclut le jeton de rafraîchissement, pour la connexion la plus durable.)\n\n**Pays** est la région HelloFresh de votre compte (par exemple US, GB, AU) — choisissez celle du site depuis lequel vous avez copié le jeton.",
+        "data": {
+          "country": "Pays",
+          "token": "Jeton apiV2Auth"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnexion à HelloFresh",
+        "description": "Saisissez l'e-mail et le mot de passe de votre compte HelloFresh pour rétablir l'accès.",
+        "data": {
+          "username": "E-mail",
+          "password": "Mot de passe"
+        }
+      },
+      "reauth_token": {
+        "title": "Reconnexion à HelloFresh",
+        "description": "Votre jeton HelloFresh a expiré. Collez un nouveau jeton `apiV2Auth` pour rétablir l'accès.\n\nPour l'obtenir : connectez-vous à votre site HelloFresh et ouvrez les outils de développement (clic droit → **Inspecter**, ou **F12**). Ouvrez la vue des cookies — **Chrome / Edge :** **Application** → **Cookies** ; **Firefox :** **Stockage** → **Cookies** — sélectionnez votre site HelloFresh et copiez la **valeur** du cookie **`apiV2Auth`**.",
+        "data": {
+          "token": "Jeton apiV2Auth"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connexion impossible",
+      "invalid_auth": "Identifiants invalides",
+      "invalid_token": "Ce jeton n'a pas pu être lu ou a été refusé"
+    },
+    "abort": {
+      "already_configured": "Ce compte HelloFresh est déjà configuré",
+      "reauth_successful": "HelloFresh a été reconnecté"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options HelloFresh",
+        "description": "Réglez la fréquence de récupération des données HelloFresh et la profondeur d'historique consultable dans les cartes. Ces réglages prennent effet immédiatement — vos identifiants ne sont pas modifiés.",
+        "data": {
+          "scan_interval_minutes": "Intervalle d'actualisation (minutes)",
+          "history_weeks": "Historique des livraisons (semaines)",
+          "menu_grace_weeks": "Historique complet du menu (semaines)",
+          "enable_public_menu_fallback": "Utiliser le menu public en secours",
+          "enable_favorites": "Afficher les cœurs favoris",
+          "show_data_quality_issues": "Afficher les avertissements de qualité des données"
+        },
+        "data_description": {
+          "scan_interval_minutes": "Fréquence d'interrogation de HelloFresh pour les données de compte et de livraison. Plus bas = données plus fraîches et plus de requêtes ; plus haut = plus léger pour l'API. Plage 5–1440 minutes ; par défaut 180 (3 heures). Le jeton de connexion est renouvelé selon son propre calendrier : ce réglage n'affecte donc pas la connexion.",
+          "history_weeks": "Nombre de semaines de livraisons passées à charger pour pouvoir les consulter dans les cartes. Plus bas = moins de données à chaque actualisation ; augmentez pour remonter plus loin (environ 56 pour une année complète). Plage 1–104 semaines ; par défaut 26 (environ 6 mois). Toute modification recharge l'intégration.",
+          "menu_grace_weeks": "Nombre de semaines après sa date de livraison pendant lesquelles une semaine conserve son menu complet consultable dans la carte du planificateur de repas (vos repas livrés restent mis en évidence) ; les semaines plus anciennes n'affichent que ce qui a été livré. Plage 0–3 semaines ; par défaut 2 (les dernières box restent consultables). 0 désactive ce délai. HelloFresh cesse de publier le menu des semaines anciennes : au-delà, seules les recettes livrées sont affichées. Toute modification recharge l'intégration.",
+          "enable_public_menu_fallback": "Si les données de menu authentifiées ne peuvent pas être chargées, la page de menu publique régionale est lue pour que les noms de recettes apparaissent quand même. Laissez cette option activée, sauf si vous souhaitez uniquement des données authentifiées.",
+          "enable_favorites": "Vérifier à chaque actualisation quelles recettes sont enregistrées dans votre carnet de recettes HelloFresh, afin que la carte du planificateur puisse afficher un cœur. Coûte une requête supplémentaire par actualisation : HelloFresh ne propose pas de point d'accès \"lister mes favoris\", les recettes du menu doivent donc être envoyées à un point d'accès de filtrage pour savoir lesquelles sont favorites. Désactivez pour ignorer cette étape — les services d'ajout et de suppression de favoris continuent de fonctionner dans tous les cas.",
+          "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés."
+        }
+      }
+    }
+  },
+  "issues": {
+    "account_data_unavailable": {
+      "title": "Les données du compte HelloFresh sont indisponibles pour {entry_title}",
+      "description": "HelloFresh n'a pas pu charger les données authentifiées du compte pour **{entry_title}**. L'intégration se limite actuellement aux données de menu publiques. Actualisez l'intégration, ou reconnectez-vous avec votre e-mail et votre mot de passe HelloFresh si la connexion ne fonctionne plus."
+    },
+    "account_menu_fallback": {
+      "title": "Le menu de secours HelloFresh est actif pour {entry_title}",
+      "description": "HelloFresh n'a pas pu charger de données de menu structurées pour **{entry_title}** depuis les réponses authentifiées de l'API : l'intégration utilise donc actuellement la page de menu publique comme secours. Le suivi des livraisons peut continuer de fonctionner, mais les détails des recettes peuvent être incomplets jusqu'à ce que la réponse de l'API soit à nouveau reconnue. Cet avertissement disparaît de lui-même dès que les données authentifiées se chargent à nouveau ; pour le masquer, utilisez Ignorer dans le menu de cette réparation, ou désactivez \"Afficher les avertissements de qualité des données\" dans les options de l'intégration."
+    },
+    "payload_shape_changed": {
+      "title": "Les données du compte HelloFresh ont changé pour {entry_title}",
+      "description": "HelloFresh a renvoyé des données authentifiées pour **{entry_title}**, mais leur format ne correspond plus aux structures de livraison que cette intégration sait analyser. Les diagnostics de cette entrée de configuration aideront à déterminer si une variante régionale de l'API ou une modification du site doit être prise en charge."
+    },
+    "write_actions_unavailable": {
+      "title": "Les actions d'écriture HelloFresh ne sont pas confirmées pour {entry_title}",
+      "description": "Vous avez tenté une action HelloFresh qui modifie les données du compte pour **{entry_title}**, comme choisir des repas ou sauter une semaine. L'intégration a essayé les points d'accès d'écriture connus pour votre compte, mais aucun n'a accepté la requête : l'action a donc été bloquée plutôt que de continuer à deviner."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_delivery_date": {
+        "name": "Date de la prochaine livraison"
+      },
+      "next_order_status": {
+        "name": "Statut de la prochaine livraison"
+      },
+      "shipment_tracking_status": {
+        "name": "Statut du colis"
+      },
+      "shipment_tracking_number": {
+        "name": "Numéro de suivi"
+      },
+      "weeks_needing_selection": {
+        "name": "Semaines présélectionnées par HelloFresh"
+      },
+      "next_selection_deadline": {
+        "name": "Date limite de choix pour la prochaine livraison"
+      },
+      "selected_meal_count": {
+        "name": "Nombre de repas de la prochaine livraison"
+      },
+      "next_selectable_delivery_meal_count": {
+        "name": "Nombre de repas de la prochaine livraison modifiable"
+      },
+      "selected_market_count": {
+        "name": "Nombre d'articles Market de la prochaine livraison"
+      },
+      "next_selectable_delivery_market_count": {
+        "name": "Nombre d'articles Market de la prochaine livraison modifiable"
+      },
+      "next_delivery_preselected": {
+        "name": "Prochaine livraison présélectionnée"
+      },
+      "next_selectable_delivery_preselected": {
+        "name": "Prochaine livraison modifiable présélectionnée"
+      },
+      "required_meal_count": {
+        "name": "Nombre de repas"
+      },
+      "delivery_count_this_week": {
+        "name": "Nombre de prochaines livraisons"
+      },
+      "next_box_total_price": {
+        "name": "Prix total de la prochaine livraison"
+      },
+      "account_credit": {
+        "name": "Crédit du compte"
+      },
+      "selected_plan": {
+        "name": "Formule choisie"
+      },
+      "selected_plan_total_price": {
+        "name": "Prix total de la formule choisie"
+      },
+      "public_menu_recipe_count": {
+        "name": "Nombre de recettes disponibles au menu"
+      },
+      "subscription_count": {
+        "name": "Nombre d'abonnements"
+      },
+      "subscription_status": {
+        "name": "Statut de l'abonnement"
+      },
+      "number_of_people": {
+        "name": "Nombre de personnes"
+      },
+      "delivery_address": {
+        "name": "Adresse de livraison"
+      },
+      "recent_payment_date": {
+        "name": "Date du dernier paiement"
+      },
+      "next_payment_date": {
+        "name": "Date de paiement de la prochaine livraison"
+      },
+      "upcoming_delivery_count": {
+        "name": "Nombre de livraisons à venir"
+      },
+      "next_delivery_subscription": {
+        "name": "Identifiant d'abonnement de la livraison"
+      },
+      "next_delivery_slot": {
+        "name": "Créneau de livraison"
+      },
+      "tracked_shipment_carrier": {
+        "name": "Transporteur"
+      },
+      "tracked_shipment_estimate": {
+        "name": "Livraison estimée"
+      },
+      "tracked_shipment_date": {
+        "name": "Date de livraison effective"
+      },
+      "skipped_week_count": {
+        "name": "Nombre de semaines sautées"
+      },
+      "next_skipped_week": {
+        "name": "Prochaine semaine sautée"
+      },
+      "boxes_received": {
+        "name": "Box reçues"
+      },
+      "last_delivery_date": {
+        "name": "Date de la dernière livraison"
+      },
+      "next_delivery_week": {
+        "name": "Semaine de la prochaine livraison"
+      },
+      "next_selectable_delivery_date": {
+        "name": "Date de la prochaine livraison modifiable"
+      },
+      "next_selectable_delivery_week": {
+        "name": "Semaine de la prochaine livraison modifiable"
+      },
+      "next_selectable_delivery_selection_deadline": {
+        "name": "Date limite de choix pour la prochaine livraison modifiable"
+      },
+      "api_base_url": {
+        "name": "URL de base de l'API"
+      },
+      "account_id": {
+        "name": "Identifiant du compte"
+      },
+      "recent_order_id": {
+        "name": "Identifiant de commande de la prochaine livraison"
+      },
+      "next_box_coupon": {
+        "name": "Code promo de la prochaine livraison"
+      },
+      "next_delivery_tracking_url": {
+        "name": "URL de suivi du colis"
+      },
+      "next_holiday_delivery_date": {
+        "name": "Date de livraison jour férié"
+      },
+      "next_holiday_message": {
+        "name": "Message de livraison jour férié"
+      },
+      "next_delivery_blocked": {
+        "name": "Prochaine livraison bloquée"
+      },
+      "access_token_minutes_remaining": {
+        "name": "Temps restant du jeton d'accès"
+      },
+      "refresh_token_days_remaining": {
+        "name": "Temps restant du jeton de rafraîchissement"
+      }
+    },
+    "binary_sensor": {
+      "needs_meal_selection": {
+        "name": "Choix des repas requis"
+      },
+      "write_actions_available": {
+        "name": "Actions d'écriture disponibles"
+      },
+      "tracked_shipment_available": {
+        "name": "Suivi du colis disponible"
+      },
+      "payload_shape_changed": {
+        "name": "Format des données modifié"
+      }
+    },
+    "button": {
+      "refresh_data": {
+        "name": "Actualiser les données"
+      }
+    },
+    "calendar": {
+      "delivery_schedule": {
+        "name": "Calendrier des livraisons"
+      }
+    },
+    "switch": {
+      "skip_next_modifiable_week": {
+        "name": "Sauter la prochaine semaine modifiable"
+      }
+    }
+  },
+  "services": {
+    "refresh_data": {
+      "name": "Actualiser les données",
+      "description": "Actualiser immédiatement les données du compte HelloFresh.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_weeks": {
+      "name": "Obtenir les semaines",
+      "description": "Renvoie les semaines de livraison HelloFresh avec le détail complet des recettes et des choix. Lecture seule ; renvoie une réponse. Filtrage possible sur une seule semaine.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "Identifiant facultatif d'une semaine de livraison HelloFresh pour ne renvoyer que cette semaine."
+        }
+      }
+    },
+    "select_meals": {
+      "name": "Choisir les repas",
+      "description": "Enregistrer le choix des repas pour une semaine de livraison.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        },
+        "recipe_ids": {
+          "name": "Identifiants de recettes",
+          "description": "Les identifiants des recettes à retenir pour cette semaine."
+        },
+        "quantities": {
+          "name": "Quantités",
+          "description": "Correspondance facultative entre identifiant de recette et nombre de parts (entier positif). Les recettes omises reçoivent une part par défaut ; le minimum de repas requis est vérifié sur le total des parts."
+        }
+      }
+    },
+    "select_market_items": {
+      "name": "Choisir les articles Market",
+      "description": "Définir la sélection d'extras HelloFresh Market pour une semaine de livraison.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        },
+        "quantities": {
+          "name": "Quantités",
+          "description": "Correspondance entre identifiant d'article Market et quantité. Une quantité de 0 retire l'article."
+        }
+      }
+    },
+    "skip_week": {
+      "name": "Sauter une semaine",
+      "description": "Sauter une semaine de livraison HelloFresh donnée.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        }
+      }
+    },
+    "unskip_week": {
+      "name": "Annuler le saut de semaine",
+      "description": "Rétablir une semaine de livraison HelloFresh précédemment sautée.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        }
+      }
+    },
+    "reschedule_week": {
+      "name": "Reprogrammer une semaine",
+      "description": "Déplacer une seule semaine de livraison HelloFresh vers une autre option de livraison (créneau/jour). Modification ponctuelle ; le calendrier récurrent n'est pas modifié.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        },
+        "delivery_option": {
+          "name": "Option de livraison",
+          "description": "L'identifiant de l'option de livraison pour cette semaine, tel que renvoyé par \"Obtenir les options de livraison\"."
+        }
+      }
+    },
+    "change_delivery_weekday": {
+      "name": "Changer le jour de livraison",
+      "description": "Modifier l'option de livraison récurrente et son intervalle pour la formule d'un abonnement. S'applique à toutes les livraisons futures.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "delivery_option": {
+          "name": "Option de livraison",
+          "description": "L'identifiant de la nouvelle option de livraison récurrente, tel que renvoyé par \"Obtenir les options de livraison\"."
+        },
+        "delivery_interval": {
+          "name": "Intervalle de livraison",
+          "description": "Fréquence des livraisons, en semaines. Hebdomadaire par défaut."
+        },
+        "subscription_id": {
+          "name": "Identifiant d'abonnement",
+          "description": "L'abonnement à modifier lorsqu'il en existe plusieurs. Par défaut, l'abonnement principal."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Obtenir les favoris",
+      "description": "Renvoie votre carnet de recettes HelloFresh : tous les favoris avec leur détail complet ou, si des identifiants de recettes sont fournis, lesquelles de ces recettes sont en favoris.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "recipe_ids": {
+          "name": "Identifiants de recettes",
+          "description": "Identifiants de recettes facultatifs pour vérifier uniquement lesquelles sont en favoris."
+        }
+      }
+    },
+    "add_favorite": {
+      "name": "Ajouter un favori",
+      "description": "Enregistrer une recette dans le carnet de recettes HelloFresh.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "recipe_id": {
+          "name": "Identifiant de recette",
+          "description": "L'identifiant de la recette HelloFresh à enregistrer (l'identifiant de 24 caractères, par exemple 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Retirer un favori",
+      "description": "Retirer une recette du carnet de recettes HelloFresh.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "recipe_id": {
+          "name": "Identifiant de recette",
+          "description": "L'identifiant de la recette HelloFresh à retirer des favoris (l'identifiant de 24 caractères, par exemple 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "get_recipe_collections": {
+      "name": "Obtenir les catégories de recettes",
+      "description": "Renvoie les catégories consultables du catalogue public de recettes HelloFresh.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_catalog_recipes": {
+      "name": "Obtenir les recettes du catalogue",
+      "description": "Renvoie des recettes du catalogue public HelloFresh, éventuellement au sein d'une seule catégorie.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "collection": {
+          "name": "Catégorie",
+          "description": "Identifiant de catégorie facultatif pour limiter les résultats à cette catégorie."
+        },
+        "limit": {
+          "name": "Limite",
+          "description": "Nombre maximal de recettes à renvoyer."
+        }
+      }
+    },
+    "preview_meal_price": {
+      "name": "Estimer le prix des repas",
+      "description": "Calcule le prix d'un choix de repas hypothétique pour une semaine sans l'enregistrer.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "L'identifiant de la semaine de livraison HelloFresh."
+        },
+        "recipe_ids": {
+          "name": "Identifiants de recettes",
+          "description": "Les identifiants des recettes à chiffrer."
+        },
+        "quantities": {
+          "name": "Quantités",
+          "description": "Correspondance facultative entre identifiant de recette et nombre de parts (entier positif)."
+        }
+      }
+    },
+    "get_recipe_detail": {
+      "name": "Obtenir le détail d'une recette",
+      "description": "Renvoie tout le détail de préparation d'une recette : ingrédients, instructions, ustensiles, allergènes, valeurs nutritionnelles et la fiche recette imprimable.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "recipe_id": {
+          "name": "Identifiant de recette",
+          "description": "L'identifiant de la recette HelloFresh à récupérer."
+        },
+        "servings": {
+          "name": "Parts",
+          "description": "Nombre de parts facultatif pour convertir les quantités d'ingrédients."
+        }
+      }
+    },
+    "get_plan_options": {
+      "name": "Obtenir les formules disponibles",
+      "description": "Liste les tailles de box vers lesquelles cet abonnement peut basculer (repas par semaine × parts), avec les prix. Le handle d'une option est ce qu'attend \"Changer de formule\". Lecture seule.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "subscription_id": {
+          "name": "Identifiant d'abonnement",
+          "description": "L'abonnement à modifier lorsqu'il en existe plusieurs. Par défaut, l'abonnement principal."
+        }
+      }
+    },
+    "change_plan": {
+      "name": "Changer de formule",
+      "description": "Modifier la taille récurrente de la box (repas par semaine × parts). S'applique à toutes les box futures et modifie le montant facturé.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "product_handle": {
+          "name": "Handle du produit",
+          "description": "Le handle de la formule souhaitée, tel que renvoyé par \"Obtenir les formules disponibles\"."
+        },
+        "subscription_id": {
+          "name": "Identifiant d'abonnement",
+          "description": "L'abonnement à modifier lorsqu'il en existe plusieurs. Par défaut, l'abonnement principal."
+        }
+      }
+    },
+    "get_account_summary": {
+      "name": "Obtenir le résumé du compte",
+      "description": "Renvoie en un seul appel les valeurs clés du compte et de l'abonnement (formule, crédit, nombres à venir, code promo, date de paiement, avis jour férié) — les mêmes valeurs que celles des capteurs correspondants. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_delivery_options": {
+      "name": "Obtenir les options de livraison",
+      "description": "Renvoie les jours de livraison sélectionnables de la formule (jour de la semaine, nom, prix et celui actuellement par défaut) — le sélecteur complet utilisé par le site. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_food_profile": {
+      "name": "Obtenir le profil alimentaire",
+      "description": "Renvoie le profil alimentaire du client (les préférences utilisées par HelloFresh pour présélectionner les prochains repas) ainsi que le catalogue complet des options disponibles. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_plans": {
+      "name": "Obtenir les formules",
+      "description": "Renvoie le catalogue de formules du compte (handle produit, prix, statut). Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Obtenir les préréglages de menu",
+      "description": "Renvoie les préréglages de menu de la région (Chef's Choice, Veggie, Quick & Easy, …) avec leur handle, leur nom et leur description. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_spending": {
+      "name": "Obtenir les dépenses",
+      "description": "Renvoie le relevé des dépenses HelloFresh à partir de l'historique de facturation complet : semaines par box, récapitulatif mensuel et total cumulé des livraisons passées. Lecture seule ; renvoie une réponse. Alimente la carte des coûts.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "set_food_profile": {
+      "name": "Enregistrer le profil alimentaire",
+      "description": "Met à jour le profil alimentaire du client. Fournissez au choix les goûts, le foyer ou les objectifs ; seules les sections fournies sont modifiées. Renvoie le profil enregistré.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "taste": {
+          "name": "Goûts",
+          "description": "Préférences de goût et alimentaires pour le profil."
+        },
+        "household": {
+          "name": "Foyer",
+          "description": "Informations sur le foyer, comme le nombre de personnes."
+        },
+        "goals": {
+          "name": "Objectifs",
+          "description": "Objectifs alimentaires pour le profil."
+        }
+      }
+    }
+  }
+}
