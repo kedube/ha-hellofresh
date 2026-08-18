@@ -5,6 +5,23 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed `sensor.tracked_shipment_date` reading Unknown for a box the web UI showed as
+  delivered.** The sensor resolves the most recent delivered week via `last_delivery_week`, which
+  prefers the past-deliveries history endpoint — but that endpoint reports no carrier timestamp.
+  Only the ranged deliveries payload carries `tracking.delivery_date`, so the winning week had
+  `delivered_at` unset even though the same week's account entry knew exactly when the box
+  arrived. The real arrival time is now back-filled from the matching account week.
+- The back-fill matches on week id and requires subscription ids to agree when both sides carry
+  one: with two subscriptions the same ISO week is two different boxes, so an unguarded match
+  would stamp another subscription's arrival time onto this one.
+- **Schedule card now shows when each delivered box arrived**, on the same meta line that already
+  carried carrier and tracking number: `Delivered Aug 17, 6:53 PM · OnTrac · D100… · Order 123…`.
+  Rendered in the viewer's timezone from the week's `delivered_at` offset, so a late-evening
+  handover keeps its local day rather than jumping forward with UTC.
+- Upcoming weeks are unaffected — only delivered weeks carry a carrier timestamp, so those rows
+  render exactly as before.
+
 ## 2.69 — 2026-08-18
 - **New sensor: `sensor.tracked_shipment_date`** — when the most recent box **actually arrived**,
   as a `TIMESTAMP` entity. Sourced from the delivered week's carrier handover timestamp

@@ -1728,6 +1728,27 @@ class HelloFreshAccountData:
         self._last_delivery_week = _newest_past(self.past_delivery_weeks) or _newest_past(
             self.weeks
         )
+
+        # The past-deliveries endpoint reports no carrier timestamp, so a week chosen from that
+        # list has `delivered_at` unset and "Tracked shipment date" would read Unknown even
+        # though the box arrived. Only the ranged deliveries payload carries
+        # `tracking.delivery_date`, so back-fill the real arrival time from the matching account
+        # week. Match on week id, requiring subscription ids to agree when BOTH sides carry one
+        # (with two subscriptions the same ISO week is two different boxes).
+        if self._last_delivery_week is not None and self._last_delivery_week.delivered_at is None:
+            for account_week in self.weeks:
+                if (
+                    account_week.week_id == self._last_delivery_week.week_id
+                    and account_week.delivered_at is not None
+                    and (
+                        account_week.subscription_id is None
+                        or self._last_delivery_week.subscription_id is None
+                        or account_week.subscription_id
+                        == self._last_delivery_week.subscription_id
+                    )
+                ):
+                    self._last_delivery_week.delivered_at = account_week.delivered_at
+                    break
         self._serialized_orders = None
         self._serialized_weeks = None
         self._serialized_past_delivery_weeks = None
