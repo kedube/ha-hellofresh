@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.68 — 2026-08-18
 - **Audited every implemented write path against the captures; fixed three real defects.**
 - `change_delivery_weekday` **swallowed `HelloFreshNotImplementedError`**. That type subclasses
   `HelloFreshError`, so the broad `except` driving the legacy fallback caught it — meaning when
