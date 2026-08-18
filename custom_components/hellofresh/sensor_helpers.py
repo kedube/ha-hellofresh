@@ -115,6 +115,13 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "shipment_tracking_status": _tracked_order_value("tracking_status"),
     "shipment_tracking_number": _tracked_order_value("tracking_number"),
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
+    "tracked_shipment_estimate": _tracked_order_value("estimated_delivery"),
+    # The moment the box actually arrived, from the newest DELIVERED week's carrier timestamp.
+    # Distinct from `last_delivery_date`, which reports that week's SCHEDULED day: a box handed
+    # over at 22:53 ET is already the next day in UTC, so the two legitimately disagree.
+    "tracked_shipment_date": lambda data: (
+        data.last_delivery_week.delivered_at if data.last_delivery_week else None
+    ),
     # Count of weeks where HelloFresh AUTO-PICKED the meals from the food profile (menu
     # `mealsPreselected`) rather than the customer choosing them — the UI's "We picked N meals
     # we thought you'd like" state. (The key name is retained for entity-ID stability.)

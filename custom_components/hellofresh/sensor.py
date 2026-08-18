@@ -182,6 +182,18 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         icon="mdi:truck-outline",
     ),
     SensorEntityDescription(
+        key="tracked_shipment_estimate",
+        translation_key="tracked_shipment_estimate",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:truck-clock-outline",
+    ),
+    SensorEntityDescription(
+        key="tracked_shipment_date",
+        translation_key="tracked_shipment_date",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:package-variant-closed-check",
+    ),
+    SensorEntityDescription(
         key="skipped_week_count",
         translation_key="skipped_week_count",
         icon="mdi:calendar-remove-outline",

@@ -481,6 +481,11 @@ class HelloFreshOrder:
     tracking_number: str | None = None
     tracking_status: str | None = None
     carrier: str | None = None
+    # The carrier's own delivery estimate, from the SCM tracking lookup's status history
+    # (``est_delivery_time``). Distinct from ``delivery_date``, which is HelloFresh's scheduled
+    # noon anchor: the carrier reports midnight-of-the-estimated-day, so this is a date-precision
+    # estimate despite being carried as a timestamp.
+    estimated_delivery: datetime | None = None
     total_price: float | None = None
     currency: str | None = None
     slot_label: str | None = None
@@ -503,6 +508,9 @@ class HelloFreshOrder:
             "tracking_number": self.tracking_number,
             "tracking_status": self.tracking_status,
             "carrier": self.carrier,
+            "estimated_delivery": (
+                self.estimated_delivery.isoformat() if self.estimated_delivery else None
+            ),
             "total_price": self.total_price,
             "currency": self.currency,
             "billed_total_price": self.billed_total_price,

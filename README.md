@@ -20,11 +20,11 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 - [HelloFresh Dashboard](#hellofresh-dashboard)
   - [Meal planner card](#meal-planner-card)
   - [Market card](#market-card)
+  - [Recipes card](#recipes-card)
   - [Food Profile card](#food-profile-card)
   - [Schedule card](#schedule-card)
   - [Subscription card](#subscription-card)
   - [Cost card](#cost-card)
-  - [Recipes card](#recipes-card)
   - [Recorder attribute sizes](#recorder-attribute-sizes)
 - [Current Scope](#current-scope)
 - [Troubleshooting](#troubleshooting)
@@ -113,8 +113,8 @@ The available options are:
 - **Refresh interval (minutes)** — how often account data is polled. Default is **180**; allowed range is **5–1440**. (This is the data-refresh cadence; the bearer token is refreshed on its own faster-running schedule regardless of this value.)
 - **Use public menu fallback** — when authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.
 - **Weeks of past history to load** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
-- **Show favorite hearts** — resolve which meals are bookmarked in your HelloFresh cookbook on each refresh, so the meal-planner card can show a ♥. Costs one extra batched request per refresh: rather than downloading your whole cookbook to decorate one week, the week's recipes are sent to HelloFresh's cheaper filter endpoint, which answers only which of *those* are bookmarked. Default is **on**; turn it off to skip that request entirely — the add/remove favorite services and the [Recipes card](#recipes-card) keep working either way.
-- **Full menu history (weeks)** — how long after its delivery date a week keeps its **full browsable menu** in the meal-planner card (with your delivered meals highlighted) before collapsing to just the delivered meals. Default is **2 weeks** (the last couple of boxes stay browsable); allowed range is **0–3**, where **0** turns the grace window off entirely. HelloFresh stops publishing the real menu for older weeks, so a week whose menu can't be validated falls back to delivered-only automatically regardless of this setting. Changing it reloads the integration.
+- **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the [Recipes card](#recipes-card) keep working.
+- **Full menu history (weeks)** — how long a delivered week keeps its full browsable menu (with your meals highlighted) before collapsing to delivered-meals-only. Default **2**, range **0–3** (**0** disables it). HelloFresh stops publishing menus for older weeks, so weeks beyond that fall back automatically regardless. Changing it reloads the integration.
 
 ### Supported regions
 
@@ -129,7 +129,7 @@ Choose the matching country during setup. All 16 markets HelloFresh currently op
 | Canada | `ca` | https://www.hellofresh.ca | CAD | Untested |
 | Australia | `au` | https://www.hellofresh.com.au | AUD | Untested |
 | New Zealand | `nz` | https://www.hellofresh.co.nz | NZD | Untested |
-| Germany | `de` | https://www.hellofresh.de | EUR | Untested |
+| Germany | `de` | https://www.hellofresh.de | EUR | ✅ Verified |
 | Austria | `at` | https://www.hellofresh.at | EUR | Untested |
 | Switzerland | `ch` | https://www.hellofresh.ch | CHF | Untested |
 | Netherlands | `nl` | https://www.hellofresh.nl | EUR | ✅ Verified |
@@ -151,7 +151,7 @@ Choose the matching country during setup. All 16 markets HelloFresh currently op
 
 The integration creates **50+ entities** per HelloFresh account:
 
-- **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit, payment dates, coupons), account & subscription (plan, servings, status), shipment tracking (status, carrier, tracking link), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
+- **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit, payment dates, coupons), account & subscription (plan, servings, status), shipment tracking (status, carrier, tracking link, carrier ETA, actual arrival time), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
 - **Binary sensors** for automations — most notably `binary_sensor.needs_meal_selection`, the primary signal for "review your meals before the cutoff" reminders — plus tracked-shipment availability and parse-health diagnostics.
 - A **delivery calendar** (`calendar.delivery_schedule`), a **refresh button**, and a **skip next week switch**.
 
@@ -171,12 +171,14 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 - `hellofresh.refresh_data` — refresh account data immediately, outside the normal polling interval
 - `hellofresh.get_weeks` — **returns a response**: delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons) and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner](#meal-planner-card), [Market](#market-card), and [Schedule](#schedule-card) cards.
-- `hellofresh.select_meals` — set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's HAR-verified cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals). Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
+- `hellofresh.select_meals` — set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's own cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals). Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
 - `hellofresh.select_market_items` — set the HelloFresh Market add-on (extras) selection for a week (`week_id` + a `quantities` map of market item id/sku/index → quantity; 0 removes an item); writes the cart's `extras`, preserving the week's meal selection. Optionally **returns a response** `{ "downgraded": <bool> }` (as above)
 - `hellofresh.skip_week` — skip a chosen delivery week so no box ships
 - `hellofresh.unskip_week` — restore a previously skipped week
 - `hellofresh.reschedule_week` — move a single week's delivery to a different delivery option (one-off)
-- `hellofresh.change_delivery_weekday` — change the recurring delivery option/interval for a plan (affects all future deliveries)
+- `hellofresh.change_delivery_weekday` — change the recurring delivery day (affects all future deliveries)
+- `hellofresh.get_plan_options` — **returns a response**: the box sizes you can switch to (meals per week × servings) with prices. Read-only; pairs with `change_plan`.
+- `hellofresh.change_plan` — change the recurring box size (`product_handle` from `get_plan_options`). Affects all future boxes and what you are billed.
 - `hellofresh.get_account_summary` — **returns a response**: the account/subscription headline values (status, plan and plan total, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report. Read-only. Powers the [Subscription card](#subscription-card).
 - `hellofresh.get_food_profile` — **returns a response**: the customer's food profile (the preferences HelloFresh uses to auto-preselect meals), a `completion` summary (how many profile fields HelloFresh considers answered, and which are still outstanding), plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](#food-profile-card).
 - `hellofresh.set_food_profile` — update the food profile; provide any of `taste`, `household`, or `goals` (only the supplied sections change). Weighted taste fields accept either a list of liked slugs or a `{slug: +100/-100}` map. Returns the saved profile.
@@ -188,7 +190,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 - `hellofresh.get_catalog_recipes` — **returns a response**: recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
 - `hellofresh.get_favorites` — **returns a response**: your HelloFresh cookbook. Called with no arguments it lists **every** bookmark with full detail (title, headline, image, times, nutrition) — including the ones HelloFresh's own website hides, since its cookbook page only ever renders a 3-item preview while the underlying endpoint reports the true total and pages the rest. Passing `recipe_ids` instead uses HelloFresh's cheaper filter endpoint to answer "which of *these* are bookmarked?", returning ids only — which is how the meal-planner card decorates a week it already has in hand. Read-only.
 - `hellofresh.add_favorite` — bookmark a recipe in your cookbook (`recipe_id`). Returns the created favorite (title, image, times, nutrition).
-- `hellofresh.remove_favorite` — remove a recipe bookmark (`recipe_id`). Note that HelloFresh's own naming is counter-intuitive here: bookmarks are *created* under `internal-recipes` but *listed and deleted* under `external-recipes`, keyed by a server-assigned row id rather than the recipe id — the integration resolves that for you.
+- `hellofresh.remove_favorite` — remove a recipe bookmark (`recipe_id`).
 - `hellofresh.get_recipe_detail` — **returns a response**: one recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps`, `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](#recipes-card).
 - `hellofresh.preview_meal_price` — **returns a response**: what a hypothetical meal selection *would* cost, without saving it — `grand_total`, `sub_total`, `shipping_amount`, `tax_amount`, `discount_amount`, and per-meal premium `surcharges`. Takes `week_id` + `recipe_ids` (plus an optional `quantities` map). Read-only: nothing is written to your account. Only works for weeks that are still bookable.
 
@@ -274,7 +276,7 @@ What it does:
 - **Week cursor** (‹ ›) across past, current, and upcoming weeks, **opening on the current week** by date. A **Current Week** button jumps back to it, and the header shows the delivery date plus how far off it is (e.g. `Mon, Jul 6 · in 3 days`).
 - **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **meal count** is shown alongside your plan's meal count (e.g. `2 meals (plan: 3)` when you've resized the week). The grid is **sorted** so your selected meals lead, and the remaining menu is grouped by dish so a meal's variants sit together. A **recently delivered week keeps its full browsable menu for 2 weeks** after the delivery date (configurable via the [**Full menu history** option](#options)) — the menu HelloFresh actually published for it, with the delivered meals marked ✓ — so the "current" week doesn't collapse the day after the box arrives. For **older past** weeks the card shows **only the meals that were actually delivered** (sourced from delivery history, all flagged selected) — not the planning menu's browsable catalog or its auto-fill — and **paused/skipped** past weeks correctly show no meals since nothing shipped. How far back you can browse is set by the [**Weeks of past history** option](#options) — **26 weeks (about 6 months)** by default, raisable to 104.
 - **Recipe videos** — a handful of meals each week ship with a short promo clip; those tiles get a ▶ button that opens the video in a lightbox over the card (Escape or a backdrop tap closes it). Coverage is sparse by HelloFresh's own doing — typically a few meals out of several hundred — but delivered meals on **past** weeks keep their clips too. HelloFresh serves a mix of `.mp4` and `.mov`, but both are delivered as `video/mp4` and play everywhere once the player declares that type rather than letting the browser guess from the file suffix. A clip that genuinely fails to load says so instead of showing a black box, the player offers an "open it directly" link, and the still image always remains the tile's base layer.
-- **Favorite hearts** — meals bookmarked in your HelloFresh cookbook show a ♥ on the tile. The state is resolved by checking the week's recipes against the cookbook on each refresh — one extra batched request, which the [**Show favorite hearts** option](#options) turns off. If that lookup fails, tiles show *no* heart rather than a misleading empty one. The heart here is **read-only**, matching HelloFresh's own site (which offers no favoriting from the menu view); add and remove favorites from the [Recipes card](#recipes-card).
+- **Favorite hearts** — meals in your cookbook show a ♥. Read-only here, matching HelloFresh's own site; add and remove favorites from the [Recipes card](#recipes-card). Turn the hearts off with the [**Show favorite hearts** option](#options).
 - **Per-serving price** — each tile shows what the meal actually costs per serving (from HelloFresh's own `itemPrice`), separate from the premium surcharge badge, which shows only the uplift over a classic meal.
 - **"You've had this before"** — meals HelloFresh has previously delivered to you show an ordered-count and the week of the last one; meals you have rated show your star rating. Both come from HelloFresh's own records and appear only on the minority of meals that have them.
 - **Full recipe view** — tap any meal on a week you can no longer change (a past or locked box) to open the complete recipe: ingredients with amounts, a servings switcher, step-by-step instructions, utensils, allergens, nutrition, and the printable recipe-card PDF. On an *editable* week the tap still changes your selection, so the recipe opens from the small **ⓘ** button on the tile instead. Same sheet the [Recipes card](#recipes-card) uses.
@@ -292,7 +294,7 @@ What it does:
 
 > Meal-selection writes are confirmed on the US and UK sites; other regions fall back to best-effort guesses (see [Current Scope](#current-scope)). Browsing works everywhere the menu loads.
 
-> **YAML-mode dashboards only.** In storage-mode dashboards the card resource is registered automatically. If your dashboard is in **YAML mode** (you manage resources yourself), add it once under **Settings → Dashboards → Resources** as a *JavaScript module* pointing at `/hellofresh/hellofresh-meal-planner-card.js?v=<integration version>` (e.g. `?v=2.62`). The same applies to the Market, Food Profile, Schedule, Subscription, Cost, and Recipes cards below — each has its own `/hellofresh/hellofresh-*-card.js` resource path. (`hellofresh-recipe-detail.js` is a shared module the cards import themselves, not a resource you register.) The `?v=` query is the cache-bust: it should match the installed integration version, and updating it after an upgrade makes browsers fetch the new card instead of a cached one (in storage mode the integration does this for you; the startup log prints the exact URLs).
+> **YAML-mode dashboards only.** Storage-mode dashboards register every card automatically — nothing to do. In **YAML mode**, add each card once under **Settings → Dashboards → Resources** as a *JavaScript module*: `/hellofresh/hellofresh-<name>-card.js?v=<integration version>` (e.g. `?v=2.68`). The `?v=` must match your installed version, and you must update it after each upgrade or browsers keep serving the cached card. The startup log prints the exact URLs. (`hellofresh-recipe-detail.js` is a shared module the cards import themselves — not a resource you register.)
 
 ### Market card
 
@@ -317,11 +319,36 @@ What it does:
 - **Past weeks show only what was ordered** — a past week displays just the market items that were actually selected/ordered (never the full browsable catalog), and the show-all/selected toggle is hidden since it no longer applies.
 - **Week stays in sync with the meal-planner card** — navigating here moves the [meal-planner card](#meal-planner-card) to the same week and vice versa, across dashboard views, remembered across reloads and tab switches.
 
-> Market reading and writing are HAR-verified against the live US cart API (selection state, single- and multi-item writes, and meal preservation). The cart's `extras` payload is grouped by item SKU and split into recurring vs. this-week (one-off) quantities, matching the website.
+### Recipes card
+
+![HelloFresh recipes dashboard in Home Assistant](images/hellofresh_screenshot-4.png)
+
+The integration also ships **`custom:hellofresh-recipes-card`**, a browser for HelloFresh's **public recipe catalog** (~10,000 recipes) with cookbook favoriting built in. Unlike every other card here, this one shows content that is **not tied to your subscription**: the catalog is the same for all customers and is unrelated to your delivery weeks. It reads `hellofresh.get_recipe_collections`, `hellofresh.get_catalog_recipes` and (for the Cookbook chip) `hellofresh.get_favorites` on demand — none of this is part of the sensor poll, since 10,000 recipes have no business in entity state.
+
+```yaml
+type: custom:hellofresh-recipes-card
+# title: HelloFresh Recipes   # optional header
+# collection: chicken-recipes # optional starting category slug
+# limit: 50                   # recipes loaded per category (1–200, default 50)
+# logo: true                  # optional bundled HelloFresh logo in the header
+# config_entry_id: <id>       # required only with multiple HelloFresh accounts
+```
+
+What it does:
+
+- **Category chips** — every category HelloFresh publishes, fetched from the site itself and switched without a page reload. This is not a curated subset: the US catalog currently returns **~60** of them, spanning cuisines (Indian, Korean, Thai, Cuban, Vietnamese, …), dish types (Pasta, Burger, Risotto, Soup, …), and dietary lines (Carb Smart, Calorie Smart, Plant-Based, Pescatarian, …). The list is whatever HelloFresh serves on the day, so new categories appear on their own with no integration update.
+- **♥ Cookbook** — a chip alongside the categories that lists **your** saved recipes instead of catalog browse content. This shows every bookmark, including the ones HelloFresh's own website hides: its cookbook page only ever renders a 3-item preview, while the underlying endpoint reports the true total and pages the rest. Un-favoriting a recipe here removes it from the list rather than leaving a hollow heart on something you no longer have saved.
+- **Refine row** — categories that have sub-categories (Noodle → Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) show a second chip row when selected. These children are absent from HelloFresh's top-level category list, so this is the only route to them.
+- **Recipe grid** — thumbnail, name (linking to the recipe on hellofresh.com), headline, star rating with its ratings count, and prep time.
+- **Favorite hearts** — tap to add or remove a recipe from your cookbook. A rejected write surfaces as an error rather than a heart that silently springs back.
+- **Full recipe view** — tap any tile for the complete recipe in an overlay: ingredients with amounts, a **servings switcher** (2 / 4 / …) that rescales those amounts, step-by-step instructions, utensils, allergens, nutrition, and a link to the printable recipe-card PDF. Fetched on demand, one request per recipe. This part reads a plain HelloFresh API rather than the website, so it is **not** affected by the build-id caveat below.
+- **Cross-card sync** — favoriting broadcasts the same `hellofresh-data-changed` event the other cards use, so the [Meal planner](#meal-planner-card)'s hearts pick up the change on its next refresh.
+
+> **Note:** the recipe listing and categories come from HelloFresh's website rather than a stable API, so this card is inherently less reliable than the others. It self-heals automatically when HelloFresh deploys. Recipe *detail* is unaffected.
 
 ### Food Profile card
 
-![HelloFresh food profile dashboard in Home Assistant](images/hellofresh_screenshot-4.png)
+![HelloFresh food profile dashboard in Home Assistant](images/hellofresh_screenshot-5.png)
 
 The integration also ships **`custom:hellofresh-food-profile-card`**, for viewing and editing your **food profile** — the preferences HelloFresh uses to automatically pre-select meals for upcoming weeks. It reads the profile and the full catalog of options live from `hellofresh.get_food_profile` (the profile isn't part of the regular sensor poll) and saves via `hellofresh.set_food_profile`, and is auto-registered the same way.
 
@@ -341,11 +368,9 @@ What it does, driven entirely by the options catalog so new HelloFresh options a
 - **Completion progress** — a slim bar showing how many profile fields HelloFresh considers answered (its own reckoning, not a guess), so it's obvious when something is still worth filling in. It disappears once the profile is complete, and is simply omitted if HelloFresh doesn't report it.
 - **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes.
 
-> The profile read/write shapes (the `taste` / `household` / `goals` sections, the weighted +100/−100 maps, and the PATCH payload) are HAR-verified against the live US profile-service API.
-
 ### Schedule card
 
-![HelloFresh schedule dashboard in Home Assistant](images/hellofresh_screenshot-5.png)
+![HelloFresh schedule dashboard in Home Assistant](images/hellofresh_screenshot-6.png)
 
 The integration also ships **`custom:hellofresh-schedule-card`**, a clean overview of your delivery schedule. Like the other cards it reads per-week data on demand from `hellofresh.get_weeks` (one call builds the whole view) and is auto-registered the same way.
 
@@ -417,31 +442,6 @@ What it does:
 
 Place it on the Schedule tab alongside the subscription card (the example dashboard does this).
 
-### Recipes card
-
-The integration also ships **`custom:hellofresh-recipes-card`**, a browser for HelloFresh's **public recipe catalog** (~10,000 recipes) with cookbook favoriting built in. Unlike every other card here, this one shows content that is **not tied to your subscription**: the catalog is the same for all customers and is unrelated to your delivery weeks. It reads `hellofresh.get_recipe_collections`, `hellofresh.get_catalog_recipes` and (for the Cookbook chip) `hellofresh.get_favorites` on demand — none of this is part of the sensor poll, since 10,000 recipes have no business in entity state.
-
-```yaml
-type: custom:hellofresh-recipes-card
-# title: HelloFresh Recipes   # optional header
-# collection: chicken-recipes # optional starting category slug
-# limit: 50                   # recipes loaded per category (1–200, default 50)
-# logo: true                  # optional bundled HelloFresh logo in the header
-# config_entry_id: <id>       # required only with multiple HelloFresh accounts
-```
-
-What it does:
-
-- **Category chips** — every category HelloFresh publishes, fetched from the site itself and switched without a page reload. This is not a curated subset: the US catalog currently returns **~60** of them, spanning cuisines (Indian, Korean, Thai, Cuban, Vietnamese, …), dish types (Pasta, Burger, Risotto, Soup, …), and dietary lines (Carb Smart, Calorie Smart, Plant-Based, Pescatarian, …). The list is whatever HelloFresh serves on the day, so new categories appear on their own with no integration update.
-- **♥ Cookbook** — a chip alongside the categories that lists **your** saved recipes instead of catalog browse content. This shows every bookmark, including the ones HelloFresh's own website hides: its cookbook page only ever renders a 3-item preview, while the underlying endpoint reports the true total and pages the rest. Un-favoriting a recipe here removes it from the list rather than leaving a hollow heart on something you no longer have saved.
-- **Refine row** — categories that have sub-categories (Noodle → Ramen / Udon / Rice / Soba / Yakisoba; Chicken → Breast / Thighs / Cutlets / …) show a second chip row when selected. These children are absent from HelloFresh's top-level category list, so this is the only route to them.
-- **Recipe grid** — thumbnail, name (linking to the recipe on hellofresh.com), headline, star rating with its ratings count, and prep time.
-- **Favorite hearts** — tap to add or remove a recipe from your HelloFresh cookbook. Both directions are verified against HelloFresh's real endpoints; a rejected write surfaces as an error rather than a heart that silently springs back.
-- **Full recipe view** — tap any tile for the complete recipe in an overlay: ingredients with amounts, a **servings switcher** (2 / 4 / …) that rescales those amounts, step-by-step instructions, utensils, allergens, nutrition, and a link to the printable recipe-card PDF. Fetched on demand, one request per recipe. This part reads a plain HelloFresh API rather than the website, so it is **not** affected by the build-id caveat below.
-- **Cross-card sync** — favoriting broadcasts the same `hellofresh-data-changed` event the other cards use, so the [Meal planner](#meal-planner-card)'s hearts pick up the change on its next refresh.
-
-> **A note on fragility:** the recipe **listing and categories** are served from HelloFresh's website (a Next.js data URL containing a build id) rather than a stable API. The build id rotates on every HelloFresh web deploy; the integration scrapes it on demand and re-scrapes automatically when a request 404s, so this self-heals — but it is inherently less stable than the account endpoints the other cards use. Recipe **detail** is unaffected: it comes from a plain `/gw/` API with no build id involved.
-
 ### Recorder attribute sizes
 
 Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required. When you do need per-week recipes (names, selection state, images), call the read-only `hellofresh.get_weeks` service, which returns them on demand without touching the recorder.
@@ -450,41 +450,35 @@ The complete recipe and market data is still available where it matters: the `he
 
 ## Current Scope
 
-What works:
+**Reading your account** — deliveries and orders, per-week meal selections (what you actually
+picked, including what shipped on past weeks), recipes with nutrition and images, shipment tracking
+with carrier detail, billing and account credit, and delivered-box history over a configurable
+window. Multiple subscriptions on one account are aggregated.
 
-- email/password login through the HelloFresh `/gw` auth gateway, with automatic access-token refresh and credential-based re-login
-- an alternative token-only setup path (paste an `apiV2Auth` token) as a backup when login is blocked, valid until the refresh token expires
-- a real Chrome-on-Windows-11 browser fingerprint (Client Hints plus a genuine TLS/HTTP-2 fingerprint via `curl_cffi`) to pass Cloudflare bot protection on the auth and data requests
-- token validation against `/gw/api/customers/me/subscriptions`
-- account delivery and order parsing from verified or likely `/gw/...` delivery endpoints
-- aggregation across multiple subscriptions on the same HelloFresh account
-- account profile metrics such as delivered box counts when exposed by authenticated profile endpoints
-- delivered-week history summaries from authenticated past-delivery endpoints, covering the configurable [past-history window](#options) (26 weeks by default, up to 104)
-- richer recipe parsing including nutrition, image, tag, and per-recipe selection metadata from the authenticated menu, with `course_index` for round-tripping selections
-- per-week meal-selection state (which recipes you've chosen) that reflects your actual picks: for current/upcoming weeks from the authenticated menu's cart quantities, and for **past** weeks from the meals that were actually delivered (so old weeks aren't shown with the system's auto-fill placeholders, and paused weeks correctly show no selection). Recently delivered weeks keep their **full browsable menu** for the configurable [**Full menu history** window](#options), with the delivered meals overlaid as the selection
-- authenticated menu API attempts before falling back to public HTML scraping
-- shipment tracking extraction and SCM enrichment when the payload includes carrier, parcel, or HelloFresh tracking-page details
-- public menu scraping from the regional `/menus` page
-- reminders driven by `binary_sensor.needs_meal_selection`
-- delivery calendar plus selection-deadline timestamp sensors for both the next delivery and the next selectable (modifiable) delivery
-- account credit balance from the payments balance endpoint
-- meal selection (with per-meal serving quantity) via `select_meals`, using the website's HAR-verified cart endpoint (`PUT /gw/v1/carts/{week}`) as the primary path, with guessed fallbacks only if the cart request can't be built. Choosing more or fewer distinct meals than the base plan resizes the box for that week (the cart's `product-sku` meal digit is adjusted up or down, matching the web app), with a minimum of 2 meals
-- HelloFresh Market add-on (extras) browsing and ordering via `select_market_items` — selection state, single- and multi-item writes, recurring-vs-one-off quantities, and meal preservation are all HAR-verified against the live US cart API (the same endpoints are confirmed working on the UK site)
-- reading and updating the customer **food profile** (dietary preference, taste likes/dislikes, household, and goals) via `get_food_profile` / `set_food_profile`, HAR-verified against the live US profile-service API
-- per-week order detail (tracking, status, carrier, billed total) surfaced alongside each week, with the billed total computed the same way as the `next_box_total_price` sensor
-- skipping/restoring the next modifiable delivery week from a switch, plus `skip_week` / `unskip_week` services that use the website's own write endpoints with conservative fallbacks
-- on-demand per-week recipe, market, selection, and order detail via the response-returning `hellofresh.get_weeks` service (kept out of entity attributes to respect the recorder size limit)
-- seven packaged Lovelace cards — [Meal planner](#meal-planner-card), [Market](#market-card), [Food Profile](#food-profile-card), [Schedule](#schedule-card), [Subscription](#subscription-card), [Cost](#cost-card), and [Recipes](#recipes-card) — for browsing weeks, editing selections/quantities, managing food preferences, reviewing the delivery timeline, a condensed account overview, a running spend total, and browsing the public recipe catalog with cookbook favoriting, all auto-registered by the integration
-- browsing the **public recipe catalog** (~10,000 recipes) by category and sub-category via `get_recipe_collections` / `get_catalog_recipes`, full per-recipe cooking detail (ingredients scaled to servings, steps, utensils, allergens, nutrition, printable card) via `get_recipe_detail`, and cookbook favoriting — listing the complete cookbook that HelloFresh's own site renders only a 3-item preview of — via `get_favorites` / `add_favorite` / `remove_favorite`
-- Repairs issues when the integration falls back to public menu data, sees unexpected payload shapes, or cannot verify a write action
+**Changing your account** — meal selection with per-meal serving quantities, Market add-ons,
+skip/unskip, one-off reschedules, recurring delivery day, box size, and food preferences. Choosing
+more or fewer meals than your plan resizes that week's box automatically (minimum 2).
 
-What is not implemented yet:
+**Browsing the public catalog** — ~10,000 recipes by category, full cooking detail, and cookbook
+favoriting (including the full cookbook, which HelloFresh's own site only previews).
 
-- verification of the write endpoints beyond the **US and UK** sites (meal-selection, market, and skip/unskip requests are confirmed there; other regions share the same `/gw` endpoints and should work, but fall back to best-effort guesses where a request can't be built)
+**In Home Assistant** — 50+ entities, a delivery calendar, seven Lovelace cards, voice intents,
+response-returning services for dashboards, and Repairs issues when something needs your attention.
 
-> **No first-party OAuth by design.** HelloFresh publishes no public OAuth app or consumer API, so account linking isn't possible — the integration signs in directly with your stored email and password (or a pasted token), exactly as the website does. For the same reason there is **no push/webhook channel** — the integration polls on the configurable [refresh interval](#options).
+### Known limitations
 
-Because HelloFresh does not publish a stable consumer integration contract here, write actions stay cautious: the integration uses the website's confirmed write endpoints first, tries a small set of fallbacks if those don't fit your account, and stops with a clear error rather than guessing endlessly.
+- **Write actions are verified on the US and UK sites.** Other regions use the same endpoints and
+  should work, but fall back to best-effort guesses if a request can't be built.
+- **No push updates.** HelloFresh offers no webhook channel, so the integration polls on the
+  configurable [refresh interval](#options).
+- **No OAuth.** HelloFresh publishes no public API or OAuth app, so the integration signs in with
+  your credentials exactly as the website does.
+- **Bot protection varies by region.** Some regional sites are tuned more aggressively than others;
+  see [Why bot protection can matter](#why-bot-protection-can-matter).
+
+Because HelloFresh publishes no stable contract, write actions stay cautious: the integration uses
+the website's own endpoints first, tries a small set of fallbacks if those don't fit your account,
+and stops with a clear error rather than guessing.
 
 ## Troubleshooting
 
@@ -510,7 +504,7 @@ For weeks that already shipped, the selection is taken from your **delivery hist
 HelloFresh returned account data the integration couldn't fully parse — usually a sign the website changed. Attaching a [diagnostics export](#diagnostics) to a GitHub issue is the most helpful thing you can do here.
 
 **A card looks outdated or is missing features after an update.**
-Every card is versioned with the integration's release version: the card's resource URL carries a `?v=<version>` cache-bust that is stamped from `manifest.json`, and the registered URL is updated automatically on the first Home Assistant restart after an upgrade. If a card still looks stale, restart Home Assistant, then hard-refresh the browser (Ctrl/Cmd+Shift+R) or clear the app cache in the mobile companion app. To confirm which card build the browser actually loaded, open the browser console (F12) — each card logs a startup banner such as `HELLOFRESH-MEAL-PLANNER-CARD v2.62`, and that version should match the integration version shown under **Settings → Devices & services → HelloFresh**. You can also compare the `frontend` block in a [diagnostics export](#diagnostics), which lists the resource URLs this release expects next to the URLs actually registered.
+Every card is versioned with the integration's release version: the card's resource URL carries a `?v=<version>` cache-bust that is stamped from `manifest.json`, and the registered URL is updated automatically on the first Home Assistant restart after an upgrade. If a card still looks stale, restart Home Assistant, then hard-refresh the browser (Ctrl/Cmd+Shift+R) or clear the app cache in the mobile companion app. To confirm which card build the browser actually loaded, open the browser console (F12) — each card logs a startup banner such as `HELLOFRESH-MEAL-PLANNER-CARD v2.68`, and that version should match the integration version shown under **Settings → Devices & services → HelloFresh**. You can also compare the `frontend` block in a [diagnostics export](#diagnostics), which lists the resource URLs this release expects next to the URLs actually registered.
 
 ## Diagnostics
 
@@ -570,9 +564,6 @@ Version history: each push to `main` publishes a tagged release with generated n
 
 ## References
 
-- Reverse-engineered example used to validate current auth and endpoint assumptions:
-  - https://github.com/CNoetzel/HelloFresh-RecipeDownloader
-  - https://raw.githubusercontent.com/CNoetzel/HelloFresh-RecipeDownloader/master/downloader.py
 - HACS documentation:
   - https://hacs.xyz/docs/publish/integration/
 - Home Assistant developer documentation:

@@ -165,6 +165,12 @@
       "tracked_shipment_carrier": {
         "name": "Tracked shipment carrier"
       },
+      "tracked_shipment_estimate": {
+        "name": "Tracked shipment estimate"
+      },
+      "tracked_shipment_date": {
+        "name": "Tracked shipment date"
+      },
       "skipped_week_count": {
         "name": "Skipped week count"
       },

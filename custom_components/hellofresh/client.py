@@ -2270,7 +2270,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         appears in **none** of the 16 retained captures -- the live web app changes the standing
         delivery day through the subscription PATCH above. The old call is kept as a fallback only
         for the case where the PATCH is rejected, since no capture proves the plans endpoint is
-        dead (see HELLOFRESH_API.md, Evidence Gaps).
+        dead (see HELLOFRESH_API.md, Change recurring delivery weekday).
 
         Two properties of the verified response are worth knowing, both pinned by tests:
 
@@ -4689,6 +4689,12 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 order.tracking_status = details["tracking_status"]
             if details["carrier"] is not None:
                 order.carrier = details["carrier"]
+            if details["estimated_delivery"] is not None:
+                # Parsed here rather than in the parser so the parser stays string-in/string-out
+                # like its siblings; an unparseable value simply leaves the field unset.
+                estimated = parse_datetime(details["estimated_delivery"])
+                if estimated is not None:
+                    order.estimated_delivery = estimated
             updates += 1
         return updates
 
