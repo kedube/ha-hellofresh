@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.65 — 2026-08-18
 - **Closed the last major evidence gap: SCM shipment tracking is confirmed working (HAR 41).**
   `GET /gw/scm/tracking-ids/track/public-id/{public_id}` had never appeared in any capture, and
   since HelloFresh's delivery payload carries no carrier field at all, it was unclear whether
