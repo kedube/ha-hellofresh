@@ -6,7 +6,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 <<<<<<< HEAD
-## Unreleased
+## 2.66 — 2026-08-18
 - **Corrected a false verification claim.** `async_change_delivery_weekday`'s docstring said
   "HAR-verified", but the endpoint (`POST /gw/api/plans/{id}/changePlanDeliveryDetails`) appears in
   **none** of the 15 retained captures — the only observed `/gw/api/plans` traffic is `GET` reads.
