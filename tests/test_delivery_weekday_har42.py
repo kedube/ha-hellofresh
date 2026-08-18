@@ -185,3 +185,33 @@ def test_fallback_without_a_plan_id_raises_not_implemented() -> None:
     client._cached_subscriptions = [_subscription(plan_id=None)]
     with pytest.raises(HelloFreshNotImplementedError):
         _run(client.async_change_delivery_weekday(TUESDAY))
+
+
+def test_not_implemented_is_not_retried_against_the_legacy_endpoint() -> None:
+    """A "this account can't do that" error must surface, not trigger the fallback.
+
+    ``HelloFreshNotImplementedError`` subclasses ``HelloFreshError``, so the broad ``except``
+    that drives the legacy fallback used to swallow it. Two things went wrong: a never-captured
+    endpoint was called in response to HelloFresh explicitly saying the capability is absent, and
+    -- worse -- the service layer raises a Repairs issue from this exact type, so suppressing it
+    hid a user-facing signal about an unsupported account.
+    """
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    calls: list[str] = []
+
+    async def fake_request(method, path, *, params=None, json_payload=None, **_kw):
+        calls.append(f"{method} {path}")
+        if method == "PATCH":
+            raise HelloFreshNotImplementedError("account cannot change delivery weekday")
+        return SimpleNamespace(status=200)
+
+    client._async_api_request = fake_request  # type: ignore[method-assign]
+    client._cached_subscriptions = [_subscription()]
+    client._country = "us"
+
+    with pytest.raises(HelloFreshNotImplementedError):
+        _run(client.async_change_delivery_weekday(TUESDAY))
+
+    assert calls == [f"PATCH /gw/api/subscriptions/{SUBSCRIPTION_ID}"], (
+        "the legacy plans endpoint must not be called after an explicit NotImplemented"
+    )

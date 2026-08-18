@@ -1800,6 +1800,78 @@ birthday). Both are account-identity writes with no automation value and real bl
   it would revert the weekday in the UI until the next refresh. The legacy plans endpoint is kept
   as a fallback only — no capture proves it dead, but none exercises it either.
 
+### Seen but not implemented — what a capture would need to settle
+
+Across all 16 captures the site calls **95 distinct `/gw` paths**; the integration implements ~31.
+Of the 64 it does not call, **29 have no response body captured anywhere** (the browser recorded
+the request but not the payload), so they cannot be implemented without a targeted capture. The
+rest are visible but out of scope. Ranked by what they would actually buy:
+
+**0. Rewards / loyalty — confirmed NOT shippable yet (capture 44).** A capture of the
+`/achievements` page made **zero authenticated requests** — 52 requests to `hellofresh.com`, none
+carrying an `Authorization` header, despite the page holding a valid `serverAuth` token. There is
+no loyalty API to call: the page is rendered entirely from static config and translations, and no
+`/gw/` loyalty path appears anywhere in its 760 KB Next.js payload. The decisive flag is in
+`/gw/configurations`:
+
+```json
+"features": {"loyaltyProgram": {"enabled": false}, "showLoyaltyBetaAwareness": {"enabled": true}}
+```
+
+The unreleased program's shape is nonetheless fully visible, and it **contradicts the older ladder
+documented below** — two mutually inconsistent schemes ship in the same config blob:
+
+| Scheme | Thresholds (boxes) |
+| --- | --- |
+| `loyalty.levels` (old, live) | Apprentice 3, Sous Chef 10, Master Chef 20 |
+| `features.loyaltyBadges` (new, dark) | newbie 0, freshie 2, foodie 5, junior-cook 10, head-cook 25, master-cook 50 |
+
+Both key off box count, so both would read from `sensor.boxes_received`, but they disagree on
+thresholds *and* names — an account with 30 boxes is "Master Chef" under one and "head-cook" under
+the other. Also present: `features.loyaltyChallenge` (12-week challenges, experiment handles
+`loyalty_challenge_v2_us` / `v2_3_us`, `loyaltyChallengeApiV2.enabled = true`) and UI copy for
+claimable rewards ("Claim", "Activated", "One more box to get your final reward").
+
+**Do not implement a tier sensor from this.** Shipping either ladder means picking a scheme
+HelloFresh has not committed to, and the flag says the new one is off. The useful takeaway is that
+`GET /gw/configurations` — which the integration does not currently call — is where the thresholds
+live, so whenever the program launches, the correct ladder can be read at runtime rather than
+hardcoded. Re-capture `/achievements` once `loyaltyProgram.enabled` flips to `true`; that is when
+a real API should appear.
+
+**1. Loyalty tier (older `loyalty.levels` scheme) — superseded by the above.**
+`GET /gw/loyalty/enrollments` returns per-challenge progress (`progress`, `total_steps`, `state`,
+`challenge_name`), and `GET /gw/configurations` carries the tier thresholds:
+
+```json
+"loyalty": {"levels": {"Apprentice": 3, "Sous Chef": 10, "Master Chef": 20}}
+```
+
+Two findings make this less useful than it looks. The `loyalty` block already rides along in
+`/gw/api/customers/me/subscriptions` — which the integration **already fetches** — but its `label`
+is **empty in all 7 captures that contain it**, while `value` is populated and rises over time
+(340 → 345). And that `value` is simply `boxesReceived` from `/gw/api/customers/me/info`, which is
+already exposed as `sensor.boxes_received`. So the tier is derivable from data on hand
+(345 boxes ≥ 20 → "Master Chef", matching the one captured label), but that derivation rests on
+**a single account at the top tier**. A capture from an account below 20 boxes would confirm the
+threshold semantics (are they box counts or points? is the boundary inclusive?) before shipping a
+tier sensor on an inferred rule.
+
+**2. Complaint eligibility.** `GET /gw/customer-complaints/users/me/eligibility` →
+`{"is_eligible": true, "is_logistics_eligible": false}`. A clean, tiny payload, but it gates a
+support-request flow the integration does not implement and would not act on.
+
+**3. Wallet / benefit distribution.** `POST /gw/customer-wallet/v2/benefit-distribution` returns
+per-week `promiseId` + `status` (`available`) entries. This is the free-box/credit promise
+machinery. The user-visible outcome — account credit — is already surfaced as
+`sensor.account_credit`, so this adds internal bookkeeping rather than new information.
+
+**Deliberately out of scope** (captured, understood, not implemented): `PATCH /gw/api/addresses/{id}`
+and `PATCH /gw/api/customers/{id}` are account-identity writes; `POST /gw/payments/us/change`
+carries billing-address and payment-token data. These change money or identity and have no
+automation value that justifies the blast radius. Onboarding, referrals, checkout, cancellation,
+experimentation, and storefront-screen endpoints are all site-UI concerns with no HA analogue.
+
 ### Low value — legacy candidates, likely deletable
 
 4. `/gw/my-menu`, `/gw/my-menu/weeks`, `/gw/my-deliveries/deliveries`,

@@ -5,6 +5,41 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Audited every implemented write path against the captures; fixed three real defects.**
+- `change_delivery_weekday` **swallowed `HelloFreshNotImplementedError`**. That type subclasses
+  `HelloFreshError`, so the broad `except` driving the legacy fallback caught it — meaning when
+  HelloFresh explicitly said an account cannot change its delivery weekday, the client retried a
+  never-captured endpoint *and* suppressed the Repairs issue the service layer raises from that
+  exact exception. The user saw a generic failure instead of "this account doesn't support write
+  actions". Now re-raised alongside auth errors. Verified skip/unskip/one-off do not share the
+  flaw.
+- `get_plan_options` **crashed with `AttributeError` on a non-dict response body**. Every other
+  read in the client type-guards the decoded payload before indexing it; this one did not, so an
+  error envelope served as a bare list or string escaped as a Python error rather than something
+  the service layer could report.
+- `get_plan_options` **silently dropped a stringified price**. The isinstance check kept the raw
+  value in `price_cents` while reporting `price` as `None`, so a plan would read as free. Prices
+  are now coerced.
+- Documented why `_sku_for_meal_count` has a floor but deliberately **no ceiling**: the
+  `product_options` catalog is per-subscription and varies (capture 43 offers 2–6 meals, capture
+  37 offers 1–12 for the same account), so a hardcoded upper bound would reject selections that
+  are valid on other plans. Confirmed all in-range resizes land on SKUs that exist in the real
+  catalog.
+- **Confirmed the Rewards (loyalty) program is not yet callable, and found that two conflicting
+  tier ladders ship side by side (HAR 44).** A capture of the `/achievements` page made **zero**
+  authenticated requests — 52 requests to hellofresh.com, none with an `Authorization` header,
+  despite the page holding a valid token — and no `/gw/` loyalty path appears anywhere in its
+  760 KB payload. `/gw/configurations` carries `features.loyaltyProgram.enabled = false`.
+- The unreleased scheme (`features.loyaltyBadges`: newbie 0, freshie 2, foodie 5, junior-cook 10,
+  head-cook 25, master-cook 50) **contradicts** the live one (`loyalty.levels`: Apprentice 3,
+  Sous Chef 10, Master Chef 20). Both key off box count, so both would read from
+  `sensor.boxes_received`, but a 30-box account is "Master Chef" under one and "head-cook" under
+  the other. No tier sensor was added: shipping either would mean guessing which scheme wins, and
+  the flag says the new one is off.
+- Noted for when it launches: the thresholds live in `GET /gw/configurations` (an endpoint the
+  integration does not currently call), so the ladder can be read at runtime instead of hardcoded.
+
 ## 2.67 — 2026-08-18
 - **New: change your box size from Home Assistant (HAR 43).** Capture 43 exposed the web app's
   "change plan" flow, which the integration did not implement at all. Two new services:
