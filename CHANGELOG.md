@@ -5,6 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+<<<<<<< HEAD
 ## Unreleased
 - **Corrected a false verification claim.** `async_change_delivery_weekday`'s docstring said
   "HAR-verified", but the endpoint (`POST /gw/api/plans/{id}/changePlanDeliveryDetails`) appears in
@@ -16,6 +17,9 @@ version heading and publishes it as the release's Highlights.
   only, while the sibling `/gw/api/subscriptions/*` writes send `country` **and** `locale` and the
   `/gw/api/plans` reads send neither — so the current choice matches no observed request and is the
   first thing to try if the call 400s.
+=======
+## 2.65 — 2026-08-18
+>>>>>>> 44886833e99049a5339bde8676fe7b232423f90c
 - **Closed the last major evidence gap: SCM shipment tracking is confirmed working (HAR 41).**
   `GET /gw/scm/tracking-ids/track/public-id/{public_id}` had never appeared in any capture, and
   since HelloFresh's delivery payload carries no carrier field at all, it was unclear whether
