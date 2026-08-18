@@ -80,7 +80,10 @@ def _subscription(*, plan_id: str | None = PLAN_ID) -> HelloFreshSubscription:
     )
 
 
-def _client(*, payload=None):
+_DEFAULT = object()
+
+
+def _client(*, payload=_DEFAULT):
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     sent: list[dict] = []
 
@@ -89,7 +92,7 @@ def _client(*, payload=None):
         return SimpleNamespace(status=204 if method == "PATCH" else 200)
 
     async def fake_json(_response):
-        return payload if payload is not None else CATALOG
+        return CATALOG if payload is _DEFAULT else payload
 
     client._async_api_request = fake_request  # type: ignore[method-assign]
     client._async_response_json = fake_json  # type: ignore[method-assign]
@@ -222,3 +225,38 @@ def test_plan_change_is_independent_of_the_weekday_change() -> None:
     _run(client.async_change_plan("US-CBU-3-3-0"))
     assert [r["path"] for r in sent] == [f"/gw/api/plans/{PLAN_ID}"]
     assert not any("deliveryTime" in str(r["json"]) for r in sent)
+
+
+@pytest.mark.parametrize("payload", [[], None, "error", 42])
+def test_a_non_dict_catalog_body_is_not_fatal(payload) -> None:
+    """An error envelope served as a bare list/string must not raise AttributeError.
+
+    Every other read in the client type-guards the decoded payload before indexing it; this one
+    did not, so a non-dict body escaped as AttributeError instead of a HelloFresh error the
+    service layer can report to the user.
+    """
+    client, _ = _client(payload=payload)
+    assert _run(client.async_list_plan_options()) == []
+
+
+def test_a_numeric_string_price_is_still_converted() -> None:
+    """Prices are integer cents in every capture, but a stringified value must not be dropped.
+
+    The isinstance check previously used would have kept "6594" in price_cents while silently
+    reporting price as None -- a plan that looks free in the UI.
+    """
+    client, _ = _client(
+        payload={
+            "items": [
+                {
+                    "handle": "f",
+                    "products": [
+                        {"handle": "X", "specs": {"meals": 3, "size": 2}, "price": "6594"}
+                    ],
+                }
+            ]
+        }
+    )
+    option = _run(client.async_list_plan_options())[0]
+    assert option["price_cents"] == 6594
+    assert option["price"] == 65.94

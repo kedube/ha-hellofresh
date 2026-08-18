@@ -1815,6 +1815,13 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     # Smallest box HelloFresh accepts. 2 distinct meals is the known minimum (and the smallest
     # box the HAR proves works); fewer has no valid box SKU to resize to.
+    #
+    # There is deliberately NO upper bound. It is tempting to cap this at the largest box in
+    # ``product_options``, but that catalog is per-subscription and varies: capture 43 offers meal
+    # digits 2-6, while capture 37 offers 1-12 for the same account. A hardcoded ceiling would
+    # reject selections that are legitimate for other plans, regions, or accounts. HelloFresh is
+    # the authority on which SKUs it sells -- an unsellable size is rejected server-side, which is
+    # the same outcome as a local cap but without the false negatives.
     MIN_MEALS_PER_WEEK = 2
 
     @classmethod
@@ -2152,6 +2159,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             params=params,
         )
         payload = await self._async_response_json(response)
+        # Every other read in this client guards the decoded payload's type before indexing it:
+        # a non-dict body (an error envelope served as a bare list, an HTML page) would otherwise
+        # surface as AttributeError rather than a HelloFresh error the service layer can report.
+        if not isinstance(payload, dict):
+            return []
 
         options: list[dict[str, Any]] = []
         for family in payload.get("items") or []:
@@ -2166,7 +2178,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 if not handle:
                     continue
                 specs = product.get("specs") or {}
-                price_cents = product.get("price")
+                # Prices are integer cents in every capture, but coerce anyway: a numeric string
+                # would otherwise pass the isinstance check below as "not a number" and silently
+                # drop the price while keeping the raw value in price_cents.
+                price_cents = coerce_int(product.get("price"))
                 options.append(
                     {
                         "handle": handle,
@@ -2177,9 +2192,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                         "servings": specs.get("size"),
                         "price_cents": price_cents,
                         "price": (
-                            round(price_cents / 100, 2)
-                            if isinstance(price_cents, (int, float))
-                            else None
+                            round(price_cents / 100, 2) if price_cents is not None else None
                         ),
                     }
                 )
@@ -2296,7 +2309,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             await self._async_api_request(
                 "PATCH", path, params=params, json_payload=json_payload
             )
-        except HelloFreshAuthError:
+        except (HelloFreshAuthError, HelloFreshNotImplementedError):
+            # Auth failures must surface as reauth, not be retried against a second endpoint.
+            # NotImplemented means HelloFresh told us this account cannot perform the action at
+            # all -- retrying a never-captured endpoint cannot make that true, and swallowing it
+            # here would suppress the Repairs issue the service layer raises from it.
             raise
         except HelloFreshError:
             _LOGGER.debug(
