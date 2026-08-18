@@ -210,12 +210,14 @@ def _simulate_policy(monkeypatch, rotate: bool, sliding: bool, echo: bool) -> di
         "refresh_token_issued_at": int(clock.now),
     }
 
+    # Deliberately NOT closed. `set_event_loop` makes this the current loop, and
+    # pytest-homeassistant-custom-component's autouse `verify_cleanup` fixture calls
+    # `asyncio.get_event_loop().shutdown_default_executor()` at teardown — on a closed loop that
+    # raises `RuntimeError: Event loop is closed`, which surfaced as teardown ERRORs on whichever
+    # test file happened to run next. Leaving it open matches every other test module here.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(_simulate_policy_async(clock, auth0, persisted, start))
-    finally:
-        loop.close()
+    return loop.run_until_complete(_simulate_policy_async(clock, auth0, persisted, start))
 
 
 def test_token_lifecycle_survives_60_days_across_all_auth0_policies(monkeypatch) -> None:

@@ -54,11 +54,10 @@ def _coordinator(refresh_error: Exception | None) -> tuple[object, dict]:
 
 
 def _run(coro) -> None:
+    # Not closed on purpose: HA's autouse `verify_cleanup` fixture touches the current event
+    # loop at teardown, and a closed one raises there. Matches the rest of the suite.
     loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    loop.run_until_complete(coro)
 
 
 def test_auth_failure_stops_the_timer_and_requests_reauth() -> None:

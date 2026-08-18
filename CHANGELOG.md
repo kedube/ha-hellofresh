@@ -5,6 +5,78 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Closed the last major evidence gap: SCM shipment tracking is confirmed working (HAR 41).**
+  `GET /gw/scm/tracking-ids/track/public-id/{public_id}` had never appeared in any capture, and
+  since HelloFresh's delivery payload carries no carrier field at all, it was unclear whether
+  `sensor.tracked_shipment_carrier` could ever populate. It can: the endpoint returns
+  `{"boxes": [...]}` with a real `carrier` (`VEHO`), a carrier-hosted tracking URL, and a full
+  status history (`pre_transit` → `in_transit` → `out_for_delivery` → `delivered`). Verified the
+  whole chain end to end — the delivery payload's tracking link yields the public id that keys the
+  request, the parser extracts all four fields, and the statuses render exactly as the README's
+  "box on the way" automation expects.
+- Added `Veho` to the carrier label map. It is the only carrier value observed in any capture, and
+  the API shouts `VEHO` where the company brands itself `Veho`. Unmapped carriers still pass
+  through unchanged rather than being guessed at.
+- Corrected `docs/entities.md`, which (as of earlier today) said the carrier sensor was "often
+  `None`" and steered automations away from it. It resolves whenever a box has published tracking.
+- **Verified the two least-evidenced write paths against a fresh capture (HAR 40).** Skip/unskip
+  had been confirmed only against a capture no longer on disk, and one-off reschedule had never
+  been observed at all. Capture 40 exercises both — skip then unskip on one week, plus two
+  reschedules — and the requests the integration builds match field for field, including the
+  `source: "reschedule-delivery-feature"` literal that looks decorative. Both contracts are now
+  pinned by tests using verbatim capture payloads.
+- Documented that **both write endpoints return a stub week** that must not be adopted: every
+  `allowedActions` flag comes back false/null, `cutoffDate` is null, and the reschedule response
+  carries no status or delivery date at all. Merging any of it into state would leave the week
+  looking permanently locked until the next poll. The client already discards these responses;
+  there is now a regression test so a future "use the response we already have" optimization
+  can't quietly break it.
+- Recorded that `delivery_option` handles (e.g. `US-2-0800-2000`) come from the week's own
+  `availableOneOffOptions` and are passed through unaltered rather than constructed.
+- Capture 40 showed **zero response-shape drift** against captures 34–39 across every shared
+  endpoint; capture 41 then closed the SCM tracking gap. The only remaining unobserved endpoint is
+  the recurring delivery-weekday change
+  (`POST /gw/api/plans/{id}/changePlanDeliveryDetails`).
+- **Covered the two shipped platforms that had no tests at all.** `button.py` sat at 0% coverage
+  and `intent.py` at 34% — both create user-facing surfaces (the refresh button, and the three
+  voice/conversation intents), so a regression in either would have gone unnoticed by the entire
+  suite. Now at 100% and 95%. The new tests pin the behaviours most likely to rot silently: the
+  button dispatches on its description key rather than refreshing for any future button added to
+  `BUTTONS`, and it goes through `async_request_refresh` so repeated presses stay debounced
+  instead of fanning out concurrent polls; the next-delivery intent announces the *soonest* box
+  across multiple accounts rather than whichever account was configured first, and the
+  meal-selection intent survives a week with no `selection_deadline` instead of raising on the
+  optional field.
+- Added an **Evidence Gaps** section to the API reference: an audit of every endpoint the
+  integration calls against every retained HAR capture, listing what no capture exercises and the
+  exact UI action that would settle each one. (Skip/unskip and one-off reschedule were on that
+  list and have since been closed by capture 40, above; the section now tracks only the SCM
+  tracking lookup and the recurring delivery-weekday change.)
+- Fixed a latent test-suite fault that produced teardown ERRORs depending on file ordering.
+  `test_token_lifecycle_simulation.py` closed an event loop it had installed as the current one,
+  and Home Assistant's autouse `verify_cleanup` fixture then hit
+  `RuntimeError: Event loop is closed` while tearing down whichever module ran next. Present since
+  the first commit; it only surfaced once a new test file happened to sort after it.
+- Documented the **real shape of HelloFresh's shipment tracking payload**, surveyed across every
+  HAR capture (59 non-null `tracking` nodes out of 409 weeks). A non-null node has exactly six
+  keys and **no carrier field**, so `sensor.tracked_shipment_carrier` is often `None` by design
+  rather than by fault — `docs/entities.md` previously implied it reliably reports `UPS`/`FedEx`.
+  Also recorded that `tracking_id` is always empty (the usable value is `tracking_code`), that
+  `tracking` is null for ~86% of weeks including delivered ones, and that
+  `estimated_delivery_time` is byte-identical to `delivery_date` in all 45 samples that carry
+  both — so it is deliberately not exposed as a separate entity. Added tests pinning the parser
+  to verbatim capture payloads.
+- Measured and documented the sold-out overlay's bandwidth cost: `/gw/menus-service/menus` returns
+  **3.0–3.8 MB even when scoped to a single week**, so the advisory "Sold out" ribbon costs roughly
+  3–7 MB per poll (~25–55 MB/day at the default interval). Narrowing the query further cannot help;
+  the per-week floor is already over 3 MB.
+- Surveyed API drift across all captures: 70 distinct `/gw/` paths, and only two additive changes
+  over the whole period (`shippingAddress` on `/gw/calculate`, `mealsReady` on
+  `/gw/my-deliveries/menu`) with **no removals or renames**. `mealsReady` is `true` in all 14
+  observed responses, so what `false` means can't be inferred and nothing reads it — noted in the
+  API reference so it reads as a deliberate omission rather than an oversight.
+
 ## 2.64 — 2026-08-17
 - Fixed the **All Recipes** card showing a "Refine" row that duplicated its own filter list.
   Selecting "Top rated" fetches the root catalog page, whose child collections *are* the

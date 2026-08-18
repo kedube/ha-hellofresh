@@ -70,21 +70,17 @@ def _coordinator(entry_id: str, *, refresh_error: Exception | None = None) -> Si
 
 
 def _register(hass) -> dict:
+    # Loops are deliberately left open here and in _call: HA's autouse `verify_cleanup` fixture
+    # touches the current event loop at teardown, and a closed one raises there.
     loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_async_register_services(hass))
-    finally:
-        loop.close()
+    loop.run_until_complete(_async_register_services(hass))
     return hass.services.registered
 
 
 def _call(handler, data: dict, hass) -> object:
     service_call = SimpleNamespace(data=data, hass=hass)
     loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(handler(service_call))
-    finally:
-        loop.close()
+    return loop.run_until_complete(handler(service_call))
 
 
 def test_single_account_needs_no_config_entry_id() -> None:
