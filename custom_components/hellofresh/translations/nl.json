@@ -1,0 +1,635 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met HelloFresh",
+        "description": "Kies hoe je je HelloFresh-account wilt verbinden:\n\n- **E-mail en wachtwoord (aanbevolen)** — Home Assistant logt voor je in en houdt de verbinding automatisch up-to-date.\n- **Toegangstoken (geavanceerd)** — plak een token uit je browsersessie. Gebruik dit alleen als inloggen met e-mail en wachtwoord niet werkt.",
+        "menu_options": {
+          "credentials": "E-mail en wachtwoord (aanbevolen)",
+          "token": "Toegangstoken (geavanceerd)"
+        }
+      },
+      "credentials": {
+        "title": "Verbinden met HelloFresh",
+        "description": "Log in met het e-mailadres en wachtwoord van je HelloFresh-account. Home Assistant gebruikt deze om in te loggen en houdt de verbinding automatisch up-to-date.\n\n**Land** is de HelloFresh-regio waartoe je account behoort (bijvoorbeeld US, GB, AU). HelloFresh heeft per land een aparte website — hiermee wordt de juiste gekozen om in te loggen en je abonnement, bezorgingen en menu op te halen.",
+        "data": {
+          "country": "Land",
+          "username": "E-mail",
+          "password": "Wachtwoord"
+        }
+      },
+      "token": {
+        "title": "Verbinden met HelloFresh",
+        "description": "Geavanceerde reserveoptie voor als inloggen met e-mail en wachtwoord geblokkeerd is. Dit werkt tot ongeveer 60 dagen, totdat het token verloopt — daarna wordt om een nieuw token gevraagd.\n\nZo vind je je `apiV2Auth`-token:\n1. Log in een desktopbrowser in op je HelloFresh-website ({site_example}) tot je op je accountpagina bent.\n2. Open de ontwikkelaarstools van de browser: klik met de rechtermuisknop op de pagina en kies **Inspecteren**, of druk op **F12** (Windows) / **⌥⌘I** (Mac).\n3. Open het cookie-overzicht voor je HelloFresh-website:\n   - **Chrome / Edge:** tabblad **Application** → klap in de linkerzijbalk **Cookies** uit → selecteer je HelloFresh-website.\n   - **Firefox:** tabblad **Opslag** → klap **Cookies** uit → selecteer je HelloFresh-website.\n   - **Safari:** schakel het Develop-menu in (Instellingen → Geavanceerd → \"Toon functies voor webontwikkelaars\"), daarna tabblad **Opslag** → **Cookies** → je HelloFresh-website.\n4. Zoek het cookie met de naam **`apiV2Auth`** en kopieer de volledige **waarde**.\n5. Plak deze hieronder. (Een los access token werkt ook, maar een volledige `apiV2Auth`-waarde bevat het refresh token voor de langst werkende verbinding.)\n\n**Land** is de HelloFresh-regio waartoe je account behoort (bijvoorbeeld US, GB, AU) — kies de regio van de website waarvan je het token hebt gekopieerd.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opnieuw verbinden met HelloFresh",
+        "description": "Voer het e-mailadres en wachtwoord van je HelloFresh-account in om de toegang te herstellen.",
+        "data": {
+          "username": "E-mail",
+          "password": "Wachtwoord"
+        }
+      },
+      "reauth_token": {
+        "title": "Opnieuw verbinden met HelloFresh",
+        "description": "Je HelloFresh-token is verlopen. Plak een nieuw `apiV2Auth`-token om de toegang te herstellen.\n\nZo doe je dat: log in op je HelloFresh-website en open de ontwikkelaarstools (rechtermuisknop → **Inspecteren**, of **F12**). Open het cookie-overzicht — **Chrome / Edge:** **Application** → **Cookies**; **Firefox:** **Opslag** → **Cookies** — selecteer je HelloFresh-website en kopieer de **waarde** van het cookie **`apiV2Auth`**.",
+        "data": {
+          "token": "apiV2Auth-token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbinden mislukt",
+      "invalid_auth": "Ongeldige inloggegevens",
+      "invalid_token": "Dit token kon niet worden gelezen of is geweigerd"
+    },
+    "abort": {
+      "already_configured": "Dit HelloFresh-account is al ingesteld",
+      "reauth_successful": "HelloFresh is opnieuw verbonden"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HelloFresh-opties",
+        "description": "Stel in hoe vaak HelloFresh-gegevens worden opgehaald en hoe ver de kaarten kunnen terugkijken. Deze instellingen werken meteen — je inloggegevens worden niet gewijzigd.",
+        "data": {
+          "scan_interval_minutes": "Vernieuwingsinterval (minuten)",
+          "history_weeks": "Bezorggeschiedenis (weken)",
+          "menu_grace_weeks": "Volledige menugeschiedenis (weken)",
+          "enable_public_menu_fallback": "Openbaar menu als terugval gebruiken",
+          "enable_favorites": "Favorietenhartjes tonen",
+          "show_data_quality_issues": "Waarschuwingen over gegevenskwaliteit tonen"
+        },
+        "data_description": {
+          "scan_interval_minutes": "Hoe vaak HelloFresh wordt bevraagd voor account- en bezorggegevens. Lager = actuelere gegevens en meer verzoeken; hoger = rustiger voor de API. Bereik 5–1440 minuten; standaard 180 (3 uur). Het inlogtoken wordt op een eigen schema vernieuwd, dus dit heeft geen invloed op het inloggen.",
+          "history_weeks": "Hoeveel weken aan eerdere bezorgingen worden geladen zodat je ze in de kaarten kunt bekijken. Lager = minder gegevens per vernieuwing; verhoog dit om verder terug te kijken (ongeveer 56 voor een heel jaar). Bereik 1–104 weken; standaard 26 (ongeveer 6 maanden). Wijzigen herlaadt de integratie.",
+          "menu_grace_weeks": "Hoeveel weken na de bezorgdatum een week zijn volledige menu houdt om te bekijken in de maaltijdplannerkaart (je bezorgde maaltijden blijven gemarkeerd); oudere weken tonen alleen wat is bezorgd. Bereik 0–3 weken; standaard 2 (de laatste paar maaltijdboxen blijven te bekijken). Met 0 zet je dit uit. HelloFresh publiceert het menu voor oudere weken niet meer, dus weken daarbuiten tonen alleen nog de bezorgde maaltijden. Wijzigen herlaadt de integratie.",
+          "enable_public_menu_fallback": "Als de ingelogde menugegevens niet geladen kunnen worden, wordt de openbare regionale menupagina uitgelezen zodat receptnamen toch verschijnen. Laat dit aan, tenzij je uitsluitend geverifieerde gegevens wilt.",
+          "enable_favorites": "Bij elke vernieuwing opzoeken welke maaltijden in je HelloFresh-kookboek als favoriet zijn opgeslagen, zodat de maaltijdplannerkaart een hartje kan tonen. Kost één extra verzoek per vernieuwing: HelloFresh heeft geen \"toon mijn favorieten\"-endpoint, dus de recepten van het menu moeten naar een filter-endpoint worden gestuurd om te zien welke favoriet zijn. Zet dit uit om die stap over te slaan — de services om favorieten toe te voegen of te verwijderen blijven hoe dan ook werken.",
+          "show_data_quality_issues": "Waarschuwingen tonen in het scherm Reparaties wanneer HelloFresh-gegevens beperkt zijn (menuterugval actief, onbekende gegevensformaten, accountgegevens niet beschikbaar, geblokkeerde schrijfacties). De gegevens blijven hoe dan ook laden. Zet dit uit om deze waarschuwingen te onderdrukken en al getoonde waarschuwingen te wissen."
+        }
+      }
+    }
+  },
+  "issues": {
+    "account_data_unavailable": {
+      "title": "HelloFresh-accountgegevens zijn niet beschikbaar voor {entry_title}",
+      "description": "HelloFresh kon geen geverifieerde accountgegevens laden voor **{entry_title}**. De integratie valt momenteel terug op alleen openbare menugegevens. Vernieuw de integratie, of log opnieuw in met je HelloFresh-e-mailadres en wachtwoord als inloggen niet meer werkt."
+    },
+    "account_menu_fallback": {
+      "title": "HelloFresh-menuterugval is actief voor {entry_title}",
+      "description": "HelloFresh kon voor **{entry_title}** geen gestructureerde menugegevens laden uit geverifieerde API-antwoorden, dus gebruikt de integratie momenteel de openbare menupagina als terugval. Bezorgtracking werkt mogelijk nog wel, maar receptdetails kunnen onvolledig zijn totdat het API-antwoord weer wordt herkend. Dit verdwijnt vanzelf zodra geverifieerde menugegevens weer laden; gebruik Negeren in het menu van deze reparatie om het te onderdrukken, of zet \"Waarschuwingen over gegevenskwaliteit tonen\" uit in de opties van de integratie."
+    },
+    "payload_shape_changed": {
+      "title": "HelloFresh-accountgegevens zijn gewijzigd voor {entry_title}",
+      "description": "HelloFresh gaf geverifieerde gegevens terug voor **{entry_title}**, maar het formaat kwam niet meer overeen met de bezorgstructuren die deze integratie kan verwerken. Diagnostiek van deze configuratie helpt vast te stellen of een regionale API-variant of een wijziging op de website ondersteund moet worden."
+    },
+    "write_actions_unavailable": {
+      "title": "HelloFresh-schrijfacties zijn niet bevestigd voor {entry_title}",
+      "description": "Je probeerde een HelloFresh-actie te gebruiken die accountgegevens wijzigt voor **{entry_title}**, zoals maaltijden kiezen of een week overslaan. De integratie heeft de bekende schrijf-endpoints voor je account geprobeerd, maar geen enkele accepteerde het verzoek. De actie is daarom geblokkeerd in plaats van verder te gokken."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_delivery_date": {
+        "name": "Datum volgende bezorging"
+      },
+      "next_order_status": {
+        "name": "Status volgende bezorging"
+      },
+      "shipment_tracking_status": {
+        "name": "Verzendstatus"
+      },
+      "shipment_tracking_number": {
+        "name": "Track & trace-nummer"
+      },
+      "weeks_needing_selection": {
+        "name": "Weken vooraf gekozen door HelloFresh"
+      },
+      "next_selection_deadline": {
+        "name": "Deadline voor volgende bezorging"
+      },
+      "selected_meal_count": {
+        "name": "Aantal maaltijden volgende bezorging"
+      },
+      "next_selectable_delivery_meal_count": {
+        "name": "Aantal maaltijden volgende wijzigbare bezorging"
+      },
+      "selected_market_count": {
+        "name": "Aantal Market-artikelen volgende bezorging"
+      },
+      "next_selectable_delivery_market_count": {
+        "name": "Aantal Market-artikelen volgende wijzigbare bezorging"
+      },
+      "next_delivery_preselected": {
+        "name": "Volgende bezorging vooraf gekozen"
+      },
+      "next_selectable_delivery_preselected": {
+        "name": "Volgende wijzigbare bezorging vooraf gekozen"
+      },
+      "required_meal_count": {
+        "name": "Aantal maaltijden"
+      },
+      "delivery_count_this_week": {
+        "name": "Aantal volgende bezorgingen"
+      },
+      "next_box_total_price": {
+        "name": "Totaalprijs volgende bezorging"
+      },
+      "account_credit": {
+        "name": "Tegoed"
+      },
+      "selected_plan": {
+        "name": "Gekozen abonnement"
+      },
+      "selected_plan_total_price": {
+        "name": "Totaalprijs gekozen abonnement"
+      },
+      "public_menu_recipe_count": {
+        "name": "Aantal beschikbare menurecepten"
+      },
+      "subscription_count": {
+        "name": "Aantal abonnementen"
+      },
+      "subscription_status": {
+        "name": "Abonnementsstatus"
+      },
+      "number_of_people": {
+        "name": "Aantal personen"
+      },
+      "delivery_address": {
+        "name": "Bezorgadres"
+      },
+      "recent_payment_date": {
+        "name": "Laatste betaaldatum"
+      },
+      "next_payment_date": {
+        "name": "Betaaldatum volgende bezorging"
+      },
+      "upcoming_delivery_count": {
+        "name": "Aantal komende bezorgingen"
+      },
+      "next_delivery_subscription": {
+        "name": "Abonnements-ID van de bezorging"
+      },
+      "next_delivery_slot": {
+        "name": "Bezorgmoment"
+      },
+      "tracked_shipment_carrier": {
+        "name": "Vervoerder"
+      },
+      "tracked_shipment_estimate": {
+        "name": "Verwachte bezorging"
+      },
+      "tracked_shipment_date": {
+        "name": "Bezorgd op"
+      },
+      "skipped_week_count": {
+        "name": "Aantal overgeslagen weken"
+      },
+      "next_skipped_week": {
+        "name": "Volgende overgeslagen week"
+      },
+      "boxes_received": {
+        "name": "Ontvangen maaltijdboxen"
+      },
+      "last_delivery_date": {
+        "name": "Datum laatste bezorging"
+      },
+      "next_delivery_week": {
+        "name": "Volgende bezorgweek"
+      },
+      "next_selectable_delivery_date": {
+        "name": "Datum volgende wijzigbare bezorging"
+      },
+      "next_selectable_delivery_week": {
+        "name": "Volgende wijzigbare bezorgweek"
+      },
+      "next_selectable_delivery_selection_deadline": {
+        "name": "Deadline voor volgende wijzigbare bezorging"
+      },
+      "api_base_url": {
+        "name": "API-basis-URL"
+      },
+      "account_id": {
+        "name": "Account-ID"
+      },
+      "recent_order_id": {
+        "name": "Bestel-ID volgende bezorging"
+      },
+      "next_box_coupon": {
+        "name": "Kortingscode volgende bezorging"
+      },
+      "next_delivery_tracking_url": {
+        "name": "Track & trace-URL"
+      },
+      "next_holiday_delivery_date": {
+        "name": "Bezorgdatum feestdag"
+      },
+      "next_holiday_message": {
+        "name": "Bericht over bezorging op feestdag"
+      },
+      "next_delivery_blocked": {
+        "name": "Volgende bezorging geblokkeerd"
+      },
+      "access_token_minutes_remaining": {
+        "name": "Resterende tijd access token"
+      },
+      "refresh_token_days_remaining": {
+        "name": "Resterende tijd refresh token"
+      }
+    },
+    "binary_sensor": {
+      "needs_meal_selection": {
+        "name": "Maaltijdkeuze nodig"
+      },
+      "write_actions_available": {
+        "name": "Schrijfacties beschikbaar"
+      },
+      "tracked_shipment_available": {
+        "name": "Track & trace beschikbaar"
+      },
+      "payload_shape_changed": {
+        "name": "Gegevensformaat gewijzigd"
+      }
+    },
+    "button": {
+      "refresh_data": {
+        "name": "Gegevens vernieuwen"
+      }
+    },
+    "calendar": {
+      "delivery_schedule": {
+        "name": "Bezorgschema"
+      }
+    },
+    "switch": {
+      "skip_next_modifiable_week": {
+        "name": "Volgende wijzigbare bezorgweek overslaan"
+      }
+    }
+  },
+  "services": {
+    "refresh_data": {
+      "name": "Gegevens vernieuwen",
+      "description": "HelloFresh-accountgegevens direct vernieuwen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_weeks": {
+      "name": "Weken ophalen",
+      "description": "Geeft de HelloFresh-bezorgweken terug met volledige recept- en keuzedetails. Alleen lezen; geeft een antwoord terug. Optioneel te filteren op één week.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "Optionele identificatie van een HelloFresh-bezorgweek om alleen die week terug te geven."
+        }
+      }
+    },
+    "select_meals": {
+      "name": "Maaltijden kiezen",
+      "description": "Maaltijdkeuzes voor een bezorgweek indienen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        },
+        "recipe_ids": {
+          "name": "Recept-ID's",
+          "description": "De identificaties van de recepten voor die week."
+        },
+        "quantities": {
+          "name": "Aantallen",
+          "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal). Recepten die ontbreken krijgen standaard één portie; het minimum aantal maaltijden wordt getoetst aan het totaal aantal porties."
+        }
+      }
+    },
+    "select_market_items": {
+      "name": "Market-artikelen kiezen",
+      "description": "De keuze van HelloFresh Market-extra's voor een bezorgweek instellen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        },
+        "quantities": {
+          "name": "Aantallen",
+          "description": "Koppeling van Market-artikel-ID aan aantal. Een aantal van 0 verwijdert het artikel."
+        }
+      }
+    },
+    "skip_week": {
+      "name": "Week overslaan",
+      "description": "Een specifieke HelloFresh-bezorgweek overslaan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        }
+      }
+    },
+    "unskip_week": {
+      "name": "Week niet overslaan",
+      "description": "Een eerder overgeslagen HelloFresh-bezorgweek herstellen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        }
+      }
+    },
+    "reschedule_week": {
+      "name": "Week verplaatsen",
+      "description": "Eén HelloFresh-bezorgweek naar een andere bezorgoptie (moment/dag) verplaatsen. Eenmalige wijziging; het terugkerende schema verandert niet.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        },
+        "delivery_option": {
+          "name": "Bezorgoptie",
+          "description": "De identificatie van de bezorgoptie voor die week, zoals teruggegeven door \"Bezorgopties ophalen\"."
+        }
+      }
+    },
+    "change_delivery_weekday": {
+      "name": "Bezorgdag wijzigen",
+      "description": "De terugkerende bezorgoptie en het interval voor het abonnement wijzigen. Geldt voor alle toekomstige bezorgingen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "delivery_option": {
+          "name": "Bezorgoptie",
+          "description": "De identificatie van de nieuwe terugkerende bezorgoptie, zoals teruggegeven door \"Bezorgopties ophalen\"."
+        },
+        "delivery_interval": {
+          "name": "Bezorginterval",
+          "description": "Hoe vaak er bezorgd wordt, in weken. Standaard wekelijks."
+        },
+        "subscription_id": {
+          "name": "Abonnements-ID",
+          "description": "Welk abonnement gewijzigd moet worden als er meerdere zijn. Standaard het hoofdabonnement."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Favorieten ophalen",
+      "description": "Geeft je HelloFresh-kookboek terug: alle favorieten met volledige details, of — wanneer recept-ID's zijn opgegeven — welke van die recepten favoriet zijn.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "recipe_ids": {
+          "name": "Recept-ID's",
+          "description": "Optionele recept-identificaties om alleen te controleren welke daarvan favoriet zijn."
+        }
+      }
+    },
+    "add_favorite": {
+      "name": "Favoriet toevoegen",
+      "description": "Een recept als favoriet opslaan in het HelloFresh-kookboek.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "recipe_id": {
+          "name": "Recept-ID",
+          "description": "De identificatie van het HelloFresh-recept dat je als favoriet wilt opslaan (de 24-tekens-ID, bijv. 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Favoriet verwijderen",
+      "description": "Een recept uit de favorieten van het HelloFresh-kookboek verwijderen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "recipe_id": {
+          "name": "Recept-ID",
+          "description": "De identificatie van het HelloFresh-recept dat je uit de favorieten wilt verwijderen (de 24-tekens-ID, bijv. 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "get_recipe_collections": {
+      "name": "Receptcategorieën ophalen",
+      "description": "Geeft de doorzoekbare categorieën van de openbare HelloFresh-receptencatalogus terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_catalog_recipes": {
+      "name": "Catalogusrecepten ophalen",
+      "description": "Geeft recepten uit de openbare HelloFresh-receptencatalogus terug, optioneel binnen één categorie.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "collection": {
+          "name": "Categorie",
+          "description": "Optionele categorie-identificatie om de resultaten tot die categorie te beperken."
+        },
+        "limit": {
+          "name": "Maximum",
+          "description": "Maximaal aantal terug te geven recepten."
+        }
+      }
+    },
+    "preview_meal_price": {
+      "name": "Maaltijdprijs bekijken",
+      "description": "Berekent de prijs van een hypothetische maaltijdkeuze voor een week zonder deze op te slaan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        },
+        "recipe_ids": {
+          "name": "Recept-ID's",
+          "description": "De recept-identificaties waarvoor de prijs wordt berekend."
+        },
+        "quantities": {
+          "name": "Aantallen",
+          "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal)."
+        }
+      }
+    },
+    "get_recipe_detail": {
+      "name": "Receptdetails ophalen",
+      "description": "Geeft alle kookdetails van één recept terug: ingrediënten, bereidingswijze, keukengerei, allergenen, voedingswaarde en de printbare receptkaart.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "recipe_id": {
+          "name": "Recept-ID",
+          "description": "De identificatie van het op te halen HelloFresh-recept."
+        },
+        "servings": {
+          "name": "Porties",
+          "description": "Optioneel aantal porties waarnaar de ingrediënthoeveelheden worden omgerekend."
+        }
+      }
+    },
+    "get_plan_options": {
+      "name": "Abonnementsopties ophalen",
+      "description": "Toont de boxformaten waarnaar dit abonnement kan overstappen (maaltijden per week × porties), met prijzen. De handle van een optie is wat \"Abonnement wijzigen\" verwacht. Alleen lezen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "subscription_id": {
+          "name": "Abonnements-ID",
+          "description": "Welk abonnement gewijzigd moet worden als er meerdere zijn. Standaard het hoofdabonnement."
+        }
+      }
+    },
+    "change_plan": {
+      "name": "Abonnement wijzigen",
+      "description": "Het terugkerende boxformaat wijzigen (maaltijden per week × porties). Geldt voor alle toekomstige maaltijdboxen en verandert wat je betaalt.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "product_handle": {
+          "name": "Product-handle",
+          "description": "De handle van het gewenste abonnement, zoals teruggegeven door \"Abonnementsopties ophalen\"."
+        },
+        "subscription_id": {
+          "name": "Abonnements-ID",
+          "description": "Welk abonnement gewijzigd moet worden als er meerdere zijn. Standaard het hoofdabonnement."
+        }
+      }
+    },
+    "get_account_summary": {
+      "name": "Accountoverzicht ophalen",
+      "description": "Geeft de belangrijkste account- en abonnementswaarden (abonnement, tegoed, komende aantallen, kortingscode, betaaldatum, feestdagbericht) in één aanroep terug — dezelfde waarden die de bijbehorende sensoren melden. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_delivery_options": {
+      "name": "Bezorgopties ophalen",
+      "description": "Geeft de te kiezen bezorgdagen van het abonnement terug (weekdag, naam, prijs en welke nu standaard is) — de volledige bezorgdagkiezer die de website gebruikt. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_food_profile": {
+      "name": "Voedingsprofiel ophalen",
+      "description": "Geeft het voedingsprofiel van de klant terug (de voorkeuren waarmee HelloFresh toekomstige maaltijden vooraf kiest) samen met de volledige catalogus van te kiezen opties. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_plans": {
+      "name": "Abonnementen ophalen",
+      "description": "Geeft de abonnementscatalogus van het account terug (product-handle, prijs, status). Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Menuvoorkeuren ophalen",
+      "description": "Geeft de menuvoorkeuren van de regio terug (Chef's Choice, Veggie, Quick & Easy, …) met handle, naam en beschrijving. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_spending": {
+      "name": "Uitgaven ophalen",
+      "description": "Geeft het HelloFresh-uitgavenoverzicht uit de volledige facturatiegeschiedenis terug: weken per maaltijdbox, een maandoverzicht en een doorlopend totaal van eerdere bezorgingen. Alleen lezen; geeft een antwoord terug. Voedt de kostenkaart.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "set_food_profile": {
+      "name": "Voedingsprofiel opslaan",
+      "description": "Werkt het voedingsprofiel van de klant bij. Geef smaak, huishouden of doelen op; alleen de opgegeven onderdelen worden gewijzigd. Geeft het opgeslagen profiel terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "taste": {
+          "name": "Smaak",
+          "description": "Smaak- en voedingsvoorkeuren voor het profiel."
+        },
+        "household": {
+          "name": "Huishouden",
+          "description": "Gegevens over het huishouden, zoals het aantal personen."
+        },
+        "goals": {
+          "name": "Doelen",
+          "description": "Voedingsdoelen voor het profiel."
+        }
+      }
+    }
+  }
+}

@@ -21,6 +21,19 @@ version heading and publishes it as the release's Highlights.
   handover keeps its local day rather than jumping forward with UTC.
 - Upcoming weeks are unaffected — only delivered weeks carry a carrier timestamp, so those rows
   render exactly as before.
+- **Added translations for six languages: German, Dutch, French, Danish, Norwegian (Bokmål) and
+  Swedish**, covering all 257 strings (entities, services, config/options flows and repair issues).
+  Between them these cover 14 of the 16 supported markets; `us`/`uk`/`ca`/`au`/`nz`/`ie` already
+  use `en.json`.
+- Product terminology was taken from the live regional HelloFresh sites rather than translated
+  generically, so the entity names match what the customer sees on their own HelloFresh website:
+  **Kochbox** (de/at/ch), **Maaltijdbox** (nl/be), **Box Repas** (fr), **måltidskasse** (dk),
+  **matkasse** (no), **matkasse/matkassar** (se). Dutch keeps the English loanword "deadline",
+  which is what hellofresh.nl itself uses.
+- Note on the browser walkthrough in the token setup step: the prose is translated, but the
+  devtools menu labels it names (**Application**, **Storage**, **Cookies**) are localized by the
+  browser itself and vary by vendor and version — treat those as best-effort and report
+  corrections.
 
 ## 2.69 — 2026-08-18
 - **New sensor: `sensor.tracked_shipment_date`** — when the most recent box **actually arrived**,

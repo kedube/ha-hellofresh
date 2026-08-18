@@ -141,6 +141,13 @@ Choose the matching country during setup. All 16 markets HelloFresh currently op
 | Norway | `no` | https://www.hellofresh.no | NOK | Untested |
 | Sweden | `se` | https://www.hellofresh.se | SEK | Untested |
 
+**Interface language.** The integration ships translations for German, Dutch, French, Danish,
+Norwegian (Bokmål) and Swedish alongside English; Home Assistant picks one from *your* profile
+language, not from the Country you choose above. Any string not yet translated falls back to
+English automatically. Product wording follows each regional HelloFresh site (Kochbox,
+Maaltijdbox, Box Repas, måltidskasse, matkasse), so entity names should read the way your own
+HelloFresh website does — corrections from native speakers are welcome.
+
 **Not supported:** HelloFresh has exited Spain and Italy (both wound down in early 2026) and Japan (2022), so accounts in those markets can no longer be used.
 
 ## What It Provides

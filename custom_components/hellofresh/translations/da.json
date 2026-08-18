@@ -1,0 +1,635 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Forbind til HelloFresh",
+        "description": "Vælg, hvordan du vil forbinde din HelloFresh-konto:\n\n- **E-mail og adgangskode (anbefales)** — Home Assistant logger ind for dig og holder forbindelsen opdateret automatisk.\n- **Adgangstoken (avanceret)** — indsæt et token fra din browsersession. Brug kun dette, hvis login med e-mail og adgangskode ikke virker.",
+        "menu_options": {
+          "credentials": "E-mail og adgangskode (anbefales)",
+          "token": "Adgangstoken (avanceret)"
+        }
+      },
+      "credentials": {
+        "title": "Forbind til HelloFresh",
+        "description": "Log ind med e-mailadressen og adgangskoden til din HelloFresh-konto. Home Assistant bruger dem til at logge ind og holder forbindelsen opdateret automatisk.\n\n**Land** er den HelloFresh-region, din konto hører til (for eksempel US, GB, AU). HelloFresh har et separat website for hvert land, så dette vælger det rigtige at logge ind på og hente dit abonnement, dine leveringer og din menu fra.",
+        "data": {
+          "country": "Land",
+          "username": "E-mail",
+          "password": "Adgangskode"
+        }
+      },
+      "token": {
+        "title": "Forbind til HelloFresh",
+        "description": "Avanceret reserveløsning, når login med e-mail og adgangskode er blokeret. Det virker i op til ca. 60 dage, indtil token udløber — derefter bliver du bedt om et nyt.\n\nSådan finder du dit `apiV2Auth`-token:\n1. Log ind på dit HelloFresh-website ({site_example}) i en browser på en computer, så du når din kontoside.\n2. Åbn browserens udviklerværktøjer: højreklik på siden og vælg **Undersøg**, eller tryk **F12** (Windows) / **⌥⌘I** (Mac).\n3. Åbn cookie-visningen for dit HelloFresh-website:\n   - **Chrome / Edge:** fanen **Application** → udvid **Cookies** i venstre sidepanel → vælg dit HelloFresh-website.\n   - **Firefox:** fanen **Lager** → udvid **Cookies** → vælg dit HelloFresh-website.\n   - **Safari:** slå Udvikler-menuen til (Indstillinger → Avanceret → \"Vis funktioner til webudviklere\"), derefter fanen **Lager** → **Cookies** → dit HelloFresh-website.\n4. Find cookien med navnet **`apiV2Auth`**, og kopiér hele dens **værdi**.\n5. Indsæt den nedenfor. (Et rent adgangstoken virker også, men en komplet `apiV2Auth`-værdi indeholder fornyelsestokenet og giver den længstvarende forbindelse.)\n\n**Land** er den HelloFresh-region, din konto hører til (for eksempel US, GB, AU) — vælg den, der passer til det website, du kopierede tokenet fra.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Forbind til HelloFresh igen",
+        "description": "Indtast e-mailadressen og adgangskoden til din HelloFresh-konto for at genoprette adgangen.",
+        "data": {
+          "username": "E-mail",
+          "password": "Adgangskode"
+        }
+      },
+      "reauth_token": {
+        "title": "Forbind til HelloFresh igen",
+        "description": "Dit HelloFresh-token er udløbet. Indsæt et nyt `apiV2Auth`-token for at genoprette adgangen.\n\nSådan gør du: log ind på dit HelloFresh-website, og åbn udviklerværktøjerne (højreklik → **Undersøg**, eller **F12**). Åbn cookie-visningen — **Chrome / Edge:** **Application** → **Cookies**; **Firefox:** **Lager** → **Cookies** — vælg dit HelloFresh-website, og kopiér **værdien** af cookien **`apiV2Auth`**.",
+        "data": {
+          "token": "apiV2Auth-token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke oprette forbindelse",
+      "invalid_auth": "Ugyldige loginoplysninger",
+      "invalid_token": "Dette token kunne ikke læses eller blev afvist"
+    },
+    "abort": {
+      "already_configured": "Denne HelloFresh-konto er allerede konfigureret",
+      "reauth_successful": "HelloFresh blev forbundet igen"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HelloFresh-indstillinger",
+        "description": "Justér, hvor ofte HelloFresh-data hentes, og hvor langt tilbage kortene kan bladre. Indstillingerne træder i kraft med det samme — dine loginoplysninger berøres ikke.",
+        "data": {
+          "scan_interval_minutes": "Opdateringsinterval (minutter)",
+          "history_weeks": "Leveringshistorik (uger)",
+          "menu_grace_weeks": "Fuld menuhistorik (uger)",
+          "enable_public_menu_fallback": "Brug offentlig menu som reserve",
+          "enable_favorites": "Vis favorithjerter",
+          "show_data_quality_issues": "Vis advarsler om datakvalitet"
+        },
+        "data_description": {
+          "scan_interval_minutes": "Hvor ofte HelloFresh forespørges om konto- og leveringsdata. Lavere = friskere data og flere forespørgsler; højere = mere skånsomt for API'et. Interval 5–1440 minutter; standard 180 (3 timer). Login-tokenet fornys efter sin egen tidsplan, så dette påvirker ikke login.",
+          "history_weeks": "Hvor mange ugers tidligere leveringer der indlæses, så du kan bladre i dem på kortene. Lavere = færre data hentes ved hver opdatering; forøg for at se længere tilbage (ca. 56 for et helt år). Interval 1–104 uger; standard 26 (ca. 6 måneder). Ændring genindlæser integrationen.",
+          "menu_grace_weeks": "Hvor mange uger efter leveringsdatoen en uge beholder hele sin menu i måltidsplanlægger-kortet (dine leverede retter forbliver fremhævet); ældre uger viser kun det, der blev leveret. Interval 0–3 uger; standard 2 (de seneste par måltidskasser kan stadig gennemses). 0 slår det fra. HelloFresh udgiver ikke længere menuen for ældre uger, så uger derudover viser kun de leverede retter. Ændring genindlæser integrationen.",
+          "enable_public_menu_fallback": "Hvis de indloggede menudata ikke kan indlæses, aflæses den offentlige regionale menuside, så opskriftsnavne stadig vises. Lad den være slået til, medmindre du kun ønsker godkendte data.",
+          "enable_favorites": "Slå ved hver opdatering op, hvilke retter der er gemt som favoritter i din HelloFresh-kogebog, så måltidsplanlægger-kortet kan vise et favorithjerte. Koster én ekstra forespørgsel pr. opdatering: HelloFresh har ingen \"vis mine favoritter\"-endpoint, så menuens opskrifter skal sendes til et filter-endpoint for at finde favoritterne. Slå fra for at springe det over — tjenesterne til at tilføje og fjerne favoritter virker uanset hvad.",
+          "show_data_quality_issues": "Vis advarsler på Reparationer-skærmen, når HelloFresh-data er forringede (menureserve aktiv, ukendte dataformater, kontodata utilgængelige, blokerede skrivehandlinger). Data indlæses fortsat uanset hvad. Slå fra for at skjule disse advarsler og fjerne dem, der allerede vises."
+        }
+      }
+    }
+  },
+  "issues": {
+    "account_data_unavailable": {
+      "title": "HelloFresh-kontodata er utilgængelige for {entry_title}",
+      "description": "HelloFresh kunne ikke indlæse godkendte kontodata for **{entry_title}**. Integrationen bruger i øjeblikket kun offentlige menudata. Opdatér integrationen, eller log ind igen med din HelloFresh-e-mail og adgangskode, hvis login er holdt op med at virke."
+    },
+    "account_menu_fallback": {
+      "title": "HelloFresh-menureserve er aktiv for {entry_title}",
+      "description": "HelloFresh kunne ikke indlæse strukturerede menudata for **{entry_title}** fra godkendte API-svar, så integrationen bruger i øjeblikket den offentlige menuside som reserve. Leveringssporing virker muligvis fortsat, men opskriftsdetaljer kan være mindre komplette, indtil API-svaret genkendes igen. Dette forsvinder af sig selv, når godkendte menudata indlæses igen; brug Ignorér i denne reparations menu for at skjule det, eller slå \"Vis advarsler om datakvalitet\" fra i integrationens indstillinger."
+    },
+    "payload_shape_changed": {
+      "title": "HelloFresh-kontodata er ændret for {entry_title}",
+      "description": "HelloFresh returnerede godkendte data for **{entry_title}**, men formatet svarede ikke længere til de leveringsstrukturer, denne integration kan fortolke. Diagnostik fra denne konfiguration hjælper med at afklare, om en regional API-variant eller en ændring på websitet skal understøttes."
+    },
+    "write_actions_unavailable": {
+      "title": "HelloFresh-skrivehandlinger er ikke bekræftet for {entry_title}",
+      "description": "Du forsøgte at bruge en HelloFresh-handling, der ændrer kontodata for **{entry_title}**, såsom at vælge retter eller springe en uge over. Integrationen prøvede de kendte skrive-endpoints for din konto, men ingen accepterede forespørgslen, så handlingen blev blokeret i stedet for at gætte videre."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_delivery_date": {
+        "name": "Dato for næste levering"
+      },
+      "next_order_status": {
+        "name": "Status for næste levering"
+      },
+      "shipment_tracking_status": {
+        "name": "Forsendelsesstatus"
+      },
+      "shipment_tracking_number": {
+        "name": "Sporingsnummer"
+      },
+      "weeks_needing_selection": {
+        "name": "Uger forudvalgt af HelloFresh"
+      },
+      "next_selection_deadline": {
+        "name": "Valgfrist for næste levering"
+      },
+      "selected_meal_count": {
+        "name": "Antal retter i næste levering"
+      },
+      "next_selectable_delivery_meal_count": {
+        "name": "Antal retter i næste ændrbare levering"
+      },
+      "selected_market_count": {
+        "name": "Antal Market-varer i næste levering"
+      },
+      "next_selectable_delivery_market_count": {
+        "name": "Antal Market-varer i næste ændrbare levering"
+      },
+      "next_delivery_preselected": {
+        "name": "Næste levering forudvalgt"
+      },
+      "next_selectable_delivery_preselected": {
+        "name": "Næste ændrbare levering forudvalgt"
+      },
+      "required_meal_count": {
+        "name": "Antal retter"
+      },
+      "delivery_count_this_week": {
+        "name": "Antal næste leveringer"
+      },
+      "next_box_total_price": {
+        "name": "Samlet pris for næste levering"
+      },
+      "account_credit": {
+        "name": "Tilgodehavende"
+      },
+      "selected_plan": {
+        "name": "Valgt abonnement"
+      },
+      "selected_plan_total_price": {
+        "name": "Samlet pris for valgt abonnement"
+      },
+      "public_menu_recipe_count": {
+        "name": "Antal tilgængelige opskrifter på menuen"
+      },
+      "subscription_count": {
+        "name": "Antal abonnementer"
+      },
+      "subscription_status": {
+        "name": "Abonnementsstatus"
+      },
+      "number_of_people": {
+        "name": "Antal personer"
+      },
+      "delivery_address": {
+        "name": "Leveringsadresse"
+      },
+      "recent_payment_date": {
+        "name": "Seneste betalingsdato"
+      },
+      "next_payment_date": {
+        "name": "Betalingsdato for næste levering"
+      },
+      "upcoming_delivery_count": {
+        "name": "Antal kommende leveringer"
+      },
+      "next_delivery_subscription": {
+        "name": "Abonnements-id for leveringen"
+      },
+      "next_delivery_slot": {
+        "name": "Leveringstidsrum"
+      },
+      "tracked_shipment_carrier": {
+        "name": "Fragtfirma"
+      },
+      "tracked_shipment_estimate": {
+        "name": "Forventet levering"
+      },
+      "tracked_shipment_date": {
+        "name": "Leveret den"
+      },
+      "skipped_week_count": {
+        "name": "Antal oversprungne uger"
+      },
+      "next_skipped_week": {
+        "name": "Næste oversprungne uge"
+      },
+      "boxes_received": {
+        "name": "Modtagne måltidskasser"
+      },
+      "last_delivery_date": {
+        "name": "Dato for seneste levering"
+      },
+      "next_delivery_week": {
+        "name": "Næste leveringsuge"
+      },
+      "next_selectable_delivery_date": {
+        "name": "Dato for næste ændrbare levering"
+      },
+      "next_selectable_delivery_week": {
+        "name": "Næste ændrbare leveringsuge"
+      },
+      "next_selectable_delivery_selection_deadline": {
+        "name": "Valgfrist for næste ændrbare levering"
+      },
+      "api_base_url": {
+        "name": "API-basis-URL"
+      },
+      "account_id": {
+        "name": "Konto-id"
+      },
+      "recent_order_id": {
+        "name": "Ordre-id for næste levering"
+      },
+      "next_box_coupon": {
+        "name": "Rabatkode til næste levering"
+      },
+      "next_delivery_tracking_url": {
+        "name": "Sporings-URL"
+      },
+      "next_holiday_delivery_date": {
+        "name": "Leveringsdato på helligdag"
+      },
+      "next_holiday_message": {
+        "name": "Besked om levering på helligdag"
+      },
+      "next_delivery_blocked": {
+        "name": "Næste levering blokeret"
+      },
+      "access_token_minutes_remaining": {
+        "name": "Resterende tid for adgangstoken"
+      },
+      "refresh_token_days_remaining": {
+        "name": "Resterende tid for fornyelsestoken"
+      }
+    },
+    "binary_sensor": {
+      "needs_meal_selection": {
+        "name": "Valg af retter påkrævet"
+      },
+      "write_actions_available": {
+        "name": "Skrivehandlinger tilgængelige"
+      },
+      "tracked_shipment_available": {
+        "name": "Forsendelsessporing tilgængelig"
+      },
+      "payload_shape_changed": {
+        "name": "Dataformat ændret"
+      }
+    },
+    "button": {
+      "refresh_data": {
+        "name": "Opdatér data"
+      }
+    },
+    "calendar": {
+      "delivery_schedule": {
+        "name": "Leveringsplan"
+      }
+    },
+    "switch": {
+      "skip_next_modifiable_week": {
+        "name": "Spring næste ændrbare leveringsuge over"
+      }
+    }
+  },
+  "services": {
+    "refresh_data": {
+      "name": "Opdatér data",
+      "description": "Opdatér HelloFresh-kontodata med det samme.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_weeks": {
+      "name": "Hent uger",
+      "description": "Returnerer HelloFresh-leveringsugerne med fulde opskrifts- og valgdetaljer. Kun læsning; returnerer et svar. Kan valgfrit filtreres til én enkelt uge.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Valgfri identifikator for en HelloFresh-leveringsuge for kun at returnere den uge."
+        }
+      }
+    },
+    "select_meals": {
+      "name": "Vælg retter",
+      "description": "Indsend valg af retter for en leveringsuge.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        },
+        "recipe_ids": {
+          "name": "Opskrifts-id'er",
+          "description": "Identifikatorerne for de opskrifter, der vælges til den uge."
+        },
+        "quantities": {
+          "name": "Antal",
+          "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal). Opskrifter, der udelades, får som standard én portion; minimumsantallet af retter kontrolleres mod det samlede antal portioner."
+        }
+      }
+    },
+    "select_market_items": {
+      "name": "Vælg Market-varer",
+      "description": "Angiv valget af HelloFresh Market-ekstra varer for en leveringsuge.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        },
+        "quantities": {
+          "name": "Antal",
+          "description": "Sammenkobling af Market-vare-id og antal. Antallet 0 fjerner varen."
+        }
+      }
+    },
+    "skip_week": {
+      "name": "Spring uge over",
+      "description": "Spring en bestemt HelloFresh-leveringsuge over.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        }
+      }
+    },
+    "unskip_week": {
+      "name": "Fortryd oversprunget uge",
+      "description": "Gendan en tidligere oversprunget HelloFresh-leveringsuge.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        }
+      }
+    },
+    "reschedule_week": {
+      "name": "Flyt uge",
+      "description": "Flyt en enkelt HelloFresh-leveringsuge til en anden leveringsmulighed (tidsrum/dag). Engangsændring; den faste plan påvirkes ikke.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        },
+        "delivery_option": {
+          "name": "Leveringsmulighed",
+          "description": "Identifikatoren for ugens leveringsmulighed, som returneret af \"Hent leveringsmuligheder\"."
+        }
+      }
+    },
+    "change_delivery_weekday": {
+      "name": "Skift leveringsdag",
+      "description": "Skift den faste leveringsmulighed og interval for abonnementets plan. Gælder alle fremtidige leveringer.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "delivery_option": {
+          "name": "Leveringsmulighed",
+          "description": "Identifikatoren for den nye faste leveringsmulighed, som returneret af \"Hent leveringsmuligheder\"."
+        },
+        "delivery_interval": {
+          "name": "Leveringsinterval",
+          "description": "Hvor ofte der leveres, i uger. Som standard ugentligt."
+        },
+        "subscription_id": {
+          "name": "Abonnements-id",
+          "description": "Hvilket abonnement der skal ændres, når der findes flere. Som standard hovedabonnementet."
+        }
+      }
+    },
+    "get_favorites": {
+      "name": "Hent favoritter",
+      "description": "Returnerer din HelloFresh-kogebog: alle favoritter med fulde detaljer, eller — når opskrifts-id'er er angivet — hvilke af de opskrifter der er gemt som favoritter.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "recipe_ids": {
+          "name": "Opskrifts-id'er",
+          "description": "Valgfrie opskrifts-id'er for kun at kontrollere, hvilke af dem der er favoritter."
+        }
+      }
+    },
+    "add_favorite": {
+      "name": "Tilføj favorit",
+      "description": "Gem en opskrift som favorit i HelloFresh-kogebogen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "recipe_id": {
+          "name": "Opskrifts-id",
+          "description": "Identifikatoren for den HelloFresh-opskrift, der skal gemmes som favorit (det 24 tegn lange id, f.eks. 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "remove_favorite": {
+      "name": "Fjern favorit",
+      "description": "Fjern en opskrift fra favoritterne i HelloFresh-kogebogen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "recipe_id": {
+          "name": "Opskrifts-id",
+          "description": "Identifikatoren for den HelloFresh-opskrift, der skal fjernes fra favoritterne (det 24 tegn lange id, f.eks. 694053fe353e00bd89ba2d3a)."
+        }
+      }
+    },
+    "get_recipe_collections": {
+      "name": "Hent opskriftskategorier",
+      "description": "Returnerer de kategorier, man kan gennemse i HelloFresh' offentlige opskriftskatalog.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_catalog_recipes": {
+      "name": "Hent katalogopskrifter",
+      "description": "Returnerer opskrifter fra HelloFresh' offentlige opskriftskatalog, eventuelt inden for én kategori.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "collection": {
+          "name": "Kategori",
+          "description": "Valgfri kategoriidentifikator for at begrænse resultaterne til den kategori."
+        },
+        "limit": {
+          "name": "Grænse",
+          "description": "Det største antal opskrifter, der returneres."
+        }
+      }
+    },
+    "preview_meal_price": {
+      "name": "Vis pris for retter",
+      "description": "Beregner prisen for et tænkt valg af retter for en uge uden at gemme det.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Identifikatoren for HelloFresh-leveringsugen."
+        },
+        "recipe_ids": {
+          "name": "Opskrifts-id'er",
+          "description": "Identifikatorerne for de opskrifter, der skal prissættes."
+        },
+        "quantities": {
+          "name": "Antal",
+          "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal)."
+        }
+      }
+    },
+    "get_recipe_detail": {
+      "name": "Hent opskriftsdetaljer",
+      "description": "Returnerer alle tilberedningsdetaljer for én opskrift: ingredienser, fremgangsmåde, redskaber, allergener, næringsindhold og det opskriftskort, der kan printes.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "recipe_id": {
+          "name": "Opskrifts-id",
+          "description": "Identifikatoren for den HelloFresh-opskrift, der skal hentes."
+        },
+        "servings": {
+          "name": "Portioner",
+          "description": "Valgfrit antal portioner, som ingrediensmængderne omregnes til."
+        }
+      }
+    },
+    "get_plan_options": {
+      "name": "Hent abonnementsmuligheder",
+      "description": "Viser de kassestørrelser, dette abonnement kan skifte til (retter pr. uge × portioner), med priser. En muligheds handle er det, \"Skift abonnement\" forventer. Kun læsning.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "subscription_id": {
+          "name": "Abonnements-id",
+          "description": "Hvilket abonnement der skal ændres, når der findes flere. Som standard hovedabonnementet."
+        }
+      }
+    },
+    "change_plan": {
+      "name": "Skift abonnement",
+      "description": "Skift den faste kassestørrelse (retter pr. uge × portioner). Gælder alle fremtidige måltidskasser og ændrer det beløb, du betaler.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "product_handle": {
+          "name": "Produkt-handle",
+          "description": "Handle for det ønskede abonnement, som returneret af \"Hent abonnementsmuligheder\"."
+        },
+        "subscription_id": {
+          "name": "Abonnements-id",
+          "description": "Hvilket abonnement der skal ændres, når der findes flere. Som standard hovedabonnementet."
+        }
+      }
+    },
+    "get_account_summary": {
+      "name": "Hent kontooversigt",
+      "description": "Returnerer de vigtigste konto- og abonnementsværdier (abonnement, tilgodehavende, kommende antal, rabatkode, betalingsdato, helligdagsbesked) i ét kald — de samme værdier, som de tilsvarende sensorer viser. Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_delivery_options": {
+      "name": "Hent leveringsmuligheder",
+      "description": "Returnerer abonnementets valgbare leveringsdage (ugedag, navn, pris og hvilken der er standard nu) — hele den leveringsdagsvælger, websitet bruger. Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_food_profile": {
+      "name": "Hent madprofil",
+      "description": "Returnerer kundens madprofil (de præferencer, HelloFresh bruger til automatisk at forudvælge kommende retter) sammen med hele kataloget over valgbare muligheder. Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_plans": {
+      "name": "Hent abonnementer",
+      "description": "Returnerer kontoens abonnementskatalog (produkt-handle, pris, status). Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Hent menuforvalg",
+      "description": "Returnerer regionens menuforvalg (Chef's Choice, Veggie, Quick & Easy, …) med handle, navn og beskrivelse. Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "get_spending": {
+      "name": "Hent forbrug",
+      "description": "Returnerer kundens HelloFresh-forbrugsoversigt fra hele betalingshistorikken: uger pr. måltidskasse, en månedlig opsummering og en løbende total for tidligere leveringer. Kun læsning; returnerer et svar. Ligger til grund for omkostningskortet.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "set_food_profile": {
+      "name": "Gem madprofil",
+      "description": "Opdaterer kundens madprofil. Angiv smag, husstand eller mål efter behov; kun de angivne afsnit ændres. Returnerer den gemte profil.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "taste": {
+          "name": "Smag",
+          "description": "Smags- og kostpræferencer til profilen."
+        },
+        "household": {
+          "name": "Husstand",
+          "description": "Oplysninger om husstanden, såsom antal personer."
+        },
+        "goals": {
+          "name": "Mål",
+          "description": "Kostmål til profilen."
+        }
+      }
+    }
+  }
+}
