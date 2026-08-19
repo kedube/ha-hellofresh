@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.72 — 2026-08-19
 - **Fixed the Market card only showing ~2 weeks of history** while My Menu correctly spanned the
   full `history_weeks` window (default 26). The per-week menu fetch was being skipped for any week
   older than `menu_grace_weeks` (default 2) as a bandwidth optimization — justified on the grounds
