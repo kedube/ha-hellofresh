@@ -40,6 +40,12 @@ version heading and publishes it as the release's Highlights.
   tests for the week-selection logic that require the Market and My Menu cards to expose the
   **same** past weeks. That parity test fails against the old code, reproducing the reported
   symptom exactly.
+- **Documentation** — the README's history option now uses its real UI label (**Past delivery
+  history (weeks)**, previously written as "Weeks of past history to load", which could not be
+  found in the options dialog); the Market card section documents how far back it browses, where
+  past-week data comes from, and why older weeks show no categories or prices; CONTRIBUTING gains
+  a "Running the CI checks locally" section; and the API reference documents the `addons` history
+  field alongside a comparison table against the similarly-named `addOns` catalog.
 - **New consistency tests** pin metadata that is edited by hand and drifts silently: the HACS
   country list against the supported countries, `strings.json` against `en.json`, all six shipped
   locales against the English keys, `services.yaml` against the actually-registered services, and

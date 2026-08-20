@@ -18,10 +18,46 @@ pip install -r requirements_test.txt
 pytest -q
 ```
 
+## Running the CI checks locally
+
+CI runs five jobs; all of them except the two hosted actions (HACS validation and hassfest) can
+be reproduced locally. Running these before pushing avoids a round-trip:
+
+```bash
+ruff check .                                  # lint
+ruff format --check .                         # formatting (enforced -- see note below)
+pytest -q                                     # Python test suite
+python .github/scripts/check_card_syntax.py   # every Lovelace card parses (needs node)
+node .github/scripts/check_card_logic.mjs     # card week-selection behaviour
+```
+
+Formatting is enforced, so run `ruff format .` before committing rather than hand-aligning code.
+
+### Why the card checks exist
+
+The Lovelace cards under `custom_components/hellofresh/www/` are several thousand lines of
+hand-written JavaScript that the Python test suite cannot reach. A past-week browsing regression
+once shipped precisely because nothing validated them. Two guards now cover that gap:
+
+- **`check_card_syntax.py`** proves each card parses as an ES module, so a typo cannot reach users
+  as a blank dashboard panel. It blanks `import` lines before checking (preserving line numbers)
+  because `node --check` would otherwise fail resolving the shared modules.
+- **`check_card_logic.mjs`** extracts the cards' real `_browsableWeeks` from the shipped sources
+  and exercises it. The load-bearing assertion is that the **Market and meal-planner cards expose
+  the same past weeks** — they read the same `get_weeks` response and share a week cursor, so any
+  divergence is a bug. Add a case here when you change week filtering.
+
+Because the logic tests parse the card sources with a regex, renaming `_browsableWeeks` or
+reindenting it will break extraction — the script fails loudly rather than silently passing.
+
 ## Project layout
 
 - `custom_components/hellofresh/` contains the integration code.
-- `tests/` contains the pytest suite.
+- `custom_components/hellofresh/www/` contains the Lovelace cards (plain ES modules, no build step).
+- `tests/` contains the pytest suite. `tests/test_repo_consistency.py` pins hand-edited metadata
+  (HACS country list, translation completeness, `services.yaml`, card registration) that otherwise
+  drifts out of step with the code.
+- `.github/scripts/` contains the CI helper scripts, including the card checks described above.
 - `docs/` contains user reference documentation split out of the README (e.g. the [entity reference](docs/entities.md)) — update it alongside entity changes.
 - `hacs.json` and `manifest.json` contain release and integration metadata.
 
