@@ -513,9 +513,61 @@ These endpoints are **not interchangeable**, and this matters for getting past-w
 
 Rather than returning the first endpoint that answers, the integration **accumulates recipe-bearing weeks from every candidate keyed by week id, with `past-deliveries` winning per week**, and follows the `nextWeek` cursor back to the history floor. A previous version returned whichever endpoint answered first; because the recipe-less candidates often win, an old week never received its delivered meals and the dashboard showed a fabricated selection (regression test `test_past_delivery_history_prefers_recipe_bearing_endpoint`).
 
+#### `addons` — purchased Market add-ons per delivered week
+
+Each `weeks[]` entry in the `past-deliveries` payload may carry a **lowercase `addons`** array
+listing the Market add-ons that week actually shipped with:
+
+```json
+{
+  "week": "2026-W25",
+  "meals": [ ... ],
+  "addons": [
+    {
+      "id": "69fb4b89fd1622233825d098",
+      "shoppableProductId": "2cfcd85b-c686-55c8-b062-5ef4c64fb59d",
+      "name": "Pork & Shiitake Gyoza",
+      "headline": "Get ready to catch fillings! | 2-3 Servings",
+      "image": "https://img.hellofresh.com/q_auto/recipes/image/....jpeg",
+      "category": "Pork",
+      "tags": [ { "name": "Ready to Heat", "type": "addon-rth" } ],
+      "nutrition": { "calories": 200, "protein": 9 }
+    }
+  ]
+}
+```
+
+> **Do not confuse this with [`addOns`](#addons--hellofresh-market-catalog) (capital O).** They are
+> different shapes serving different purposes, and conflating them caused a long-lived bug:
+>
+> | | `addOns` (capital O) | `addons` (lowercase) |
+> |---|---|---|
+> | Source | week menu payload | `past-deliveries` history |
+> | Shape | `{groups: [{groupType, addOns: []}]}` | flat array |
+> | Means | what you **could** order (catalog) | what you **did** order |
+> | Availability | ~`menu_grace_weeks` only | full history window |
+> | Has `index`/price/`quantity` | yes | **no** |
+> | Has `groupType` | yes | **no** (only `category`) |
+>
+> The catalog disappears once HelloFresh stops publishing a week's menu, so for anything older
+> than the grace window `addons` is the **only** record that a Market purchase happened. The
+> integration originally parsed only `addOns`, which left every older week with an empty catalog —
+> and since the Market card listed a past week only when it carried market data, history silently
+> collapsed to ~2 weeks while My Menu spanned the full window.
+
+`_build_purchased_market_items` parses this into `HelloFreshWeek.market_items`, and
+`_merge_past_delivery_market_items` stamps them onto the matching **past** account week (guarded to
+`delivery_date < today` so a current week keeps its live, editable catalog). Because history omits
+`index` — the cart selection unit — these items deliberately carry `index=None`, and
+`async_select_market_items` rejects any item without one, so a history-sourced item can never be
+submitted as a cart write. Quantity is recorded as `1` (history reports no count) and `group_type`
+stays `None`, which the card renders as an ungrouped list rather than inventing a category.
+
 **History window.** Both the ranged display range and the `past-deliveries` pagination floor are driven by the **configurable** history depth — the `history_weeks` option (`CONF_HISTORY_WEEKS` in [const.py](custom_components/hellofresh/const.py)), default **`DEFAULT_HISTORY_WEEKS` = 26** (~6 months), range **1–104** (`MIN_HISTORY_WEEKS`/`MAX_HISTORY_WEEKS`). The client reads it as `self._history_weeks` (the `history_weeks` constructor arg, falling back to the `_HISTORY_LOOKBACK_WEEKS = 26` class default when unset). Lowering it shrinks the per-poll deliveries payload; raising it browses further back.
 
 > **Use ~56, not 52, for a full year of history.** `today − 52 weeks` lands 364 days back, so a 12-month-old box sits exactly on the boundary and ISO-week rounding can drop it. Two related rules: the pagination floor is set **two weeks past** `self._history_weeks` (`weeks=self._history_weeks + 2`) so the oldest *visible* week always has its delivered recipes fetched, and the cursor floor is compared by `(year, week)` rather than raw string, so `2026-W01` orders after `2025-W52`.
+
+**Page cap scales with the option.** Pagination is also bounded by a page cap so a misbehaving cursor cannot loop forever. That cap is derived from the configured window — `max(20, (history_weeks // 2) + 10)` — rather than being a fixed number. It was previously hardcoded to `20`, which at ~4 weeks per page stopped roughly 80 weeks back, so a `history_weeks` near the 104 maximum silently lost its oldest weeks. The divisor assumes a conservative 2 weeks per page so the cap clears the floor even if HelloFresh shrinks page size.
 
 Recognized top-level arrays include:
 
