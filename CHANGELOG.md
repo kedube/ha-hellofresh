@@ -5,6 +5,31 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed past-week browsing in the Market card**, which showed only the last couple of weeks
+  while My Menu correctly spanned the configured **Past delivery history (weeks)** window
+  (default 26, selectable 1–104). The Market card now honors that same option.
+- Root cause: a week's market items were only ever parsed from the browsable `addOns` catalog
+  published on its menu, and HelloFresh only serves that menu for about the **Full menu history
+  (weeks)** window (default 2). Past that point a week had no market data at all, and the card
+  lists a past week only when it carries some, so older weeks silently vanished from the strip.
+- The delivered-history endpoint separately reports the add-ons a shipped week actually came
+  with, in a distinct lowercase `addons` field that the integration had never read. That field is
+  now parsed into each past week's market items, so history reflects **what you ordered** instead
+  of depending on a catalog that no longer exists. Verified against a live capture: the week of
+  Jun 15 again shows *Pork & Shiitake Gyoza* and *Steelhead Trout*.
+- Items keep their categories wherever category data still exists (within the Full menu history
+  window). Beyond it, delivered history records what was bought but not which Market shelf it came
+  from, so those weeks render as a single ordered list — no invented headings — matching how My
+  Menu presents an older week.
+- Past weeks are unaffected in My Menu: purchased add-ons are recognized and kept out of the meal
+  list even when no catalog survives, so they can't appear as delivered meals.
+- Current and future weeks are untouched — a live week keeps its full browsable catalog and stays
+  editable.
+- **Past-delivery pagination now scales with the configured history window.** The page cap was a
+  fixed 20, which stopped roughly 80 weeks back, so a history setting near the 104-week maximum
+  silently lost its oldest weeks. It is now derived from the option.
+
 ## 2.70 — 2026-08-18
 - **Fixed `sensor.tracked_shipment_date` reading Unknown for a box the web UI showed as
   delivered.** The sensor resolves the most recent delivered week via `last_delivery_week`, which

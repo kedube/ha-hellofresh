@@ -226,8 +226,9 @@ class HelloFreshMarketCard extends HTMLElement {
   // have a catalog and no further — if HelloFresh has published 5 future weeks, show 5; if 7, show
   // 7 — without any fixed cap. So we walk the weeks in chronological order and, once we reach a
   // FUTURE week with no market data, stop including everything from there on. Past and current
-  // weeks are kept only when they carry a catalog (a past week with no market items has nothing
-  // to browse), matching the original "weeks that carry a market catalog" rule for history.
+  // weeks are kept only when they carry market data — for a past week that is the add-ons it
+  // shipped with (from delivered history), so weeks where nothing was ordered stay out rather
+  // than padding the strip with empty entries.
   _browsableWeeks(weeks) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -242,7 +243,7 @@ class HelloFreshMarketCard extends HTMLElement {
         : true; // undated weeks are treated as future (can't anchor them to the past)
       const hasMarket = (week.market_items || []).length > 0;
       if (!isFuture) {
-        if (hasMarket) result.push(week); // past/current week with a catalog: browsable history
+        if (hasMarket) result.push(week); // past/current week with market data: browsable history
         continue;
       }
       // Future week: include only while the catalog is still being published contiguously.
@@ -740,11 +741,21 @@ class HelloFreshMarketCard extends HTMLElement {
       return `<div class="state">${selectedOnly ? noneSelected : "No market items for this week."}</div>`;
     }
 
+    // A market item's own `currency` is often null; fall back to the week's order currency so a
+    // non-USD account doesn't get every tile silently priced with a "$" by _fmtPrice's default.
+    const fallbackCurrency = week?.order?.currency;
+
     // Group by group_type, preserving the catalog order of first appearance.
+    //
+    // Only the browsable catalog carries group_type, and HelloFresh serves that for roughly the
+    // menu-grace window. Older weeks are reconstructed from delivered history, which records
+    // what was bought but not which Market shelf it came from. Rather than invent a heading (or
+    // bucket everything under a meaningless "Other"), those weeks render as a single ungrouped
+    // list in delivery order — matching how My Menu presents an old week's meals.
     const order = [];
     const byGroup = new Map();
     for (const item of items) {
-      const key = item.group_type || "other";
+      const key = item.group_type || "";
       if (!byGroup.has(key)) {
         byGroup.set(key, []);
         order.push(key);
@@ -752,17 +763,19 @@ class HelloFreshMarketCard extends HTMLElement {
       byGroup.get(key).push(item);
     }
 
-    // A market item's own `currency` is often null; fall back to the week's order currency so a
-    // non-USD account doesn't get every tile silently priced with a "$" by _fmtPrice's default.
-    const fallbackCurrency = week?.order?.currency;
-
     return order
       .map((key) => {
-        const label = GROUP_LABELS[key] || this._titleCase(key);
         const tiles = byGroup
           .get(key)
           .map((item) => this._renderTile(week, item, editable, qtyOf(item), fallbackCurrency))
           .join("");
+        // No group_type (history-sourced): plain list, no heading.
+        if (!key) {
+          return `<div class="group">
+            <div class="grid ${this._busy ? "busy" : ""}">${tiles}</div>
+          </div>`;
+        }
+        const label = GROUP_LABELS[key] || this._titleCase(key);
         return `<div class="group">
           <div class="grouptitle">${this._esc(label)}</div>
           <div class="grid ${this._busy ? "busy" : ""}">${tiles}</div>

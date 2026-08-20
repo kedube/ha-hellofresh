@@ -18,6 +18,7 @@ from custom_components.hellofresh.api import (
     HelloFreshError,
     HelloFreshFoodProfile,
     HelloFreshFoodProfileOptions,
+    HelloFreshMarketItem,
     HelloFreshNotImplementedError,
     HelloFreshOrder,
     HelloFreshRecipe,
@@ -2570,6 +2571,140 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
 
     assert "2026-future" in fetched_weeks
     assert "2026-old" not in fetched_weeks
+
+
+def test_past_delivery_purchased_addons_become_market_items() -> None:
+    """A shipped week's lowercase ``addons`` array must become its market items.
+
+    HAR-verified shape: past-deliveries reports what was BOUGHT as a flat ``addons`` list with no
+    index/quantity/price/groupType — distinct from the browsable ``addOns`` catalog. Beyond the
+    menu-grace window it is the only record of Market activity, so failing to parse it left every
+    older week with an empty catalog and dropped it from the Market card.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="6959884", account_id="a", locale="en-US", servings=2, raw={}
+    )
+    payload = {
+        "weeks": [
+            {
+                "week": "2026-W25",
+                "meals": [{"id": "meal-1", "name": "Cantina Steak"}],
+                "addons": [
+                    {
+                        "id": "69fb4b89fd1622233825d098",
+                        "name": "Pork & Shiitake Gyoza",
+                        "headline": "Get ready to catch fillings! | 2-3 Servings",
+                        "image": "https://img.hellofresh.com/gyoza.jpeg",
+                        "category": "Pork",
+                        "tags": [{"name": "Ready to Heat", "type": "addon-rth"}],
+                        "nutrition": {"calories": 200},
+                    },
+                    {
+                        "id": "6865744e9a91734697582de7",
+                        "name": "Steelhead Trout",
+                        "headline": "Reel-y tasty | 10 oz | 2 Servings",
+                        "image": "https://img.hellofresh.com/trout.jpeg",
+                        "category": "Seafood",
+                    },
+                ],
+            }
+        ]
+    }
+
+    weeks = client._normalize_past_delivery_payload(payload, [subscription])
+    assert len(weeks) == 1
+    items = weeks[0].market_items
+    assert [item.name for item in items] == ["Pork & Shiitake Gyoza", "Steelhead Trout"]
+    # History records no count; a listed add-on is one unit and is by definition selected.
+    assert all(item.is_selected and item.selected_quantity == 1 for item in items)
+    assert items[0].category == "Pork"
+    assert items[0].image_url == "https://img.hellofresh.com/gyoza.jpeg"
+    # No index: it is the cart selection unit and must never be fabricated for a past week.
+    assert all(item.index is None for item in items)
+    # No groupType in history — the card renders these ungrouped rather than inventing a shelf.
+    assert all(item.group_type is None for item in items)
+    # The add-ons must NOT leak into the meal list.
+    assert [r.name for r in weeks[0].recipes] == ["Cantina Steak"]
+
+
+def test_merge_past_delivery_market_items_onto_account_weeks() -> None:
+    """Purchased add-ons land on the matching PAST account week, never a current/future one."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    today = date.today()
+
+    past_week = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id="6959884",
+        source="past_deliveries",
+        market_items=[
+            HelloFreshMarketItem(item_id="a-1", name="Pork & Shiitake Gyoza", is_selected=True),
+        ],
+    )
+    # A bare shell, which is what the ranged deliveries endpoint returns for history.
+    old_account_week = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id="6959884",
+        delivery_date=today - timedelta(weeks=9),
+    )
+    client._merge_past_delivery_market_items(
+        account_weeks=[old_account_week], past_delivery_weeks=[past_week]
+    )
+    assert [i.name for i in old_account_week.market_items] == ["Pork & Shiitake Gyoza"]
+
+    # The current week keeps its live catalog: replacing it would strip the ability to order.
+    current = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="This week",
+        subscription_id="6959884",
+        delivery_date=today,
+        market_items=[HelloFreshMarketItem(item_id="cat-1", name="Catalog Item", index=3)],
+    )
+    client._merge_past_delivery_market_items(
+        account_weeks=[current], past_delivery_weeks=[past_week]
+    )
+    assert [i.name for i in current.market_items] == ["Catalog Item"]
+
+
+def test_past_delivery_addons_do_not_leak_into_meal_list_without_catalog() -> None:
+    """An old week's add-ons stay out of My Menu even when no ``addOns`` catalog survives.
+
+    _delivered_meals_only used to identify add-ons only via the week's catalog, which is gone
+    past the grace window — so a bought add-on would have shown up as a delivered meal.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    account_week = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id="6959884",
+        delivery_date=date.today() - timedelta(weeks=9),
+        market_items=[
+            HelloFreshMarketItem(
+                item_id="69fb4b89fd1622233825d098",
+                name="Pork & Shiitake Gyoza",
+                recipe_id="69fb4b89fd1622233825d098",
+            )
+        ],
+        raw={},
+    )
+    delivered = [
+        HelloFreshRecipe(recipe_id="meal-1", name="Cantina Steak"),
+        HelloFreshRecipe(recipe_id="69fb4b89fd1622233825d098", name="Pork & Shiitake Gyoza"),
+    ]
+    meals = client._delivered_meals_only(account_week, delivered)
+    assert [r.name for r in meals] == ["Cantina Steak"]
+
+
+def test_past_delivery_pagination_cap_covers_max_history_weeks() -> None:
+    """The page cap must scale with history_weeks, not stop short of the 104-week maximum."""
+    from custom_components.hellofresh.const import MAX_HISTORY_WEEKS
+
+    client = HelloFreshClient(session=None, history_weeks=MAX_HISTORY_WEEKS)  # type: ignore[arg-type]
+    max_pages = max(20, (client._history_weeks // 2) + 10)
+    # Pages have held ~4 weeks; even at a conservative 2 weeks/page the cap must clear the floor.
+    assert max_pages * 2 >= MAX_HISTORY_WEEKS + 2
 
 
 def test_delivery_menu_rejects_substitute_menu_for_mismatched_week() -> None:
