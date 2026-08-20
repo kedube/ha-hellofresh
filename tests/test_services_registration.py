@@ -98,6 +98,7 @@ def test_no_handler_is_bound_to_two_services() -> None:
     duplicates = sorted({h for h in handlers if handlers.count(h) > 1})
     assert not duplicates, f"handlers bound to more than one service: {duplicates}"
 
+
 # --- registration <-> services.yaml <-> strings.json parity ------------------------
 
 SERVICES_YAML = INIT_PATH.parent / "services.yaml"

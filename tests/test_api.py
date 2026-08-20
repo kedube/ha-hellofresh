@@ -35,6 +35,7 @@ def _menu_weeks(result: dict[str, list[HelloFreshWeek] | list[str]]) -> list[Hel
     """Extract the typed week list from an account menu data result."""
     return cast("list[HelloFreshWeek]", result["weeks"])
 
+
 # Home Assistant recorder drops state attributes larger than this many bytes.
 _RECORDER_ATTR_CAP_BYTES = 16384
 
@@ -764,7 +765,10 @@ def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
         return None
 
     async def fake_get_public_menu_data():
-        return {"weeks": [HelloFreshWeek(week_id="pub", display_name="Menu", source="public_menu")], "available_labels": []}
+        return {
+            "weeks": [HelloFreshWeek(week_id="pub", display_name="Menu", source="public_menu")],
+            "available_labels": [],
+        }
 
     async def fake_noop(*_args, **_kwargs):
         return None
@@ -2108,21 +2112,41 @@ def test_past_delivery_history_follows_next_week_cursor() -> None:
     pages: dict[str | None, dict[str, object]] = {
         None: {
             "weeks": [
-                {"week": "2026-W25", "subscriptionId": "sub-1", "meals": [{"id": "r25", "name": "A25"}]},
-                {"week": "2026-W24", "subscriptionId": "sub-1", "meals": [{"id": "r24", "name": "A24"}]},
+                {
+                    "week": "2026-W25",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "r25", "name": "A25"}],
+                },
+                {
+                    "week": "2026-W24",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "r24", "name": "A24"}],
+                },
             ],
             "nextWeek": "2026-W23",
         },
         "2026-W23": {
             "weeks": [
-                {"week": "2026-W23", "subscriptionId": "sub-1", "meals": [{"id": "r23", "name": "A23"}]},
-                {"week": "2026-W22", "subscriptionId": "sub-1", "meals": [{"id": "r22", "name": "A22"}]},
+                {
+                    "week": "2026-W23",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "r23", "name": "A23"}],
+                },
+                {
+                    "week": "2026-W22",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "r22", "name": "A22"}],
+                },
             ],
             "nextWeek": "2026-W21",
         },
         "2026-W21": {
             "weeks": [
-                {"week": "2026-W21", "subscriptionId": "sub-1", "meals": [{"id": "r21", "name": "A21"}]},
+                {
+                    "week": "2026-W21",
+                    "subscriptionId": "sub-1",
+                    "meals": [{"id": "r21", "name": "A21"}],
+                },
             ],
             "nextWeek": None,  # end of history
         },
@@ -3728,9 +3752,7 @@ def test_merge_keeps_richest_menu_variant_per_week() -> None:
         week_id="2026-W26",
         display_name="Week 26",
         subscription_id="sub-1",
-        recipes=[
-            HelloFreshRecipe(recipe_id=f"r-{i}", name=f"Dish {i}") for i in range(20)
-        ],
+        recipes=[HelloFreshRecipe(recipe_id=f"r-{i}", name=f"Dish {i}") for i in range(20)],
         source="account_menu_api",
     )
 
@@ -3922,7 +3944,14 @@ def test_meatless_recipe_gets_veggie_preference_from_tag() -> None:
     client = HelloFreshClient(session=None, access_token="t")  # type: ignore[arg-type]
 
     veggie = client._recipe_from_raw_meal(
-        {"index": 10, "recipe": {"id": "v1", "name": "Silky Sicilian Penne", "tags": ["pasta-noodles", "Veggie"]}},
+        {
+            "index": 10,
+            "recipe": {
+                "id": "v1",
+                "name": "Silky Sicilian Penne",
+                "tags": ["pasta-noodles", "Veggie"],
+            },
+        },
         default_selected=False,
     )
     assert veggie.preference == "Veggie"
@@ -3930,7 +3959,15 @@ def test_meatless_recipe_gets_veggie_preference_from_tag() -> None:
 
     # A protein category still wins over the tag fallback.
     poultry = client._recipe_from_raw_meal(
-        {"index": 11, "recipe": {"id": "p1", "name": "Chicken Bake", "category": "Poultry", "tags": ["High Protein"]}},
+        {
+            "index": 11,
+            "recipe": {
+                "id": "p1",
+                "name": "Chicken Bake",
+                "category": "Poultry",
+                "tags": ["High Protein"],
+            },
+        },
         default_selected=False,
     )
     assert poultry.preference == "Poultry"
@@ -4603,12 +4640,21 @@ def _select_meals_client_with_cart_response(cart_body):
             "_menu_payload": {
                 "week": "2026-W26",
                 "meals": [
-                    {"index": 11, "selection": {"limit": 2},
-                     "recipe": {"id": "recipe-11", "name": "Meal 11"}},
-                    {"index": 18, "selection": {"limit": 2},
-                     "recipe": {"id": "recipe-18", "name": "Meal 18"}},
-                    {"index": 20, "selection": {"limit": 2},
-                     "recipe": {"id": "recipe-20", "name": "Meal 20"}},
+                    {
+                        "index": 11,
+                        "selection": {"limit": 2},
+                        "recipe": {"id": "recipe-11", "name": "Meal 11"},
+                    },
+                    {
+                        "index": 18,
+                        "selection": {"limit": 2},
+                        "recipe": {"id": "recipe-18", "name": "Meal 18"},
+                    },
+                    {
+                        "index": 20,
+                        "selection": {"limit": 2},
+                        "recipe": {"id": "recipe-20", "name": "Meal 20"},
+                    },
                 ],
             },
         },
@@ -4627,8 +4673,9 @@ def _select_meals_client_with_cart_response(cart_body):
         async def json(self, content_type=None):
             return cart_body
 
-    async def fake_api_request(method, path, params=None, json_payload=None,
-                               extra_headers=None, _allow_refresh_retry=True):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
+    ):
         return CartResponse()
 
     client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
@@ -4726,7 +4773,9 @@ def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
         extra_headers=None,
         _allow_refresh_retry=True,
     ):
-        requests.append({"method": method, "path": path, "params": params, "json_payload": json_payload})
+        requests.append(
+            {"method": method, "path": path, "params": params, "json_payload": json_payload}
+        )
 
         class DummyResponse:
             status = 200
@@ -4795,13 +4844,19 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
         selection_deadline=datetime(2026, 6, 17, 23, 59, 59, tzinfo=timezone(timedelta(hours=-7))),
         meals_required=3,
         meals_selected=0,
-        recipes=[HelloFreshRecipe(recipe_id=f"recipe-{i}", name=f"Meal {i}") for i in (11, 18, 20, 32)],
+        recipes=[
+            HelloFreshRecipe(recipe_id=f"recipe-{i}", name=f"Meal {i}") for i in (11, 18, 20, 32)
+        ],
         raw={
             "product": {"handle": "US-CBU-3-2-0"},
             "_menu_payload": {
                 "week": "2026-W26",
                 "meals": [
-                    {"index": i, "selection": {"limit": 2}, "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"}}
+                    {
+                        "index": i,
+                        "selection": {"limit": 2},
+                        "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"},
+                    }
                     for i in (11, 18, 20, 32)
                 ],
             },
@@ -4816,7 +4871,9 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
     async def fake_pref(_subscription):
         return "quick"
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
+    ):
         requests.append({"method": method, "path": path, "json_payload": json_payload})
 
         class DummyResponse:
@@ -4869,9 +4926,7 @@ def test_async_select_meals_allows_fewer_meals_than_plan() -> None:
     client, requests = _build_select_meals_client()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"])
-    )
+    loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"]))
     assert len(requests) == 1
     meals = requests[0]["json_payload"]["meals"]
     assert [m["index"] for m in meals] == [11, 18]
@@ -4883,9 +4938,7 @@ def test_async_select_meals_rejects_below_minimum_box() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshError, match="at least 2 meals"):
-        loop.run_until_complete(
-            client.async_select_meals("2026-W26", ["recipe-11"])
-        )
+        loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11"]))
 
 
 def test_async_select_meals_rejects_invalid_quantity() -> None:
@@ -4932,12 +4985,20 @@ def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, obje
         ],
         market_items=[
             HelloFreshMarketItem(
-                item_id="m-app", name="Salmon Bites", index=70185, sku="US-AAB-0-0-0",
-                group_type="appetizer", max_quantity=6,
+                item_id="m-app",
+                name="Salmon Bites",
+                index=70185,
+                sku="US-AAB-0-0-0",
+                group_type="appetizer",
+                max_quantity=6,
             ),
             HelloFreshMarketItem(
-                item_id="m-des", name="Bundt Cake", index=70200, sku="US-DES-0-0-0",
-                group_type="dessert", max_quantity=4,
+                item_id="m-des",
+                name="Bundt Cake",
+                index=70200,
+                sku="US-DES-0-0-0",
+                group_type="dessert",
+                max_quantity=4,
             ),
         ],
         raw={"product": {"handle": "US-CBU-3-2-0"}, "_menu_payload": {"week": "2026-W26"}},
@@ -4951,7 +5012,9 @@ def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, obje
     async def fake_pref(_s):
         return "quick"
 
-    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+    async def fake_req(
+        method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
+    ):
         requests.append({"method": method, "path": path, "json_payload": json_payload})
 
         class R:
@@ -5069,12 +5132,18 @@ def test_select_market_items_keeps_base_sku_when_meals_below_minimum() -> None:
         meals_required=3,
         recipes=[
             # Only ONE confirmed meal — below MIN_MEALS_PER_WEEK.
-            HelloFreshRecipe(recipe_id="recipe-11", name="Meal 11", is_selected=True, course_index=11),
+            HelloFreshRecipe(
+                recipe_id="recipe-11", name="Meal 11", is_selected=True, course_index=11
+            ),
         ],
         market_items=[
             HelloFreshMarketItem(
-                item_id="m-app", name="Salmon Bites", index=70185, sku="US-AAB-0-0-0",
-                group_type="appetizer", max_quantity=6,
+                item_id="m-app",
+                name="Salmon Bites",
+                index=70185,
+                sku="US-AAB-0-0-0",
+                group_type="appetizer",
+                max_quantity=6,
             ),
         ],
         raw={"product": {"handle": "US-CBU-3-2-0"}, "_menu_payload": {"week": "2026-W26"}},
@@ -5088,7 +5157,9 @@ def test_select_market_items_keeps_base_sku_when_meals_below_minimum() -> None:
     async def fake_pref(_s):
         return "quick"
 
-    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+    async def fake_req(
+        method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
+    ):
         requests.append({"params": params})
 
         class R:
@@ -5148,9 +5219,7 @@ def test_select_market_items_multiple_groups_produce_separate_extras() -> None:
     client, requests = _build_market_select_client()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        client.async_select_market_items("2026-W26", {"m-app": 1, "m-des": 1})
-    )
+    loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-app": 1, "m-des": 1}))
     extras = requests[0]["json_payload"]["extras"]
     by_sku = {g["sku"]: g for g in extras}
     assert set(by_sku) == {"US-AAB-0-0-0", "US-DES-0-0-0"}
@@ -5673,8 +5742,8 @@ def test_refresh_without_credentials_raises_when_token_rejected() -> None:
 
 
 _BOT_BLOCK_HTML = (
-    "<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> "
-    "<![endif]-->\n<html class=\"no-js\" lang=\"en-US\"><head><title>Access denied</title>"
+    '<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> '
+    '<![endif]-->\n<html class="no-js" lang="en-US"><head><title>Access denied</title>'
 )
 
 
@@ -6134,9 +6203,7 @@ def test_reschedule_week_posts_oneoff_with_verified_body() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        client.async_change_one_off_delivery("2026-W26", "US-2-0800-2000")
-    )
+    loop.run_until_complete(client.async_change_one_off_delivery("2026-W26", "US-2-0800-2000"))
 
     assert captured["method"] == "POST"
     assert captured["path"] == "/gw/api/subscriptions/6959884/oneoff"
@@ -6166,9 +6233,7 @@ def test_reschedule_week_blocked_when_capability_absent() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshNotImplementedError):
-        loop.run_until_complete(
-            client.async_change_one_off_delivery("2026-W26", "US-2-0800-2000")
-        )
+        loop.run_until_complete(client.async_change_one_off_delivery("2026-W26", "US-2-0800-2000"))
 
 
 def test_change_delivery_weekday_patches_the_subscription() -> None:
@@ -6197,9 +6262,7 @@ def test_change_delivery_weekday_patches_the_subscription() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        client.async_change_delivery_weekday("US-1-0800-2000", 1)
-    )
+    loop.run_until_complete(client.async_change_delivery_weekday("US-1-0800-2000", 1))
 
     assert captured["method"] == "PATCH"
     assert captured["path"] == "/gw/api/subscriptions/6959884"
@@ -7125,9 +7188,7 @@ def test_subscription_status_derived_from_real_payload_fields() -> None:
     )
     # endlessPausedAt carries a stale historical date even on active accounts -> must be ignored.
     assert (
-        _status_for(
-            {"id": "s", "isActive": True, "endlessPausedAt": "2020-12-12T00:00:00-0800"}
-        )
+        _status_for({"id": "s", "isActive": True, "endlessPausedAt": "2020-12-12T00:00:00-0800"})
         == "active"
     )
     # An explicit status field (other regions / future drift) still wins.
@@ -7177,7 +7238,12 @@ _FOOD_PROFILE = {
 
 def test_food_profile_options_from_api_preserves_groups_and_meta() -> None:
     options = HelloFreshFoodProfileOptions.from_api(_FOOD_PROFILE_OPTIONS)
-    assert options.taste["dietaryPreferences"] == ["flexitarian", "mostly-meat", "vegetarian", "pescatarian"]
+    assert options.taste["dietaryPreferences"] == [
+        "flexitarian",
+        "mostly-meat",
+        "vegetarian",
+        "pescatarian",
+    ]
     assert options.household["adults"] == [1, 2, 3, 4]
     assert options.goals["goals"][0] == "save-time"
     # The _meta block (which fields support "None") is preserved for the card.
@@ -7251,7 +7317,9 @@ def test_async_update_food_profile_patches_normalized_payload() -> None:
     client = HelloFreshClient(session=None, country="us")  # type: ignore[arg-type]
     sent: dict[str, object] = {}
 
-    async def fake_req(method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True):
+    async def fake_req(
+        method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
+    ):
         sent["method"] = method
         sent["path"] = path
         sent["params"] = params
@@ -7268,9 +7336,7 @@ def test_async_update_food_profile_patches_normalized_payload() -> None:
     client._async_api_request = fake_req  # type: ignore[method-assign]
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        client.async_update_food_profile({"taste": {"cuisines": ["italian"]}})
-    )
+    loop.run_until_complete(client.async_update_food_profile({"taste": {"cuisines": ["italian"]}}))
     assert sent["method"] == "PATCH"
     assert sent["path"] == "/gw/profile-service/v2/customers/me/profile"
     assert sent["params"]["source"] == "food-profile"
@@ -7377,18 +7443,14 @@ def test_plan_preference_read_from_profile_service_taste_plans() -> None:
 
     async def fake_response_json(_resp):
         # The unified-preferences endpoint carries the plan preference directly.
-        return {
-            "unifiedPreferences": {"plans": {"plan-abc": {"planPreference": "quick"}}}
-        }
+        return {"unifiedPreferences": {"plans": {"plan-abc": {"planPreference": "quick"}}}}
 
     client._async_api_get = fake_api_get  # type: ignore[method-assign]
     client._async_response_json = fake_response_json  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    pref = loop.run_until_complete(
-        client._async_get_subscription_plan_preference(subscription)
-    )
+    pref = loop.run_until_complete(client._async_get_subscription_plan_preference(subscription))
 
     assert pref == "quick"  # NOT the "chefschoice" preset fallback
     # Only the unified endpoint is hit — the plan was found there, so no profile-service fallback.
@@ -7426,9 +7488,7 @@ def test_plan_preference_falls_back_to_profile_service_when_unified_empty() -> N
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    pref = loop.run_until_complete(
-        client._async_get_subscription_plan_preference(subscription)
-    )
+    pref = loop.run_until_complete(client._async_get_subscription_plan_preference(subscription))
 
     assert pref == "veggie"
     assert calls == [
@@ -7461,9 +7521,7 @@ def test_plan_preference_falls_back_to_preset_without_profile_match() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    pref = loop.run_until_complete(
-        client._async_get_subscription_plan_preference(subscription)
-    )
+    pref = loop.run_until_complete(client._async_get_subscription_plan_preference(subscription))
     assert pref == "chefschoice"
 
 
@@ -7506,18 +7564,42 @@ def test_get_delivery_options_parses_and_dedupes_by_handle() -> None:
     # Two items repeat the same handles (as the real payload does across weeks).
     body = {
         "items": [
-            {"deliveryOptions": [
-                {"handle": "US-1-0800-2000", "deliveryDay": 1,
-                 "deliveryName": "Mondays: 8AM - 8PM", "priceInCents": 0, "isDefault": True},
-                {"handle": "US-3-0800-2000", "deliveryDay": 3,
-                 "deliveryName": "Wednesdays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
-            ]},
-            {"deliveryOptions": [
-                {"handle": "US-1-0800-2000", "deliveryDay": 1,
-                 "deliveryName": "Mondays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
-                {"handle": "US-2-0800-2000", "deliveryDay": 2,
-                 "deliveryName": "Tuesdays: 8AM - 8PM", "priceInCents": 0, "isDefault": False},
-            ]},
+            {
+                "deliveryOptions": [
+                    {
+                        "handle": "US-1-0800-2000",
+                        "deliveryDay": 1,
+                        "deliveryName": "Mondays: 8AM - 8PM",
+                        "priceInCents": 0,
+                        "isDefault": True,
+                    },
+                    {
+                        "handle": "US-3-0800-2000",
+                        "deliveryDay": 3,
+                        "deliveryName": "Wednesdays: 8AM - 8PM",
+                        "priceInCents": 0,
+                        "isDefault": False,
+                    },
+                ]
+            },
+            {
+                "deliveryOptions": [
+                    {
+                        "handle": "US-1-0800-2000",
+                        "deliveryDay": 1,
+                        "deliveryName": "Mondays: 8AM - 8PM",
+                        "priceInCents": 0,
+                        "isDefault": False,
+                    },
+                    {
+                        "handle": "US-2-0800-2000",
+                        "deliveryDay": 2,
+                        "deliveryName": "Tuesdays: 8AM - 8PM",
+                        "priceInCents": 0,
+                        "isDefault": False,
+                    },
+                ]
+            },
         ]
     }
     client, captured = _catalog_client(body)
@@ -7567,10 +7649,12 @@ def test_get_plans_returns_list_shape() -> None:
 
 def test_get_presets_prefers_api_presets_endpoint() -> None:
     """get_presets returns {items:[...]}; the account-context /gw/api/presets is tried first."""
-    body = {"items": [
-        {"handle": "quick", "name": "Quick & Easy", "description": "Fast recipes"},
-        {"handle": "veggie", "name": "Veggie", "description": "Vegetarian"},
-    ]}
+    body = {
+        "items": [
+            {"handle": "quick", "name": "Quick & Easy", "description": "Fast recipes"},
+            {"handle": "veggie", "name": "Veggie", "description": "Vegetarian"},
+        ]
+    }
     client, captured = _catalog_client(body)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -7769,13 +7853,20 @@ def test_video_link_is_read_from_the_meal_wrapper_too() -> None:
         {
             "name": "X",
             "videoLink": "https://media.hellofresh.com/dam/asset/WRAP/clip.mp4",
-            "recipe": {"id": "r2", "name": "X", "videoLink": "https://media.hellofresh.com/dam/asset/REC/clip.mp4"},
+            "recipe": {
+                "id": "r2",
+                "name": "X",
+                "videoLink": "https://media.hellofresh.com/dam/asset/REC/clip.mp4",
+            },
         }
     )
     assert both.video_url == "https://media.hellofresh.com/dam/asset/REC/clip.mp4"
 
     # A meal with no clip anywhere must stay None, not gain an empty string.
-    assert client._recipe_from_raw_meal({"name": "X", "recipe": {"id": "r3", "name": "X"}}).video_url is None
+    assert (
+        client._recipe_from_raw_meal({"name": "X", "recipe": {"id": "r3", "name": "X"}}).video_url
+        is None
+    )
 
 
 def test_recipe_video_link_is_parsed_from_menu_payload() -> None:
@@ -7845,9 +7936,7 @@ def test_favorite_search_batches_and_maps_bookmark_ids() -> None:
     assert set(found) == {"694053fe353e00bd89ba2d3e"}
     assert found["694053fe353e00bd89ba2d3e"].favorite_id == "srv-1"
     # Locale suffix is added on the way out and stripped on the way back in.
-    assert sent == [
-        ["694053fe353e00bd89ba2d3e-en-US", "63aa8b5b1de163c0b20fb22b-en-US"]
-    ]
+    assert sent == [["694053fe353e00bd89ba2d3e-en-US", "63aa8b5b1de163c0b20fb22b-en-US"]]
 
 
 def test_favorite_search_requests_are_batched() -> None:
@@ -7983,9 +8072,7 @@ def test_add_favorite_parses_created_bookmark() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    favorite = loop.run_until_complete(
-        client.async_add_favorite("694053fe353e00bd89ba2d3e")
-    )
+    favorite = loop.run_until_complete(client.async_add_favorite("694053fe353e00bd89ba2d3e"))
 
     assert favorite.recipe_id == "694053fe353e00bd89ba2d3e"
     assert favorite.name == "Indian-Style Butter Chicken & Rice"
@@ -8041,9 +8128,7 @@ def test_remove_favorite_deletes_row_under_external_recipes() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    removed = loop.run_until_complete(
-        client.async_remove_favorite("691f38f6927c3f76100b20a2")
-    )
+    removed = loop.run_until_complete(client.async_remove_favorite("691f38f6927c3f76100b20a2"))
 
     assert removed is True
     assert called["method"] == "DELETE"
@@ -8357,9 +8442,7 @@ def test_catalog_html_fallback_maps_a_category_page_to_its_path() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(
-        client._async_get_catalog_json("recipes/indian-recipes.json")
-    )
+    result = loop.run_until_complete(client._async_get_catalog_json("recipes/indian-recipes.json"))
 
     assert result == {"pageProps": {"ssrPayload": {"marker": "indian"}}}
     assert "/recipes/indian-recipes" in requested
@@ -8418,9 +8501,7 @@ def test_preview_meal_price_prices_hypothetical_selection() -> None:
             HelloFreshRecipe(recipe_id="r-b", name="B", course_index=10),
         ],
     )
-    subscription = HelloFreshSubscription(
-        subscription_id="sub-1", account_id="42", locale="en-US"
-    )
+    subscription = HelloFreshSubscription(subscription_id="sub-1", account_id="42", locale="en-US")
     captured: dict[str, object] = {}
 
     async def fake_get_subscription(_week):
@@ -8490,9 +8571,7 @@ def test_preview_meal_price_rejects_unknown_recipes() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshError, match="Unknown recipes"):
-        loop.run_until_complete(
-            client.async_preview_meal_price("2026-W39", ["r-a", "nope"])
-        )
+        loop.run_until_complete(client.async_preview_meal_price("2026-W39", ["r-a", "nope"]))
 
 
 def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
@@ -8530,6 +8609,7 @@ def _catalog_page_payload() -> dict:
     ``recipeCollectionTags.id`` filter, and one generic "best rated overall" query that is
     identical on every category page.
     """
+
     def _query(name, where, pages):
         return {
             "queryKey": [name, {"searchParams": {"limit": len(pages), "where": where}}],
@@ -8704,8 +8784,7 @@ def test_catalog_page_url_handles_a_nested_collection() -> None:
     """A nested path must produce a nested data URL, not a flattened one."""
     assert HelloFreshClient._catalog_page_params(None)[0] == "recipes.json"
     assert (
-        HelloFreshClient._catalog_page_params("noodle-recipes")[0]
-        == "recipes/noodle-recipes.json"
+        HelloFreshClient._catalog_page_params("noodle-recipes")[0] == "recipes/noodle-recipes.json"
     )
     assert (
         HelloFreshClient._catalog_page_params("noodle-recipes/ramen-noodles")[0]
@@ -8896,8 +8975,7 @@ def test_recipe_detail_image_uses_the_working_host_not_the_payloads_own_link() -
     )
 
     assert detail.image_url == (
-        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640"
-        "/hellofresh_s3/image/chicken.jpeg"
+        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3/image/chicken.jpeg"
     )
     assert "cloudfront" not in detail.image_url
 
@@ -8972,9 +9050,7 @@ def test_recipe_detail_request_uses_the_gw_api_not_the_website() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    detail = loop.run_until_complete(
-        client.async_get_recipe_detail("6819dfd55efe69a088447ef3")
-    )
+    detail = loop.run_until_complete(client.async_get_recipe_detail("6819dfd55efe69a088447ef3"))
 
     assert called["path"] == "/gw/recipes/recipes/6819dfd55efe69a088447ef3"
     assert called["params"]["country"] == "US"
@@ -9048,9 +9124,7 @@ def test_profile_completion_handles_zero_total_without_dividing_by_zero() -> Non
     """A profile reporting no fields must yield 0%, not raise."""
     from custom_components.hellofresh.models import HelloFreshProfileCompletion
 
-    completion = HelloFreshProfileCompletion.from_api(
-        {"overall": {"completed": 0, "total": 0}}
-    )
+    completion = HelloFreshProfileCompletion.from_api({"overall": {"completed": 0, "total": 0}})
 
     assert completion.rate == 0.0
     assert completion.percent == 0
@@ -9404,7 +9478,12 @@ def test_menu_availability_overlays_sold_out_onto_the_editable_week() -> None:
         "2026-W39",
         [
             {"id": "c1", "isSoldOut": False, "recipe": {"id": "r-1", "name": "Fine"}},
-            {"id": "c2", "isSoldOut": True, "isHidden": True, "recipe": {"id": "r-2", "name": "Gone"}},
+            {
+                "id": "c2",
+                "isSoldOut": True,
+                "isHidden": True,
+                "recipe": {"id": "r-2", "name": "Gone"},
+            },
         ],
     )
     client = _availability_client(payload)
@@ -9484,7 +9563,9 @@ def test_menu_availability_skips_weeks_that_cannot_be_changed() -> None:
 
 def test_menu_availability_requests_only_the_editable_weeks() -> None:
     """The `weeks` filter keeps the response to the week we care about, not the whole catalog."""
-    editable = _editable_week("2026-W39", [HelloFreshRecipe(recipe_id="r-1", name="A", course_index=1)])
+    editable = _editable_week(
+        "2026-W39", [HelloFreshRecipe(recipe_id="r-1", name="A", course_index=1)]
+    )
     locked = HelloFreshWeek(
         week_id="2026-W30",
         display_name="W30",

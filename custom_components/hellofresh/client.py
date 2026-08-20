@@ -673,9 +673,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 continue
             item = by_key.get(str(raw_key))
             if item is None or item.index is None:
-                raise HelloFreshError(
-                    f"Market item {raw_key!r} is not in week {week_id}'s catalog"
-                )
+                raise HelloFreshError(f"Market item {raw_key!r} is not in week {week_id}'s catalog")
             if item.max_quantity is not None and quantity > item.max_quantity:
                 raise HelloFreshError(
                     f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
@@ -742,9 +740,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     async def async_get_food_profile(self) -> HelloFreshFoodProfile:
         """Return the customer's current food profile (auto-preselection preferences)."""
-        response = await self._async_api_get(
-            self._PROFILE_PATH, params=self._profile_params()
-        )
+        response = await self._async_api_get(self._PROFILE_PATH, params=self._profile_params())
         if response.status >= 400:
             raise HelloFreshError(
                 f"HelloFresh food-profile request failed (HTTP {response.status})"
@@ -773,9 +769,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             return None
         return HelloFreshProfileCompletion.from_api(payload)
 
-    async def async_update_food_profile(
-        self, changes: dict[str, Any]
-    ) -> HelloFreshFoodProfile:
+    async def async_update_food_profile(self, changes: dict[str, Any]) -> HelloFreshFoodProfile:
         """Update the customer's food profile and return the saved result.
 
         ``changes`` is a partial ``{taste, household, goals}`` mapping (only the sections you
@@ -896,7 +890,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 # failure must never fail the poll — record it and leave the state unknown.
                 self._record_debug_attempt(
                     "cookbook_attempts",
-                    {"path": f"{self._COOKBOOK_PATH}/search", "count": len(batch), "error": str(err)},
+                    {
+                        "path": f"{self._COOKBOOK_PATH}/search",
+                        "count": len(batch),
+                        "error": str(err),
+                    },
                 )
                 continue
 
@@ -929,10 +927,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if not self._enable_favorites:
             return
         recipe_ids = {
-            recipe.recipe_id
-            for week in weeks
-            for recipe in week.recipes
-            if recipe.recipe_id
+            recipe.recipe_id for week in weeks for recipe in week.recipes if recipe.recipe_id
         }
         if not recipe_ids:
             return
@@ -1003,9 +998,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             # An `offset` param is simply ignored, which would re-serve page one forever.
             if cursor:
                 params["cursor"] = cursor
-            response = await self._async_api_request(
-                "GET", self._COOKBOOK_LIST_PATH, params=params
-            )
+            response = await self._async_api_request("GET", self._COOKBOOK_LIST_PATH, params=params)
             if response.status >= 400:
                 raise HelloFreshError(
                     f"HelloFresh cookbook listing failed (HTTP {response.status})"
@@ -1134,9 +1127,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     # The same SSR payload the `_next/data` JSON returns is also embedded in the rendered page
     # inside <script id="__NEXT_DATA__">. It is the fallback when the JSON URL is unavailable.
-    _NEXT_DATA_RE = re.compile(
-        r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S
-    )
+    _NEXT_DATA_RE = re.compile(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 
     async def _async_get_catalog_json(self, page: str, params: dict[str, str] | None = None) -> Any:
         """Fetch one catalog document's SSR payload.
@@ -1236,9 +1227,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         docs = children.get("docs") if isinstance(children, dict) else None
         out: list[HelloFreshRecipeCollection] = []
         for row in docs if isinstance(docs, list) else []:
-            parsed = HelloFreshRecipeCollection.from_api(
-                row, image_base=self._CATALOG_IMAGE_BASE
-            )
+            parsed = HelloFreshRecipeCollection.from_api(row, image_base=self._CATALOG_IMAGE_BASE)
             if parsed is not None:
                 out.append(parsed)
         return out
@@ -1265,9 +1254,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             "country": api_country_code(self._country),
             "locale": self._locale_for_country(),
         }
-        response = await self._async_api_get(
-            f"{self._RECIPE_DETAIL_PATH}/{bare}", params=params
-        )
+        response = await self._async_api_get(f"{self._RECIPE_DETAIL_PATH}/{bare}", params=params)
         if response.status == 404:
             raise HelloFreshError(f"HelloFresh has no recipe with id {bare}")
         if response.status >= 400:
@@ -1422,7 +1409,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
 
     def _extract_subcollections(self, payload: Any) -> list[HelloFreshRecipeCollection]:
         """Return the child categories of the collection this page represents."""
-        docs = self._nested_get(payload, "pageProps", "ssrPayload", "collection", "children", "docs")
+        docs = self._nested_get(
+            payload, "pageProps", "ssrPayload", "collection", "children", "docs"
+        )
         out: list[HelloFreshRecipeCollection] = []
         for row in docs if isinstance(docs, list) else []:
             parsed = HelloFreshRecipeCollection.from_api(row, image_base=self._CATALOG_IMAGE_BASE)
@@ -1431,7 +1420,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         return out
 
     @staticmethod
-    def _extract_catalog_rows(payload: Any, *, collection: str | None = None) -> list[dict[str, Any]]:
+    def _extract_catalog_rows(
+        payload: Any, *, collection: str | None = None
+    ) -> list[dict[str, Any]]:
         """Pull recipe rows out of a catalog page's react-query cache.
 
         The listing lives in ``dehydratedState.queries`` under a ``foodContentHubRecipe.*`` key,
@@ -1551,9 +1542,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if subscription is None:
             return []
 
-        family = self._find_first_nested_value(
-            subscription.raw.get("productType"), ("family",)
-        )
+        family = self._find_first_nested_value(subscription.raw.get("productType"), ("family",))
         family_handle = (
             family.get("handle") if isinstance(family, dict) else None
         ) or self._find_first_nested_value(subscription.raw, ("family",))
@@ -1729,9 +1718,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         The list of the account's plans with their product handle, price, and status. Returned
         as decoded dicts — this is reference data, not part of the normalized account model.
         """
-        response = await self._async_api_get(
-            "/gw/api/plans", params={"includeCanceled": "false"}
-        )
+        response = await self._async_api_get("/gw/api/plans", params={"includeCanceled": "false"})
         if response.status >= _HTTP_BAD_REQUEST:
             raise HelloFreshError(f"HelloFresh plans request failed (HTTP {response.status})")
         payload = await self._async_response_json(response)
@@ -2200,9 +2187,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                         "meals": specs.get("meals"),
                         "servings": specs.get("size"),
                         "price_cents": price_cents,
-                        "price": (
-                            round(price_cents / 100, 2) if price_cents is not None else None
-                        ),
+                        "price": (round(price_cents / 100, 2) if price_cents is not None else None),
                     }
                 )
         # Smallest box first reads far better than the API's own ordering, which starts at the
@@ -2315,9 +2300,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         }
         try:
             # The response body is deliberately discarded: it carries the pre-change value.
-            await self._async_api_request(
-                "PATCH", path, params=params, json_payload=json_payload
-            )
+            await self._async_api_request("PATCH", path, params=params, json_payload=json_payload)
         except (HelloFreshAuthError, HelloFreshNotImplementedError):
             # Auth failures must surface as reauth, not be retried against a second endpoint.
             # NotImplemented means HelloFresh told us this account cannot perform the action at
@@ -3058,14 +3041,10 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # boundary (and ISO-week rounding / year-boundary ordering around it) always has its
         # delivered meals fetched, not just shown as an empty shell. Keyed off the same lookback
         # the display range uses (+2 weeks margin) so the two stay aligned as the constant moves.
-        floor_date = date.today() - timedelta(
-            weeks=self._history_weeks + 2
-        )
+        floor_date = date.today() - timedelta(weeks=self._history_weeks + 2)
         floor_iso = floor_date.isocalendar()
         floor_week = f"{floor_iso.year}-W{floor_iso.week:02d}"
-        weeks_by_id: dict[str, HelloFreshWeek] = {
-            week.week_id: week for week in first_page_weeks
-        }
+        weeks_by_id: dict[str, HelloFreshWeek] = {week.week_id: week for week in first_page_weeks}
         next_cursor = self._extract_next_week_cursor(payload)
         # Derive the page cap from the configured lookback instead of hardcoding it: pages have
         # held ~4 weeks, but a fixed 20 silently stopped ~80 weeks back, so a history_weeks near
@@ -3445,9 +3424,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             (s.locale for s in subscriptions if s.locale),
             api_locale(self._country),
         )
-        week_ids = sorted(
-            {week.week_id for week in (account_weeks or []) if week.week_id}
-        )
+        week_ids = sorted({week.week_id for week in (account_weeks or []) if week.week_id})
         params: dict[str, Any] = {
             "country": api_country_code(self._country),
             "locale": locale,
@@ -3482,9 +3459,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         if not weeks:
             return None
 
-        available_labels = [
-            week.display_name for week in weeks if week.display_name
-        ]
+        available_labels = [week.display_name for week in weeks if week.display_name]
         return {"weeks": weeks, "available_labels": available_labels}
 
     async def _async_apply_menu_availability(
@@ -3654,11 +3629,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         # show the wrong meals (e.g. the current menu under a past week), so reject a mismatch
         # and let the recipes embedded in the deliveries payload stand for that week.
         payload_week = payload.get("week") if isinstance(payload, dict) else None
-        if (
-            isinstance(payload_week, str)
-            and payload_week
-            and payload_week != account_week.week_id
-        ):
+        if isinstance(payload_week, str) and payload_week and payload_week != account_week.week_id:
             self._record_debug_attempt(
                 "menu_attempts",
                 {
@@ -3728,10 +3699,14 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             or self._find_first_nested_value(account_week.raw, ("handle", "sku"))
         )
         # Servings likewise from the week's own product spec first (the box size), then the plan.
-        week_specs = week_product.get("specs") if isinstance(week_product.get("specs"), dict) else {}
+        week_specs = (
+            week_product.get("specs") if isinstance(week_product.get("specs"), dict) else {}
+        )
         servings = coerce_int(
             week_specs.get("size")
-            or self._find_first_nested_value(subscription.raw, ("size", "servings", "numberOfPersons"))
+            or self._find_first_nested_value(
+                subscription.raw, ("size", "servings", "numberOfPersons")
+            )
             or subscription.servings
         )
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
@@ -3822,9 +3797,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         preference = subscription.raw.get("planPreference") or subscription.raw.get("preset")
 
         if customer_plan_id:
-            resolved = await self._async_resolve_plan_preference(
-                subscription_id, customer_plan_id
-            )
+            resolved = await self._async_resolve_plan_preference(subscription_id, customer_plan_id)
             if resolved:
                 preference = resolved
 
@@ -4883,9 +4856,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
     async def _async_fetch_app_token(self) -> None:
         await self._tokens._async_fetch_app_token()
 
-    async def _async_response_json(
-        self, response: ClientResponse | AuthResponse
-    ) -> dict[str, Any]:
+    async def _async_response_json(self, response: ClientResponse | AuthResponse) -> dict[str, Any]:
         """Decode a JSON response."""
         try:
             return await response.json(content_type=None)

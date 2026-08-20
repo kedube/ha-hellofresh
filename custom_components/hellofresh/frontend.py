@@ -153,9 +153,7 @@ async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
                         resource_url,
                     )
             except Exception:  # noqa: BLE001
-                _LOGGER.exception(
-                    "HelloFresh could not migrate card resource %s", resource_url
-                )
+                _LOGGER.exception("HelloFresh could not migrate card resource %s", resource_url)
         if matches:
             continue
         try:

@@ -115,9 +115,7 @@ def test_account_key_is_derived_the_same_way_everywhere(filename: str) -> None:
         "accountKey(this._config)",  # delegates to hellofresh-shared.js
         '(this._config && this._config.config_entry_id) || "default"',  # not yet migrated
     }
-    assert body in accepted, (
-        f"{filename}: _accountKey() derives the key differently: {body!r}"
-    )
+    assert body in accepted, f"{filename}: _accountKey() derives the key differently: {body!r}"
 
 
 def test_event_names_are_identical_across_every_card() -> None:

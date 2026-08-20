@@ -418,9 +418,7 @@ def sensor_extra_state_attributes(
             "account_data_available": data.account_data_available,
             "capabilities": data.capabilities.as_dict(),
             "available_menu_labels": data.available_menu_labels,
-            "current_menu_recipe_count": (
-                len(current_menu.recipes) if current_menu else 0
-            ),
+            "current_menu_recipe_count": (len(current_menu.recipes) if current_menu else 0),
         }
 
     if key in SUBSCRIPTION_CONTEXT_KEYS:

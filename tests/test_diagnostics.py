@@ -69,9 +69,7 @@ def test_new_identifier_keys_redacted() -> None:
                         "params": {"customerUUID": "cust-uuid-123", "types": "DEBIT"},
                     }
                 ],
-                "tracking_attempts": [
-                    {"path": "/gw/scm/...", "public_id": "track-uuid-456"}
-                ],
+                "tracking_attempts": [{"path": "/gw/scm/...", "public_id": "track-uuid-456"}],
             },
             "subscriptions": [{"coupon_code": "HF-VOUCHER-789"}],
         }
@@ -97,9 +95,7 @@ def test_template_debug_path_strips_account_identifiers() -> None:
         "/gw/api/plans/1e989989-eb15-49b3-94e2-a089bc0e2082/changePlanDeliveryDetails": (
             "/gw/api/plans/{id}/changePlanDeliveryDetails"
         ),
-        "/gw/payments/customers/cust-uuid-123/balance": (
-            "/gw/payments/customers/{id}/balance"
-        ),
+        "/gw/payments/customers/cust-uuid-123/balance": ("/gw/payments/customers/{id}/balance"),
         "/gw/scm/tracking-ids/track/public-id/track-uuid-456": (
             "/gw/scm/tracking-ids/track/public-id/{id}"
         ),

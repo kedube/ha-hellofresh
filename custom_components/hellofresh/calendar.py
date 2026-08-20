@@ -68,9 +68,7 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
             return None
 
         now = dt_util.now()
-        future_events = [
-            item for item in self._events if self._event_sort_key(item, now) >= now
-        ]
+        future_events = [item for item in self._events if self._event_sort_key(item, now) >= now]
         return min(future_events or self._events, key=lambda item: self._event_sort_key(item, now))
 
     async def async_get_events(

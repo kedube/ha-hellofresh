@@ -113,6 +113,7 @@ class _DowngradeFlag:
     def __init__(self) -> None:
         self.value = False
 
+
 # Credential keys belong in entry.data only. Older entries stored some of these in
 # entry.options (the source of the data/options split-brain that broke refresh); this set
 # drives a one-time, idempotent heal on load.
@@ -157,7 +158,9 @@ def _variation_join_debug(week: object) -> dict[str, object]:
                 "name": r.name,
                 "course_index": r.course_index,
                 "variation_title": r.variation_title,
-                "matches_modularity": r.course_index in titles if r.course_index is not None else False,
+                "matches_modularity": r.course_index in titles
+                if r.course_index is not None
+                else False,
             }
             for r in getattr(week, "recipes", [])
         ],
@@ -505,9 +508,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             return {
                 "weeks": [_week_dict(week) for week in weeks],
                 "account": account,
-                "variation_debug": [
-                    _variation_join_debug(week) for week in weeks
-                ],
+                "variation_debug": [_variation_join_debug(week) for week in weeks],
             }
 
         # The common case — no week filter, no debug — is what the dashboard cards call, often
@@ -572,9 +573,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         summary["account_credit_currency"] = data.account_credit_currency
         # Week ids behind the counters, so the card can make them clickable (the click
         # broadcasts the cross-card week-sync event to jump the other cards there).
-        summary["weeks_needing_selection_ids"] = [
-            week.week_id for week in data.weeks_auto_picked
-        ]
+        summary["weeks_needing_selection_ids"] = [week.week_id for week in data.weeks_auto_picked]
         summary["next_skipped_week_id"] = (
             data.next_skipped_week.week_id if data.next_skipped_week else None
         )
@@ -740,9 +739,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         the recipe is genuinely favorited; the error explains that when it happens.
         """
         coordinator = _single_coordinator(service_call)
-        removed = await coordinator.client.async_remove_favorite(
-            service_call.data[ATTR_RECIPE_ID]
-        )
+        removed = await coordinator.client.async_remove_favorite(service_call.data[ATTR_RECIPE_ID])
         await coordinator.async_request_refresh()
         return {"removed": removed}
 
@@ -914,7 +911,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         await coordinator.async_request_refresh()
         return result
 
-    def _notify_seamless_downgrade(coordinator: HelloFreshDataUpdateCoordinator, week_id: str) -> None:
+    def _notify_seamless_downgrade(
+        coordinator: HelloFreshDataUpdateCoordinator, week_id: str
+    ) -> None:
         """Warn the user that HelloFresh silently shrank the box to fit the new selection.
 
         The cart write succeeded but HelloFresh applied a seamless downgrade, so fewer meals

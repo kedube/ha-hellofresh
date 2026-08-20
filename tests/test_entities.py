@@ -141,9 +141,7 @@ def test_entity_ids_are_pinned_to_key_not_display_name() -> None:
     """
     # Title "HelloFresh" -> slug "hellofresh"; entity_id is "<domain>.<slug>_<key>".
     assert _sensor_for("next_order_status").entity_id == "sensor.hellofresh_next_order_status"
-    assert (
-        _sensor_for("selected_meal_count").entity_id == "sensor.hellofresh_selected_meal_count"
-    )
+    assert _sensor_for("selected_meal_count").entity_id == "sensor.hellofresh_selected_meal_count"
     # Switch and binary sensor use the same pinning.
     sw_desc = next(d for d in SWITCHES if d.key == "skip_next_modifiable_week")
     switch = HelloFreshSwitch(_build_coordinator(), sw_desc)
@@ -601,9 +599,7 @@ def test_next_selection_deadline_falls_back_to_subscription_cutoff() -> None:
         item for item in SENSOR_DESCRIPTIONS if item.key == "next_selection_deadline"
     )
 
-    assert HelloFreshSensor(coordinator, description).native_value == fallback.replace(
-        tzinfo=UTC
-    )
+    assert HelloFreshSensor(coordinator, description).native_value == fallback.replace(tzinfo=UTC)
 
 
 def test_next_selectable_delivery_meal_count_reads_modifiable_week() -> None:

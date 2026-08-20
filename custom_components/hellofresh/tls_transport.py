@@ -114,9 +114,7 @@ async def async_request(
     curl = await _try_curl_cffi(method, url, params, json_payload, headers)
     if curl is not None:
         return curl
-    return await session.request(
-        method, url, params=params, json=json_payload, headers=headers
-    )
+    return await session.request(method, url, params=params, json=json_payload, headers=headers)
 
 
 async def async_auth_post(

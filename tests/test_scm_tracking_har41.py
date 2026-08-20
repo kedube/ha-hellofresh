@@ -56,7 +56,7 @@ SCM_BOX = {
         "sent": True,
         "sent_at": "2026-08-17T22:59:41.079956Z",
         "processed_at": None,
-        "tracking_id": ""
+        "tracking_id": "",
     },
     "statuses": [
         {
@@ -74,7 +74,7 @@ SCM_BOX = {
             "sent": True,
             "sent_at": "2026-08-17T22:59:41.079956Z",
             "processed_at": None,
-            "tracking_id": ""
+            "tracking_id": "",
         },
         {
             "status": "out_for_delivery",
@@ -91,7 +91,7 @@ SCM_BOX = {
             "sent": True,
             "sent_at": "2026-08-17T15:11:05.380586Z",
             "processed_at": None,
-            "tracking_id": ""
+            "tracking_id": "",
         },
         {
             "status": "in_transit",
@@ -108,9 +108,9 @@ SCM_BOX = {
             "sent": True,
             "sent_at": "2026-08-17T08:40:03.573568Z",
             "processed_at": None,
-            "tracking_id": ""
-        }
-    ]
+            "tracking_id": "",
+        },
+    ],
 }
 
 PUBLIC_ID = "711f9257-5782-4d5a-a96b-3cc195bdc3e5"

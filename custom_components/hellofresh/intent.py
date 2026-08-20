@@ -80,7 +80,9 @@ class HelloFreshNextDeliveryIntentHandler(HelloFreshBaseIntentHandler):
             next_orders,
             key=lambda item: item[1].delivery_date,
         )
-        delivery_date = order.delivery_date.isoformat() if order.delivery_date else "an unknown date"
+        delivery_date = (
+            order.delivery_date.isoformat() if order.delivery_date else "an unknown date"
+        )
         speech = f"The next HelloFresh delivery for {title} is scheduled for {delivery_date}."
         if order.status:
             speech = f"{speech} Its current status is {order.status}."

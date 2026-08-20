@@ -125,7 +125,7 @@ def test_unknown_config_entry_id_is_an_error_not_a_silent_noop() -> None:
 
 
 def test_no_loaded_account_reports_that_specifically() -> None:
-    """"Nothing loaded" and "which one?" are different problems; don't conflate them."""
+    """ "Nothing loaded" and "which one?" are different problems; don't conflate them."""
     hass = _hass({})
     handlers = _register(hass)
 

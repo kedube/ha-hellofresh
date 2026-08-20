@@ -54,7 +54,7 @@ def _eval(expression_body: str) -> object:
 
 def test_esc_neutralizes_html_injection() -> None:
     """Card markup is built from template strings, so payload text must be escaped."""
-    out = _eval('return S.esc(\'<img src=x onerror="alert(1)">\');')
+    out = _eval("return S.esc('<img src=x onerror=\"alert(1)\">');")
     assert "<" not in out and ">" not in out
     assert "&lt;" in out and "&quot;" in out
 
@@ -109,7 +109,7 @@ def test_is_editable_requires_meal_swap() -> None:
     """A locked week, and a delivered week with no allowed_actions, are not editable."""
     out = _eval(
         "return ["
-        'S.isEditable({allowed_actions:{mealSwap:false}}),'
+        "S.isEditable({allowed_actions:{mealSwap:false}}),"
         "S.isEditable({}),"
         "S.isEditable(null),"
         'S.isEditable({allowed_actions:{mealSwap:true}, selection_deadline:"2099-01-01T00:00:00+00:00"}),'
@@ -140,7 +140,7 @@ def test_account_key_defaults_to_the_shared_sentinel() -> None:
 def test_broadcasts_always_carry_the_account_key() -> None:
     """The reported bug: an empty detail is dropped by every listener, silently."""
     out = _eval(
-        'globalThis.__events = [];'
+        "globalThis.__events = [];"
         'S.broadcastDataChanged({config_entry_id:"abc"});'
         'S.broadcastWeek({config_entry_id:"abc"}, "2026-W20");'
         "return globalThis.__events.map((e) => [e.type, e.detail.accountKey]);"
@@ -154,7 +154,7 @@ def test_broadcasts_always_carry_the_account_key() -> None:
 def test_event_matches_account_pairs_with_the_broadcasts() -> None:
     """Round-trip: what broadcastDataChanged emits must pass eventMatchesAccount."""
     out = _eval(
-        'globalThis.__events = [];'
+        "globalThis.__events = [];"
         'const cfg = {config_entry_id:"abc"};'
         "S.broadcastDataChanged(cfg);"
         "const ev = globalThis.__events[0];"
@@ -167,9 +167,7 @@ def test_event_matches_account_pairs_with_the_broadcasts() -> None:
 
 def test_week_sync_storage_key_is_account_scoped() -> None:
     """Two accounts on one dashboard must not share a selected week."""
-    out = _eval(
-        'return [S.syncStorageKey({}), S.syncStorageKey({config_entry_id:"abc"})];'
-    )
+    out = _eval('return [S.syncStorageKey({}), S.syncStorageKey({config_entry_id:"abc"})];')
     assert out == ["hellofresh:selected-week:default", "hellofresh:selected-week:abc"]
 
 

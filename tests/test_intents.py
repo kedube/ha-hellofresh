@@ -62,9 +62,7 @@ def _run(coro):
 
 def _speak(handler, *coordinators) -> str:
     """Run a handler against the given coordinators and return the spoken text."""
-    hass = SimpleNamespace(
-        data={DOMAIN: {f"entry-{i}": c for i, c in enumerate(coordinators)}}
-    )
+    hass = SimpleNamespace(data={DOMAIN: {f"entry-{i}": c for i, c in enumerate(coordinators)}})
     intent_obj = _Intent(hass)
     _run(handler.async_handle(intent_obj))
     return intent_obj.response.speech
@@ -194,9 +192,7 @@ def test_meal_selection_reports_no_configuration_when_no_accounts_exist() -> Non
 
 
 def test_meal_selection_reports_all_clear_when_nothing_is_pending() -> None:
-    speech = _speak(
-        HelloFreshMealSelectionIntentHandler(), _coordinator("HelloFresh US")
-    )
+    speech = _speak(HelloFreshMealSelectionIntentHandler(), _coordinator("HelloFresh US"))
     assert speech == "All configured HelloFresh accounts are up to date on meal selection."
 
 
@@ -230,12 +226,8 @@ def test_meal_selection_aggregates_across_accounts() -> None:
     """Both accounts' pending weeks appear, joined into one utterance."""
     speech = _speak(
         HelloFreshMealSelectionIntentHandler(),
-        _coordinator(
-            "Account A", weeks=[_week_needing_selection("2026-W39", deadline=None)]
-        ),
-        _coordinator(
-            "Account B", weeks=[_week_needing_selection("2026-W40", deadline=None)]
-        ),
+        _coordinator("Account A", weeks=[_week_needing_selection("2026-W39", deadline=None)]),
+        _coordinator("Account B", weeks=[_week_needing_selection("2026-W40", deadline=None)]),
     )
     assert "Account A" in speech
     assert "Account B" in speech

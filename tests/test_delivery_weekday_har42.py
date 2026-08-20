@@ -84,9 +84,7 @@ def test_weekday_change_matches_the_captured_patch() -> None:
     request = sent[0]
     assert request["method"] == "PATCH"
     assert request["path"] == f"/gw/api/subscriptions/{SUBSCRIPTION_ID}"
-    assert request["json"] == {
-        "subscription": {"id": SUBSCRIPTION_ID, "deliveryTime": TUESDAY}
-    }
+    assert request["json"] == {"subscription": {"id": SUBSCRIPTION_ID, "deliveryTime": TUESDAY}}
 
 
 def test_country_param_is_lowercase_as_captured() -> None:

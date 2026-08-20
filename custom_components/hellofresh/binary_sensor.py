@@ -47,9 +47,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up HelloFresh binary sensors."""
     coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        HelloFreshBinarySensor(coordinator, description) for description in SENSORS
-    )
+    async_add_entities(HelloFreshBinarySensor(coordinator, description) for description in SENSORS)
 
 
 class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
@@ -88,9 +86,7 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
             return "mdi:pencil-box-outline" if is_on else "mdi:pencil-off-outline"
         if self.entity_description.key == "tracked_shipment_available":
             return (
-                "mdi:package-variant-closed-check"
-                if is_on
-                else "mdi:package-variant-closed-remove"
+                "mdi:package-variant-closed-check" if is_on else "mdi:package-variant-closed-remove"
             )
         if self.entity_description.key == "payload_shape_changed":
             return "mdi:alert-octagon" if is_on else "mdi:check-circle-outline"

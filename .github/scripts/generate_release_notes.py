@@ -23,9 +23,7 @@ RELEASE_TAG_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", *args], check=True, capture_output=True, text=True
-    ).stdout.strip()
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 def _previous_tag(version: str) -> str | None:

@@ -83,9 +83,9 @@ def test_every_consumer_imports_the_shared_module_with_a_cache_bust() -> None:
     for name, path in CONSUMERS.items():
         source = _source(path)
         assert "hellofresh-recipe-detail.js" in source, f"{name} does not import the module"
-        assert re.search(
-            r"hellofresh-recipe-detail\.js\?v=\$\{encodeURIComponent\(", source
-        ), f"{name} imports the shared module without a ?v= cache-bust"
+        assert re.search(r"hellofresh-recipe-detail\.js\?v=\$\{encodeURIComponent\(", source), (
+            f"{name} imports the shared module without a ?v= cache-bust"
+        )
 
 
 def test_no_consumer_keeps_its_own_copy_of_the_sheet() -> None:
@@ -103,9 +103,9 @@ def test_every_consumer_closes_the_sheet_on_disconnect() -> None:
         disconnect = re.search(r"  disconnectedCallback\(\) \{.*?\n  \}", source, re.S)
         assert disconnect, f"{name} has no disconnectedCallback"
         body = disconnect.group(0)
-        assert (
-            "_detailOverlay.close()" in body or "_closeDetail()" in body
-        ), f"{name} does not close the recipe sheet on disconnect"
+        assert "_detailOverlay.close()" in body or "_closeDetail()" in body, (
+            f"{name} does not close the recipe sheet on disconnect"
+        )
 
 
 def test_planner_opens_the_sheet_on_a_read_only_tile() -> None:
@@ -115,7 +115,7 @@ def test_planner_opens_the_sheet_on_a_read_only_tile() -> None:
     there — so that path keeps its own handler and the ⓘ button covers the read-only case.
     """
     source = _source(CONSUMERS["planner"])
-    assert '.recipe:not(.editable)' in source, "no read-only tile handler"
+    assert ".recipe:not(.editable)" in source, "no read-only tile handler"
     assert "_openRecipeDetail" in source
     # The editable path must still toggle rather than open.
     assert "_toggleRecipe(week, recipe)" in source
@@ -125,7 +125,7 @@ def test_planner_offers_an_info_button_on_editable_weeks() -> None:
     """An editable tile's tap is taken by selection, so the recipe needs its own affordance."""
     source = _source(CONSUMERS["planner"])
     assert 'class="infobtn"' in source
-    assert 'data-info=' in source
+    assert "data-info=" in source
 
 
 def test_market_opens_the_sheet_from_a_tile() -> None:
@@ -142,10 +142,7 @@ def test_market_items_expose_a_recipe_id() -> None:
     SKU, so the model exposes the recipe id separately and the card reads that.
     """
     models = (
-        Path(__file__).resolve().parents[1]
-        / "custom_components"
-        / "hellofresh"
-        / "models.py"
+        Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "models.py"
     ).read_text(encoding="utf-8")
     market = re.search(r"class HelloFreshMarketItem:.*?def as_dict", models, re.S)
     assert market, "HelloFreshMarketItem not found"
