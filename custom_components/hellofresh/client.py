@@ -3292,29 +3292,28 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 continue
             weeks_by_subscription.setdefault(account_week.subscription_id, []).append(account_week)
 
-        # Every week fetches its menu, including history beyond the grace window.
-        #
-        # This used to skip weeks older than the grace window, reasoning that their recipes are
-        # unconditionally replaced by the delivered-only set in
-        # _merge_past_delivery_recipes_into_account_weeks, so the download was pure waste. That
-        # is true of recipes but NOT of the payload as a whole: the menu response is also the
-        # only source of the week's ``addOns`` block, which _build_market_items parses into
-        # week.market_items. Skipping the fetch therefore stripped the Market catalog from every
-        # week older than menu_grace_weeks (default 2), so the Market card — which only lists
-        # past weeks that carry a catalog — collapsed to ~2 weeks of history while My Menu still
-        # showed the full history_weeks span (its recipes are restored from past-deliveries).
-        #
-        # The cost is real (a past week's menu can be a multi-MB aggregate), but it is bounded by
-        # history_weeks and the fetches run concurrently via _async_gather_bounded below.
+        # Skip the per-week menu fetch for weeks older than the menu grace window: their
+        # recipes are unconditionally replaced by the delivered-only set in
+        # _merge_past_delivery_recipes_into_account_weeks, so downloading their (often multi-MB
+        # aggregate) menu only to discard it is pure waste. Weeks with no date, or dated within
+        # the grace window, still fetch — the grace-window branch keeps and overlays the catalog.
+        grace_floor = date.today() - timedelta(weeks=self.menu_grace_weeks)
+
+        def _needs_menu_fetch(account_week: HelloFreshWeek) -> bool:
+            return account_week.delivery_date is None or account_week.delivery_date >= grace_floor
 
         for subscription in subscriptions:
             subscription_id = subscription.subscription_id
             subscription_weeks: list[HelloFreshWeek] = []
             seen_week_ids: set[str] = set()
 
-            fetch_weeks = list(weeks_by_subscription.get(subscription_id, []))
-            # Fetch the weeks concurrently (bounded) instead of one round-trip at a time — the
-            # poll's critical path was ~N sequential TLS round-trips per subscription.
+            fetch_weeks = [
+                account_week
+                for account_week in weeks_by_subscription.get(subscription_id, [])
+                if _needs_menu_fetch(account_week)
+            ]
+            # Fetch the eligible weeks concurrently (bounded) instead of one round-trip at a
+            # time — the poll's critical path was ~N sequential TLS round-trips per subscription.
             menu_week_lists = await self._async_gather_bounded(
                 [
                     self._async_get_delivery_menu_week_data(
