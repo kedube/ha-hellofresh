@@ -1,4 +1,7 @@
 beautifulsoup4>=4.12.3
 pytest>=8.2.0
 pytest-homeassistant-custom-component>=0.13.218
+# Used by tests/test_repo_consistency.py to parse services.yaml. Available transitively via
+# Home Assistant, but declared explicitly so the suite does not depend on a transitive pin.
+PyYAML>=6.0
 ruff>=0.8.0

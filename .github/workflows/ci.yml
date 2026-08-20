@@ -59,6 +59,11 @@ jobs:
       - name: Run Ruff lint
         run: python -m ruff check .
 
+      # Enabled once the repo was formatted in full, so this starts from a clean tree and only
+      # ever fails on newly-introduced drift.
+      - name: Check Ruff formatting
+        run: python -m ruff format --check .
+
   cards:
     name: Cards
     runs-on: ubuntu-latest
