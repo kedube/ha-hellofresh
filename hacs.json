@@ -1,5 +1,22 @@
 {
   "name": "HelloFresh",
-  "country": ["AU", "CA", "DE", "GB", "NL", "US"],
+  "country": [
+    "AT",
+    "AU",
+    "BE",
+    "CA",
+    "CH",
+    "DE",
+    "DK",
+    "FR",
+    "GB",
+    "IE",
+    "LU",
+    "NL",
+    "NO",
+    "NZ",
+    "SE",
+    "US"
+  ],
   "render_readme": true
 }

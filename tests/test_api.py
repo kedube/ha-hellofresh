@@ -2668,6 +2668,68 @@ def test_merge_past_delivery_market_items_onto_account_weeks() -> None:
     assert [i.name for i in current.market_items] == ["Catalog Item"]
 
 
+def test_purchased_market_items_skip_malformed_and_duplicate_entries() -> None:
+    """Malformed/nameless/duplicate ``addons`` entries are dropped, not rendered as blank tiles."""
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    items = client._build_purchased_market_items(
+        {
+            "addons": [
+                "not-a-dict",  # wrong type entirely
+                {"id": "x-1"},  # no name — nothing to show
+                {"id": "a-1", "name": "Gyoza"},
+                {"id": "a-1", "name": "Gyoza (dupe)"},  # same id: keep only the first
+            ]
+        }
+    )
+    assert [item.name for item in items] == ["Gyoza"]
+
+    # A week with no ``addons`` key, or a non-list value, yields nothing rather than raising.
+    assert client._build_purchased_market_items({}) == []
+    assert client._build_purchased_market_items({"addons": {"not": "a list"}}) == []
+
+
+def test_market_items_never_cross_subscriptions() -> None:
+    """Two subscriptions sharing an ISO week must not inherit each other's purchases.
+
+    The id-only fallback exists for payloads that omit a subscription id on one side; when BOTH
+    sides carry ids that differ, matching on week id alone would stamp another box's add-ons
+    onto this week.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    past_date = date.today() - timedelta(weeks=9)
+
+    other_sub_history = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id="OTHER-SUB",
+        source="past_deliveries",
+        market_items=[HelloFreshMarketItem(item_id="a-1", name="Someone Else's Gyoza")],
+    )
+    mine = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id="6959884",
+        delivery_date=past_date,
+    )
+    client._merge_past_delivery_market_items(
+        account_weeks=[mine], past_delivery_weeks=[other_sub_history]
+    )
+    assert mine.market_items == []
+
+    # But when the history side omits its subscription id, the id-only fallback DOES apply.
+    unattributed = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="Jun 15",
+        subscription_id=None,
+        source="past_deliveries",
+        market_items=[HelloFreshMarketItem(item_id="a-1", name="Pork & Shiitake Gyoza")],
+    )
+    client._merge_past_delivery_market_items(
+        account_weeks=[mine], past_delivery_weeks=[unattributed]
+    )
+    assert [i.name for i in mine.market_items] == ["Pork & Shiitake Gyoza"]
+
+
 def test_past_delivery_addons_do_not_leak_into_meal_list_without_catalog() -> None:
     """An old week's add-ons stay out of My Menu even when no ``addOns`` catalog survives.
 
