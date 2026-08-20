@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.73 — 2026-08-20
 - **Fixed past-week browsing in the Market card**, which showed only the last couple of weeks
   while My Menu correctly spanned the configured **Past delivery history (weeks)** window
   (default 26, selectable 1–104). The Market card now honors that same option.
