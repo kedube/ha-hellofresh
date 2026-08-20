@@ -169,7 +169,7 @@ def _heading_anchors(text: str) -> set[str]:
 DOCS = [
     "README.md",
     "CONTRIBUTING.md",
-    "HELLOFRESH_API.md",
+    "docs/HELLOFRESH_API.md",
     "docs/entities.md",
     "docs/cards.md",
     "docs/services.md",
@@ -180,7 +180,7 @@ def test_documentation_links_resolve() -> None:
     """Every relative Markdown link must point at a real file and a real heading.
 
     The README was split into docs/ reference files; that move silently broke a dozen anchors
-    (README's own ``#market-card`` links, and HELLOFRESH_API.md pointing at README anchors that
+    (README's own ``#market-card`` links, and docs/HELLOFRESH_API.md pointing at README anchors that
     had moved). Cross-document links are exactly the thing nobody re-checks by hand.
     """
     texts = {name: (REPO / name).read_text(encoding="utf-8") for name in DOCS}

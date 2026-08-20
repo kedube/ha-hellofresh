@@ -2264,7 +2264,7 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         appears in **none** of the 16 retained captures -- the live web app changes the standing
         delivery day through the subscription PATCH above. The old call is kept as a fallback only
         for the case where the PATCH is rejected, since no capture proves the plans endpoint is
-        dead (see HELLOFRESH_API.md, Change recurring delivery weekday).
+        dead (see docs/HELLOFRESH_API.md, Change recurring delivery weekday).
 
         Two properties of the verified response are worth knowing, both pinned by tests:
 

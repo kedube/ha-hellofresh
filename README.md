@@ -374,7 +374,7 @@ Tips:
 
 Logs appear in **Settings → System → Logs** (and in `config/home-assistant.log`).
 
-For lower-level endpoint details and normalization notes, see [HELLOFRESH_API.md](HELLOFRESH_API.md).
+For lower-level endpoint details and normalization notes, see [docs/HELLOFRESH_API.md](docs/HELLOFRESH_API.md).
 
 ## Development
 
