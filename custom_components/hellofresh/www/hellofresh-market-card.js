@@ -226,9 +226,8 @@ class HelloFreshMarketCard extends HTMLElement {
   // have a catalog and no further — if HelloFresh has published 5 future weeks, show 5; if 7, show
   // 7 — without any fixed cap. So we walk the weeks in chronological order and, once we reach a
   // FUTURE week with no market data, stop including everything from there on. Past and current
-  // weeks are ALWAYS kept, mirroring the meal-planner card: they belong to the browsable history
-  // regardless of whether a catalog came back for them, and a week whose catalog is missing
-  // renders an empty state rather than silently disappearing from the week strip.
+  // weeks are kept only when they carry a catalog (a past week with no market items has nothing
+  // to browse), matching the original "weeks that carry a market catalog" rule for history.
   _browsableWeeks(weeks) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -243,7 +242,7 @@ class HelloFreshMarketCard extends HTMLElement {
         : true; // undated weeks are treated as future (can't anchor them to the past)
       const hasMarket = (week.market_items || []).length > 0;
       if (!isFuture) {
-        result.push(week); // past/current week: always browsable history
+        if (hasMarket) result.push(week); // past/current week with a catalog: browsable history
         continue;
       }
       // Future week: include only while the catalog is still being published contiguously.

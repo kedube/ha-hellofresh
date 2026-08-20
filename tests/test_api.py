@@ -2512,13 +2512,11 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     assert weeks[0].recipes[0].is_selected is False
 
 
-def test_account_menu_data_fetches_menu_for_weeks_past_grace_window() -> None:
-    """A past week older than the grace window must STILL trigger a menu fetch.
+def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> None:
+    """A past week older than the grace window must not trigger a (wasted) menu fetch.
 
-    The menu response is the only source of the week's ``addOns`` block, which becomes
-    week.market_items. Skipping the fetch for old weeks (an earlier bandwidth optimization that
-    reasoned only about recipes) stripped the Market catalog from all history beyond
-    menu_grace_weeks, collapsing the Market card to ~2 weeks while My Menu kept the full span.
+    Its recipes are unconditionally replaced by the delivered-only set later, so downloading
+    its menu is pure waste; only current/future/in-grace weeks should hit /gw/my-deliveries/menu.
     """
     from datetime import timedelta
 
@@ -2539,8 +2537,7 @@ def test_account_menu_data_fetches_menu_for_weeks_past_grace_window() -> None:
     # The integration gates delivery dates with LOCAL today (they are local-market
     # calendar dates); expectations must match or they diverge near midnight UTC.
     today = date.today()
-    # menu_grace_weeks default is 2; a week delivered 10 weeks ago is well past the floor, and
-    # must still be fetched so its market catalog survives.
+    # menu_grace_weeks default is 2; a week delivered 10 weeks ago is well past the floor.
     old_week = HelloFreshWeek(
         week_id="2026-old",
         display_name="Old",
@@ -2572,61 +2569,7 @@ def test_account_menu_data_fetches_menu_for_weeks_past_grace_window() -> None:
     )
 
     assert "2026-future" in fetched_weeks
-    assert "2026-old" in fetched_weeks
-
-
-def test_old_week_keeps_market_items_after_menu_merge() -> None:
-    """An old past week must retain its Market catalog end-to-end.
-
-    Regression: the Market card lists a past week only when it carries market_items, so when the
-    per-week menu fetch was skipped for weeks older than menu_grace_weeks the ``addOns`` block
-    never arrived and the card's history collapsed to ~2 weeks. The delivered-only recipe merge
-    (which the grace window still governs) must not disturb the catalog.
-    """
-    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()
-    old_week = HelloFreshWeek(
-        week_id="2026-W10",
-        display_name="Old",
-        subscription_id="6959884",
-        delivery_date=today - timedelta(weeks=10),
-        recipes=[HelloFreshRecipe(recipe_id="m-1", name="Delivered Dish")],
-        raw={
-            "_menu_payload": {
-                "addOns": {
-                    "groups": [
-                        {
-                            "groupType": "dessert",
-                            "addOns": [
-                                {
-                                    "id": "addon-1",
-                                    "index": 0,
-                                    "name": "Chocolate Cake",
-                                    "quantity": 1,
-                                }
-                            ],
-                        }
-                    ]
-                }
-            }
-        },
-    )
-
-    client._apply_market_items([old_week])
-    assert [item.name for item in old_week.market_items] == ["Chocolate Cake"]
-
-    # The delivered-only merge for an out-of-grace week replaces recipes but leaves the catalog.
-    delivered_week = HelloFreshWeek(
-        week_id="2026-W10",
-        display_name="Old",
-        subscription_id="6959884",
-        source="past_deliveries",
-        recipes=[HelloFreshRecipe(recipe_id="m-1", name="Delivered Dish")],
-    )
-    merged = client._merge_past_delivery_recipes_into_account_weeks(
-        account_weeks=[old_week], past_delivery_weeks=[delivered_week]
-    )
-    assert [item.name for item in merged[0].market_items] == ["Chocolate Cake"]
+    assert "2026-old" not in fetched_weeks
 
 
 def test_delivery_menu_rejects_substitute_menu_for_mismatched_week() -> None:

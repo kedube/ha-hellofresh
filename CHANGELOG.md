@@ -5,25 +5,6 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## 2.72 — 2026-08-19
-- **Fixed the Market card only showing ~2 weeks of history** while My Menu correctly spanned the
-  full `history_weeks` window (default 26). The per-week menu fetch was being skipped for any week
-  older than `menu_grace_weeks` (default 2) as a bandwidth optimization — justified on the grounds
-  that a past week's recipes are replaced by the delivered-only set anyway. That reasoning held for
-  recipes but not for the rest of the payload: the menu response is the **only** source of a week's
-  `addOns` block, which becomes `week.market_items`. Skipping it stripped the Market catalog from
-  all older history, and the Market card lists a past week only when it carries a catalog, so that
-  history silently vanished from the week strip. History weeks now fetch their menu again.
-- The grace window still governs **recipe** merging exactly as before — an out-of-grace past week
-  still shows only what was delivered. Only the catalog fetch changed.
-- **Market card keeps past weeks in the strip even when no catalog came back**, mirroring the
-  meal-planner card. A week with no market data now renders its empty state instead of
-  disappearing, so a gap in HelloFresh's data can't quietly shorten the browsable history.
-- Trade-off: restoring the fetch costs a menu download per history week on each poll (a past
-  week's payload can be a multi-MB aggregate). It stays bounded by `history_weeks` and the
-  requests run concurrently, but accounts with a long history will see more poll traffic than in
-  2.70. Lower `history_weeks` if that matters on your connection.
-
 ## 2.70 — 2026-08-18
 - **Fixed `sensor.tracked_shipment_date` reading Unknown for a box the web UI showed as
   delivered.** The sensor resolves the most recent delivered week via `last_delivery_week`, which
