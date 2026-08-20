@@ -46,6 +46,20 @@ version heading and publishes it as the release's Highlights.
   past-week data comes from, and why older weeks show no categories or prices; CONTRIBUTING gains
   a "Running the CI checks locally" section; and the API reference documents the `addons` history
   field alongside a comparison table against the similarly-named `addOns` catalog.
+- **README restructured for browsability** — it had grown to 581 lines, with the seven card
+  references (204 lines) and the service list sitting in the middle of the page everyone scrolls
+  through. Those are now [`docs/cards.md`](docs/cards.md) and [`docs/services.md`](docs/services.md),
+  leaving the README as the narrative path: install → configure → what you get → troubleshoot.
+  **581 → 408 lines**, with no content lost.
+- Card options shared by every card (`title`, `config_entry_id`, `logo`, `image_width`) were
+  repeated in all seven YAML examples — `config_entry_id` was explained seven times. They now live
+  in one **Common options** table, so each card's example is just its `type` plus anything genuinely
+  card-specific.
+- Services are grouped by purpose (meals and Market, delivery schedule, plan and account, food
+  profile, recipes and favorites) with one heading each, so a service is linkable and findable
+  instead of buried in a 24-item bullet list.
+- The densest bullets were split into sub-lists — the Schedule card's timeline entry was a single
+  242-word sentence; nothing now exceeds 140 words.
 - **New consistency tests** pin metadata that is edited by hand and drifts silently: the HACS
   country list against the supported countries, `strings.json` against `en.json`, all six shipped
   locales against the English keys, `services.yaml` against the actually-registered services, and

@@ -151,3 +151,70 @@ def test_shared_modules_are_not_registered_as_cards() -> None:
     for module in ("hellofresh-shared.js", "hellofresh-recipe-detail.js"):
         assert (COMPONENT / "www" / module).exists(), f"{module} is missing from www/"
         assert module not in referenced, f"{module} is a shared import, not a Lovelace resource"
+
+
+# ---- documentation links ---------------------------------------------------------------
+
+
+def _heading_anchors(text: str) -> set[str]:
+    """GitHub's anchor slugs for every heading in a Markdown document."""
+    anchors: set[str] = set()
+    for heading in re.findall(r"^#{1,6}\s+(.+)$", text, re.M):
+        slug = re.sub(r"[`*\[\]()]", "", heading).strip().lower()
+        slug = re.sub(r"[^\w\s-]", "", slug).replace(" ", "-")
+        anchors.add(slug)
+    return anchors
+
+
+DOCS = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "HELLOFRESH_API.md",
+    "docs/entities.md",
+    "docs/cards.md",
+    "docs/services.md",
+]
+
+
+def test_documentation_links_resolve() -> None:
+    """Every relative Markdown link must point at a real file and a real heading.
+
+    The README was split into docs/ reference files; that move silently broke a dozen anchors
+    (README's own ``#market-card`` links, and HELLOFRESH_API.md pointing at README anchors that
+    had moved). Cross-document links are exactly the thing nobody re-checks by hand.
+    """
+    texts = {name: (REPO / name).read_text(encoding="utf-8") for name in DOCS}
+    anchors = {name: _heading_anchors(text) for name, text in texts.items()}
+
+    broken: list[str] = []
+    for name, text in texts.items():
+        base = (REPO / name).parent
+        for match in re.finditer(r"\[[^\]]*\]\((?!https?:|mailto:)([^)]+)\)", text):
+            target, _, fragment = match.group(1).partition("#")
+            if not target:  # same-document anchor
+                if fragment and fragment not in anchors[name]:
+                    broken.append(f"{name}: #{fragment}")
+                continue
+            resolved = (base / target).resolve()
+            if not resolved.exists():
+                broken.append(f"{name}: missing file {target}")
+                continue
+            rel = str(resolved.relative_to(REPO))
+            if fragment and rel in anchors and fragment not in anchors[rel]:
+                broken.append(f"{name}: {target}#{fragment}")
+
+    assert not broken, "broken documentation links:\n  " + "\n  ".join(broken)
+
+
+def test_readme_stays_browsable() -> None:
+    """The README is the landing page; detail belongs in docs/.
+
+    It reached 581 lines before the card and service references were split out. This is a smoke
+    alarm, not a style rule -- if it trips, move the newest reference material into docs/ rather
+    than raising the number.
+    """
+    length = len((REPO / "README.md").read_text(encoding="utf-8").splitlines())
+    assert length < 500, (
+        f"README.md is {length} lines. Move reference detail into docs/ "
+        f"(see docs/cards.md and docs/services.md for the pattern)."
+    )

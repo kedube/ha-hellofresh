@@ -58,7 +58,16 @@ reindenting it will break extraction — the script fails loudly rather than sil
   (HACS country list, translation completeness, `services.yaml`, card registration) that otherwise
   drifts out of step with the code.
 - `.github/scripts/` contains the CI helper scripts, including the card checks described above.
-- `docs/` contains user reference documentation split out of the README (e.g. the [entity reference](docs/entities.md)) — update it alongside entity changes.
+- `docs/` contains the user reference documentation split out of the README. Keep the README as the
+  narrative landing page (install → configure → what you get → troubleshoot) and put detail here:
+  - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch and button.
+  - [`docs/cards.md`](docs/cards.md) — the seven Lovelace cards. Options shared by every card live
+    in its **Common options** table, so per-card examples stay minimal; don't repeat them.
+  - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
+
+  `tests/test_repo_consistency.py` checks that every relative Markdown link resolves to a real file
+  and heading, and that the README stays under 500 lines — if that trips, move the newest reference
+  material into `docs/` rather than raising the limit.
 - `hacs.json` and `manifest.json` contain release and integration metadata.
 
 ## Pull requests

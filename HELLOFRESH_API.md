@@ -682,7 +682,7 @@ These additional read endpoints the web app uses are exposed as optional read-on
   }
   ```
 
-  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](README.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
+  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](docs/cards.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
 
 ### Cookbook favorites (`/gw/cookbook/v1/…`)
 
@@ -702,7 +702,7 @@ Row shape: `{bookmark_id, id, title, headline, thumbnail_url, url, prep_time, to
 
 **Paging is cursor-based, not offset-based.** The response's `pagination.next_cursor` is an opaque token that must be echoed back as `cursor=`; there is no `offset`. An offset-style implementation silently returns only page one. The integration stops on a missing cursor, a page that adds no new rows, or a page cap, and warns if it collected fewer rows than `total_count`.
 
-> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](README.md#recipes-card)'s ♥ Cookbook chip shows all of it.
+> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](docs/cards.md#recipes-card)'s ♥ Cookbook chip shows all of it.
 
 ### Secondary favorites store (`/gw/cfs/v2/favorites/recipe`)
 
@@ -771,7 +771,7 @@ returns chosen option **ids**, and only the catalog maps those to display names.
 partial update — only the sections supplied (`taste`, `household`, `goals`) are changed.
 
 Exposed as the `hellofresh.get_food_profile` and `hellofresh.set_food_profile` services, which back
-the [Food profile card](README.md#food-profile-card). The same `GET` doubles as the fallback source
+the [Food profile card](docs/cards.md#food-profile-card). The same `GET` doubles as the fallback source
 for [plan preference](#plan-preference).
 
 ### Food profile completion (`/gw/profile-service/v2/…/profile/completion`)
@@ -780,7 +780,7 @@ for [plan preference](#plan-preference).
 | --- | --- | --- |
 | Profile completion progress | `GET` | `/gw/profile-service/v2/customers/me/profile/completion` |
 
-Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](README.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
+Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](docs/cards.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
 
 ## Read Endpoints — Pricing
 
