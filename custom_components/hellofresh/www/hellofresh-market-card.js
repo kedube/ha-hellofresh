@@ -226,9 +226,10 @@ class HelloFreshMarketCard extends HTMLElement {
   // have a catalog and no further — if HelloFresh has published 5 future weeks, show 5; if 7, show
   // 7 — without any fixed cap. So we walk the weeks in chronological order and, once we reach a
   // FUTURE week with no market data, stop including everything from there on. Past and current
-  // weeks are kept only when they carry market data — for a past week that is the add-ons it
-  // shipped with (from delivered history), so weeks where nothing was ordered stay out rather
-  // than padding the strip with empty entries.
+  // weeks are ALWAYS kept, exactly as the meal-planner card does. A past week where nothing was
+  // ordered is a real answer ("no Market items this week"), not a reason to hide the week — and
+  // hiding it made the strip skip unpredictably from one delivery to another, so the Market and
+  // My Menu cards disagreed about which weeks exist.
   _browsableWeeks(weeks) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -243,7 +244,7 @@ class HelloFreshMarketCard extends HTMLElement {
         : true; // undated weeks are treated as future (can't anchor them to the past)
       const hasMarket = (week.market_items || []).length > 0;
       if (!isFuture) {
-        if (hasMarket) result.push(week); // past/current week with market data: browsable history
+        result.push(week); // past/current week: always browsable history
         continue;
       }
       // Future week: include only while the catalog is still being published contiguously.
