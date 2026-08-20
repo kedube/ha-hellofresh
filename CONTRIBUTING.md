@@ -64,6 +64,10 @@ reindenting it will break extraction — the script fails loudly rather than sil
   - [`docs/cards.md`](docs/cards.md) — the seven Lovelace cards. Options shared by every card live
     in its **Common options** table, so per-card examples stay minimal; don't repeat them.
   - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
+  - [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md) — the endpoint and normalization reference.
+    This one is for contributors rather than users: payload shapes, why each endpoint is called,
+    and the reasoning behind the merge order. Read it before changing anything in `client.py` or
+    `normalizers.py`.
 
   `tests/test_repo_consistency.py` checks that every relative Markdown link resolves to a real file
   and heading, and that the README stays under 500 lines — if that trips, move the newest reference

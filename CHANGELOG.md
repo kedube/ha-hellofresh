@@ -60,6 +60,11 @@ version heading and publishes it as the release's Highlights.
   instead of buried in a 24-item bullet list.
 - The densest bullets were split into sub-lists — the Schedule card's timeline entry was a single
   242-word sentence; nothing now exceeds 140 words.
+- `HELLOFRESH_API.md` moved to [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md). At 157 KB it was
+  the largest file in the repo root and is contributor reference rather than user documentation, so
+  it now sits with the other reference docs. `CHANGELOG.md`, `CONTRIBUTING.md` and `QUALITY_SCALE.md`
+  stay at the root: the release workflow reads `CHANGELOG.md` by path, and GitHub only links
+  contributing guidelines from the root or `.github/`.
 - **New consistency tests** pin metadata that is edited by hand and drifts silently: the HACS
   country list against the supported countries, `strings.json` against `en.json`, all six shipped
   locales against the English keys, `services.yaml` against the actually-registered services, and

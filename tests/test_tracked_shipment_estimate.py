@@ -8,7 +8,7 @@ Two things make this field worth its own entity, and both are asserted here:
 
 * It is **not** the `estimated_delivery_time` that appears on the week's `tracking` node. That one
   is byte-identical to `delivery_date` in all 69 samples across the captures that carry both, which
-  is why it is deliberately not surfaced (see HELLOFRESH_API.md). This is a different field from a
+  is why it is deliberately not surfaced (see docs/HELLOFRESH_API.md). This is a different field from a
   different endpoint.
 * It is date-precision: the carrier reports midnight of the estimated day, whereas HelloFresh's
   own `delivery_date` is a scheduled **noon** anchor. The two therefore disagree by 12 hours on

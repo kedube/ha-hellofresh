@@ -4,15 +4,15 @@ This document describes the reverse-engineered HelloFresh HTTP API surface used 
 
 It is derived from the integration source and its normalization tests:
 
-- HTTP client and orchestration — [client.py](custom_components/hellofresh/client.py)
-- Data models and exceptions — [models.py](custom_components/hellofresh/models.py)
-- Pure parsing/coercion helpers — [parsers.py](custom_components/hellofresh/parsers.py)
-- Payload normalization helpers — [normalizers.py](custom_components/hellofresh/normalizers.py)
-- Token refresh scheduling — [coordinator.py](custom_components/hellofresh/coordinator.py)
-- Setup / reauth (email + password, or pasted token) — [config_flow.py](custom_components/hellofresh/config_flow.py)
-- Normalization tests — [tests/test_api.py](tests/test_api.py)
+- HTTP client and orchestration — [client.py](../custom_components/hellofresh/client.py)
+- Data models and exceptions — [models.py](../custom_components/hellofresh/models.py)
+- Pure parsing/coercion helpers — [parsers.py](../custom_components/hellofresh/parsers.py)
+- Payload normalization helpers — [normalizers.py](../custom_components/hellofresh/normalizers.py)
+- Token refresh scheduling — [coordinator.py](../custom_components/hellofresh/coordinator.py)
+- Setup / reauth (email + password, or pasted token) — [config_flow.py](../custom_components/hellofresh/config_flow.py)
+- Normalization tests — [tests/test_api.py](../tests/test_api.py)
 
-> **Module layout:** [api.py](custom_components/hellofresh/api.py) is a thin re-export shim, kept so `from .api import ...` keeps working. Import from the specific modules above in new code.
+> **Module layout:** [api.py](../custom_components/hellofresh/api.py) is a thin re-export shim, kept so `from .api import ...` keeps working. Import from the specific modules above in new code.
 
 ## Contents
 
@@ -86,7 +86,7 @@ exited in 2022 and `hellofresh.jp` no longer resolves.
 
 The integration authenticates the same way the HelloFresh web app does: it logs in with the account **email and password** through HelloFresh's own `/gw` auth gateway and then renews the resulting short-lived access token with a long-lived refresh token. There is no OAuth app or Auth0 `/oauth/token` exchange — the access/refresh tokens are obtained and maintained entirely at runtime.
 
-Setup offers **two paths** (a menu in [config_flow.py](custom_components/hellofresh/config_flow.py)):
+Setup offers **two paths** (a menu in [config_flow.py](../custom_components/hellofresh/config_flow.py)):
 
 1. **Credentials (recommended)** — store email + password; the runtime logs in and self-heals across token expiry/rotation indefinitely.
 2. **Token (advanced backup)** — paste the website's `apiV2Auth` value (a JSON auth object, plain or URL-encoded) or a bare access token. No credentials are stored, so the entry works only until the refresh token expires (~60 days) or HelloFresh rotates/invalidates it, at which point a reauth prompt is raised. This path exists as a fallback for when the Cloudflare bot-protection bypass cannot complete a credential `/gw/login` (see [Bot-protection handling](#bot-protection-waf-handling)). The paste is parsed by `parsers.token_payload_to_entry_data` (URL-decoded if needed; missing timing backfilled from the access token's JWT `iat`/`exp`).
@@ -171,7 +171,7 @@ A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`) i
 
 ### TLS-impersonating transport
 
-[tls_transport.py](custom_components/hellofresh/tls_transport.py) routes **both** the three `/gw` auth POSTs (`/gw/auth/token`, `/gw/login`, `/gw/refresh`) **and the authenticated data XHRs** (every call through `_async_api_request` / `_async_api_get` — subscriptions, deliveries, menus, billing, cart pricing, meal-selection, etc.) through [`curl_cffi`](https://github.com/lexiforest/curl_cffi) with `impersonate="chrome"`, which performs the TLS handshake and HTTP/2 framing with a **real Chrome fingerprint** — the part `aiohttp` cannot fake and the part stricter-region Cloudflare blocks on. `curl_cffi` is pinned in [manifest.json](custom_components/hellofresh/manifest.json) so Home Assistant installs it.
+[tls_transport.py](../custom_components/hellofresh/tls_transport.py) routes **both** the three `/gw` auth POSTs (`/gw/auth/token`, `/gw/login`, `/gw/refresh`) **and the authenticated data XHRs** (every call through `_async_api_request` / `_async_api_get` — subscriptions, deliveries, menus, billing, cart pricing, meal-selection, etc.) through [`curl_cffi`](https://github.com/lexiforest/curl_cffi) with `impersonate="chrome"`, which performs the TLS handshake and HTTP/2 framing with a **real Chrome fingerprint** — the part `aiohttp` cannot fake and the part stricter-region Cloudflare blocks on. `curl_cffi` is pinned in [manifest.json](../custom_components/hellofresh/manifest.json) so Home Assistant installs it.
 
 The data calls need the same impersonation as the auth calls: Cloudflare fingerprints the **connection**, which is identical whether the request is a login POST or a menu GET, so a region tuned to block the transport would otherwise let login through (now impersonated) but still 403 the very next data poll.
 
@@ -199,7 +199,7 @@ A full login runs in two steps, mirroring the web app:
 
 Notes:
 
-- The `client_id` is `senf` (the web app's `NEXT_PUBLIC_GW_CLIENT_ID`), defined as `GW_CLIENT_ID` in [const.py](custom_components/hellofresh/const.py).
+- The `client_id` is `senf` (the web app's `NEXT_PUBLIC_GW_CLIENT_ID`), defined as `GW_CLIENT_ID` in [const.py](../custom_components/hellofresh/const.py).
 - Step 1's response is **not retained** — the app token only primes the gateway. The request is best-effort: any failure is logged and ignored. The web app has been observed reaching `/gw/login` **without** a preceding `/gw/auth/token` call and **without** an `Authorization` header, so step 1 appears optional; it is kept as harmless defensive priming.
 - Step 2 is confirmed against live traffic: `POST /gw/login?country=<CC>&locale=<locale>` with body exactly `{"username", "password"}`, no `Authorization` header. It returns the auth object below. A `401`/`403` raises `HelloFreshAuthError` (bad credentials); any other `>= 400` raises `HelloFreshError`. (The login *response* body is redacted in transit logs, but its field shape is the same auth object returned by `/gw/refresh`.)
 
@@ -281,15 +281,15 @@ Login itself is only possible when both a username and password are stored (`_ha
 
 Access tokens are short-lived (≈30 min) while the data poll interval can be hours, so token renewal cannot be tied to data polling. The integration manages token freshness in three coordinated places:
 
-1. **Proactive refresh decision** ([client.py](custom_components/hellofresh/client.py), `_token_expiring_soon`): the token is considered "due for refresh" once it has passed **half its lifetime**, or is within `_TOKEN_MIN_REMAINING_BEFORE_REFRESH` (300 s) of expiry, whichever comes first. The half-life window is intentionally wide so a periodically-firing timer reliably lands inside it before expiry. (Missing expiry metadata is treated as "refresh now.")
-2. **Dedicated refresh timer** ([coordinator.py](custom_components/hellofresh/coordinator.py), `async_start_token_refresh`): an `async_track_time_interval` timer, independent of the data poll, calls `client.async_ensure_token_fresh()`. Its cadence is derived from the token lifetime (`TOKEN_REFRESH_LIFETIME_FRACTION = 0.25`, i.e. a quarter of the lifetime), clamped to 2–10 minutes. A quarter-lifetime tick guarantees at least one firing inside the back-half refresh window.
-3. **Reactive retry** ([client.py](custom_components/hellofresh/client.py), `_async_api_request`): after a single `401`/`403` on an authenticated call, the client forces one refresh and retries the request once. The forced refresh happens under `_token_refresh_lock` and re-checks whether the access token already changed first, so when many concurrent requests `401` together only the first rotates the refresh token (HelloFresh invalidates a refresh token on use, so a second rotation would burn the token the first waiter just obtained).
+1. **Proactive refresh decision** ([client.py](../custom_components/hellofresh/client.py), `_token_expiring_soon`): the token is considered "due for refresh" once it has passed **half its lifetime**, or is within `_TOKEN_MIN_REMAINING_BEFORE_REFRESH` (300 s) of expiry, whichever comes first. The half-life window is intentionally wide so a periodically-firing timer reliably lands inside it before expiry. (Missing expiry metadata is treated as "refresh now.")
+2. **Dedicated refresh timer** ([coordinator.py](../custom_components/hellofresh/coordinator.py), `async_start_token_refresh`): an `async_track_time_interval` timer, independent of the data poll, calls `client.async_ensure_token_fresh()`. Its cadence is derived from the token lifetime (`TOKEN_REFRESH_LIFETIME_FRACTION = 0.25`, i.e. a quarter of the lifetime), clamped to 2–10 minutes. A quarter-lifetime tick guarantees at least one firing inside the back-half refresh window.
+3. **Reactive retry** ([client.py](../custom_components/hellofresh/client.py), `_async_api_request`): after a single `401`/`403` on an authenticated call, the client forces one refresh and retries the request once. The forced refresh happens under `_token_refresh_lock` and re-checks whether the access token already changed first, so when many concurrent requests `401` together only the first rotates the refresh token (HelloFresh invalidates a refresh token on use, so a second rotation would burn the token the first waiter just obtained).
 
 > **Why both a wide window and a sub-lifetime tick?** An earlier version refreshed only within 5 min of expiry on a 20-min timer; the timer stepped over that narrow window and the token died for ~10 min each cycle. Refreshing at half-life with a quarter-lifetime tick removes that gap. See the regression test `test_token_refresh_timer_never_lets_token_expire`.
 
 A concurrency lock (`_token_refresh_lock`) ensures only one refresh runs at a time; both the proactive and reactive paths re-check expiry inside the lock so simultaneous callers don't refresh twice.
 
-**Persisting refreshed tokens without a reload:** when a token is refreshed, the new token cache is written back to the config entry so it survives a restart. Because the live client already holds the new token in memory, the integration flags this as a token-only update (`TOKEN_ONLY_UPDATE_KEY` in [\_\_init\_\_.py](custom_components/hellofresh/__init__.py)) so the config-entry update listener skips the otherwise-costly full integration reload. The user's email and password live in `entry.data` and are owned by the runtime login/refresh flow; options store only user preferences (scan interval, public-menu fallback toggle, and the past-history window — `history_weeks`). Changing the `history_weeks` option triggers a full integration reload (it is consumed when the client is constructed), whereas a token-only update deliberately skips the reload.
+**Persisting refreshed tokens without a reload:** when a token is refreshed, the new token cache is written back to the config entry so it survives a restart. Because the live client already holds the new token in memory, the integration flags this as a token-only update (`TOKEN_ONLY_UPDATE_KEY` in [\_\_init\_\_.py](../custom_components/hellofresh/__init__.py)) so the config-entry update listener skips the otherwise-costly full integration reload. The user's email and password live in `entry.data` and are owned by the runtime login/refresh flow; options store only user preferences (scan interval, public-menu fallback toggle, and the past-history window — `history_weeks`). Changing the `history_weeks` option triggers a full integration reload (it is consumed when the client is constructed), whereas a token-only update deliberately skips the reload.
 
 **Refresh-token expiry:** `_refresh_token_expired` compares `refresh_token_issued_at + refresh_expires_in` against now (anchored to when the *refresh token* was issued — login or the last rotation — not the access token's issue time). When the refresh token has expired, the client skips `/gw/refresh` and goes straight to a credential login. Only if that login also fails (or no credentials are stored) does it raise `HelloFreshAuthError`, which the coordinator turns into a Home Assistant reauthentication prompt.
 
@@ -563,7 +563,7 @@ listing the Market add-ons that week actually shipped with:
 submitted as a cart write. Quantity is recorded as `1` (history reports no count) and `group_type`
 stays `None`, which the card renders as an ungrouped list rather than inventing a category.
 
-**History window.** Both the ranged display range and the `past-deliveries` pagination floor are driven by the **configurable** history depth — the `history_weeks` option (`CONF_HISTORY_WEEKS` in [const.py](custom_components/hellofresh/const.py)), default **`DEFAULT_HISTORY_WEEKS` = 26** (~6 months), range **1–104** (`MIN_HISTORY_WEEKS`/`MAX_HISTORY_WEEKS`). The client reads it as `self._history_weeks` (the `history_weeks` constructor arg, falling back to the `_HISTORY_LOOKBACK_WEEKS = 26` class default when unset). Lowering it shrinks the per-poll deliveries payload; raising it browses further back.
+**History window.** Both the ranged display range and the `past-deliveries` pagination floor are driven by the **configurable** history depth — the `history_weeks` option (`CONF_HISTORY_WEEKS` in [const.py](../custom_components/hellofresh/const.py)), default **`DEFAULT_HISTORY_WEEKS` = 26** (~6 months), range **1–104** (`MIN_HISTORY_WEEKS`/`MAX_HISTORY_WEEKS`). The client reads it as `self._history_weeks` (the `history_weeks` constructor arg, falling back to the `_HISTORY_LOOKBACK_WEEKS = 26` class default when unset). Lowering it shrinks the per-poll deliveries payload; raising it browses further back.
 
 > **Use ~56, not 52, for a full year of history.** `today − 52 weeks` lands 364 days back, so a 12-month-old box sits exactly on the boundary and ISO-week rounding can drop it. Two related rules: the pagination floor is set **two weeks past** `self._history_weeks` (`weeks=self._history_weeks + 2`) so the oldest *visible* week always has its delivered recipes fetched, and the cursor floor is compared by `(year, week)` rather than raw string, so `2026-W01` orders after `2025-W52`.
 
@@ -682,7 +682,7 @@ These additional read endpoints the web app uses are exposed as optional read-on
   }
   ```
 
-  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](docs/cards.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
+  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](cards.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
 
 ### Cookbook favorites (`/gw/cookbook/v1/…`)
 
@@ -702,7 +702,7 @@ Row shape: `{bookmark_id, id, title, headline, thumbnail_url, url, prep_time, to
 
 **Paging is cursor-based, not offset-based.** The response's `pagination.next_cursor` is an opaque token that must be echoed back as `cursor=`; there is no `offset`. An offset-style implementation silently returns only page one. The integration stops on a missing cursor, a page that adds no new rows, or a page cap, and warns if it collected fewer rows than `total_count`.
 
-> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](docs/cards.md#recipes-card)'s ♥ Cookbook chip shows all of it.
+> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](cards.md#recipes-card)'s ♥ Cookbook chip shows all of it.
 
 ### Secondary favorites store (`/gw/cfs/v2/favorites/recipe`)
 
@@ -771,7 +771,7 @@ returns chosen option **ids**, and only the catalog maps those to display names.
 partial update — only the sections supplied (`taste`, `household`, `goals`) are changed.
 
 Exposed as the `hellofresh.get_food_profile` and `hellofresh.set_food_profile` services, which back
-the [Food profile card](docs/cards.md#food-profile-card). The same `GET` doubles as the fallback source
+the [Food profile card](cards.md#food-profile-card). The same `GET` doubles as the fallback source
 for [plan preference](#plan-preference).
 
 ### Food profile completion (`/gw/profile-service/v2/…/profile/completion`)
@@ -780,7 +780,7 @@ for [plan preference](#plan-preference).
 | --- | --- | --- |
 | Profile completion progress | `GET` | `/gw/profile-service/v2/customers/me/profile/completion` |
 
-Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](docs/cards.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
+Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](cards.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
 
 ## Read Endpoints — Pricing
 
@@ -1364,7 +1364,7 @@ The two similarly-named estimate fields, since confusing them is the easy mistak
 
 Only one carrier value (`VEHO`) has ever been observed, so `_CARRIER_LABELS` maps what is known (`UPS`, `FedEx`, `DoorDash`, `OnTrac`, `LaserShip`, `Veho`) and passes anything else through unchanged rather than guessing.
 
-Pinned by [tests/test_scm_tracking_har41.py](tests/test_scm_tracking_har41.py) and [tests/test_tracked_shipment_estimate.py](tests/test_tracked_shipment_estimate.py).
+Pinned by [tests/test_scm_tracking_har41.py](../tests/test_scm_tracking_har41.py) and [tests/test_tracked_shipment_estimate.py](../tests/test_tracked_shipment_estimate.py).
 
 
 Pricing notes:
@@ -1394,7 +1394,7 @@ Normalization notes:
 
 - tracking enrichment prefers `last_status.status` before `last_status.internal_status`
 - `box.status` is preferred before `box.internal_status` as a fallback shipment label
-- carrier codes are normalized into friendlier names when recognized: `DDASH` → `DoorDash`, `FEDEX` → `FedEx`, `UPS` → `UPS`, `USPS` → `USPS`, `ONTRAC` → `OnTrac`, `LASERSHIP` → `LaserShip`; unrecognized codes pass through unchanged (the map lives in [parsers.py](custom_components/hellofresh/parsers.py))
+- carrier codes are normalized into friendlier names when recognized: `DDASH` → `DoorDash`, `FEDEX` → `FedEx`, `UPS` → `UPS`, `USPS` → `USPS`, `ONTRAC` → `OnTrac`, `LASERSHIP` → `LaserShip`; unrecognized codes pass through unchanged (the map lives in [parsers.py](../custom_components/hellofresh/parsers.py))
 - `tracked_order` is **not** simply the most recent order. It is selected with a sort key that prefers orders carrying *concrete* tracking detail: orders with a tracking number or URL rank highest, then carrier, then a tracking status, and delivery date is used only as the final tiebreaker. This avoids surfacing a generic state-only record when a fully-tracked shipment exists.
 
 ## Home Assistant Exposure
@@ -1470,7 +1470,7 @@ Entity behavior notes:
 
 ### Frontend assets
 
-The integration ships seven custom Lovelace cards (`www/hellofresh-meal-planner-card.js`, `www/hellofresh-market-card.js`, `www/hellofresh-food-profile-card.js`, `www/hellofresh-schedule-card.js`, `www/hellofresh-subscription-card.js`, `www/hellofresh-cost-card.js`, and `www/hellofresh-recipes-card.js`) and registers them at startup ([frontend.py](custom_components/hellofresh/frontend.py)):
+The integration ships seven custom Lovelace cards (`www/hellofresh-meal-planner-card.js`, `www/hellofresh-market-card.js`, `www/hellofresh-food-profile-card.js`, `www/hellofresh-schedule-card.js`, `www/hellofresh-subscription-card.js`, `www/hellofresh-cost-card.js`, and `www/hellofresh-recipes-card.js`) and registers them at startup ([frontend.py](../custom_components/hellofresh/frontend.py)):
 
 - the `www/` directory is served via `hass.http.async_register_static_paths` at `/hellofresh/`, so each card is reachable at `/hellofresh/<filename>` and any other asset (e.g. the bundled `hellofresh-logo.png`) under the same mount
 - every card resource URL carries a `?v=` cache-bust stamped with the **integration release version** read from `manifest.json` (`INTEGRATION_VERSION`), so the release workflow's automatic manifest bump invalidates cached card JS on every release — there are no per-card version constants to maintain
@@ -1495,7 +1495,7 @@ Both halves are load-bearing. The import must be **dynamic** so the integration'
 
 Three helpers stay card-local because they are genuine specializations, not drift: the schedule card's `_isEditable` (its `_isSkipped` also treats `PAUSED` as skipped) and `_broadcastDataChanged` (tags its own broadcasts with an instance id so it can ignore them coming back), and the cost card's `_fmtDate` (includes the year, since its rows span months). The last is expressed by passing options to the shared `fmtDate`.
 
-> **`node --check` is not enough for these files.** It only parses, so it accepts a reference to an undefined variable — which in a browser means the card throws at module scope, never registers, and simply does not appear on the dashboard. [tests/test_card_modules_load.py](tests/test_card_modules_load.py) imports every card as a real ES module with stubbed browser globals and asserts it defines its custom element.
+> **`node --check` is not enough for these files.** It only parses, so it accepts a reference to an undefined variable — which in a browser means the card throws at module scope, never registers, and simply does not appear on the dashboard. [tests/test_card_modules_load.py](../tests/test_card_modules_load.py) imports every card as a real ES module with stubbed browser globals and asserts it defines its custom element.
 
 **Shared recipe-detail module.** `www/hellofresh-recipe-detail.js` is a module, not a card: it is not registered as a Lovelace resource and is imported dynamically by the Recipes, Meal planner and Market cards, which each render the same tap-through recipe sheet (ingredients scaled to a servings switcher, steps, utensils, allergens, nutrition, printable PDF) from `get_recipe_detail`. It exports `RecipeDetailOverlay`, `DETAIL_STYLES`, and the `escapeHtml` / `safeHttpUrl` / `resizedImage` / `formatMinutes` helpers, replacing what had been three divergent copies.
 
@@ -1506,7 +1506,7 @@ Two layout constraints are load-bearing and were both discovered by the sheet fa
 
 ### Diagnostics redaction
 
-The config-entry diagnostics export ([diagnostics.py](custom_components/hellofresh/diagnostics.py)) serializes the redacted config entry, non-sensitive **token timing/health** (expiry timestamps and boolean `has_refresh_token` / `has_credentials` flags — **never the tokens themselves**), a **`frontend` block** (the integration release version, the card resource URLs this build expects, and the URLs actually registered in Lovelace — a `?v=` mismatch means the user is loading a stale cached card), and the normalized account views (subscriptions, orders, weeks, public-menu weeks, capabilities, and the `debug_trace` of attempted endpoints).
+The config-entry diagnostics export ([diagnostics.py](../custom_components/hellofresh/diagnostics.py)) serializes the redacted config entry, non-sensitive **token timing/health** (expiry timestamps and boolean `has_refresh_token` / `has_credentials` flags — **never the tokens themselves**), a **`frontend` block** (the integration release version, the card resource URLs this build expects, and the URLs actually registered in Lovelace — a `?v=` mismatch means the user is loading a stale cached card), and the normalized account views (subscriptions, orders, weeks, public-menu weeks, capabilities, and the `debug_trace` of attempted endpoints).
 
 Sensitive values are stripped by `async_redact_data(diagnostics, TO_REDACT)`, which redacts by **key name at any nesting depth**, so a redacted key is removed wherever it appears — including inside the `debug_trace` request params, which record full query strings. The redacted set covers:
 
@@ -1516,9 +1516,9 @@ Sensitive values are stripped by `async_redact_data(diagnostics, TO_REDACT)`, wh
 - **Tracking:** `tracking_number`, `tracking_url`, `public_id` (the tracking id that reconstructs the unauthenticated tracking page).
 - **Billing:** `coupon_code` / `couponCode` (an active voucher a shared export could otherwise expose).
 
-The `debug_trace` params motivated several of these: PII like the user's postcode and the per-account `customerPlanId` ride along in the `/gw/my-deliveries/menu` query string even though they aren't fields on the serialized models, so they are redacted by key name (regression coverage in [tests/test_diagnostics.py](tests/test_diagnostics.py): `test_debug_trace_params_redact_pii_and_identifiers`, `test_new_identifier_keys_redacted`, `test_tokens_and_credentials_still_redacted`). Box codes that are **not** PII — `product-sku`, `delivery-option` — are intentionally left unredacted so endpoint behavior stays diagnosable.
+The `debug_trace` params motivated several of these: PII like the user's postcode and the per-account `customerPlanId` ride along in the `/gw/my-deliveries/menu` query string even though they aren't fields on the serialized models, so they are redacted by key name (regression coverage in [tests/test_diagnostics.py](../tests/test_diagnostics.py): `test_debug_trace_params_redact_pii_and_identifiers`, `test_new_identifier_keys_redacted`, `test_tokens_and_credentials_still_redacted`). Box codes that are **not** PII — `product-sku`, `delivery-option` — are intentionally left unredacted so endpoint behavior stays diagnosable.
 
-**Key-name redaction can't reach an id baked into a path string** (e.g. `/gw/api/subscriptions/1234567/oneoff`), because the value is part of the string, not a dict key. So before a debug attempt is stored, `_record_debug_attempt` ([normalizers.py](custom_components/hellofresh/normalizers.py)) runs its `path` through `_template_debug_path`, which replaces known identifier segments (`/subscriptions/<id>`, `/plans/<id>`, `/customers/<uuid>/balance`, `/public-id/<uuid>`) with `{id}` placeholders. This is the single choke point every recorded attempt flows through, so it covers current and future call sites uniformly (regression coverage: `test_template_debug_path_strips_account_identifiers`, `test_record_debug_attempt_templates_path`).
+**Key-name redaction can't reach an id baked into a path string** (e.g. `/gw/api/subscriptions/1234567/oneoff`), because the value is part of the string, not a dict key. So before a debug attempt is stored, `_record_debug_attempt` ([normalizers.py](../custom_components/hellofresh/normalizers.py)) runs its `path` through `_template_debug_path`, which replaces known identifier segments (`/subscriptions/<id>`, `/plans/<id>`, `/customers/<uuid>/balance`, `/public-id/<uuid>`) with `{id}` placeholders. This is the single choke point every recorded attempt flows through, so it covers current and future call sites uniformly (regression coverage: `test_template_debug_path_strips_account_identifiers`, `test_record_debug_attempt_templates_path`).
 
 ## Mutation Endpoints
 
@@ -1731,7 +1731,7 @@ Two successful reschedules of `2026-W39` (both `201`) settle two details worth s
 - **`source` is load-bearing enough to keep.** The web app sends the literal `"reschedule-delivery-feature"`; it looks decorative but there is no evidence the endpoint tolerates its absence, so it is sent verbatim rather than trimmed.
 - **`delivery_option` is a `handle` from the week's own `availableOneOffOptions`**, e.g. `US-2-0800-2000` paired with `deliveryDate: "2026-09-22"`. The handle encodes country, weekday index and the 0800–2000 window; the integration passes handles through unaltered rather than constructing them.
 
-Pinned by [tests/test_write_contracts_har40.py](tests/test_write_contracts_har40.py).
+Pinned by [tests/test_write_contracts_har40.py](../tests/test_write_contracts_har40.py).
 
 ### Change recurring delivery weekday
 
@@ -1958,28 +1958,28 @@ accounts and other regions, not a question about the current API.
 - Menu and delivery payloads may differ by region or account type.
 - **Past-week selection comes from `past-deliveries`, not the menu.** A past week's menu still carries auto-fill picks; only the `past-deliveries` `meals[]` reflect what actually shipped. Paused weeks shipped nothing and must show no selection. See [Selection-state resolution](#selection-state-resolution).
 - Public menu scraping does not expose personal selections, dates, or shipment data.
-- Because the API is reverse-engineered, adding new regions or supporting future payload drift will likely require updating the key fallback lists in [client.py](custom_components/hellofresh/client.py) / [normalizers.py](custom_components/hellofresh/normalizers.py) and the region map in [const.py](custom_components/hellofresh/const.py).
+- Because the API is reverse-engineered, adding new regions or supporting future payload drift will likely require updating the key fallback lists in [client.py](../custom_components/hellofresh/client.py) / [normalizers.py](../custom_components/hellofresh/normalizers.py) and the region map in [const.py](../custom_components/hellofresh/const.py).
 
 ## Related Files
 
 | File | Role |
 | --- | --- |
-| [client.py](custom_components/hellofresh/client.py) | HTTP requests, endpoint orchestration, write actions (composes a `TokenManager`) |
-| [token_manager.py](custom_components/hellofresh/token_manager.py) | `TokenManager`: access/refresh token state, the `/gw` login/refresh calls, expiry math, bot-block handling |
-| [models.py](custom_components/hellofresh/models.py) | Dataclasses (`HelloFreshSubscription/Week/Recipe/Order/Capabilities/AccountData`) and exceptions |
-| [parsers.py](custom_components/hellofresh/parsers.py) | Pure parsing/coercion helpers (dates, numbers, tracking, recursive payload search) |
-| [normalizers.py](custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
-| [coordinator.py](custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
-| [config_flow.py](custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
-| [frontend.py](custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the five Lovelace cards, stamping each resource URL with the manifest release version (`?v=` cache-bust) and updating stale registrations |
-| [diagnostics.py](custom_components/hellofresh/diagnostics.py) | Config-entry diagnostics export with `TO_REDACT` key-name redaction (secrets, account IDs, PII) |
-| [tls_transport.py](custom_components/hellofresh/tls_transport.py) | `curl_cffi` Chrome-fingerprint transport for auth POSTs and data XHRs (with `verify=True`), `aiohttp` fallback |
-| [www/hellofresh-meal-planner-card.js](custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals`, skip/unskip weeks |
-| [www/hellofresh-market-card.js](custom_components/hellofresh/www/hellofresh-market-card.js) | Packaged Lovelace card: browse and order Market add-ons via `get_weeks` + `select_market_items` |
-| [www/hellofresh-food-profile-card.js](custom_components/hellofresh/www/hellofresh-food-profile-card.js) | Packaged Lovelace card: view/edit meal-preselection preferences via `get_food_profile` + `set_food_profile` |
-| [www/hellofresh-schedule-card.js](custom_components/hellofresh/www/hellofresh-schedule-card.js) | Packaged Lovelace card: next-box summary, month calendar of delivery days, and past + upcoming timeline via `get_weeks` (per-week skip/unskip; calendar/row clicks broadcast the week-sync event) |
-| [www/hellofresh-subscription-card.js](custom_components/hellofresh/www/hellofresh-subscription-card.js) | Packaged Lovelace card: condensed account/subscription overview with built-in holiday notice via `get_account_summary` (read-only) |
-| [const.py](custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds, history-window bounds (`DEFAULT/MIN/MAX_HISTORY_WEEKS`) |
-| [api.py](custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
-| [services.yaml](custom_components/hellofresh/services.yaml) | Service definitions |
-| [tests/test_api.py](tests/test_api.py), [tests/test_parsers.py](tests/test_parsers.py) | Normalization and parser unit tests |
+| [client.py](../custom_components/hellofresh/client.py) | HTTP requests, endpoint orchestration, write actions (composes a `TokenManager`) |
+| [token_manager.py](../custom_components/hellofresh/token_manager.py) | `TokenManager`: access/refresh token state, the `/gw` login/refresh calls, expiry math, bot-block handling |
+| [models.py](../custom_components/hellofresh/models.py) | Dataclasses (`HelloFreshSubscription/Week/Recipe/Order/Capabilities/AccountData`) and exceptions |
+| [parsers.py](../custom_components/hellofresh/parsers.py) | Pure parsing/coercion helpers (dates, numbers, tracking, recursive payload search) |
+| [normalizers.py](../custom_components/hellofresh/normalizers.py) | Payload-to-model normalization helpers |
+| [coordinator.py](../custom_components/hellofresh/coordinator.py) | Data update coordinator and the dedicated token-refresh timer |
+| [config_flow.py](../custom_components/hellofresh/config_flow.py) | Setup (email/password **or** pasted token), options, and reauthentication flows |
+| [frontend.py](../custom_components/hellofresh/frontend.py) | Serves the `www/` assets and auto-registers the five Lovelace cards, stamping each resource URL with the manifest release version (`?v=` cache-bust) and updating stale registrations |
+| [diagnostics.py](../custom_components/hellofresh/diagnostics.py) | Config-entry diagnostics export with `TO_REDACT` key-name redaction (secrets, account IDs, PII) |
+| [tls_transport.py](../custom_components/hellofresh/tls_transport.py) | `curl_cffi` Chrome-fingerprint transport for auth POSTs and data XHRs (with `verify=True`), `aiohttp` fallback |
+| [www/hellofresh-meal-planner-card.js](../custom_components/hellofresh/www/hellofresh-meal-planner-card.js) | Packaged Lovelace card: browse weeks, view/edit the selection via `get_weeks` + `select_meals`, skip/unskip weeks |
+| [www/hellofresh-market-card.js](../custom_components/hellofresh/www/hellofresh-market-card.js) | Packaged Lovelace card: browse and order Market add-ons via `get_weeks` + `select_market_items` |
+| [www/hellofresh-food-profile-card.js](../custom_components/hellofresh/www/hellofresh-food-profile-card.js) | Packaged Lovelace card: view/edit meal-preselection preferences via `get_food_profile` + `set_food_profile` |
+| [www/hellofresh-schedule-card.js](../custom_components/hellofresh/www/hellofresh-schedule-card.js) | Packaged Lovelace card: next-box summary, month calendar of delivery days, and past + upcoming timeline via `get_weeks` (per-week skip/unskip; calendar/row clicks broadcast the week-sync event) |
+| [www/hellofresh-subscription-card.js](../custom_components/hellofresh/www/hellofresh-subscription-card.js) | Packaged Lovelace card: condensed account/subscription overview with built-in holiday notice via `get_account_summary` (read-only) |
+| [const.py](../custom_components/hellofresh/const.py) | Regional base URLs, config keys (`username`/`password`), `GW_CLIENT_ID`, scan-interval bounds, history-window bounds (`DEFAULT/MIN/MAX_HISTORY_WEEKS`) |
+| [api.py](../custom_components/hellofresh/api.py) | Backwards-compatible re-export shim |
+| [services.yaml](../custom_components/hellofresh/services.yaml) | Service definitions |
+| [tests/test_api.py](../tests/test_api.py), [tests/test_parsers.py](../tests/test_parsers.py) | Normalization and parser unit tests |
