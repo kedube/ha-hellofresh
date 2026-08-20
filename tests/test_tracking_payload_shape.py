@@ -83,7 +83,7 @@ def test_carrier_is_absent_from_the_delivery_payload() -> None:
 
 
 def test_carrier_is_not_guessed_from_the_tracking_code_prefix() -> None:
-    """"1Z…" is a UPS convention, but inferring from it would be a guess, not data."""
+    """ "1Z…" is a UPS convention, but inferring from it would be a guess, not data."""
     assert extract_tracking_details({"tracking": REAL_UPS})["carrier"] is None
     assert extract_tracking_details({"tracking": REAL_HF})["carrier"] is None
 

@@ -69,7 +69,7 @@ def main() -> int:
     next_version = bump(current_version)
     updated_text, replacements = re.subn(
         r'("version"\s*:\s*")([^"]+)(")',
-        rf'\g<1>{next_version}\g<3>',
+        rf"\g<1>{next_version}\g<3>",
         manifest_text,
         count=1,
     )

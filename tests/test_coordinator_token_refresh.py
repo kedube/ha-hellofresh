@@ -107,9 +107,7 @@ def test_refresh_interval_is_clamped_both_ways() -> None:
     """Never hammer the auth endpoint, never drift past the ceiling."""
     assert _token_refresh_interval(1) == MIN_TOKEN_REFRESH_INTERVAL
     assert _token_refresh_interval(86400) == MAX_TOKEN_REFRESH_INTERVAL
-    assert _token_refresh_interval(None) == timedelta(
-        seconds=DEFAULT_TOKEN_LIFETIME_SECONDS * 0.25
-    )
+    assert _token_refresh_interval(None) == timedelta(seconds=DEFAULT_TOKEN_LIFETIME_SECONDS * 0.25)
 
 
 def test_unknown_lifetime_falls_back_to_the_documented_default() -> None:

@@ -75,9 +75,7 @@ def _client(week: HelloFreshWeek) -> tuple[HelloFreshClient, list[dict]]:
     sent: list[dict] = []
 
     async def fake_request(method, path, *, params=None, json_payload=None, **_kw):
-        sent.append(
-            {"method": method, "path": path, "params": params, "json": json_payload}
-        )
+        sent.append({"method": method, "path": path, "params": params, "json": json_payload})
 
         class _Resp:
             status = 201

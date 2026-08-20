@@ -165,7 +165,6 @@ def _tile_lookup_outcomes() -> list[dict]:
     return json.loads(result.stdout)
 
 
-
 def test_each_tile_resolves_to_its_own_meal_on_a_delivered_week() -> None:
     """The reported bug: tapping one meal played another's video and opened its recipe.
 
@@ -178,7 +177,6 @@ def test_each_tile_resolves_to_its_own_meal_on_a_delivered_week() -> None:
         assert outcome["resolved"] == outcome["tapped"], (
             f"tapping {outcome['tapped']!r} resolved to {outcome['resolved']!r}"
         )
-
 
 
 def test_each_tile_keeps_its_own_video_on_a_delivered_week() -> None:
@@ -195,7 +193,7 @@ def test_tile_keys_are_not_derived_from_course_index_alone() -> None:
     source = MEAL_PLANNER.read_text(encoding="utf-8")
     assert "String(recipe.course_index)" not in source
     assert "this._esc(String(r.course_index))" not in source
-    assert 'list.find((r) => String(r.course_index) === index)' not in source
+    assert "list.find((r) => String(r.course_index) === index)" not in source
 
 
 def test_video_source_is_declared_as_mp4() -> None:
@@ -208,7 +206,7 @@ def test_video_source_is_declared_as_mp4() -> None:
     source = MEAL_PLANNER.read_text(encoding="utf-8")
     open_video = re.search(r"^  _openVideo\(recipe\) \{.*?^  \}", source, re.S | re.M)
     assert open_video, "_openVideo not found"
-    assert '<source src=' in open_video.group(0)
+    assert "<source src=" in open_video.group(0)
     assert 'type="video/mp4"' in open_video.group(0)
 
 

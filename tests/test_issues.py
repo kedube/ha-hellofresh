@@ -11,9 +11,7 @@ from custom_components.hellofresh.const import CONF_SHOW_DATA_QUALITY_ISSUES
 
 def _hass_with_options(options: dict) -> SimpleNamespace:
     entry = SimpleNamespace(options=options)
-    return SimpleNamespace(
-        config_entries=SimpleNamespace(async_get_entry=lambda entry_id: entry)
-    )
+    return SimpleNamespace(config_entries=SimpleNamespace(async_get_entry=lambda entry_id: entry))
 
 
 def test_write_actions_issue_raised_by_default() -> None:
@@ -33,9 +31,7 @@ def test_write_actions_issue_suppressed_when_option_off() -> None:
 
 def test_write_actions_issue_raised_when_entry_lookup_fails() -> None:
     """A missing config entry must not swallow the warning."""
-    hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_get_entry=lambda entry_id: None)
-    )
+    hass = SimpleNamespace(config_entries=SimpleNamespace(async_get_entry=lambda entry_id: None))
     with patch.object(issues.ir, "async_create_issue") as create:
         issues.async_create_write_actions_issue(hass, "entry-1", "HelloFresh (US)")
     assert create.call_count == 1

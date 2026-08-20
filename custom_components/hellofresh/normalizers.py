@@ -606,9 +606,7 @@ class HelloFreshPayloadNormalizer:
         # Selected quantity lives on the item's `selection` block when chosen. Market add-ons use
         # `oneOffQuantity` (this-week add) + `preselectedQuantity` (recurring add) — NOT `quantity`
         # (which is what meals use). Unselected items have `selection: null`.
-        selection = (
-            raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
-        )
+        selection = raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
         one_off = coerce_int(selection.get("oneOffQuantity")) or 0
         preselected = coerce_int(selection.get("preselectedQuantity")) or 0
         selected_quantity = (one_off + preselected) or coerce_int(
@@ -622,7 +620,9 @@ class HelloFreshPayloadNormalizer:
         raw_recipe_id = recipe_data.get("id")
         return HelloFreshMarketItem(
             item_id=str(recipe_data.get("id") or raw_item.get("sku") or index),
-            recipe_id=str(raw_recipe_id) if isinstance(raw_recipe_id, str) and raw_recipe_id else None,
+            recipe_id=str(raw_recipe_id)
+            if isinstance(raw_recipe_id, str) and raw_recipe_id
+            else None,
             name=name,
             index=index,
             sku=raw_item.get("sku"),
@@ -1391,9 +1391,7 @@ class HelloFreshPayloadNormalizer:
             # which is what fabricated the wrong selection on past weeks. In that case derive
             # nothing here and let the menu week's own flags / past-deliveries decide.
             if not account_selected_ids and len(account_week.recipes) < len(menu_week.recipes):
-                account_selected_ids = {
-                    recipe.recipe_id for recipe in account_week.recipes
-                }
+                account_selected_ids = {recipe.recipe_id for recipe in account_week.recipes}
             if account_selected_ids:
                 for recipe in menu_week.recipes:
                     recipe.is_selected = recipe.recipe_id in account_selected_ids
@@ -1457,9 +1455,7 @@ class HelloFreshPayloadNormalizer:
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
-            past_week = past_by_key.get(
-                (account_week.subscription_id, account_week.week_id)
-            )
+            past_week = past_by_key.get((account_week.subscription_id, account_week.week_id))
             if past_week is None:
                 candidate = past_by_week_id.get(account_week.week_id)
                 # Fall back to the id-only match ONLY when a subscription id is missing on
@@ -1513,9 +1509,7 @@ class HelloFreshPayloadNormalizer:
             account_week.menu_title = account_week.menu_title or past_week.menu_title
             # Counts follow what actually shipped, overriding any stale menu/plan values.
             account_week.meals_selected = past_week.meals_selected or len(delivered)
-            account_week.meals_required = (
-                past_week.meals_required or account_week.meals_required
-            )
+            account_week.meals_required = past_week.meals_required or account_week.meals_required
             # The browsable catalog was replaced by the delivered set, so the (possibly
             # multi-MB aggregate) menu payload stashed on this week is now dead weight kept
             # alive for the whole poll interval. Drop it — nothing reads it back for an old
@@ -1596,9 +1590,7 @@ class HelloFreshPayloadNormalizer:
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
-            past_week = past_by_key.get(
-                (account_week.subscription_id, account_week.week_id)
-            )
+            past_week = past_by_key.get((account_week.subscription_id, account_week.week_id))
             if past_week is None:
                 candidate = past_by_week_id.get(account_week.week_id)
                 # Same guard as the recipe merge: fall back to an id-only match ONLY when a
@@ -1718,7 +1710,8 @@ class HelloFreshPayloadNormalizer:
                     status=raw_week.get("status") or "menu",
                     # The week's own box size wins over the subscription's base plan (a resized
                     # week can hold fewer/more meals than the plan default).
-                    meals_required=self._week_box_meal_count(raw_week) or subscription.meals_required,
+                    meals_required=self._week_box_meal_count(raw_week)
+                    or subscription.meals_required,
                     meals_selected=meals_selected,
                     meals_preselected=bool(raw_week.get("mealsPreselected")),
                     recipes=recipes,
@@ -1983,9 +1976,7 @@ class HelloFreshPayloadNormalizer:
                 return True
         return False
 
-    def _build_purchased_market_items(
-        self, raw_week: dict[str, Any]
-    ) -> list[HelloFreshMarketItem]:
+    def _build_purchased_market_items(self, raw_week: dict[str, Any]) -> list[HelloFreshMarketItem]:
         """Parse the Market add-ons a past week ACTUALLY shipped with.
 
         Distinct from :meth:`_build_market_items`, which reads the browsable ``addOns`` CATALOG

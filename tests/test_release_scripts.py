@@ -47,9 +47,7 @@ def test_main_bumps_manifest_in_place(tmp_path: Path, capsys, monkeypatch) -> No
 def test_main_major_bump(tmp_path: Path, capsys, monkeypatch) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"domain": "hellofresh", "version": "2.43"}))
-    monkeypatch.setattr(
-        "sys.argv", ["bump_manifest_version.py", str(manifest), "--bump", "major"]
-    )
+    monkeypatch.setattr("sys.argv", ["bump_manifest_version.py", str(manifest), "--bump", "major"])
     assert bump_manifest_version.main() == 0
     assert capsys.readouterr().out.strip() == "3.00"
     assert json.loads(manifest.read_text())["version"] == "3.00"

@@ -1389,9 +1389,7 @@ class HelloFreshAccountData:
     _summarized_weeks_needing_selection: list[dict[str, Any]] | None = field(
         default=None, compare=False
     )
-    _serialized_public_menu_weeks: list[dict[str, Any]] | None = field(
-        default=None, compare=False
-    )
+    _serialized_public_menu_weeks: list[dict[str, Any]] | None = field(default=None, compare=False)
     _serialized_subscriptions: list[dict[str, Any]] | None = field(default=None, compare=False)
     _next_order: HelloFreshOrder | None = None
     _upcoming_orders: list[HelloFreshOrder] = field(default_factory=list)
@@ -1610,9 +1608,7 @@ class HelloFreshAccountData:
         # service writes) could act on the OTHER subscription's box. On collision the primary
         # subscription's week wins deterministically, matching next_modifiable_week, which is
         # anchored on the primary subscription's handles.
-        primary_sub_id = (
-            self.subscriptions[0].subscription_id if self.subscriptions else None
-        )
+        primary_sub_id = self.subscriptions[0].subscription_id if self.subscriptions else None
         self._weeks_by_id = {}
         for week in self.weeks:
             existing = self._weeks_by_id.get(week.week_id)
@@ -1743,8 +1739,7 @@ class HelloFreshAccountData:
                     and (
                         account_week.subscription_id is None
                         or self._last_delivery_week.subscription_id is None
-                        or account_week.subscription_id
-                        == self._last_delivery_week.subscription_id
+                        or account_week.subscription_id == self._last_delivery_week.subscription_id
                     )
                 ):
                     self._last_delivery_week.delivered_at = account_week.delivered_at

@@ -36,8 +36,7 @@ class _FakeResources:
         self.loaded = True
         self.store = object()  # storage mode marker; YAML mode has no store
         self._items = [
-            {"id": f"item{i}", "res_type": "module", "url": url}
-            for i, url in enumerate(urls)
+            {"id": f"item{i}", "res_type": "module", "url": url} for i, url in enumerate(urls)
         ]
         self.created: list[dict] = []
         self.updated: list[tuple[str, dict]] = []
@@ -64,10 +63,7 @@ def test_resource_urls_stamped_with_manifest_version() -> None:
     """All card ?v= stamps must equal the manifest release version (single source of truth)."""
     manifest = json.loads(
         (
-            Path(__file__).parent.parent
-            / "custom_components"
-            / "hellofresh"
-            / "manifest.json"
+            Path(__file__).parent.parent / "custom_components" / "hellofresh" / "manifest.json"
         ).read_text(encoding="utf-8")
     )
     assert manifest["version"] == INTEGRATION_VERSION

@@ -83,9 +83,7 @@ def test_events_outside_the_window_are_excluded() -> None:
             _order("3", date(2026, 9, 5)),
         ]
     )
-    events = _get_events(
-        cal, datetime(2026, 8, 19, tzinfo=UTC), datetime(2026, 8, 22, tzinfo=UTC)
-    )
+    events = _get_events(cal, datetime(2026, 8, 19, tzinfo=UTC), datetime(2026, 8, 22, tzinfo=UTC))
     assert [e.summary for e in events] == ["HelloFresh delivery"]
     assert len(events) == 1
 
@@ -97,9 +95,7 @@ def test_window_boundaries_are_half_open() -> None:
     Aug 20 00:00 must not include it, or adjacent month views double-count.
     """
     cal = _calendar([_order("1", date(2026, 8, 20))])
-    before = _get_events(
-        cal, datetime(2026, 8, 19, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC)
-    )
+    before = _get_events(cal, datetime(2026, 8, 19, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC))
     assert before == []
     touching = _get_events(
         cal, datetime(2026, 8, 20, tzinfo=UTC), datetime(2026, 8, 21, tzinfo=UTC)

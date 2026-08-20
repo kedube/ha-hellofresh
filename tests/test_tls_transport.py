@@ -77,7 +77,13 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
             return False
 
         async def request(
-            self, method, url, params=None, json=None, headers=None, impersonate=None,
+            self,
+            method,
+            url,
+            params=None,
+            json=None,
+            headers=None,
+            impersonate=None,
             verify=None,
         ):
             return await post(

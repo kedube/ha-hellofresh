@@ -26,7 +26,7 @@ def _coordinator() -> SimpleNamespace:
         data=SimpleNamespace(),
         config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh US"),
         last_update_success=True,
-        async_add_listener=lambda *_a, **_kw: (lambda: None),
+        async_add_listener=lambda *_a, **_kw: lambda: None,
     )
 
 

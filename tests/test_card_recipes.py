@@ -169,14 +169,12 @@ def test_cookbook_is_reachable_from_the_card() -> None:
     assert collections, "_renderCollections not found"
     body = collections.group(0)
 
-    chip_markup = re.search(
-        r"const cookbook = `(.*?)`;", body, re.S
-    )
+    chip_markup = re.search(r"const cookbook = `(.*?)`;", body, re.S)
     assert chip_markup, "no cookbook chip element is built"
     assert "data-collection" in chip_markup.group(1), "cookbook chip is not clickable"
 
     # ...and that the built chip is interpolated into the returned chips bar.
-    returned = body[body.index("return `"):]
+    returned = body[body.index("return `") :]
     assert "${cookbook}" in returned, "cookbook chip is built but never rendered"
 
 
