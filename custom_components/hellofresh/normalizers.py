@@ -1557,6 +1557,62 @@ class HelloFreshPayloadNormalizer:
             match.is_selected = True
             match.selected_quantity = delivered_recipe.selected_quantity
 
+    def _merge_past_delivery_market_items(
+        self,
+        account_weeks: Sequence[HelloFreshWeek],
+        past_delivery_weeks: Sequence[HelloFreshWeek],
+    ) -> None:
+        """Stamp each past week's PURCHASED Market add-ons onto its account week.
+
+        A week's browsable ``addOns`` catalog only exists while HelloFresh still publishes that
+        week's menu (~2-3 weeks, the menu-grace window). Beyond it the sole record of Market
+        activity is the ``addons`` array on past-deliveries, so without this merge every older
+        week reports an empty catalog and drops out of the Market card entirely -- which is why
+        the card's history collapsed to the grace window while My Menu kept its full span.
+
+        Purchased items REPLACE a past week's catalog rather than merging into it: for a shipped
+        week the question is "what did I order", and the catalog (when one survived) lists
+        everything that was merely on offer. Weeks with no recorded purchase are left untouched
+        so an in-grace week keeps its catalog and still renders normally.
+        """
+        if not past_delivery_weeks:
+            return
+
+        past_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
+        past_by_week_id: dict[str, HelloFreshWeek] = {}
+        for past_week in past_delivery_weeks:
+            if not past_week.market_items:
+                continue
+            past_by_key[(past_week.subscription_id, past_week.week_id)] = past_week
+            past_by_week_id[past_week.week_id] = past_week
+        if not past_by_key:
+            return
+
+        today = date.today()
+        for account_week in account_weeks:
+            # Only PAST weeks. A current/future week's live catalog is what makes it editable,
+            # and past-deliveries can list the current week once its cutoff passes -- replacing
+            # that catalog would strip the customer's ability to change their order.
+            if account_week.delivery_date is None or account_week.delivery_date >= today:
+                continue
+
+            past_week = past_by_key.get(
+                (account_week.subscription_id, account_week.week_id)
+            )
+            if past_week is None:
+                candidate = past_by_week_id.get(account_week.week_id)
+                # Same guard as the recipe merge: fall back to an id-only match ONLY when a
+                # subscription id is absent on one side, so two subscriptions sharing an ISO
+                # week can't inherit each other's purchases.
+                if candidate is not None and (
+                    candidate.subscription_id is None or account_week.subscription_id is None
+                ):
+                    past_week = candidate
+            if past_week is None:
+                continue
+
+            account_week.market_items = list(past_week.market_items)
+
     def _delivered_meals_only(
         self,
         account_week: HelloFreshWeek,
@@ -1566,18 +1622,28 @@ class HelloFreshPayloadNormalizer:
 
         The delivered record includes ordered market add-ons (appetizers/sides/desserts)
         alongside the box meals, but those belong to the Market view, not the meal list. A
-        delivered item that is a known market item for the week (from the week's raw ``addOns``
-        catalog, matched by id or name) is dropped so it never shows in My Menu; the market merge
-        marks those selected separately.
+        delivered item that is a known market item for the week is dropped so it never shows in
+        My Menu; the market merge marks those selected separately. Known items come from BOTH the
+        week's raw ``addOns`` catalog and its already-merged purchased add-ons -- past the
+        menu-grace window no catalog survives, so the purchased list is the only thing that can
+        still identify an add-on and keep it out of the meal list.
         """
         market_ids: set[str] = set()
         market_names: set[str] = set()
+
+        def _remember(item: HelloFreshMarketItem) -> None:
+            if item.item_id:
+                market_ids.add(item.item_id)
+            if item.recipe_id:
+                market_ids.add(item.recipe_id)
+            if item.name:
+                market_names.add(item.name.strip().casefold())
+
+        for item in account_week.market_items:
+            _remember(item)
         if isinstance(account_week.raw, dict):
             for item in self._build_market_items(account_week.raw):
-                if item.item_id:
-                    market_ids.add(item.item_id)
-                if item.name:
-                    market_names.add(item.name.strip().casefold())
+                _remember(item)
 
         meals: list[HelloFreshRecipe] = []
         for delivered in delivered_recipes:
@@ -1832,6 +1898,9 @@ class HelloFreshPayloadNormalizer:
                 for raw_recipe in self._extract_past_delivery_recipes(raw_week)
             ]
             display_name = raw_week.get("label") or raw_week.get("title") or week_id
+            # The Market add-ons this week actually shipped with. Carried on the history week so
+            # _merge_past_delivery_market_items can stamp them onto the matching account week.
+            purchased_market_items = self._build_purchased_market_items(raw_week)
             weeks.append(
                 HelloFreshWeek(
                     week_id=week_id,
@@ -1849,6 +1918,7 @@ class HelloFreshPayloadNormalizer:
                     or None,
                     meals_selected=len(recipes) or None,
                     recipes=recipes,
+                    market_items=purchased_market_items,
                     source="past_deliveries",
                     slot_label=self._find_first_nested_value(
                         raw_week,
@@ -1912,6 +1982,77 @@ class HelloFreshPayloadNormalizer:
             ) and self._extract_past_delivery_recipes(item):
                 return True
         return False
+
+    def _build_purchased_market_items(
+        self, raw_week: dict[str, Any]
+    ) -> list[HelloFreshMarketItem]:
+        """Parse the Market add-ons a past week ACTUALLY shipped with.
+
+        Distinct from :meth:`_build_market_items`, which reads the browsable ``addOns`` CATALOG
+        (capital O, ``{groups: [{addOns: [...]}]}``) published on a week's menu payload. The
+        past-deliveries history endpoint instead carries a flat lowercase ``addons`` array of the
+        items the customer bought that week — the only record of a purchase once HelloFresh stops
+        serving that week's menu (which it does after ~2-3 weeks). The two shapes never coexist on
+        one payload, so they get separate parsers rather than one overloaded key lookup.
+
+        History entries are deliberately sparse: no ``index``, ``quantity``, ``price`` or
+        ``groupType``. So:
+
+        * ``index`` is left None. It is the CART SELECTION UNIT used to submit writes, and a
+          synthesized one could address the wrong product; a past week is not editable, so it is
+          never needed. This is also why these items cannot go through
+          ``_market_item_from_raw``, which requires an index.
+        * ``group_type`` is left None. The card groups by it when present and falls back to a
+          plain ordered list otherwise, which is the intended presentation for weeks older than
+          the menu-grace window where no catalog (and therefore no grouping) survives.
+        * quantity is recorded as 1 — history reports no count, and one unit is what a listed
+          add-on represents.
+        """
+        raw_addons = raw_week.get("addons")
+        if not isinstance(raw_addons, list):
+            return []
+
+        items: list[HelloFreshMarketItem] = []
+        seen_ids: set[str] = set()
+        for raw_item in raw_addons:
+            if not isinstance(raw_item, dict):
+                continue
+            name = raw_item.get("name") or raw_item.get("title")
+            if not name:
+                continue
+            # ``id`` is a normal 24-hex recipe id here, so it doubles as the recipe reference
+            # that powers the recipe-detail lookup.
+            item_id = str(
+                raw_item.get("id")
+                or raw_item.get("shoppableProductId")
+                or str(name).strip().casefold()
+            )
+            if item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+
+            recipe_id = raw_item.get("id")
+            nutrition = self._extract_nutrition(raw_item)
+            items.append(
+                HelloFreshMarketItem(
+                    item_id=item_id,
+                    name=str(name),
+                    recipe_id=str(recipe_id) if recipe_id else None,
+                    image_url=raw_item.get("image") or raw_item.get("imageUrl"),
+                    description=raw_item.get("headline") or raw_item.get("description"),
+                    category=raw_item.get("category"),
+                    tags=[
+                        str(tag.get("name"))
+                        for tag in raw_item.get("tags") or []
+                        if isinstance(tag, dict) and tag.get("name")
+                    ],
+                    nutrition=nutrition,
+                    calories_kcal=coerce_float(nutrition.get("calories")),
+                    is_selected=True,
+                    selected_quantity=1,
+                )
+            )
+        return items
 
     def _extract_past_delivery_recipes(self, raw_week: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract recipe-like payloads from a delivered week record."""

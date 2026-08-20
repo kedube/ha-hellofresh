@@ -329,6 +329,15 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             past_delivery_weeks=data.past_delivery_weeks,
         )
 
+        # Same idea for the Market: past-deliveries records the add-ons a shipped week actually
+        # came with, and beyond the menu-grace window it is the ONLY record (the browsable
+        # catalog is gone with the menu). Runs before _apply_market_items so a purchased list
+        # wins over any catalog still attached to the week.
+        self._merge_past_delivery_market_items(
+            account_weeks=all_weeks,
+            past_delivery_weeks=data.past_delivery_weeks,
+        )
+
         # Sold-out availability is only reported by the menus-service catalog, which the
         # primary per-week menu endpoint never carries. Overlay it for the weeks where it
         # can actually change a decision — see _async_apply_menu_availability.
@@ -3058,8 +3067,11 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
             week.week_id: week for week in first_page_weeks
         }
         next_cursor = self._extract_next_week_cursor(payload)
-        # ~14 four-week pages cover the floor; the cap is generous slack against drift.
-        max_pages = 20
+        # Derive the page cap from the configured lookback instead of hardcoding it: pages have
+        # held ~4 weeks, but a fixed 20 silently stopped ~80 weeks back, so a history_weeks near
+        # the 104 maximum lost its oldest weeks. Assume a conservative 2 weeks per page and add
+        # slack, so the cap scales with the option and still bounds a misbehaving cursor.
+        max_pages = max(20, (self._history_weeks // 2) + 10)
 
         for _ in range(max_pages):
             # Compare by absolute week order, not raw string: "2026-W01" < "2025-W52" is True
