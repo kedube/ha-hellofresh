@@ -59,6 +59,35 @@ jobs:
       - name: Run Ruff lint
         run: python -m ruff check .
 
+  cards:
+    name: Cards
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # The Lovelace cards are ~8k lines of hand-written JS that no other job looks at, so a
+      # typo used to reach users as a blank dashboard panel. This proves each card parses.
+      - name: Syntax-check Lovelace cards
+        run: python .github/scripts/check_card_syntax.py
+
+      # Week-selection logic is where every past-week browsing regression has landed. These
+      # run the cards' real `_browsableWeeks` and require the Market and My Menu cards to
+      # expose the same past weeks.
+      - name: Test card week-selection logic
+        run: node .github/scripts/check_card_logic.mjs
+
   pytest:
     name: Pytest
     runs-on: ubuntu-latest

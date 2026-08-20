@@ -29,6 +29,21 @@ version heading and publishes it as the release's Highlights.
 - **Past-delivery pagination now scales with the configured history window.** The page cap was a
   fixed 20, which stopped roughly 80 weeks back, so a history setting near the 104-week maximum
   silently lost its oldest weeks. It is now derived from the option.
+- **HelloFresh is now listed for all 16 supported countries in HACS.** `hacs.json` advertised only
+  6 (AU, CA, DE, GB, NL, US), so users in Austria, Belgium, Switzerland, Denmark, France, Ireland,
+  Luxembourg, Norway, New Zealand and Sweden could not discover the integration in the HACS store
+  even though it works in their market — including every country whose translations shipped in
+  2.70. The UK is published as `GB`, its ISO code, rather than the `uk` config key.
+- **CI now checks the Lovelace cards.** The ~8k lines of card JavaScript had no automated checks
+  at all, which is how the past-week browsing regression reached users: every job in CI was
+  Python-only. Two new gates run on each push — a syntax check over all 9 cards, and behavioural
+  tests for the week-selection logic that require the Market and My Menu cards to expose the
+  **same** past weeks. That parity test fails against the old code, reproducing the reported
+  symptom exactly.
+- **New consistency tests** pin metadata that is edited by hand and drifts silently: the HACS
+  country list against the supported countries, `strings.json` against `en.json`, all six shipped
+  locales against the English keys, `services.yaml` against the actually-registered services, and
+  every card named in `frontend.py` against the files on disk.
 
 ## 2.70 — 2026-08-18
 - **Fixed `sensor.tracked_shipment_date` reading Unknown for a box the web UI showed as
