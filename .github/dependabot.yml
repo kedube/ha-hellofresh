@@ -1,0 +1,35 @@
+# Keep CI action versions current.
+#
+# Two of the actions in ci.yml are pinned by commit SHA (hacs/action and
+# home-assistant/actions/hassfest). SHA pins are the secure default -- a mutable tag could change
+# under us -- but they never notify, so both had drifted ~2 months behind before this was added.
+# Dependabot rewrites the SHA and updates the accompanying comment, which restores update
+# visibility without giving up pinning.
+#
+# It also covers the versioned actions (checkout, setup-python, setup-node, github-script). That
+# would have surfaced the actions/setup-node@v4 Node 20 deprecation as a PR rather than as a
+# warning annotation on a finished run.
+#
+# Python dependencies are deliberately NOT tracked here: requirements_test.txt pins loose lower
+# bounds, and the integration's runtime requirements live in manifest.json, which Dependabot does
+# not understand. Both are better reviewed by hand against Home Assistant's own pins.
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      # One PR for the routine first-party bumps instead of four; they land together and are
+      # verified by the same CI run.
+      actions:
+        patterns:
+          - "actions/*"
