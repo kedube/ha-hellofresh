@@ -94,7 +94,7 @@ views:
         cards:
           # Pantry staples the NEXT box does not include, from its selected meals.
           - type: heading
-            heading: Ingredients needed for this week's meals
+            heading: Ingredients needed for this week
           - type: todo-list
             entity: todo.hellofresh_us_prep_list
       - type: grid
@@ -102,7 +102,7 @@ views:
           # The delivery after that. Empty until a second box is scheduled and has meals
           # selected — a skipped week ships nothing and is passed over.
           - type: heading
-            heading: Ingredients needed for next week's meals
+            heading: Ingredients needed for next week
           - type: todo-list
             entity: todo.hellofresh_us_prep_list_week_2
   - title: Schedule

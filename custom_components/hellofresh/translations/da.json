@@ -295,7 +295,7 @@
     },
     "todo": {
       "prep_list": {
-        "name": "Forberedelsesliste"
+        "name": "Forberedelsesliste (denne uge)"
       },
       "prep_list_week_2": {
         "name": "Forberedelsesliste (næste uge)"

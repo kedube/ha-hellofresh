@@ -6,6 +6,12 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+- **Renamed the prep-list entities** to say which week they are for: **Prep List (current week)**
+  and **Prep List (next week)**, replacing "Prep list" and "Prep list (following week)". Shown
+  with the device name, these read as *HelloFresh (US) Prep List (current week)*. Translated in
+  all six shipped locales. Entity IDs are pinned to a stable key and are **unchanged**
+  (`todo.<prefix>_prep_list`, `todo.<prefix>_prep_list_week_2`), so dashboards and automations
+  keep working.
 - **Fixed the prep lists never combining quantities.** HelloFresh spells ingredient units as
   *name plus a parenthetical abbreviation* — `"tablespoon (tbsp)"`, `"teaspoon (tsp)"` — but the
   unit table matched only the bare `"tablespoon"` or `"tbsp"`. Every real unit therefore looked

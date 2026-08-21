@@ -118,8 +118,8 @@ A few conventions used in the tables:
 | --- | --- |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
-| `todo.prep_list` | Shown as **Prep list**. The pantry staples HelloFresh does **not** ship for your **next delivery's** meals. See [Prep lists](#prep-lists). |
-| `todo.prep_list_week_2` | Shown as **Prep list (following week)**. The same, for the delivery *after* the next one. See [Prep lists](#prep-lists). |
+| `todo.prep_list` | Shown as **Prep List (current week)**. The pantry staples HelloFresh does **not** ship for your **next delivery's** meals. See [Prep lists](#prep-lists). |
+| `todo.prep_list_week_2` | Shown as **Prep List (next week)**. The same, for the delivery *after* the next one. See [Prep lists](#prep-lists). |
 
 ## Prep lists
 
