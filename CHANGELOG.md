@@ -15,9 +15,19 @@ version heading and publishes it as the release's Highlights.
   card and heading. This is deliberate rather than one combined list: HA's to-do card renders a
   single entity, so two weeks in one entity could only ever be a flat list. Two entities give
   two real sections, each with its own totals, deadline, and check-offs.
-- Amounts are summed per unit *within* a week but never across weeks: each box is its own
-  shopping trip, and merging both weeks' butter into one line would lose which trip it belongs
-  to. Skipped weeks ship nothing and are passed over.
+- Amounts are added up *within* a week but never across weeks: each box is its own shopping
+  trip, and merging both weeks' butter into one line would lose which trip it belongs to.
+  Skipped weeks ship nothing and are passed over.
+- **Quantities convert between units of the same family** where the conversion is exact, so
+  `4 tablespoon + 3 teaspoon` reads as **5 tablespoon** rather than two lines. Aliases are
+  resolved first (`tbsp`, `tbsp.`, `Tablespoon` are one unit), and a unit with no number counts
+  as one of it (`teaspoon` → `1 teaspoon`), so it adds up instead of trailing behind as a bare
+  word. Three guards keep this honest: conversion never crosses families (grams never become
+  cups, millilitres never become teaspoons), the total is only combined when it lands on a
+  fraction a cook can measure (`1 cup + 1 teaspoon` stays as two amounts instead of becoming an
+  unmeasurable `1.02 cup`), and the result is always expressed in a unit the recipes actually
+  used — never promoted into one that only exists in the conversion table. Unrecognized units
+  still total up on their own.
 - As a box arrives the weeks shift up — `prep_list` always means the next delivery. Check-offs
   are keyed to `(week, ingredient)` rather than to the slot, so a week carries everything
   already ticked with it when it becomes the current box.

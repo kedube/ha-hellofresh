@@ -12,10 +12,10 @@ weeks ago is still in the cupboard. Here every item belongs to exactly one deliv
 grouped, totalled, and due against that box, and it disappears once that box has landed —
 while the following week's items, and anything already ticked on them, carry straight over.
 
-Within a week, amounts for the same ingredient **are** added up per unit — two recipes wanting
-2 tablespoon of butter ask for 4 tablespoon, which is what you need to buy. Amounts are never
-summed *across* weeks: each box is its own shopping trip. Only across *differing* units are
-they left separate; see :func:`_format_amounts`.
+Within a week, amounts for the same ingredient are added up, converting between units of the
+same measurement family where that is exact — 4 tablespoon plus 3 teaspoon is 5 tablespoon.
+Amounts are never summed *across* weeks: each box is its own shopping trip. See
+:func:`_format_amounts` for what does and does not get converted.
 """
 
 from __future__ import annotations
@@ -107,46 +107,187 @@ def _trim_number(value: float) -> str:
     return text or "0"
 
 
+# Unit families for combining amounts. Each maps a canonical unit to its size in the family's
+# base unit, smallest first. Only units that convert *exactly* and unambiguously are listed:
+# 3 teaspoon = 1 tablespoon is a definition, so "4 tablespoon + 3 teaspoon" is honestly
+# "5 tablespoon". Deliberately excluded:
+#
+#   * Weight <-> volume (grams to cups) — depends on what is being measured.
+#   * Metric <-> imperial (ml to teaspoon) — 4.929 ml/tsp, so any total becomes a fraction
+#     that is worse to read than the two amounts side by side.
+#   * "clove", "piece", "bunch", "can", "pinch" — countable or vague, and not interconvertible.
+#
+# Anything not listed here still groups by its own name, so an unknown unit is never silently
+# folded into the wrong family; it simply reports its own subtotal.
+_UNIT_FAMILIES: tuple[dict[str, float], ...] = (
+    # Volume, imperial. Base: teaspoon.
+    {"teaspoon": 1.0, "tablespoon": 3.0, "fluid ounce": 6.0, "cup": 48.0},
+    # Volume, metric. Base: millilitre.
+    {"millilitre": 1.0, "centilitre": 10.0, "decilitre": 100.0, "litre": 1000.0},
+    # Weight, metric. Base: gram.
+    {"gram": 1.0, "kilogram": 1000.0},
+    # Weight, imperial. Base: ounce.
+    {"ounce": 1.0, "pound": 16.0},
+)
+
+# Spellings HelloFresh uses (or plausibly could) for the canonical names above. The payload is
+# not consistent — both "tablespoon" and "tbsp" appear — so aliases are resolved before any
+# comparison or conversion.
+_UNIT_ALIASES: dict[str, str] = {
+    "tsp": "teaspoon",
+    "teaspoons": "teaspoon",
+    "tbsp": "tablespoon",
+    "tbs": "tablespoon",
+    "tablespoons": "tablespoon",
+    "fl oz": "fluid ounce",
+    "fluid ounces": "fluid ounce",
+    "cups": "cup",
+    "ml": "millilitre",
+    "milliliter": "millilitre",
+    "milliliters": "millilitre",
+    "millilitres": "millilitre",
+    "cl": "centilitre",
+    "dl": "decilitre",
+    "l": "litre",
+    "liter": "litre",
+    "liters": "litre",
+    "litres": "litre",
+    "g": "gram",
+    "grams": "gram",
+    "gramme": "gram",
+    "grammes": "gram",
+    "kg": "kilogram",
+    "kilograms": "kilogram",
+    "oz": "ounce",
+    "ounces": "ounce",
+    "lb": "pound",
+    "lbs": "pound",
+    "pounds": "pound",
+}
+
+
 def _unit_key(unit: Any) -> str:
-    """Return a comparison key for a unit, so "Tablespoon" and "tablespoon" match."""
-    return " ".join(str(unit or "").split()).casefold()
+    """Return a comparison key for a unit.
+
+    Normalizes case, whitespace, a trailing period ("tbsp." -> "tbsp"), and known aliases, so
+    "Tablespoon", "tbsp" and "TBSP." are all one unit.
+    """
+    text = " ".join(str(unit or "").split()).casefold().rstrip(".")
+    return _UNIT_ALIASES.get(text, text)
+
+
+def _unit_family(unit: str) -> dict[str, float] | None:
+    """Return the conversion family ``unit`` belongs to, if any."""
+    for family in _UNIT_FAMILIES:
+        if unit in family:
+            return family
+    return None
+
+
+# Fractions a cook can actually measure. A combined total is only promoted into a larger unit
+# when it lands on one of these (within a whisker), so "4 tablespoon + 3 teaspoon" becomes
+# "5 tablespoon" but "1 cup + 1 teaspoon" is NOT flattened into an unmeasurable "1.02 cup".
+_MEASURABLE_FRACTIONS: tuple[float, ...] = (0.0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75)
+
+
+def _is_measurable(value: float) -> bool:
+    """Return True when ``value`` sits on a fraction a measuring spoon can hit."""
+    fraction = value - int(value)
+    return any(abs(fraction - candidate) < 0.02 for candidate in _MEASURABLE_FRACTIONS)
+
+
+def _combine_family(
+    totals: dict[str, float], family: dict[str, float], display: dict[str, Any]
+) -> list[tuple[float, str]]:
+    """Fold one family's subtotals into as few readable amounts as possible.
+
+    The result is expressed in the largest unit **the recipes themselves used**, never in a
+    unit that only exists in the conversion table. That is what makes "4 tablespoon +
+    3 teaspoon" read as "5 tablespoon": a cook measuring tablespoons wants the answer in
+    tablespoons, and promoting to "2.5 fluid ounce" would be equal but useless.
+
+    Combining only happens when the total lands on a measurable fraction. "1 cup + 1 teaspoon"
+    is left as two amounts rather than becoming "1.02 cup", which no one can measure and which
+    hides the teaspoon entirely.
+    """
+    base_total = sum(amount * family[unit] for unit, amount in totals.items())
+    used = sorted(totals, key=lambda u: family[u], reverse=True)
+
+    # Only ever combine into the largest unit the recipes used. Falling back to a smaller one
+    # would turn "1 cup + 1 teaspoon" into "49 teaspoon" — arithmetically right, useless to a
+    # cook, and further from the recipe than the two amounts it replaced.
+    largest = used[0]
+    scaled = base_total / family[largest]
+    if scaled >= 1 and _is_measurable(scaled):
+        return [(scaled, str(display.get(largest) or largest))]
+
+    # A single unit always reports its own total, even at an awkward fraction: there is
+    # nothing to split it into.
+    if len(used) == 1:
+        return [(totals[largest], str(display.get(largest) or largest))]
+
+    # Nothing combines cleanly: keep each unit's own subtotal, largest first.
+    return [(totals[unit], str(display.get(unit) or unit)) for unit in used]
 
 
 def _format_amounts(amounts: list[tuple[Any, Any]]) -> str:
-    """Render the total of one ingredient across the week's recipes.
+    """Render the total of one ingredient across a week's recipes.
 
-    Amounts **are** summed, but only within a single unit: two recipes each wanting
-    ``2 tablespoon`` become ``4 tablespoon`` rather than "2 tablespoon + 2 tablespoon", which
-    is what you actually need to have on hand.
+    Amounts are summed, and units that belong to the same measurement family are converted so
+    the total reads the way a cook would say it: 4 tablespoon plus 3 teaspoon is "5 tablespoon",
+    not "4 tablespoon + 1 tablespoon". Aliases are resolved first, so "tbsp" and "tablespoon"
+    are never treated as different units.
 
-    What is deliberately *not* attempted is unit conversion. ``unit`` is whatever HelloFresh
-    put in the payload, and while it is consistent per ingredient in practice, nothing
-    guarantees that a week won't mix ``tbsp`` with ``tablespoon`` or ``cup`` with ``ounce``.
-    Converting between them needs a unit table this integration has no business owning, and a
-    wrong conversion is worse than no conversion — so distinct units are summed separately
-    and joined, leaving the last step to the cook. Non-numeric amounts are likewise kept
-    verbatim rather than guessed at.
+    Conversion is deliberately confined to families where it is exact and unambiguous (see
+    :data:`_UNIT_FAMILIES`). Grams do not become cups, and millilitres do not become teaspoons:
+    those need to know what is being measured, or produce a fraction less readable than the
+    two amounts side by side. Unknown units keep their own subtotal, and non-numeric amounts
+    (a range like "1-2") are passed through verbatim rather than guessed at.
     """
-    # Preserve first-seen unit order so the output is stable across rebuilds.
-    totals: dict[str, list[Any]] = {}
+    # Sum per normalized unit first, preserving first-seen order for stable output.
+    totals: dict[str, float] = {}
+    display_units: dict[str, Any] = {}
     literals: list[str] = []
     for amount, unit in amounts:
         if amount is None and unit is None:
             continue
         number = _coerce_amount(amount)
         if number is None:
-            # No usable number: keep whatever was there rather than dropping the line.
-            text = " ".join(str(p) for p in (amount, unit) if p not in (None, ""))
-            if text and text not in literals:
-                literals.append(text)
-            continue
+            if amount in (None, "") and unit not in (None, ""):
+                # A unit with no amount means one of it: HelloFresh writes "teaspoon" for a
+                # single teaspoon. Treating it as 1 makes it countable, so it both reads as
+                # "1 teaspoon" on its own and adds up with the other recipes' teaspoons
+                # instead of trailing behind them as a separate bare word.
+                number = 1.0
+            else:
+                # No usable number and nothing to infer: keep whatever was there rather than
+                # dropping the line (a range like "1-2" is still information).
+                text = " ".join(str(p) for p in (amount, unit) if p not in (None, ""))
+                if text and text not in literals:
+                    literals.append(text)
+                continue
         key = _unit_key(unit)
-        entry = totals.setdefault(key, [0.0, unit])
-        entry[0] += number
+        totals[key] = totals.get(key, 0.0) + number
+        display_units.setdefault(key, unit)
+
+    # Fold each convertible family down to one amount; leave everything else as it is.
+    grouped: list[tuple[float, str]] = []
+    handled: set[str] = set()
+    for key in list(totals):
+        if key in handled:
+            continue
+        family = _unit_family(key)
+        if family is None:
+            grouped.append((totals[key], str(display_units.get(key) or "")))
+            handled.add(key)
+            continue
+        members = {unit: totals[unit] for unit in totals if unit in family}
+        handled.update(members)
+        grouped.extend(_combine_family(members, family, display_units))
 
     rendered = [
-        " ".join(part for part in (_trim_number(total), str(unit or "")) if part).strip()
-        for total, unit in totals.values()
+        " ".join(part for part in (_trim_number(total), unit) if part).strip()
+        for total, unit in grouped
     ]
     return " + ".join([*rendered, *literals])
 
