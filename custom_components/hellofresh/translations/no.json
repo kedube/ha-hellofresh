@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth-token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Konfigurer HelloFresh på nytt",
+        "description": "Oppdater landet eller e-postadressen og passordet for denne HelloFresh-oppføringen. Påloggingsinformasjonen må tilhøre kontoen oppføringen ble satt opp med.",
+        "data": {
+          "country": "Land",
+          "username": "E-post",
+          "password": "Passord"
+        }
+      },
+      "reconfigure_token": {
+        "title": "Konfigurer HelloFresh på nytt",
+        "description": "Oppdater landet, eller lim inn et nytt `apiV2Auth`-token for denne HelloFresh-oppføringen. Logg inn på {site_example}, og kopier verdien av `apiV2Auth`-informasjonskapselen. Tokenet må tilhøre kontoen oppføringen ble satt opp med.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Denne HelloFresh-kontoen er allerede satt opp",
-      "reauth_successful": "HelloFresh ble koblet til på nytt"
+      "reauth_successful": "HelloFresh ble koblet til på nytt",
+      "reconfigure_successful": "HelloFresh ble konfigurert på nytt",
+      "reconfigure_failed": "Denne HelloFresh-oppføringen ble ikke funnet lenger",
+      "account_mismatch": "Disse opplysningene tilhører en annen HelloFresh-konto. Legg den til som en ny integrasjonsoppføring i stedet for å konfigurere denne på nytt."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Hopp over neste endringsbare leveringsuke"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Forberedelsesliste"
       }
     }
   },

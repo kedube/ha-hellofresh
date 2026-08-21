@@ -40,6 +40,23 @@
         "data": {
           "token": "Jeton apiV2Auth"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Reconfigurer HelloFresh",
+        "description": "Mettez à jour le pays ou l'adresse e-mail et le mot de passe de cette entrée HelloFresh. Les identifiants doivent correspondre au compte avec lequel cette entrée a été configurée.",
+        "data": {
+          "country": "Pays",
+          "username": "E-mail",
+          "password": "Mot de passe"
+        }
+      },
+      "reconfigure_token": {
+        "title": "Reconfigurer HelloFresh",
+        "description": "Mettez à jour le pays ou collez un nouveau jeton `apiV2Auth` pour cette entrée HelloFresh. Connectez-vous sur {site_example}, puis copiez la valeur du cookie `apiV2Auth`. Le jeton doit correspondre au compte avec lequel cette entrée a été configurée.",
+        "data": {
+          "country": "Pays",
+          "token": "Jeton apiV2Auth"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Ce compte HelloFresh est déjà configuré",
-      "reauth_successful": "HelloFresh a été reconnecté"
+      "reauth_successful": "HelloFresh a été reconnecté",
+      "reconfigure_successful": "HelloFresh a été reconfiguré",
+      "reconfigure_failed": "Cette entrée HelloFresh est introuvable",
+      "account_mismatch": "Ces informations correspondent à un autre compte HelloFresh. Ajoutez-le comme nouvelle entrée d'intégration au lieu de reconfigurer celle-ci."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Sauter la prochaine semaine modifiable"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Liste de préparation"
       }
     }
   },

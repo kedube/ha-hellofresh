@@ -118,6 +118,7 @@ A few conventions used in the tables:
 | --- | --- |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
+| `todo.prep_list` | Shown as **Prep list**. The pantry staples the *next delivery's* selected meals need that HelloFresh does **not** ship — salt, oil, butter, eggs — so you can have them on hand before the box lands. Add it to a **To-do list** card. It is a projection of that one week, not a general shopping list: items appear and vanish as you change your meal selection, so the list cannot be added to or deleted from, only checked off. Amounts are listed per recipe rather than summed (the API's units are free-form text, so "1.5 tablespoon" and "2 tbsp" cannot be added), and every item is due on the delivery date. When the next box becomes the anchor week, the list is rebuilt and the previous week's check-offs are cleared. |
 
 ## Notes
 

@@ -716,6 +716,15 @@ A **second, separate** favorites service backs HelloFresh's `/recipes/favorites`
 
 Carries ingredients, `yields[]`, `steps[]`, `utensils`, `allergens`, `nutrition`, `cardLink` (printable PDF), and `videoLink`. Ingredient **amounts** live per-yield: each `yields[]` entry has its own `ingredients[]` with amounts for that serving count, so rescaling servings means re-reading the matching entry (the integration defaults to the smallest yield, matching the website).
 
+**`shipped` is tri-state, and the distinction is load-bearing.** Each `ingredients[]` entry may
+carry a `shipped` boolean: `false` marks a pantry staple the customer supplies (salt, oil,
+butter) rather than something that arrives in the box. The field is **not guaranteed present** —
+it has only been confirmed on US payloads — so the integration preserves `None` for a missing key
+instead of coercing it to `False`. Collapsing the two would claim HelloFresh isn't shipping an
+ingredient it is, which for [`todo.prep_list`](entities.md) would put the whole box on the
+shopping list in any region that omits the field. Consumers must test `shipped is False`
+(the recipe-detail card likewise tests `shipped === false`), never falsiness.
+
 Unlike the browse catalog below, this is a plain `/gw/` API with no build id involved, so it cannot break on a HelloFresh web deploy.
 
 **Image trap:** the payload offers both a bare `imagePath` and a ready-made absolute `imageLink`, and the convenient one is dead — `imageLink` points at a CloudFront distribution (`d3hvwccx09j84u.cloudfront.net`) that now answers **502** for every path. Join `imagePath` to the verified host instead (see below).
@@ -1941,16 +1950,23 @@ radius of a misfiring automation is not justified by the benefit.
 - Onboarding, referrals, checkout, cancellation, experimentation, and storefront-screen endpoints
   are site-UI concerns with no HA equivalent.
 
-### Legacy candidate paths — likely removable
+### Legacy candidate paths — retained deliberately
 
 `/gw/my-menu`, `/gw/my-menu/weeks`, `/gw/my-deliveries/deliveries`,
 `/gw/my-deliveries/upcoming-deliveries`, and
 `/gw/api/customers/me/subscriptions/{id}/weeks/{id}/{selection,skip}` are probed as candidates but
 never observed in live traffic, while the endpoints that *are* served
 (`/gw/my-deliveries/menu`, `/gw/my-deliveries/past-deliveries`, `/gw/api/customers/me/deliveries`)
-already win the preference ordering. They cost one failed round-trip on the first poll before
-`_preferred_endpoints` learns the winner. Whether to drop them is a judgement call about older
-accounts and other regions, not a question about the current API.
+already win the preference ordering.
+
+They were reviewed for removal and **kept**. The "one failed round-trip" cost is smaller than it
+looks: the *menu* candidate list is only reached when the primary per-week fetch yields nothing
+(the success branch `continue`s before it), so on a healthy US account it costs nothing at all;
+the *deliveries* list is probed in order but the HAR-verified path is already first, so the
+legacy entries are only tried when that one fails. `_preferred_endpoints` then makes even that
+one-time. They also carry test coverage — the sticky-endpoint test uses `upcoming-deliveries` as
+its winning candidate. Removing them would trade real older-account and non-US resilience for no
+measurable gain.
 
 ## Practical Caveats
 

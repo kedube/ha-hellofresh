@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth-token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Konfigurer HelloFresh igen",
+        "description": "Opdater landet eller e-mailadressen og adgangskoden for denne HelloFresh-post. Loginoplysningerne skal høre til den konto, som posten blev oprettet med.",
+        "data": {
+          "country": "Land",
+          "username": "E-mail",
+          "password": "Adgangskode"
+        }
+      },
+      "reconfigure_token": {
+        "title": "Konfigurer HelloFresh igen",
+        "description": "Opdater landet, eller indsæt et nyt `apiV2Auth`-token til denne HelloFresh-post. Log ind på {site_example}, og kopiér værdien af `apiV2Auth`-cookien. Tokenet skal høre til den konto, som posten blev oprettet med.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Denne HelloFresh-konto er allerede konfigureret",
-      "reauth_successful": "HelloFresh blev forbundet igen"
+      "reauth_successful": "HelloFresh blev forbundet igen",
+      "reconfigure_successful": "HelloFresh blev konfigureret igen",
+      "reconfigure_failed": "Denne HelloFresh-post kunne ikke længere findes",
+      "account_mismatch": "Disse oplysninger hører til en anden HelloFresh-konto. Tilføj den som en ny integrationspost i stedet for at omkonfigurere denne."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Spring næste ændrbare leveringsuge over"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Forberedelsesliste"
       }
     }
   },

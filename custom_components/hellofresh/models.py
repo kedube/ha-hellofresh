@@ -942,8 +942,12 @@ class HelloFreshRecipeDetail:
                     "unit": amount.get("unit"),
                     "image_url": item.get("imageLink"),
                     # False marks a pantry staple you supply yourself (salt, oil, ...) rather
-                    # than something that arrives in the box.
-                    "shipped": bool(item.get("shipped")),
+                    # than something that arrives in the box. Deliberately tri-state: a
+                    # *missing* key stays None ("unknown"), because coercing it to False
+                    # would claim HelloFresh isn't shipping an ingredient it is. Only the
+                    # prep list depends on telling those apart, and it treats None as
+                    # in-box; the recipe-detail card already tests `shipped === false`.
+                    "shipped": (bool(item["shipped"]) if item.get("shipped") is not None else None),
                 }
             )
 
