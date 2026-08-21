@@ -118,8 +118,55 @@ A few conventions used in the tables:
 | --- | --- |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
-| `todo.prep_list` | Shown as **Prep list**. The pantry staples that HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your **next delivery**. Add it to a **To-do list** card. Quantities are added up, converting between units of the same family where that is exact — 4 tablespoon + 3 teaspoon shows as **5 tablespoon**, and `tbsp`/`tablespoon` are recognized as one unit. Conversion stops when the result would be unmeasurable (`1 cup + 1 teaspoon` stays as two amounts rather than becoming "1.02 cup") and never crosses between weight and volume, or metric and imperial. A unit with no number means one of it (`teaspoon` → **1 teaspoon**). Items are due on the delivery date. It is a projection of that week's selection, so it cannot be added to or deleted from, only checked off. Attributes carry `week_id` and `delivery_date` for dashboard headings. |
-| `todo.prep_list_week_2` | Shown as **Prep list (following week)**. The same, for the delivery *after* the next one — a **separate entity** so each week gets its own card and section rather than one merged list. Empty until a second box is scheduled with meals selected; skipped weeks ship nothing and are passed over. As a box arrives the weeks shift up: `prep_list` always means the next delivery, and check-offs travel with the week they belong to, so anything already ticked here stays ticked when it becomes the current box. |
+| `todo.prep_list` | Shown as **Prep list**. The pantry staples HelloFresh does **not** ship for your **next delivery's** meals. See [Prep lists](#prep-lists). |
+| `todo.prep_list_week_2` | Shown as **Prep list (following week)**. The same, for the delivery *after* the next one. See [Prep lists](#prep-lists). |
+
+## Prep lists
+
+`todo.prep_list` and `todo.prep_list_week_2` list the pantry staples HelloFresh does **not** put
+in the box — salt, oil, butter, eggs — for the meals you have selected on your next two
+deliveries, so you can have them on hand before each box lands instead of discovering them
+mid-recipe. Add each to a **To-do list** card; the [example dashboard](../dashboard/hellofresh.yaml)
+puts them side by side under a *Missing Ingredients* view.
+
+**Two entities, one per week.** Home Assistant's to-do card renders exactly one entity and has no
+filtering, so a single entity spanning both weeks could only ever be one flat list. Two entities
+give two cards — a real section per week — and keep each week's totals, deadline, and check-offs
+independent. The slots are positional: `prep_list` always means the next delivery, and as a box
+arrives the weeks shift up beneath it. Check-offs are keyed to the *week*, not the slot, so
+anything already ticked on the following week stays ticked when it becomes the current box.
+
+**What appears.** Only ingredients flagged as not shipped. The flag is tri-state in the API, and a
+*missing* flag is treated as in-box — telling you to buy something HelloFresh is already sending
+is the worse error. Skipped weeks ship nothing and are passed over, so the second list may land on
+a week further out (or be empty until a second box is scheduled with meals selected).
+
+**Quantities** are added up within a week, and converted between units of the same measurement
+family where the conversion is exact:
+
+| Recipes ask for | Shown as | Why |
+| --- | --- | --- |
+| `4 tablespoon (tbsp)` + `3 teaspoon (tsp)` | **5 tablespoon (tbsp)** | 3 tsp = 1 tbsp exactly |
+| `2 tablespoon (tbsp)` + `2 tbsp` | **4 tablespoon (tbsp)** | Same unit, two spellings |
+| `teaspoon (tsp)` (no number) | **1 teaspoon (tsp)** | A bare unit means one of it |
+| `500 gram (g)` + `1 kilogram (kg)` | **1.5 kilogram (kg)** | Same family |
+| `1 cup (c)` + `1 teaspoon (tsp)` | `1 cup (c) + 1 teaspoon (tsp)` | 1.02 cup is not measurable |
+| `100 gram (g)` + `1 cup (c)` | `100 gram (g) + 1 cup (c)` | Weight ≠ volume |
+
+HelloFresh spells units as *name plus a parenthetical abbreviation* (`tablespoon (tbsp)`), and
+both halves are recognized, so the compound, bare and abbreviated forms are all one unit.
+Conversion never crosses between weight and volume or metric and imperial (1 tsp is 4.929 ml, so
+any combined total would be an unreadable fraction), never promotes into a unit the recipes did
+not use, and stops entirely when the result would not land on a fraction you can measure.
+Unrecognized units — `clove`, `pinch` — still total up on their own, they simply never join a
+family. Amounts that are not numbers (a range like `1-2`) are passed through verbatim.
+
+Quantities are **never** merged across the two weeks: each box is its own shopping trip, and
+combining them would lose which trip an amount belongs to.
+
+**Limits.** The lists are a projection of your meal selection, so items appear and vanish as you
+swap meals — they can be checked off but not added to or deleted from. Each entity exposes
+`week_id` and `delivery_date` attributes for dashboard headings or automations.
 
 ## Notes
 

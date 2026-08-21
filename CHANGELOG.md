@@ -5,6 +5,21 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed the prep lists never combining quantities.** HelloFresh spells ingredient units as
+  *name plus a parenthetical abbreviation* — `"tablespoon (tbsp)"`, `"teaspoon (tsp)"` — but the
+  unit table matched only the bare `"tablespoon"` or `"tbsp"`. Every real unit therefore looked
+  unrecognized, and no conversion ever ran: a list showed
+  `Cooking Oil — 4 tablespoon (tbsp) + 3 teaspoon (tsp)` instead of
+  `Cooking Oil — 5 tablespoon (tbsp)`. Units are now matched on either half of the compound
+  spelling, so the compound, bare, and abbreviated forms are one unit. A side effect is that a
+  unit whose abbreviation isn't in the table (`cup (c)`) still resolves via its name.
+- The test fixtures in `tests/test_api.py` use the bare spelling, so they did not exercise the
+  real format and every test passed while the feature was inert in production. The actual
+  payload shape is now documented in
+  [docs/HELLOFRESH_API.md](docs/HELLOFRESH_API.md#recipe-detail-gwrecipesrecipesid), with
+  regression tests using the live spelling.
+
 ## 2.79 — 2026-08-21
 - **Added Prep lists (`todo.prep_list`, `todo.prep_list_week_2`).** New to-do entities listing
   the pantry staples that HelloFresh does **not** ship — salt, oil, butter, eggs — for the
@@ -19,30 +34,25 @@ version heading and publishes it as the release's Highlights.
   trip, and merging both weeks' butter into one line would lose which trip it belongs to.
   Skipped weeks ship nothing and are passed over.
 - **Quantities convert between units of the same family** where the conversion is exact, so
-  `4 tablespoon + 3 teaspoon` reads as **5 tablespoon** rather than two lines. Aliases are
-  resolved first (`tbsp`, `tbsp.`, `Tablespoon` are one unit), and a unit with no number counts
-  as one of it (`teaspoon` → `1 teaspoon`), so it adds up instead of trailing behind as a bare
-  word. Three guards keep this honest: conversion never crosses families (grams never become
-  cups, millilitres never become teaspoons), the total is only combined when it lands on a
-  fraction a cook can measure (`1 cup + 1 teaspoon` stays as two amounts instead of becoming an
-  unmeasurable `1.02 cup`), and the result is always expressed in a unit the recipes actually
-  used — never promoted into one that only exists in the conversion table. Unrecognized units
-  still total up on their own.
+  `4 tablespoon (tbsp) + 3 teaspoon (tsp)` reads as **5 tablespoon (tbsp)** rather than two
+  lines. HelloFresh spells units as *name plus parenthetical abbreviation*, so both halves are
+  recognized (`tbsp`, `tbsp.`, `Tablespoon`, `tablespoon (tbsp)` are all one unit), and a unit
+  with no number counts as one of it (`teaspoon (tsp)` → `1 teaspoon (tsp)`), so it adds up
+  instead of trailing behind as a bare word. Three guards keep this honest: conversion never
+  crosses families (grams never become cups, millilitres never become teaspoons), the total is
+  only combined when it lands on a fraction a cook can measure (`1 cup (c) + 1 teaspoon (tsp)`
+  stays as two amounts instead of becoming an unmeasurable `1.02 cup`), and the result is always
+  expressed in a unit the recipes actually used — never promoted into one that only exists in
+  the conversion table. Unrecognized units still total up on their own, and amounts that aren't
+  numbers (a range like `1-2`) are kept verbatim rather than guessed at.
 - As a box arrives the weeks shift up — `prep_list` always means the next delivery. Check-offs
   are keyed to `(week, ingredient)` rather than to the slot, so a week carries everything
   already ticked with it when it becomes the current box.
 - Each entity exposes `week_id` and `delivery_date` attributes, so a dashboard heading or
   automation can name the delivery a list belongs to.
-- The list is a *projection* of the week's selection, so items appear and vanish as meals are
+- Each list is a *projection* of that week's selection, so items appear and vanish as meals are
   swapped; it advertises check-off only (no adding or deleting rows), since user-authored edits
-  would fight every refresh. Check-off state is keyed to ingredient identity rather than list
-  position, so it survives a rebuild. Every item is due on the delivery date.
-- Amounts for one ingredient are **summed per unit** across the week's recipes: two meals each
-  wanting 2 tablespoon of butter show **4 tablespoon**, which is what you actually need to buy.
-  Unit *conversion* is deliberately not attempted — mixing `tbsp` with `tablespoon`, or `cup`
-  with `ounce`, would need a unit table this integration has no business owning, and a wrong
-  conversion is worse than none — so differing units are summed separately and joined. Amounts
-  that aren't numbers (a range like "1-2") are kept verbatim rather than guessed at.
+  would fight every refresh. Every item is due on its own box's delivery date.
 - The list refreshes on every coordinator poll. `CoordinatorEntity` sets `should_poll = False`
   and its `_handle_coordinator_update` is synchronous, so neither hook can await the per-recipe
   detail fetch; the callback is overridden to schedule the rebuild as a task instead.

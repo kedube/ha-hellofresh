@@ -166,14 +166,35 @@ _UNIT_ALIASES: dict[str, str] = {
 }
 
 
+# Every canonical unit across all families, for recognizing a resolved candidate.
+_KNOWN_UNITS: frozenset[str] = frozenset(unit for family in _UNIT_FAMILIES for unit in family)
+
+
 def _unit_key(unit: Any) -> str:
     """Return a comparison key for a unit.
 
     Normalizes case, whitespace, a trailing period ("tbsp." -> "tbsp"), and known aliases, so
     "Tablespoon", "tbsp" and "TBSP." are all one unit.
+
+    HelloFresh's real payloads spell units as **name plus a parenthetical abbreviation** —
+    ``"tablespoon (tbsp)"``, ``"teaspoon (tsp)"``. The parenthetical is stripped and either
+    half is allowed to resolve the alias, so the compound form lands on the same key as the
+    bare one. Without this every such unit looked unrecognized and nothing ever combined.
     """
     text = " ".join(str(unit or "").split()).casefold().rstrip(".")
-    return _UNIT_ALIASES.get(text, text)
+    if text in _UNIT_ALIASES:
+        return _UNIT_ALIASES[text]
+
+    # Split "name (abbrev)" and try the name, then the abbreviation.
+    outer, _, rest = text.partition("(")
+    candidates = [outer.strip().rstrip("."), rest.rstrip(")").strip().rstrip(".")]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        resolved = _UNIT_ALIASES.get(candidate, candidate)
+        if resolved in _KNOWN_UNITS:
+            return resolved
+    return text
 
 
 def _unit_family(unit: str) -> dict[str, float] | None:

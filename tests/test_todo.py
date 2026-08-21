@@ -21,7 +21,11 @@ from types import SimpleNamespace
 
 from homeassistant.components.todo import TodoItem, TodoItemStatus
 
-from custom_components.hellofresh.todo import HelloFreshPrepListTodo, _format_amounts
+from custom_components.hellofresh.todo import (
+    HelloFreshPrepListTodo,
+    _format_amounts,
+    _unit_key,
+)
 
 
 def _run(coro):
@@ -545,3 +549,42 @@ def test_attributes_name_the_delivery_the_list_belongs_to() -> None:
     assert current.extra_state_attributes["delivery_date"] == "2026-08-25"
     assert following.extra_state_attributes["delivery_date"] == "2026-09-01"
     assert following.extra_state_attributes["week_id"] == "2026-W36"
+
+
+def test_compound_unit_spellings_are_recognized() -> None:
+    """HelloFresh writes units as "name (abbrev)", not as a bare name.
+
+    Regression guard for the real payload format. The alias table originally matched only
+    "tablespoon" or "tbsp", so the live ``"tablespoon (tbsp)"`` fell through as an unknown
+    unit and nothing ever combined — a prep list showed
+    "4 tablespoon (tbsp) + 3 teaspoon (tsp)" instead of "5 tablespoon (tbsp)".
+    """
+    assert (
+        _format_amounts([(4, "tablespoon (tbsp)"), (3, "teaspoon (tsp)")]) == "5 tablespoon (tbsp)"
+    )
+    assert (
+        _format_amounts([(1, "tablespoon (tbsp)"), (6, "teaspoon (tsp)")]) == "3 tablespoon (tbsp)"
+    )
+    # The compound and bare spellings are the same unit.
+    assert _format_amounts([(2, "tablespoon (tbsp)"), (2, "tbsp")]) == "4 tablespoon (tbsp)"
+    assert _format_amounts([(500, "gram (g)"), (1, "kilogram (kg)")]) == "1.5 kilogram (kg)"
+
+
+def test_compound_unit_resolves_from_either_half() -> None:
+    """Either the name or the abbreviation is enough to identify the unit."""
+    assert _unit_key("tablespoon (tbsp)") == "tablespoon"
+    assert _unit_key("Tablespoon (TBSP)") == "tablespoon"
+    # "c" is not in the alias table, but the name half still resolves it.
+    assert _unit_key("cup (c)") == "cup"
+    # An unrecognized compound is left alone rather than being forced into a family.
+    assert _unit_key("clove (whole)") == "clove (whole)"
+
+
+def test_compound_units_still_respect_the_conversion_guards() -> None:
+    """The guards must hold for the real spelling too, not just the bare one."""
+    # Weight and volume never merge.
+    assert _format_amounts([(100, "gram (g)"), (1, "cup (c)")]) == "100 gram (g) + 1 cup (c)"
+    # An unmeasurable total stays split.
+    assert (
+        _format_amounts([(1, "cup (c)"), (1, "teaspoon (tsp)")]) == "1 cup (c) + 1 teaspoon (tsp)"
+    )
