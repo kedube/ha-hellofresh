@@ -277,10 +277,10 @@
     },
     "todo": {
       "prep_list": {
-        "name": "Prep list"
+        "name": "Prep List (current week)"
       },
       "prep_list_week_2": {
-        "name": "Prep list (following week)"
+        "name": "Prep List (next week)"
       }
     }
   },

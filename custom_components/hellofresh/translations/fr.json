@@ -295,10 +295,10 @@
     },
     "todo": {
       "prep_list": {
-        "name": "Liste de préparation"
+        "name": "Liste de préparation (semaine en cours)"
       },
       "prep_list_week_2": {
-        "name": "Liste de préparation (semaine suivante)"
+        "name": "Liste de préparation (semaine prochaine)"
       }
     }
   },
