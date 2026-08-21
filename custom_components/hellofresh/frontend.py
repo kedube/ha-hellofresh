@@ -74,7 +74,10 @@ async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
     hass.data[_REGISTERED_KEY] = True
 
     www_dir = Path(__file__).parent / "www"
-    if not (www_dir / CARD_FILENAME).is_file():
+    # `Path.is_file()` hits the disk, so it must not run on the event loop — this is a
+    # coroutine, and HA blocks (and warns about) synchronous I/O here.
+    card_present = await hass.async_add_executor_job((www_dir / CARD_FILENAME).is_file)
+    if not card_present:
         _LOGGER.warning("HelloFresh meal-planner card file not found in %s", www_dir)
         return
 
