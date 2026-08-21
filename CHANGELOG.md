@@ -5,20 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
-- **Added a Prep list (`todo.prep_list`).** A new to-do entity listing the pantry staples that
-  HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your next
-  two deliveries, so they can be on hand before each box arrives instead of being discovered
-  mid-recipe. Add it to a **To-do list** card.
-- It covers your **next two deliveries** — the box on its way and the one after it — so a single
-  shopping trip can serve both. Each item is due on its own box's delivery date, which is how
-  HA's to-do card groups the two weeks without inventing section headers, and every item names
-  its delivery in the description. Skipped weeks ship nothing and are passed over.
-- The weeks are kept deliberately **separate** rather than merged into one rolling list. Amounts
-  are summed per unit *within* a week but never across weeks: each box is its own shopping trip,
-  and merging both weeks' butter into one line would lose which trip it belongs to. When a box
-  arrives its items drop off and the following week's carry over — including anything already
-  ticked, since check-offs are keyed to `(week, ingredient)`.
+## 2.79 — 2026-08-21
+- **Added a Prep list (`todo.prep_list`).** A new to-do entity listing the pantry staples the
+  *next delivery's* selected meals need that HelloFresh does **not** ship — salt, oil, butter,
+  eggs — so they can be on hand before the box arrives instead of being discovered mid-recipe.
+  Add it to a **To-do list** card.
+- It is deliberately scoped to **one delivery week**, not a rolling shopping list. That is what
+  makes it tractable: there is no question of whether last week's butter still counts, and no
+  need to sum amounts across weeks. When the next box becomes the anchor week the list is
+  rebuilt and the previous week's check-offs are cleared.
 - The list is a *projection* of the week's selection, so items appear and vanish as meals are
   swapped; it advertises check-off only (no adding or deleting rows), since user-authored edits
   would fight every refresh. Check-off state is keyed to ingredient identity rather than list
