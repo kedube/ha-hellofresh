@@ -30,7 +30,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 
 | Document | Contents |
 |---|---|
-| [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, and button |
+| [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
 | [docs/cards.md](docs/cards.md) | All seven Lovelace cards: options, features, screenshots |
 | [docs/services.md](docs/services.md) | All 24 services: parameters and responses |
 
@@ -164,6 +164,7 @@ The integration creates **50+ entities** per HelloFresh account:
 - **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit, payment dates, coupons), account & subscription (plan, servings, status), shipment tracking (status, carrier, tracking link, carrier ETA, actual arrival time), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
 - **Binary sensors** for automations — most notably `binary_sensor.needs_meal_selection`, the primary signal for "review your meals before the cutoff" reminders — plus tracked-shipment availability and parse-health diagnostics.
 - A **delivery calendar** (`calendar.delivery_schedule`), a **refresh button**, and a **skip next week switch**.
+- Two **prep lists** (`todo.prep_list`, `todo.prep_list_week_2`) — the pantry staples HelloFresh does *not* ship for your next two boxes, as native to-do lists you can check off from the dashboard, your phone, or a voice assistant. See [Prep lists](docs/entities.md#prep-lists).
 
 The full reference — every entity with its name, ID, device class, and behavior notes — lives in **[docs/entities.md](docs/entities.md)**.
 
@@ -248,7 +249,7 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 - **Market** — the packaged [Market card](docs/cards.md#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category, with prices and a quantity stepper per item.
 - **All Recipes** — the packaged [Recipes card](docs/cards.md#recipes-card): browse HelloFresh's whole public recipe catalog (~10,000 recipes) by category and sub-category, open any recipe in full, and add or remove cookbook favorites. This is the one view that isn't about *your* subscription — the catalog is the same for every customer.
 - **Food Profile** — the packaged [Food Profile card](docs/cards.md#food-profile-card): view and edit every preference HelloFresh uses to auto-preselect your meals — taste exclusions, dietary preference, liked/disliked cuisines, proteins, flavors and dish types, nutrition goals, meal types, household size, and goals.
-- **Missing Ingredients** — **two** built-in to-do list cards, one per delivery week (`todo.<prefix>_prep_list` and `todo.<prefix>_prep_list_week_2`): the pantry staples that HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your next two boxes. They are deliberately **separate sections**, not one merged list: each box has its own deadline and its own shopping trip. Quantities are added up within a week — converting between units of the same family where that is exact, so 4 tablespoon + 3 teaspoon shows as **5 tablespoon** — but never merged across weeks. Check them off as you shop — as a box arrives the weeks shift up and ticks travel with the week they belong to. See [`todo.prep_list`](docs/entities.md).
+- **Missing Ingredients** — **two** built-in to-do list cards, one per delivery week (`todo.<prefix>_prep_list` and `todo.<prefix>_prep_list_week_2`): the pantry staples that HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your next two boxes. They are deliberately **separate sections**, not one merged list: each box has its own deadline and its own shopping trip. Quantities are added up within a week — converting between units of the same family where that is exact, so `4 tablespoon (tbsp)` + `3 teaspoon (tsp)` shows as **5 tablespoon (tbsp)** — but never merged across weeks. Check them off as you shop — as a box arrives the weeks shift up and ticks travel with the week they belong to. See [Prep lists](docs/entities.md#prep-lists).
 - **Schedule** — the packaged [Schedule card](docs/cards.md#schedule-card): a clean "next box" summary (delivery date, deadline countdown, payment date, status and price), a built-in month calendar of delivery days, and a timeline of recent past and upcoming weeks with their delivery date, status, selection state, tracking, and per-week skip/unskip — plus the packaged [Subscription card](docs/cards.md#subscription-card), a condensed account overview with the holiday-delivery notice built in, and the [Cost card](docs/cards.md#cost-card), a running total of your HelloFresh spend with a monthly-cost chart and roll-up.
 - **Diagnostics** — token-expiry and integration-health **tile cards** (state-colored) plus the long-form identifiers, tucked out of the way.
 
@@ -299,7 +300,7 @@ more or fewer meals than your plan resizes that week's box automatically (minimu
 **Browsing the public catalog** — ~10,000 recipes by category, full cooking detail, and cookbook
 favoriting (including the full cookbook, which HelloFresh's own site only previews).
 
-**In Home Assistant** — 50+ entities, a delivery calendar, seven Lovelace cards, voice intents,
+**In Home Assistant** — 50+ entities, a delivery calendar, two prep-list to-do lists, seven Lovelace cards, voice intents,
 response-returning services for dashboards, and Repairs issues when something needs your attention.
 
 ### Known limitations

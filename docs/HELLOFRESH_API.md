@@ -716,6 +716,13 @@ A **second, separate** favorites service backs HelloFresh's `/recipes/favorites`
 
 Carries ingredients, `yields[]`, `steps[]`, `utensils`, `allergens`, `nutrition`, `cardLink` (printable PDF), and `videoLink`. Ingredient **amounts** live per-yield: each `yields[]` entry has its own `ingredients[]` with amounts for that serving count, so rescaling servings means re-reading the matching entry (the integration defaults to the smallest yield, matching the website).
 
+**Units are spelled `name (abbrev)`.** Ingredient `unit` values arrive as
+`"tablespoon (tbsp)"`, `"teaspoon (tsp)"`, `"gram (g)"` — the full name *plus* a parenthetical
+abbreviation, not one or the other. Any consumer matching on a bare `"tablespoon"` or `"tbsp"`
+will silently fail to recognize the unit; [`todo.prep_list`](entities.md) strips the
+parenthetical and resolves either half. Note the test fixtures in `tests/test_api.py` use the
+bare form, so they do **not** exercise this.
+
 **`shipped` is tri-state, and the distinction is load-bearing.** Each `ingredients[]` entry may
 carry a `shipped` boolean: `false` marks a pantry staple the customer supplies (salt, oil,
 butter) rather than something that arrives in the box. The field is **not guaranteed present** —

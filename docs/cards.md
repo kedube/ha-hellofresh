@@ -9,6 +9,10 @@ For the ready-made dashboard that assembles these, see
 [`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml) and the
 [HelloFresh Dashboard](../README.md#hellofresh-dashboard) section of the README.
 
+> **Not on this page:** the *Missing Ingredients* view uses Home Assistant's **built-in** to-do
+> card over the `todo.prep_list` entities, not a packaged card, so it is documented under
+> [Prep lists](entities.md#prep-lists) instead.
+
 | Card | Type | What it is for |
 |---|---|---|
 | [Meal planner](#meal-planner-card) | `custom:hellofresh-meal-planner-card` | Browse each week's menu, change your meal selection, skip/unskip |
