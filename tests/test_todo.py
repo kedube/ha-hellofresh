@@ -190,13 +190,74 @@ def test_unitless_amounts_sum() -> None:
     assert _format_amounts([(2, None), (1, None)]) == "3"
 
 
-def test_different_units_are_not_converted() -> None:
-    """Distinct units are summed separately and joined — never converted.
+def test_units_in_one_family_are_converted_and_combined() -> None:
+    """3 teaspoon is 1 tablespoon, so 4 tablespoon + 3 teaspoon is 5 tablespoon."""
+    assert _format_amounts([(4, "tablespoon"), (3, "teaspoon")]) == "5 tablespoon"
+    assert _format_amounts([(1, "tablespoon"), (1.5, "teaspoon")]) == "1.5 tablespoon"
+    assert _format_amounts([(500, "g"), (1, "kg")]) == "1.5 kg"
+    assert _format_amounts([(8, "oz"), (1, "lb")]) == "1.5 lb"
 
-    Converting tbsp->tablespoon (or cup->ounce) needs a unit table this integration has no
-    business owning, and a wrong conversion is worse than none.
+
+def test_aliases_are_the_same_unit() -> None:
+    """ "tbsp", "tbsp." and "tablespoon" must not be three different units."""
+    assert _format_amounts([(2, "tbsp"), (2, "tablespoon")]) == "4 tbsp"
+    # The first spelling seen is what gets displayed; only matching is normalized.
+    assert _format_amounts([(1, "tbsp."), (1, "Tablespoon")]) == "2 tbsp."
+    assert _format_amounts([(1, "tsp"), (2, "teaspoons")]) == "3 tsp"
+
+
+def test_a_combined_total_must_be_measurable() -> None:
+    """Combining stops when the result is a fraction no one can measure.
+
+    "1 cup + 1 teaspoon" is 1.02 cup — arithmetically right, useless in a kitchen, and it
+    hides the teaspoon entirely. Both amounts are kept instead.
     """
-    assert _format_amounts([(2, "tablespoon"), (2, "tbsp")]) == "2 tablespoon + 2 tbsp"
+    assert _format_amounts([(1, "cup"), (1, "teaspoon")]) == "1 cup + 1 teaspoon"
+    assert _format_amounts([(1, "pound"), (1, "ounce")]) == "1 pound + 1 ounce"
+
+
+def test_combining_never_promotes_to_an_unused_unit() -> None:
+    """The total stays in a unit the recipes actually used.
+
+    4 tablespoon + 3 teaspoon is exactly 2.5 fluid ounce, but nobody wrote "fluid ounce", so
+    reporting it that way would be equal and useless.
+    """
+    assert "fluid ounce" not in _format_amounts([(4, "tablespoon"), (3, "teaspoon")])
+    # Nor does a failed combination fall back to the family's smallest unit.
+    assert _format_amounts([(1, "cup"), (1, "teaspoon")]) != "49 teaspoon"
+
+
+def test_different_families_are_never_converted() -> None:
+    """Weight and volume cannot be converted without knowing the ingredient."""
+    assert _format_amounts([(100, "g"), (1, "cup")]) == "100 g + 1 cup"
+    # Metric and imperial volume are also left alone: 1 tsp is 4.929 ml, so any combined
+    # total would be a fraction less readable than the two amounts.
+    assert _format_amounts([(15, "ml"), (1, "tablespoon")]) == "15 ml + 1 tablespoon"
+
+
+def test_unknown_units_keep_their_own_subtotal() -> None:
+    """An unrecognized unit still adds up; it just never joins a family."""
+    assert _format_amounts([(2, "clove"), (1, "clove")]) == "3 clove"
+    assert _format_amounts([(1, "clove"), (1, "teaspoon")]) == "1 clove + 1 teaspoon"
+
+
+def test_a_unit_with_no_amount_counts_as_one() -> None:
+    """HelloFresh writes a bare "teaspoon" for a single teaspoon.
+
+    Reading it as 1 makes it both render as "1 teaspoon" and add up with the other recipes'
+    teaspoons, instead of trailing behind them as a stray bare word.
+    """
+    assert _format_amounts([(None, "teaspoon")]) == "1 teaspoon"
+    assert _format_amounts([(None, "tsp")]) == "1 tsp"
+    assert _format_amounts([(None, "teaspoon"), (2, "teaspoon")]) == "3 teaspoon"
+    assert _format_amounts([(None, "teaspoon"), (None, "teaspoon")]) == "2 teaspoon"
+    # It combines across the family too: 1 tablespoon + 3 teaspoon = 2 tablespoon.
+    assert _format_amounts([(None, "tablespoon"), (3, "teaspoon")]) == "2 tablespoon"
+
+
+def test_an_ingredient_with_no_amount_at_all_stays_bare() -> None:
+    """ "Salt" with neither amount nor unit must not become "1"."""
+    assert _format_amounts([(None, None)]) == ""
 
 
 def test_non_numeric_amounts_are_kept_verbatim() -> None:
