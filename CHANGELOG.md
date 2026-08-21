@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.85 — 2026-08-21
 - **Renamed the prep-list entities** to say which week they are for: **Prep List (current week)**
   and **Prep List (next week)**, replacing "Prep list" and "Prep list (following week)". Shown
   with the device name, these read as *HelloFresh (US) Prep List (current week)*. Translated in
