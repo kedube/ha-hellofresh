@@ -65,6 +65,7 @@ def _make_entity(
     *,
     servings: int | None = 2,
     weeks: list | None = None,
+    slot: int = 0,
 ):
     """Build a prep-list entity over stub coordinator data.
 
@@ -94,6 +95,7 @@ def _make_entity(
     )
     entity = HelloFreshPrepListTodo.__new__(HelloFreshPrepListTodo)
     entity.coordinator = coordinator  # type: ignore[attr-defined]
+    entity._slot = slot
     entity._completed = set()
     entity._items = []
     entity._built_for = ()
@@ -366,100 +368,119 @@ def test_entity_does_not_rely_on_polling() -> None:
     assert "_handle_coordinator_update" in HelloFreshPrepListTodo.__dict__
 
 
-def test_covers_the_current_and_next_delivery_week() -> None:
-    """Both the box on its way and the one after it are listed."""
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
-    entity = _make_entity(
-        w1,
-        {
-            "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}]),
-            "r2": _detail([{"name": "Salt", "shipped": False}]),
-        },
-        weeks=[w1, w2],
-    )
-    _run(entity._async_rebuild())
+def test_each_entity_covers_exactly_one_week() -> None:
+    """Slot 0 is the box on its way; slot 1 is the one after it.
 
-    assert [i.uid for i in entity.todo_items] == ["2026-W35:butter", "2026-W36:salt"]
-    # Each week carries its own deadline, which is how the to-do card separates them.
-    assert [i.due for i in entity.todo_items] == [date(2026, 8, 25), date(2026, 9, 1)]
-
-
-def test_a_staple_needed_in_both_weeks_stays_two_items() -> None:
-    """Amounts are summed within a week, never across weeks.
-
-    Merging both boxes' butter into one line would lose which shopping trip it belongs to.
+    They are separate entities precisely so a dashboard can give each week its own card and
+    heading — HA's to-do card renders one entity, so a combined list could only ever be flat.
     """
     w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
     w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
-    entity = _make_entity(
-        w1,
-        {
-            "r1": _detail(
-                [{"name": "Butter", "shipped": False, "amount": 2, "unit": "tablespoon"}]
-            ),
-            "r2": _detail(
-                [{"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"}]
-            ),
-        },
-        weeks=[w1, w2],
-    )
-    _run(entity._async_rebuild())
+    details = {
+        "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}]),
+        "r2": _detail([{"name": "Salt", "shipped": False}]),
+    }
 
-    assert [i.summary for i in entity.todo_items] == [
-        "Butter — 2 tablespoon",
-        "Butter — 1 tablespoon",
-    ]
+    current = _make_entity(w1, details, weeks=[w1, w2], slot=0)
+    _run(current._async_rebuild())
+    following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+    _run(following._async_rebuild())
+
+    assert [i.uid for i in current.todo_items] == ["2026-W35:butter"]
+    assert [i.uid for i in following.todo_items] == ["2026-W36:salt"]
+    # Neither list leaks the other week's items.
+    assert current.todo_items[0].due == date(2026, 8, 25)
+    assert following.todo_items[0].due == date(2026, 9, 1)
+
+
+def test_a_staple_needed_in_both_weeks_is_not_merged() -> None:
+    """Each week reports its own total; amounts are never summed across weeks."""
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    details = {
+        "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tablespoon"}]),
+        "r2": _detail([{"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"}]),
+    }
+
+    current = _make_entity(w1, details, weeks=[w1, w2], slot=0)
+    _run(current._async_rebuild())
+    following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+    _run(following._async_rebuild())
+
+    assert [i.summary for i in current.todo_items] == ["Butter — 2 tablespoon"]
+    assert [i.summary for i in following.todo_items] == ["Butter — 1 tablespoon"]
 
 
 def test_skipped_weeks_are_never_covered() -> None:
-    """A skipped box ships nothing, so it contributes no ingredients."""
+    """A skipped box ships nothing, so coverage moves past it."""
     w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
     skipped = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1), is_skipped=True)
     w3 = _week("2026-W37", [_recipe("r3")], date(2026, 9, 8))
-    entity = _make_entity(
-        w1,
-        {
-            "r1": _detail([{"name": "Salt", "shipped": False}]),
-            "r3": _detail([{"name": "Pepper", "shipped": False}]),
-        },
-        weeks=[w1, skipped, w3],
-    )
-    _run(entity._async_rebuild())
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r3": _detail([{"name": "Pepper", "shipped": False}]),
+    }
 
-    # The skipped week is passed over; coverage moves to the next week that actually ships.
-    assert [i.uid for i in entity.todo_items] == ["2026-W35:salt", "2026-W37:pepper"]
+    following = _make_entity(w1, details, weeks=[w1, skipped, w3], slot=1)
+    _run(following._async_rebuild())
+
+    # Slot 1 lands on W37, not the skipped W36.
+    assert [i.uid for i in following.todo_items] == ["2026-W37:pepper"]
 
 
-def test_a_landed_box_drops_its_items_but_keeps_the_other_weeks_ticks() -> None:
-    """When the current box arrives, next week's check-offs must survive.
+def test_a_week_keeps_its_ticks_when_it_shifts_slot() -> None:
+    """When the current box lands, next week's check-offs move up with it.
 
-    Ticks are keyed by (week, ingredient) precisely so the week that was "next" keeps what
-    was already bought as it becomes the current box.
+    Ticks are keyed to the week id rather than the slot, so the week that was "following"
+    arrives in the current slot with everything already bought still ticked.
     """
     w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
     w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
-    entity = _make_entity(
-        w1,
-        {
-            "r1": _detail([{"name": "Salt", "shipped": False}]),
-            "r2": _detail([{"name": "Pepper", "shipped": False}]),
-        },
-        weeks=[w1, w2],
-    )
-    _run(entity._async_rebuild())
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": _detail([{"name": "Pepper", "shipped": False}]),
+    }
 
-    pepper = next(i for i in entity.todo_items if i.uid == "2026-W36:pepper")
+    entity = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+    _run(entity._async_rebuild())
+    pepper = entity.todo_items[0]
     _run(
         entity.async_update_todo_item(
             TodoItem(uid=pepper.uid, summary=pepper.summary, status=TodoItemStatus.COMPLETED)
         )
     )
+    assert entity.todo_items[0].status is TodoItemStatus.COMPLETED
 
-    # W35 lands and falls out of coverage; W36 becomes the current box.
-    entity.coordinator.data.next_delivery_week_obj = w2
-    entity.coordinator.data.weeks = [w2]
+    # W35 lands. W36 shifts into slot 0, so this same entity now points at slot 1 = nothing,
+    # while the slot-0 entity picks W36 up — carrying the tick with the week.
+    current = _make_entity(w2, details, weeks=[w2], slot=0)
+    current._completed = set(entity._completed)
+    _run(current._async_rebuild())
+
+    assert [i.uid for i in current.todo_items] == ["2026-W36:pepper"]
+    assert current.todo_items[0].status is TodoItemStatus.COMPLETED
+
+
+def test_slot_beyond_the_covered_weeks_is_empty() -> None:
+    """With only one box on its way, the following-week list is simply empty."""
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    entity = _make_entity(
+        w1, {"r1": _detail([{"name": "Salt", "shipped": False}])}, weeks=[w1], slot=1
+    )
     _run(entity._async_rebuild())
 
-    assert [i.uid for i in entity.todo_items] == ["2026-W36:pepper"]
-    assert entity.todo_items[0].status is TodoItemStatus.COMPLETED
+    assert entity.todo_items == []
+
+
+def test_attributes_name_the_delivery_the_list_belongs_to() -> None:
+    """A dashboard heading needs the date, which the entity name does not carry."""
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    details = {"r1": _detail([]), "r2": _detail([])}
+
+    current = _make_entity(w1, details, weeks=[w1, w2], slot=0)
+    following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+
+    assert current.extra_state_attributes["delivery_date"] == "2026-08-25"
+    assert following.extra_state_attributes["delivery_date"] == "2026-09-01"
+    assert following.extra_state_attributes["week_id"] == "2026-W36"

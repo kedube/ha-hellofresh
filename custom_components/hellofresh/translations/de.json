@@ -296,6 +296,9 @@
     "todo": {
       "prep_list": {
         "name": "Vorbereitungsliste"
+      },
+      "prep_list_week_2": {
+        "name": "Vorbereitungsliste (Folgewoche)"
       }
     }
   },
