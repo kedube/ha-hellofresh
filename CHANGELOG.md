@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.79 — 2026-08-21
 - **Added a Prep list (`todo.prep_list`).** A new to-do entity listing the pantry staples that
   HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your next
   two deliveries, so they can be on hand before each box arrives instead of being discovered
