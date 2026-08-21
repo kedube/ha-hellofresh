@@ -170,3 +170,83 @@ def test_shared_detail_module_is_not_registered_as_a_card() -> None:
     which does nothing useful and shows up as a phantom card resource for users.
     """
     assert not any("recipe-detail" in filename for filename, _p, _r in _CARDS)
+
+
+def test_card_file_check_runs_in_the_executor() -> None:
+    """The www/ file check must not touch the disk on the event loop.
+
+    ``Path.is_file()`` is blocking I/O. Called directly inside a coroutine it stalls the loop
+    and trips Home Assistant's synchronous-I/O detection, which is what a HACS reviewer flagged
+    against this function. The check has to go through ``async_add_executor_job``.
+    """
+    executor_calls: list = []
+
+    async def async_add_executor_job(func, *args):
+        executor_calls.append(func)
+        return func(*args)
+
+    registered: list = []
+
+    async def async_register_static_paths(configs) -> None:
+        registered.append(configs)
+
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=async_add_executor_job,
+        http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
+    )
+
+    _run(frontend_module.async_register_meal_planner_card(hass))
+
+    # The real www/ directory ships the card, so registration proceeds to serving it.
+    assert executor_calls, "the file check must be handed to the executor"
+    assert registered, "static paths should be registered when the card file exists"
+
+
+def test_missing_card_file_aborts_registration() -> None:
+    """A missing card file warns and stops, without registering static paths."""
+    executor_calls: list = []
+
+    async def async_add_executor_job(func, *args):
+        executor_calls.append(func)
+        return False  # pretend the card file is absent
+
+    registered: list = []
+
+    async def async_register_static_paths(configs) -> None:  # pragma: no cover - must not run
+        registered.append(configs)
+
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=async_add_executor_job,
+        http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
+    )
+
+    _run(frontend_module.async_register_meal_planner_card(hass))
+
+    assert executor_calls, "the file check must still go through the executor"
+    assert not registered, "a missing card file must abort before serving assets"
+
+
+def test_registration_is_idempotent() -> None:
+    """A second call is a no-op, so the file check does not run again."""
+    executor_calls: list = []
+
+    async def async_add_executor_job(func, *args):
+        executor_calls.append(func)
+        return func(*args)
+
+    async def async_register_static_paths(configs) -> None:
+        pass
+
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=async_add_executor_job,
+        http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
+    )
+
+    _run(frontend_module.async_register_meal_planner_card(hass))
+    first = len(executor_calls)
+    _run(frontend_module.async_register_meal_planner_card(hass))
+
+    assert len(executor_calls) == first, "the guard must short-circuit a repeat call"
