@@ -40,21 +40,42 @@ def _recipe(recipe_id: str, *, selected: bool = True) -> SimpleNamespace:
 
 
 def _week(
-    week_id: str, recipes: list, delivery: date | None = date(2026, 8, 25)
+    week_id: str,
+    recipes: list,
+    delivery: date | None = date(2026, 8, 25),
+    *,
+    is_skipped: bool = False,
 ) -> SimpleNamespace:
-    return SimpleNamespace(week_id=week_id, recipes=recipes, delivery_date=delivery)
+    return SimpleNamespace(
+        week_id=week_id,
+        recipes=recipes,
+        delivery_date=delivery,
+        is_skipped=is_skipped,
+        display_name=week_id,
+    )
 
 
 def _detail(ingredients: list[dict]) -> SimpleNamespace:
     return SimpleNamespace(ingredients=ingredients)
 
 
-def _make_entity(week, details: dict[str, object], *, servings: int | None = 2):
-    """Build a prep-list entity over stub coordinator data."""
+def _make_entity(
+    week,
+    details: dict[str, object],
+    *,
+    servings: int | None = 2,
+    weeks: list | None = None,
+):
+    """Build a prep-list entity over stub coordinator data.
+
+    ``weeks`` is the account's full week list the second covered week is drawn from; it
+    defaults to just the anchor so single-week tests read unchanged.
+    """
     data = SimpleNamespace(
         next_delivery_week_obj=week,
         next_configurable_week=None,
         primary_subscription=SimpleNamespace(servings=servings),
+        weeks=weeks if weeks is not None else ([week] if week is not None else []),
     )
 
     calls: list[tuple[str, int | None]] = []
@@ -74,9 +95,8 @@ def _make_entity(week, details: dict[str, object], *, servings: int | None = 2):
     entity = HelloFreshPrepListTodo.__new__(HelloFreshPrepListTodo)
     entity.coordinator = coordinator  # type: ignore[attr-defined]
     entity._completed = set()
-    entity._completed_week = None
     entity._items = []
-    entity._built_for = (None, ())
+    entity._built_for = ()
     entity.async_write_ha_state = lambda: None  # type: ignore[method-assign]
     entity._calls = calls  # type: ignore[attr-defined]
     return entity
@@ -128,8 +148,8 @@ def test_missing_shipped_flag_is_not_treated_as_pantry_staple() -> None:
     assert [i.summary for i in entity.todo_items] == ["Salt"]
 
 
-def test_amounts_are_listed_not_summed_across_recipes() -> None:
-    """Two recipes needing the same staple keep both amounts verbatim."""
+def test_amounts_are_summed_across_recipes() -> None:
+    """Two recipes needing the same staple report one combined amount."""
     week = _week("2026-W35", [_recipe("r1"), _recipe("r2")])
     entity = _make_entity(
         week,
@@ -137,19 +157,54 @@ def test_amounts_are_listed_not_summed_across_recipes() -> None:
             "r1": _detail(
                 [{"name": "Butter", "shipped": False, "amount": 1.5, "unit": "tablespoon"}]
             ),
-            "r2": _detail([{"name": "butter", "shipped": False, "amount": 2, "unit": "tbsp"}]),
+            "r2": _detail(
+                [{"name": "butter", "shipped": False, "amount": 2, "unit": "tablespoon"}]
+            ),
         },
     )
     _run(entity._async_rebuild())
 
     assert len(entity.todo_items) == 1
-    # Case-insensitive grouping, but no arithmetic across mismatched units.
-    assert entity.todo_items[0].summary == "Butter — 1.5 tablespoon + 2 tbsp"
+    # Ingredient names group case-insensitively, and the shared unit is summed.
+    assert entity.todo_items[0].summary == "Butter — 3.5 tablespoon"
 
 
-def test_identical_amounts_collapse_to_a_multiple() -> None:
-    """The same amount twice reads as "2 x", not a repeated string."""
-    assert _format_amounts([(1, "tsp"), (1, "tsp")]) == "2 x 1 tsp"
+def test_amounts_in_the_same_unit_are_summed() -> None:
+    """Two recipes wanting 2 tablespoon each need 4 tablespoon, not "2 + 2"."""
+    assert _format_amounts([(2, "tablespoon"), (2, "tablespoon")]) == "4 tablespoon"
+    assert _format_amounts([(1, "tsp"), (2, "tsp")]) == "3 tsp"
+    # Fractions combine, and the total is rendered without trailing zeros.
+    assert _format_amounts([(0.5, "cup"), (0.25, "cup")]) == "0.75 cup"
+    assert _format_amounts([(1.5, "tablespoon"), (1.5, "tablespoon")]) == "3 tablespoon"
+
+
+def test_unit_matching_ignores_case() -> None:
+    """A unit spelled "Tablespoon" and "tablespoon" is one unit."""
+    assert _format_amounts([(2, "Tablespoon"), (3, "tablespoon")]) == "5 Tablespoon"
+
+
+def test_unitless_amounts_sum() -> None:
+    """Countable staples (eggs) carry no unit and still add up."""
+    assert _format_amounts([(2, None), (1, None)]) == "3"
+
+
+def test_different_units_are_not_converted() -> None:
+    """Distinct units are summed separately and joined — never converted.
+
+    Converting tbsp->tablespoon (or cup->ounce) needs a unit table this integration has no
+    business owning, and a wrong conversion is worse than none.
+    """
+    assert _format_amounts([(2, "tablespoon"), (2, "tbsp")]) == "2 tablespoon + 2 tbsp"
+
+
+def test_non_numeric_amounts_are_kept_verbatim() -> None:
+    """A range like "1-2" cannot be summed, and must not be dropped either."""
+    assert _format_amounts([("1-2", "tsp"), (1, "tsp")]) == "1 tsp + 1-2 tsp"
+
+
+def test_numeric_strings_are_summed() -> None:
+    """Amounts arrive as strings on some recipes; those still add up."""
+    assert _format_amounts([("2", "tsp"), (1, "tsp")]) == "3 tsp"
 
 
 def test_unselected_meals_are_ignored() -> None:
@@ -213,7 +268,7 @@ def test_check_off_survives_a_rebuild_of_the_same_week() -> None:
     )
 
     # Force a genuine rebuild of the same week (selection unchanged).
-    entity._built_for = (None, ())
+    entity._built_for = ()
     _run(entity._async_rebuild())
 
     assert next(i for i in entity.todo_items if i.summary == "Salt").status is (
@@ -309,3 +364,102 @@ def test_entity_does_not_rely_on_polling() -> None:
     assert "async_update" not in HelloFreshPrepListTodo.__dict__
     # The coordinator callback is the real refresh path, so it must be overridden here.
     assert "_handle_coordinator_update" in HelloFreshPrepListTodo.__dict__
+
+
+def test_covers_the_current_and_next_delivery_week() -> None:
+    """Both the box on its way and the one after it are listed."""
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    entity = _make_entity(
+        w1,
+        {
+            "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}]),
+            "r2": _detail([{"name": "Salt", "shipped": False}]),
+        },
+        weeks=[w1, w2],
+    )
+    _run(entity._async_rebuild())
+
+    assert [i.uid for i in entity.todo_items] == ["2026-W35:butter", "2026-W36:salt"]
+    # Each week carries its own deadline, which is how the to-do card separates them.
+    assert [i.due for i in entity.todo_items] == [date(2026, 8, 25), date(2026, 9, 1)]
+
+
+def test_a_staple_needed_in_both_weeks_stays_two_items() -> None:
+    """Amounts are summed within a week, never across weeks.
+
+    Merging both boxes' butter into one line would lose which shopping trip it belongs to.
+    """
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    entity = _make_entity(
+        w1,
+        {
+            "r1": _detail(
+                [{"name": "Butter", "shipped": False, "amount": 2, "unit": "tablespoon"}]
+            ),
+            "r2": _detail(
+                [{"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"}]
+            ),
+        },
+        weeks=[w1, w2],
+    )
+    _run(entity._async_rebuild())
+
+    assert [i.summary for i in entity.todo_items] == [
+        "Butter — 2 tablespoon",
+        "Butter — 1 tablespoon",
+    ]
+
+
+def test_skipped_weeks_are_never_covered() -> None:
+    """A skipped box ships nothing, so it contributes no ingredients."""
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    skipped = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1), is_skipped=True)
+    w3 = _week("2026-W37", [_recipe("r3")], date(2026, 9, 8))
+    entity = _make_entity(
+        w1,
+        {
+            "r1": _detail([{"name": "Salt", "shipped": False}]),
+            "r3": _detail([{"name": "Pepper", "shipped": False}]),
+        },
+        weeks=[w1, skipped, w3],
+    )
+    _run(entity._async_rebuild())
+
+    # The skipped week is passed over; coverage moves to the next week that actually ships.
+    assert [i.uid for i in entity.todo_items] == ["2026-W35:salt", "2026-W37:pepper"]
+
+
+def test_a_landed_box_drops_its_items_but_keeps_the_other_weeks_ticks() -> None:
+    """When the current box arrives, next week's check-offs must survive.
+
+    Ticks are keyed by (week, ingredient) precisely so the week that was "next" keeps what
+    was already bought as it becomes the current box.
+    """
+    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    entity = _make_entity(
+        w1,
+        {
+            "r1": _detail([{"name": "Salt", "shipped": False}]),
+            "r2": _detail([{"name": "Pepper", "shipped": False}]),
+        },
+        weeks=[w1, w2],
+    )
+    _run(entity._async_rebuild())
+
+    pepper = next(i for i in entity.todo_items if i.uid == "2026-W36:pepper")
+    _run(
+        entity.async_update_todo_item(
+            TodoItem(uid=pepper.uid, summary=pepper.summary, status=TodoItemStatus.COMPLETED)
+        )
+    )
+
+    # W35 lands and falls out of coverage; W36 becomes the current box.
+    entity.coordinator.data.next_delivery_week_obj = w2
+    entity.coordinator.data.weeks = [w2]
+    _run(entity._async_rebuild())
+
+    assert [i.uid for i in entity.todo_items] == ["2026-W36:pepper"]
+    assert entity.todo_items[0].status is TodoItemStatus.COMPLETED

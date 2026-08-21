@@ -4,10 +4,13 @@
 # A ready-to-use dashboard built entirely from entities and cards this integration
 # provides. No HACS frontend add-ons required.
 #
-# Five views:
+# Seven views:
 #   • My Menu      — browse & edit each week's meal selection (meal-planner card)
 #   • Market       — browse & order HelloFresh Market add-ons (market card)
+#   • All Recipes  — browse the ~10,000-recipe public catalog (recipes card)
 #   • Food Profile — view & edit meal-preselection preferences (food-profile card)
+#   • Missing Ingredients — pantry staples the next box does NOT include, as a checklist
+#                    (built-in to-do card over `todo.<prefix>_prep_list`)
 #   • Schedule     — delivery calendar + timeline, account overview, and running cost
 #                    (schedule + subscription + cost cards, sections grid layout)
 #   • Diagnostics  — token expiry & integration health as tile cards, manual refresh
@@ -77,6 +80,22 @@ views:
         title: Food Profile
         logo: true
     type: panel
+  - title: Missing Ingredients
+    path: missing-ingredients
+    icon: mdi:cart-outline
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          # Pantry staples your next TWO boxes do NOT include, from their selected meals —
+          # salt, oil, butter, eggs — so one shopping trip covers both. Items are due on their
+          # own box's delivery date, which is how the to-do card groups the two weeks; when a
+          # box arrives its items drop off and the following week's carry over, ticks included.
+          - type: heading
+            heading: Have these on hand before your next two boxes arrive
+          - type: todo-list
+            entity: todo.hellofresh_us_prep_list
   - title: Schedule
     path: planning
     icon: mdi:calendar-month
@@ -103,10 +122,6 @@ views:
             logo: true
             grid_options:
               columns: full
-          # Pantry staples the next box does NOT include, from its selected meals. Checked off
-          # in the days before delivery; rebuilt (and cleared) when the next week takes over.
-          - type: todo-list
-            entity: todo.hellofresh_us_prep_list
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope
