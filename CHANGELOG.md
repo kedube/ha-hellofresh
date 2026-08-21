@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.86 — 2026-08-21
 - **Fixed blocking I/O on the event loop during setup** (HACS review). `frontend.py` checked for
   the card file with a synchronous `Path.is_file()` inside a coroutine, which stalls Home
   Assistant's event loop and trips its synchronous-I/O detection. The check now runs via
