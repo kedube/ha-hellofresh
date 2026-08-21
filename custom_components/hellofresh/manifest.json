@@ -11,5 +11,5 @@
   "loggers": ["custom_components.hellofresh"],
   "quality_scale": "custom",
   "requirements": ["beautifulsoup4>=4.12.3", "Brotli>=1.1.0", "curl_cffi>=0.7.0"],
-  "version": "2.80"
+  "version": "2.81"
 }
