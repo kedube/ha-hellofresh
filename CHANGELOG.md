@@ -6,19 +6,23 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## 2.79 — 2026-08-21
-- **Added a Prep list (`todo.prep_list`).** A new to-do entity listing the pantry staples that
-  HelloFresh does **not** ship — salt, oil, butter, eggs — for the selected meals of your next
-  two deliveries, so they can be on hand before each box arrives instead of being discovered
-  mid-recipe. Add it to a **To-do list** card.
-- It covers your **next two deliveries** — the box on its way and the one after it — so a single
-  shopping trip can serve both. Each item is due on its own box's delivery date, which is how
-  HA's to-do card groups the two weeks without inventing section headers, and every item names
-  its delivery in the description. Skipped weeks ship nothing and are passed over.
-- The weeks are kept deliberately **separate** rather than merged into one rolling list. Amounts
-  are summed per unit *within* a week but never across weeks: each box is its own shopping trip,
-  and merging both weeks' butter into one line would lose which trip it belongs to. When a box
-  arrives its items drop off and the following week's carry over — including anything already
-  ticked, since check-offs are keyed to `(week, ingredient)`.
+- **Added Prep lists (`todo.prep_list`, `todo.prep_list_week_2`).** New to-do entities listing
+  the pantry staples that HelloFresh does **not** ship — salt, oil, butter, eggs — for the
+  selected meals of your next two deliveries, so they can be on hand before each box arrives
+  instead of being discovered mid-recipe. Add them to **To-do list** cards.
+- It ships as **two entities**, one per delivery week — `todo.prep_list` for the box on its way
+  and `todo.prep_list_week_2` for the one after it — so the dashboard gives each week its own
+  card and heading. This is deliberate rather than one combined list: HA's to-do card renders a
+  single entity, so two weeks in one entity could only ever be a flat list. Two entities give
+  two real sections, each with its own totals, deadline, and check-offs.
+- Amounts are summed per unit *within* a week but never across weeks: each box is its own
+  shopping trip, and merging both weeks' butter into one line would lose which trip it belongs
+  to. Skipped weeks ship nothing and are passed over.
+- As a box arrives the weeks shift up — `prep_list` always means the next delivery. Check-offs
+  are keyed to `(week, ingredient)` rather than to the slot, so a week carries everything
+  already ticked with it when it becomes the current box.
+- Each entity exposes `week_id` and `delivery_date` attributes, so a dashboard heading or
+  automation can name the delivery a list belongs to.
 - The list is a *projection* of the week's selection, so items appear and vanish as meals are
   swapped; it advertises check-off only (no adding or deleting rows), since user-authored edits
   would fight every refresh. Check-off state is keyed to ingredient identity rather than list

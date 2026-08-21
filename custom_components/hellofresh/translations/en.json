@@ -278,6 +278,9 @@
     "todo": {
       "prep_list": {
         "name": "Prep list"
+      },
+      "prep_list_week_2": {
+        "name": "Prep list (following week)"
       }
     }
   },

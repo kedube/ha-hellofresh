@@ -57,9 +57,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the HelloFresh prep-list todo entity."""
+    """Set up one prep-list entity per covered delivery week."""
     coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([HelloFreshPrepListTodo(coordinator)])
+    async_add_entities(HelloFreshPrepListTodo(coordinator, slot) for slot in range(_WEEKS_COVERED))
 
 
 def _ingredient_key(name: str) -> str:
@@ -152,41 +152,60 @@ def _format_amounts(amounts: list[tuple[Any, Any]]) -> str:
 
 
 class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
-    """Pantry staples to have on hand before the next HelloFresh box arrives."""
+    """Pantry staples to have on hand before one HelloFresh box arrives.
 
-    _attr_translation_key = "prep_list"
-    # Read-mostly on purpose. The list is derived from the week's selected meals, so items
-    # appear and vanish as the selection changes; letting the user add or delete rows would
-    # put their edits in a fight with every refresh. Check-off is the one write that makes
-    # sense, and it lives outside the projection.
+    One entity per covered delivery week (``slot`` 0 is the box on its way, 1 the one after
+    it). Separate entities rather than a single combined list: HA's to-do card renders exactly
+    one entity, so two weeks in one entity can only ever be one flat list. Two entities give
+    two cards — a real section per week — and keep each week's totals, deadline, and check-offs
+    genuinely independent.
+
+    The slot is positional, so as boxes arrive the *same* entity keeps meaning "the next
+    delivery" and its history stays coherent; the week it points at moves up.
+    """
+
     _attr_supported_features = TodoListEntityFeature.UPDATE_TODO_ITEM
 
-    def __init__(self, coordinator: HelloFreshDataUpdateCoordinator) -> None:
-        """Initialize the prep list."""
+    def __init__(self, coordinator: HelloFreshDataUpdateCoordinator, slot: int) -> None:
+        """Initialize the prep list for one week slot."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_prep_list"
-        self._pin_entity_id(ENTITY_ID_FORMAT, "prep_list")
-        # Ticked-off items, keyed by (week_id, ingredient_key). Keying on the week means a
-        # box landing discards only its own check-offs, while the week that was "next" keeps
-        # everything already ticked as it becomes the current box.
+        self._slot = slot
+        key = "prep_list" if slot == 0 else f"prep_list_week_{slot + 1}"
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{key}"
+        self._pin_entity_id(ENTITY_ID_FORMAT, key)
+        # Ticked-off items, keyed by (week_id, ingredient_key). Keying on the week id rather
+        # than the slot means a box landing (which shifts every week up one slot) carries the
+        # ticks with the week they belong to instead of stranding them on the old position.
         self._completed: set[tuple[str, str]] = set()
         self._items: list[TodoItem] = []
         self._built_for: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
-        """Return the current prep list."""
+        """Return this week's prep list."""
         return self._items
 
-    def _target_weeks(self) -> list[HelloFreshWeek]:
-        """Return the delivery weeks the list covers: the current box and the one after it.
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose which delivery this list belongs to.
 
-        "Current" is the next box actually on its way (the subscription's own next-delivery
-        handle), which stays the anchor right up until it lands — that is the box you are
-        shopping for. "Next" is the following non-skipped delivery, included so a single
-        shopping trip can cover both.
+        The entity name is static ("Prep list" / "Prep list week 2") so it stays stable in the
+        UI, but a dashboard heading or automation usually wants the actual date this box
+        arrives. Kept as attributes rather than baked into the name.
+        """
+        week = self._target_week()
+        if week is None:
+            return {"week_id": None, "delivery_date": None}
+        return {
+            "week_id": week.week_id,
+            "delivery_date": week.delivery_date.isoformat() if week.delivery_date else None,
+        }
 
-        Skipped weeks ship nothing, so they are never targets. Weeks whose delivery date has
+    def _all_covered_weeks(self) -> list[HelloFreshWeek]:
+        """Return the delivery weeks the prep lists cover, current box first.
+
+        Skipped weeks ship nothing, so they are never covered. Weeks whose delivery date has
         passed are excluded on the same ``delivery_date >= today`` basis the account data uses
         for upcoming orders.
         """
@@ -218,6 +237,13 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
         remaining.sort(key=lambda w: (w.delivery_date is None, w.delivery_date or today))
         ordered.extend(remaining)
         return ordered[:_WEEKS_COVERED]
+
+    def _target_week(self) -> HelloFreshWeek | None:
+        """Return the one delivery week this entity is responsible for."""
+        weeks = self._all_covered_weeks()
+        if self._slot < len(weeks):
+            return weeks[self._slot]
+        return None
 
     def _selected_recipe_ids(self, week: HelloFreshWeek) -> list[str]:
         """Return the recipe ids this week will actually ship."""
@@ -258,94 +284,80 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
         self.async_write_ha_state()
 
     async def _async_rebuild(self) -> None:
-        """Refresh the prep list from each covered week's selected meals.
+        """Refresh this week's prep list from its selected meals.
 
         Recipe detail is fetched per selected meal (the week's own recipes carry ingredient
         *names* only, without amounts or the shipped flag), so this is skipped entirely unless
-        one of the covered weeks or its selection actually changed.
+        the week or its selection actually changed.
         """
-        weeks = self._target_weeks()
-        if not weeks:
+        week = self._target_week()
+        if week is None:
             self._items = []
             self._built_for = ()
             return
 
-        per_week = [(week, self._selected_recipe_ids(week)) for week in weeks]
-        fingerprint = tuple((week.week_id, tuple(ids)) for week, ids in per_week)
+        recipe_ids = self._selected_recipe_ids(week)
+        fingerprint = ((week.week_id, tuple(recipe_ids)),)
         if fingerprint == self._built_for:
             return
 
-        # Ticks are keyed by week, so a week dropping off the list (its box landed) discards
-        # only its own check-offs; the week that was "next" keeps everything already ticked.
-        live_weeks = {week.week_id for week, _ in per_week}
-        self._completed = {key for key in self._completed if key[0] in live_weeks}
+        # Ticks belong to a week, not a slot. Dropping everything for other weeks keeps the
+        # set from growing without bound, while a week shifting from slot 1 to slot 0 (its
+        # predecessor landed) arrives with its check-offs intact.
+        self._completed = {entry for entry in self._completed if entry[0] == week.week_id}
 
         servings = None
         subscription = self.coordinator.data.primary_subscription if self.coordinator.data else None
         if subscription is not None:
             servings = subscription.servings
 
-        items: list[TodoItem] = []
+        # name -> (display name, [(amount, unit), ...])
+        collected: dict[str, tuple[str, list[tuple[Any, Any]]]] = {}
         fetched = 0
-        for week, recipe_ids in per_week:
-            # Ingredients are grouped WITHIN a week, never across weeks: each box has its own
-            # deadline, and merging two weeks' butter into one line would lose which shop it
-            # belongs to.
-            collected: dict[str, tuple[str, list[tuple[Any, Any]]]] = {}
-            for recipe_id in recipe_ids:
-                if fetched >= _MAX_RECIPE_FETCHES:
-                    _LOGGER.debug(
-                        "Prep list stopped after %s recipes (week %s)", fetched, week.week_id
-                    )
-                    break
-                try:
-                    detail = await self.coordinator.client.async_get_recipe_detail(
-                        recipe_id, servings=servings, include_favorite=False
-                    )
-                except Exception as err:  # noqa: BLE001 - one bad recipe must not blank the list
-                    _LOGGER.debug("Prep list could not read recipe %s: %s", recipe_id, err)
-                    continue
-                fetched += 1
-                for ingredient in detail.ingredients:
-                    # Tri-state: only an explicit False means "you supply this". A missing flag
-                    # (None) is unknown, and is treated as in-box — telling someone to buy an
-                    # ingredient HelloFresh is already shipping is the worse error.
-                    if ingredient.get("shipped") is not False:
-                        continue
-                    name = ingredient.get("name")
-                    if not isinstance(name, str) or not name.strip():
-                        continue
-                    key = _ingredient_key(name)
-                    display, amounts = collected.setdefault(key, (name.strip(), []))
-                    amounts.append((ingredient.get("amount"), ingredient.get("unit")))
-
-            if not collected:
-                continue
-
-            for key, (display, amounts) in sorted(
-                collected.items(), key=lambda kv: kv[1][0].lower()
-            ):
-                summary = display
-                detail_text = _format_amounts(amounts)
-                if detail_text:
-                    summary = f"{display} — {detail_text}"
-                uid = f"{week.week_id}:{key}"
-                items.append(
-                    TodoItem(
-                        uid=uid,
-                        summary=summary,
-                        status=(
-                            TodoItemStatus.COMPLETED
-                            if (week.week_id, key) in self._completed
-                            else TodoItemStatus.NEEDS_ACTION
-                        ),
-                        # Each week carries its own deadline: the day that box arrives. HA's
-                        # to-do card groups and sorts by due date, which is what separates the
-                        # two weeks visually without inventing section headers.
-                        due=week.delivery_date,
-                        description=_week_label(week),
-                    )
+        for recipe_id in recipe_ids:
+            if fetched >= _MAX_RECIPE_FETCHES:
+                _LOGGER.debug("Prep list stopped after %s recipes (week %s)", fetched, week.week_id)
+                break
+            try:
+                detail = await self.coordinator.client.async_get_recipe_detail(
+                    recipe_id, servings=servings, include_favorite=False
                 )
+            except Exception as err:  # noqa: BLE001 - one bad recipe must not blank the list
+                _LOGGER.debug("Prep list could not read recipe %s: %s", recipe_id, err)
+                continue
+            fetched += 1
+            for ingredient in detail.ingredients:
+                # Tri-state: only an explicit False means "you supply this". A missing flag
+                # (None) is unknown, and is treated as in-box — telling someone to buy an
+                # ingredient HelloFresh is already shipping is the worse error.
+                if ingredient.get("shipped") is not False:
+                    continue
+                name = ingredient.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                key = _ingredient_key(name)
+                display, amounts = collected.setdefault(key, (name.strip(), []))
+                amounts.append((ingredient.get("amount"), ingredient.get("unit")))
+
+        items: list[TodoItem] = []
+        for key, (display, amounts) in sorted(collected.items(), key=lambda kv: kv[1][0].lower()):
+            summary = display
+            detail_text = _format_amounts(amounts)
+            if detail_text:
+                summary = f"{display} — {detail_text}"
+            items.append(
+                TodoItem(
+                    uid=f"{week.week_id}:{key}",
+                    summary=summary,
+                    status=(
+                        TodoItemStatus.COMPLETED
+                        if (week.week_id, key) in self._completed
+                        else TodoItemStatus.NEEDS_ACTION
+                    ),
+                    # The deadline for having these on hand is the day that box arrives.
+                    due=week.delivery_date,
+                )
+            )
 
         self._items = items
         self._built_for = fingerprint
