@@ -80,6 +80,7 @@ PLATFORMS = [
     Platform.BUTTON,
     Platform.CALENDAR,
     Platform.SWITCH,
+    Platform.TODO,
 ]
 
 SERVICE_REFRESH_DATA = "refresh_data"

@@ -103,6 +103,10 @@ views:
             logo: true
             grid_options:
               columns: full
+          # Pantry staples the next box does NOT include, from its selected meals. Checked off
+          # in the days before delivery; rebuilt (and cleared) when the next week takes over.
+          - type: todo-list
+            entity: todo.hellofresh_us_prep_list
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope

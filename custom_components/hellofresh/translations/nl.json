@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth-token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "HelloFresh opnieuw instellen",
+        "description": "Werk het land of het e-mailadres en wachtwoord van deze HelloFresh-vermelding bij. De inloggegevens moeten horen bij het account waarmee deze vermelding is ingesteld.",
+        "data": {
+          "country": "Land",
+          "username": "E-mail",
+          "password": "Wachtwoord"
+        }
+      },
+      "reconfigure_token": {
+        "title": "HelloFresh opnieuw instellen",
+        "description": "Werk het land bij of plak een nieuw `apiV2Auth`-token voor deze HelloFresh-vermelding. Log in op {site_example} en kopieer de waarde van de `apiV2Auth`-cookie. Het token moet horen bij het account waarmee deze vermelding is ingesteld.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Dit HelloFresh-account is al ingesteld",
-      "reauth_successful": "HelloFresh is opnieuw verbonden"
+      "reauth_successful": "HelloFresh is opnieuw verbonden",
+      "reconfigure_successful": "HelloFresh is opnieuw ingesteld",
+      "reconfigure_failed": "Deze HelloFresh-vermelding kon niet meer worden gevonden",
+      "account_mismatch": "Deze gegevens horen bij een ander HelloFresh-account. Voeg het toe als nieuwe integratievermelding in plaats van deze opnieuw in te stellen."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Volgende wijzigbare bezorgweek overslaan"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Voorbereidingslijst"
       }
     }
   },

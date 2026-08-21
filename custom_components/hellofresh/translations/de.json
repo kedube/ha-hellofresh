@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth-Token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "HelloFresh neu konfigurieren",
+        "description": "Aktualisiere das Land oder die E-Mail-Adresse und das Passwort für diesen HelloFresh-Eintrag. Die Zugangsdaten müssen zu dem Konto gehören, mit dem dieser Eintrag eingerichtet wurde.",
+        "data": {
+          "country": "Land",
+          "username": "E-Mail",
+          "password": "Passwort"
+        }
+      },
+      "reconfigure_token": {
+        "title": "HelloFresh neu konfigurieren",
+        "description": "Aktualisiere das Land oder füge ein neues `apiV2Auth`-Token für diesen HelloFresh-Eintrag ein. Melde dich unter {site_example} an und kopiere den Wert des `apiV2Auth`-Cookies. Das Token muss zu dem Konto gehören, mit dem dieser Eintrag eingerichtet wurde.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-Token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Dieses HelloFresh-Konto ist bereits eingerichtet",
-      "reauth_successful": "HelloFresh wurde erfolgreich neu verbunden"
+      "reauth_successful": "HelloFresh wurde erfolgreich neu verbunden",
+      "reconfigure_successful": "HelloFresh wurde erfolgreich neu konfiguriert",
+      "reconfigure_failed": "Dieser HelloFresh-Eintrag wurde nicht mehr gefunden",
+      "account_mismatch": "Diese Daten gehören zu einem anderen HelloFresh-Konto. Füge es als neuen Integrationseintrag hinzu, statt diesen neu zu konfigurieren."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Nächste änderbare Lieferwoche überspringen"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Vorbereitungsliste"
       }
     }
   },

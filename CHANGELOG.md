@@ -5,6 +5,45 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Added a Prep list (`todo.prep_list`).** A new to-do entity listing the pantry staples the
+  *next delivery's* selected meals need that HelloFresh does **not** ship — salt, oil, butter,
+  eggs — so they can be on hand before the box arrives instead of being discovered mid-recipe.
+  Add it to a **To-do list** card.
+- It is deliberately scoped to **one delivery week**, not a rolling shopping list. That is what
+  makes it tractable: there is no question of whether last week's butter still counts, and no
+  need to sum amounts across weeks. When the next box becomes the anchor week the list is
+  rebuilt and the previous week's check-offs are cleared.
+- The list is a *projection* of the week's selection, so items appear and vanish as meals are
+  swapped; it advertises check-off only (no adding or deleting rows), since user-authored edits
+  would fight every refresh. Check-off state is keyed to ingredient identity rather than list
+  position, so it survives a rebuild. Every item is due on the delivery date.
+- Amounts are **listed, not summed**: `amount`/`unit` are free-form API text, so "1.5 tablespoon"
+  and "2 tbsp" cannot be added without inventing precision. Two recipes needing the same staple
+  show both amounts; identical amounts collapse to an "N x" multiple.
+- The list refreshes on every coordinator poll. `CoordinatorEntity` sets `should_poll = False`
+  and its `_handle_coordinator_update` is synchronous, so neither hook can await the per-recipe
+  detail fetch; the callback is overridden to schedule the rebuild as a task instead.
+- **Fixed a latent `shipped` bug this depends on.** `HelloFreshRecipeDetail` coerced a *missing*
+  `shipped` key to `False`, making it indistinguishable from a genuine pantry staple. The field
+  is now tri-state (`None` = unknown), and the prep list treats only an explicit `False` as
+  "you supply this" — otherwise, in any region that omits the field, the entire box would have
+  been listed as things to go out and buy.
+- **Added a Reconfigure flow.** The integration's entry can now be corrected in place from
+  Settings → Devices & Services → Configure without deleting and re-adding it. Credential
+  entries re-collect email/password, token-only entries re-collect an `apiV2Auth` token, and
+  either can also correct the **country** — previously fixed at setup, so a wrong choice meant
+  starting over.
+- Reconfigure refuses to repoint an entry at a *different* HelloFresh account (`account_mismatch`):
+  the entities, history, and unique ID on disk belong to the original account, so a different one
+  is a new integration entry rather than an edit to this one.
+- All six shipped locales (de, fr, nl, da, no, sv) were translated alongside English.
+- **Declared `"quality_scale": "custom"` in the manifest.** This is the accurate value for a
+  custom integration: Home Assistant's loader reports every custom integration as `custom` at
+  runtime regardless of the manifest, so a tiered claim would be silently ignored. `QUALITY_SCALE.md`
+  now records that the Silver *rules* remain the engineering target even though the badge is
+  reserved for integrations merged into core.
+
 ## 2.73 — 2026-08-20
 - **Fixed past-week browsing in the Market card**, which showed only the last couple of weeks
   while My Menu correctly spanned the configured **Past delivery history (weeks)** window

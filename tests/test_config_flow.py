@@ -182,3 +182,137 @@ def test_reauth_routes_credential_entry_to_confirm_step() -> None:
     result = _run(flow.async_step_reauth({}))
     assert result["type"] == "form"
     assert result["step_id"] == "reauth_confirm"
+
+
+def _make_reconfigure_flow(entry_data: dict, *, mismatch: bool = False):
+    """Build a flow positioned on ``entry_data`` with the reconfigure helpers stubbed."""
+    flow = _make_flow()
+    entry = SimpleNamespace(data=entry_data, options={})
+    flow.hass = SimpleNamespace(  # type: ignore[assignment]
+        config_entries=SimpleNamespace(async_get_entry=lambda _id: entry)
+    )
+    flow.context = {"entry_id": "e1"}  # type: ignore[attr-defined]
+
+    updated: dict = {}
+
+    def async_update_reload_and_abort(target, *, reason, **kwargs):
+        updated.update({"entry": target, "reason": reason, **kwargs})
+        return {"type": "abort", "reason": reason, **kwargs}
+
+    def _abort_if_unique_id_mismatch(*, reason):
+        if mismatch:
+            raise _Aborted(reason)
+
+    flow.async_update_reload_and_abort = async_update_reload_and_abort  # type: ignore[method-assign]
+    flow._abort_if_unique_id_mismatch = _abort_if_unique_id_mismatch  # type: ignore[method-assign]
+    flow._updated = updated  # type: ignore[attr-defined]
+    flow._entry = entry  # type: ignore[attr-defined]
+    return flow
+
+
+class _Aborted(Exception):
+    """Stands in for HA's AbortFlow, which the real helper raises on a unique-id mismatch."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def test_reconfigure_routes_token_entry_to_token_step() -> None:
+    """A token-only entry reconfigures into the token step, not credentials."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "a.b.c"})
+    result = _run(flow.async_step_reconfigure())
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure_token"
+
+
+def test_reconfigure_routes_credential_entry_to_confirm_step() -> None:
+    """A credential entry reconfigures into the username/password step."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com"})
+    result = _run(flow.async_step_reconfigure())
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure_confirm"
+
+
+def test_reconfigure_updates_entry_and_allows_country_change() -> None:
+    """Reconfiguring rewrites credentials and the country, then reloads the entry."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "us", CONF_USERNAME: "old@example.com"})
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        return {"account_id": "acct-1"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    result = _run(
+        flow.async_step_reconfigure_confirm(
+            {CONF_COUNTRY: "uk", CONF_USERNAME: "new@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert flow._updated["data_updates"] == {
+        CONF_USERNAME: "new@example.com",
+        CONF_PASSWORD: "pw",
+        CONF_COUNTRY: "uk",
+    }
+    # The title follows the corrected country.
+    assert flow._updated["title"] == "HelloFresh (UK)"
+
+
+def test_reconfigure_refuses_a_different_account() -> None:
+    """Credentials for another account abort rather than repointing the entry."""
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "us", CONF_USERNAME: "old@example.com"}, mismatch=True
+    )
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        return {"account_id": "somebody-else"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    try:
+        _run(
+            flow.async_step_reconfigure_confirm(
+                {CONF_COUNTRY: "us", CONF_USERNAME: "other@example.com", CONF_PASSWORD: "pw"}
+            )
+        )
+    except _Aborted as err:
+        assert err.reason == "account_mismatch"
+    else:  # pragma: no cover - guard must fire
+        raise AssertionError("expected the mismatch guard to abort the flow")
+
+    # Nothing was written to the entry.
+    assert flow._updated == {}
+
+
+def test_reconfigure_token_step_rejects_unparseable_token() -> None:
+    """Garbage token input re-shows the reconfigure token form with an error."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "a.b.c"})
+    _run(flow.async_step_reconfigure())
+    result = _run(flow.async_step_reconfigure_token({CONF_COUNTRY: "uk", CONF_TOKEN: "  "}))
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure_token"
+    assert result["errors"]["base"] == "invalid_token"
+    assert flow._updated == {}
+
+
+def test_reconfigure_token_step_updates_entry_on_success() -> None:
+    """A valid token paste rewrites the stored tokens for the same account."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "old-token"})
+
+    async def fake_validate_token(country, token_data, errors):
+        return {"account_id": "acct-9"}
+
+    flow._async_validate_token = fake_validate_token  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    result = _run(
+        flow.async_step_reconfigure_token({CONF_COUNTRY: "uk", CONF_TOKEN: "fresh-token"})
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert flow._updated["data_updates"][CONF_ACCESS_TOKEN] == "fresh-token"

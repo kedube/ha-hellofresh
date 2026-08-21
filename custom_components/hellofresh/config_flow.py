@@ -73,6 +73,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the flow."""
         self._reauth_entry: config_entries.ConfigEntry | None = None
+        self._reconfigure_entry: config_entries.ConfigEntry | None = None
         self._selected_country = DEFAULT_COUNTRY
 
     async def async_step_user(self, user_input: dict[str, str] | None = None):
@@ -152,6 +153,128 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
             errors=errors,
         )
+
+    async def async_step_reconfigure(self, user_input: dict[str, str] | None = None):
+        """Handle reconfiguration of an existing entry.
+
+        Unlike reauth (which the integration raises when tokens die, and which keeps the
+        entry's existing auth method), reconfigure is user-initiated and lets the country be
+        corrected as well. Credential entries re-collect username/password; token-only
+        entries re-collect a token, mirroring :meth:`async_step_reauth`.
+        """
+        self._reconfigure_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if self._reconfigure_entry is None:
+            return self.async_abort(reason="reconfigure_failed")
+
+        self._selected_country = self._reconfigure_entry.data.get(CONF_COUNTRY, DEFAULT_COUNTRY)
+        if not self._reconfigure_entry.data.get(CONF_USERNAME):
+            return await self.async_step_reconfigure_token()
+        return await self.async_step_reconfigure_confirm()
+
+    async def async_step_reconfigure_confirm(self, user_input: dict[str, str] | None = None):
+        """Re-collect country + credentials for an existing credential entry."""
+        errors: dict[str, str] = {}
+        entry = self._reconfigure_entry
+        if entry is None:
+            return self.async_abort(reason="reconfigure_failed")
+
+        if user_input is not None:
+            country = user_input[CONF_COUNTRY]
+            self._selected_country = country
+            account = await self._async_validate(
+                user_input[CONF_USERNAME],
+                user_input[CONF_PASSWORD],
+                country,
+                errors,
+                enable_public_menu_fallback=entry.options.get(
+                    CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+                    DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+                ),
+            )
+            if account is not None:
+                await self._async_guard_same_account(country, account)
+                # Credentials live in entry.data only; never write them into options.
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=_entry_data_from_credentials(
+                        user_input[CONF_USERNAME], user_input[CONF_PASSWORD], country
+                    ),
+                    title=f"HelloFresh ({country.upper()})",
+                    reason="reconfigure_successful",
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_COUNTRY, default=self._selected_country): vol.In(
+                        sorted(COUNTRY_BASE_URLS)
+                    ),
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=entry.data.get(CONF_USERNAME, ""),
+                    ): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure_token(self, user_input: dict[str, str] | None = None):
+        """Re-collect country + token for an existing token-only entry."""
+        errors: dict[str, str] = {}
+        entry = self._reconfigure_entry
+        if entry is None:
+            return self.async_abort(reason="reconfigure_failed")
+
+        if user_input is not None:
+            country = user_input[CONF_COUNTRY]
+            self._selected_country = country
+            token_data = token_payload_to_entry_data(user_input.get(CONF_TOKEN))
+            if token_data is None:
+                errors["base"] = "invalid_token"
+            else:
+                account = await self._async_validate_token(country, token_data, errors)
+                if account is not None:
+                    await self._async_guard_same_account(country, account)
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data_updates={CONF_COUNTRY: country, **token_data},
+                        title=f"HelloFresh ({country.upper()})",
+                        reason="reconfigure_successful",
+                    )
+
+        return self.async_show_form(
+            step_id="reconfigure_token",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_COUNTRY, default=self._selected_country): vol.In(
+                        sorted(COUNTRY_BASE_URLS)
+                    ),
+                    vol.Required(CONF_TOKEN): str,
+                }
+            ),
+            description_placeholders={
+                # Hassfest forbids literal URLs in translation strings, so the example
+                # HelloFresh site URL is injected as a placeholder instead.
+                "site_example": COUNTRY_BASE_URLS.get(
+                    self._selected_country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY]
+                ),
+            },
+            errors=errors,
+        )
+
+    async def _async_guard_same_account(self, country: str, account: dict[str, object]) -> None:
+        """Abort unless the re-validated login points at the entry's own account.
+
+        Reconfigure must not silently repoint an entry at a different HelloFresh account: the
+        entities, history, and unique ID already on disk belong to the original one. A
+        genuinely different account is a new config entry, not an edit to this one. Raises
+        HA's ``AbortFlow`` via ``_abort_if_unique_id_mismatch``; it never returns a result.
+        """
+        account_id = account.get("account_id") or account.get("subscription_id")
+        await self.async_set_unique_id(f"{country}::{account_id}")
+        self._abort_if_unique_id_mismatch(reason="account_mismatch")
 
     async def async_step_reauth(self, entry_data: dict[str, str]):
         """Handle reauth flow start.

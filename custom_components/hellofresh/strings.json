@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Reconfigure HelloFresh",
+        "description": "Update the country or account email and password for this HelloFresh entry. The credentials must belong to the account this entry was set up with.",
+        "data": {
+          "country": "Country",
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reconfigure_token": {
+        "title": "Reconfigure HelloFresh",
+        "description": "Update the country or paste a fresh apiV2Auth token for this HelloFresh entry. Sign in at {site_example}, then copy the apiV2Auth cookie value. The token must belong to the account this entry was set up with.",
+        "data": {
+          "country": "Country",
+          "token": "Token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "This HelloFresh account is already configured",
-      "reauth_successful": "HelloFresh was reconnected successfully"
+      "reauth_successful": "HelloFresh was reconnected successfully",
+      "reconfigure_successful": "HelloFresh was reconfigured successfully",
+      "reconfigure_failed": "That HelloFresh entry could no longer be found",
+      "account_mismatch": "Those details are for a different HelloFresh account. Add it as a new integration entry instead of reconfiguring this one."
     }
   },
   "options": {
@@ -253,6 +273,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Skip next selectable delivery week"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Prep list"
       }
     }
   },

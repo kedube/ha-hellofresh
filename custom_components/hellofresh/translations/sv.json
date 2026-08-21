@@ -40,6 +40,23 @@
         "data": {
           "token": "apiV2Auth-token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Konfigurera om HelloFresh",
+        "description": "Uppdatera landet eller e-postadressen och lösenordet för den här HelloFresh-posten. Inloggningsuppgifterna måste tillhöra kontot som posten skapades med.",
+        "data": {
+          "country": "Land",
+          "username": "E-post",
+          "password": "Lösenord"
+        }
+      },
+      "reconfigure_token": {
+        "title": "Konfigurera om HelloFresh",
+        "description": "Uppdatera landet eller klistra in en ny `apiV2Auth`-token för den här HelloFresh-posten. Logga in på {site_example} och kopiera värdet för `apiV2Auth`-kakan. Token måste tillhöra kontot som posten skapades med.",
+        "data": {
+          "country": "Land",
+          "token": "apiV2Auth-token"
+        }
       }
     },
     "error": {
@@ -49,7 +66,10 @@
     },
     "abort": {
       "already_configured": "Detta HelloFresh-konto är redan konfigurerat",
-      "reauth_successful": "HelloFresh anslöts igen"
+      "reauth_successful": "HelloFresh anslöts igen",
+      "reconfigure_successful": "HelloFresh konfigurerades om",
+      "reconfigure_failed": "Den här HelloFresh-posten kunde inte längre hittas",
+      "account_mismatch": "De här uppgifterna tillhör ett annat HelloFresh-konto. Lägg till det som en ny integrationspost i stället för att konfigurera om den här."
     }
   },
   "options": {
@@ -271,6 +291,11 @@
     "switch": {
       "skip_next_modifiable_week": {
         "name": "Hoppa över nästa ändringsbara leveransvecka"
+      }
+    },
+    "todo": {
+      "prep_list": {
+        "name": "Förberedelselista"
       }
     }
   },
