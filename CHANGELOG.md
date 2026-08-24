@@ -5,6 +5,23 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed `sensor.tracked_shipment_estimate` showing the wrong day.** The carrier reports its
+  estimate as midnight *UTC* of the estimated day (`est_delivery_time: 2026-08-24T00:00:00Z`),
+  but the entity was registered as a `TIMESTAMP`, so Home Assistant rendered it in the viewer's
+  zone — a US-Eastern user saw **"Aug 23 @ 8:00 PM"** for a box the carrier estimated for
+  **Aug 24**: the wrong day, and a time of day the carrier never promised. It is now a `DATE`
+  entity reporting the estimated day, with the calendar day read in UTC (converting to local
+  first would just relocate the same off-by-one). The result is now identical in every
+  timezone — verified from Auckland to Honolulu — because HA serializes a `DATE` state as a
+  bare ISO day with no viewer-side conversion. HelloFresh's own date fields were never
+  affected: they use a scheduled **noon** anchor, which survives ±12h of shifting.
+- Verified against a live out-for-delivery capture: `sensor.shipment_tracking_status` parses
+  `out_for_delivery` correctly and humanizes to "Out for delivery". A status that lags the
+  website is the **poll interval**, not a parse bug — the box flipped status at 17:55 UTC and
+  the default `refresh_interval_minutes` is 180. Lower it, or call `hellofresh.refresh_data`,
+  to tighten delivery-day tracking.
+
 ## 2.86 — 2026-08-21
 - **Fixed blocking I/O on the event loop during setup** (HACS review). `frontend.py` checked for
   the card file with a synchronous `Path.is_file()` inside a coroutine, which stalls Home

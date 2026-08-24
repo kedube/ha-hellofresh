@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from .models import HelloFreshAccountData
@@ -85,6 +85,23 @@ def _next_order_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
     return lambda data: getattr(data.next_order, attr) if data.next_order else None
 
 
+def _estimated_delivery_date(data: HelloFreshAccountData) -> date | None:
+    """Return the carrier's estimated delivery **day**.
+
+    ``est_delivery_time`` is midnight *UTC* of the estimated day — a date carried in a
+    timestamp field, not a real time-of-day. The calendar day must therefore be read in UTC:
+    converting to local time first would move `2026-08-24T00:00:00Z` back to Aug 23 for any
+    viewer west of UTC, which is exactly the off-by-one this sensor used to display.
+    """
+    order = data.tracked_order
+    if order is None or order.estimated_delivery is None:
+        return None
+    estimated = order.estimated_delivery
+    if estimated.tzinfo is not None:
+        estimated = estimated.astimezone(UTC)
+    return estimated.date()
+
+
 def _tracked_order_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
     return lambda data: getattr(data.tracked_order, attr) if data.tracked_order else None
 
@@ -115,7 +132,7 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "shipment_tracking_status": _tracked_order_value("tracking_status"),
     "shipment_tracking_number": _tracked_order_value("tracking_number"),
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
-    "tracked_shipment_estimate": _tracked_order_value("estimated_delivery"),
+    "tracked_shipment_estimate": lambda data: _estimated_delivery_date(data),
     # The moment the box actually arrived, from the newest DELIVERED week's carrier timestamp.
     # Distinct from `last_delivery_date`, which reports that week's SCHEDULED day: a box handed
     # over at 22:53 ET is already the next day in UTC, so the two legitimately disagree.
