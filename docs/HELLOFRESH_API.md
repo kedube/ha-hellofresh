@@ -1326,6 +1326,24 @@ Carrier names are not inferred from `tracking_link_type`. In practice, the most 
 
 #### SCM shipment tracking (carrier detail)
 
+> **`est_delivery_time` is a DATE, not a time.** It is always midnight **UTC** of the estimated
+> day (`2026-08-24T00:00:00Z`), never a real time of day — confirmed across captures 41 and 47.
+> Any consumer must take the calendar day *in UTC*; rendering it as a timestamp shows the
+> previous evening to anyone west of UTC. `sensor.tracked_shipment_estimate` is therefore a
+> `DATE` entity, and HA serializes a date as a bare `isoformat()` with no timezone maths — so
+> every viewer worldwide sees the same day.
+>
+> **Contrast HelloFresh's own dates, which are safe.** `deliveryDate` is a scheduled **noon**
+> anchor carrying a real offset (`2026-08-24T12:00:00-0700`), and `cutoffDate` is a genuine
+> instant (`23:59:59-0700`). A noon anchor survives ±12h of timezone shifting without changing
+> the calendar day, which is why only the carrier's midnight-anchored `est_delivery_time` was
+> ever at risk.
+>
+> **There is no delivery time window anywhere in the API.** HelloFresh's own push notifications
+> quote a narrow window (e.g. 6:25–9:25 PM), but that originates with the carrier — capture 47
+> shows the tracking page contacts no carrier host at all, only linking out to
+> `track.shipveho.com`. The window is not obtainable from any `/gw/` endpoint.
+
 **Confirmed against live traffic.** The only source of carrier information anywhere in the API.
 
 | Purpose | Method | Path | Params |

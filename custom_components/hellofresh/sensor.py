@@ -184,7 +184,11 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="tracked_shipment_estimate",
         translation_key="tracked_shipment_estimate",
-        device_class=SensorDeviceClass.TIMESTAMP,
+        # DATE, not TIMESTAMP. The carrier reports midnight-UTC of the estimated *day*
+        # (`est_delivery_time: 2026-08-24T00:00:00Z`), so rendering it as a timestamp showed
+        # "Aug 23 @ 8:00 PM" to a US-Eastern viewer -- the wrong day, and an 8pm time the
+        # carrier never promised. The value is date-precision, so the entity says so.
+        device_class=SensorDeviceClass.DATE,
         icon="mdi:truck-clock-outline",
     ),
     SensorEntityDescription(

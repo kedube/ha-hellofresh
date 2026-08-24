@@ -128,20 +128,37 @@ def test_a_missing_estimate_does_not_clear_a_previously_known_one() -> None:
 # --- the sensor ----------------------------------------------------------------------
 
 
-def test_sensor_is_registered_as_a_timestamp() -> None:
+def test_sensor_is_registered_as_a_date_not_a_timestamp() -> None:
+    """The estimate is date-precision, so the entity must declare DATE.
+
+    Registered as TIMESTAMP it rendered midnight-UTC in the viewer's zone: a US-Eastern user
+    saw "Aug 23 @ 8:00 PM" for a box the carrier estimated for Aug 24 — both the wrong day and
+    a time of day the carrier never gave.
+    """
     from homeassistant.components.sensor import SensorDeviceClass
 
     description = next(d for d in SENSORS if d.key == "tracked_shipment_estimate")
-    assert description.device_class == SensorDeviceClass.TIMESTAMP
+    assert description.device_class == SensorDeviceClass.DATE
     assert description.translation_key == "tracked_shipment_estimate"
 
 
-def test_sensor_reports_the_tracked_orders_estimate() -> None:
+def test_sensor_reports_the_estimated_day() -> None:
     data = HelloFreshAccountData(orders=[_apply(CAPTURED_BOX)]).finalize()
     assert data.tracked_order is not None
-    assert sensor_native_value("tracked_shipment_estimate", data, "https://x") == datetime(
-        2026, 8, 17, 0, 0, tzinfo=UTC
-    )
+    assert sensor_native_value("tracked_shipment_estimate", data, "https://x") == date(2026, 8, 17)
+
+
+def test_estimated_day_is_read_in_utc_not_local_time() -> None:
+    """The calendar day must come from the UTC instant, not the viewer's zone.
+
+    ``est_delivery_time`` is midnight *UTC* of the estimated day. Converting to local time
+    before taking ``.date()`` would move it back a day for anyone west of UTC — the same
+    off-by-one, just relocated.
+    """
+    order = _order(estimated_delivery=datetime(2026, 8, 24, 0, 0, tzinfo=UTC))
+    order.tracking_number = "HF01000042879712"
+    data = HelloFreshAccountData(orders=[order]).finalize()
+    assert sensor_native_value("tracked_shipment_estimate", data, "https://x") == date(2026, 8, 24)
 
 
 def test_sensor_is_none_without_a_tracked_order() -> None:
@@ -152,3 +169,100 @@ def test_sensor_is_none_without_a_tracked_order() -> None:
 
 def test_estimate_is_serialized_in_order_attributes() -> None:
     assert _apply(CAPTURED_BOX).as_dict()["estimated_delivery"] == "2026-08-17T00:00:00+00:00"
+
+
+def test_capture_47_out_for_delivery_box_reports_the_right_day_and_status() -> None:
+    """Regression from capture 47 (a live out-for-delivery box, 2026-08-24).
+
+    Both sensors were reported wrong against this exact box: the status showed "In transit"
+    while the website said "Out for delivery", and the estimate showed "Aug 23 @ 8:00 PM" for
+    a box arriving Aug 24. The status turned out to be correct-but-stale (the box flipped at
+    17:55 UTC and the default poll is 3h); the estimate was a real bug, fixed by declaring the
+    entity DATE.
+    """
+    box = {
+        "external_id": "H4237862550",
+        "carrier": "VEHO",
+        "delivery_date": "2026-08-24T12:00:00Z",
+        "tracking_code": "HF01000042879712",
+        "public_url": "https://track.shipveho.com/#/trackingId/HF01000042879712",
+        "internal_status": "out_for_delivery",
+        "last_status": {
+            "status": "out_for_delivery",
+            "datetime": "2026-08-24T17:55:43Z",
+            "est_delivery_time": "2026-08-24T00:00:00Z",
+        },
+        "statuses": [
+            {"status": "out_for_delivery", "est_delivery_time": "2026-08-24T00:00:00Z"},
+            {"status": "in_transit", "est_delivery_time": "2026-08-24T00:00:00Z"},
+        ],
+    }
+    details = extract_scm_tracking_details(box)
+    assert details["tracking_status"] == "out_for_delivery"
+    assert details["estimated_delivery"] == "2026-08-24T00:00:00Z"
+
+    order = _order(estimated_delivery=None)
+    order.delivery_date = date(2026, 8, 24)
+    client = HelloFreshClient(session=object())  # type: ignore[arg-type]
+    client._apply_tracking_boxes_to_orders([order], [box])
+    data = HelloFreshAccountData(orders=[order]).finalize()
+
+    # The estimated DAY, not an invented 8pm on the previous day.
+    assert sensor_native_value("tracked_shipment_estimate", data, "https://x") == date(2026, 8, 24)
+    # And the status the website showed.
+    assert sensor_native_value("shipment_tracking_status", data, "https://x") == (
+        "Out for delivery"
+    )
+
+
+def test_estimated_day_is_the_same_in_every_timezone() -> None:
+    """The estimate must name the same calendar day for every viewer.
+
+    ``est_delivery_time`` is midnight UTC of the estimated day, so an instant that is "Aug 24"
+    in UTC is still "Aug 23 evening" in the Americas. Taking the day in UTC is what keeps the
+    answer identical worldwide; a local conversion would report Aug 23 for every US zone while
+    Europe and Asia-Pacific saw Aug 24 — the same box, two different answers.
+    """
+    from zoneinfo import ZoneInfo
+
+    order = _order(estimated_delivery=datetime(2026, 8, 24, 0, 0, tzinfo=UTC))
+    order.tracking_number = "HF01000042879712"
+    data = HelloFreshAccountData(orders=[order]).finalize()
+
+    for tz_name in (
+        "Pacific/Auckland",
+        "Asia/Tokyo",
+        "Europe/Berlin",
+        "UTC",
+        "America/New_York",
+        "America/Los_Angeles",
+        "Pacific/Honolulu",
+    ):
+        # The helper must not consult local time at all; passing an offset-aware value in a
+        # different zone must not move the reported day.
+        shifted = order.estimated_delivery.astimezone(ZoneInfo(tz_name))
+        order.estimated_delivery = shifted
+        data = HelloFreshAccountData(orders=[order]).finalize()
+        assert sensor_native_value("tracked_shipment_estimate", data, "https://x") == date(
+            2026, 8, 24
+        ), f"wrong day when the value arrives as {tz_name}"
+
+
+def test_date_sensors_are_not_re_localized_by_home_assistant() -> None:
+    """A DATE sensor's state is the bare ISO day, so no viewer-side shift can occur.
+
+    This is why DATE is the right class here rather than TIMESTAMP with a noon anchor: HA
+    serializes a date as ``value.isoformat()`` with no timezone maths, whereas a timestamp is
+    converted to UTC and re-rendered in each viewer's zone.
+    """
+    from homeassistant.components.sensor import SensorDeviceClass
+
+    description = next(d for d in SENSORS if d.key == "tracked_shipment_estimate")
+    assert description.device_class is SensorDeviceClass.DATE
+
+    order = _order(estimated_delivery=datetime(2026, 8, 24, 0, 0, tzinfo=UTC))
+    order.tracking_number = "HF01000042879712"
+    data = HelloFreshAccountData(orders=[order]).finalize()
+    value = sensor_native_value("tracked_shipment_estimate", data, "https://x")
+    assert isinstance(value, date) and not isinstance(value, datetime)
+    assert value.isoformat() == "2026-08-24"
