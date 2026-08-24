@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.87 — 2026-08-24
 - **Fixed `sensor.tracked_shipment_estimate` showing the wrong day.** The carrier reports its
   estimate as midnight *UTC* of the estimated day (`est_delivery_time: 2026-08-24T00:00:00Z`),
   but the entity was registered as a `TIMESTAMP`, so Home Assistant rendered it in the viewer's
