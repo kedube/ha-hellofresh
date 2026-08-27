@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.88 — 2026-08-27
 - Fixed the prep-list test suite failing from 2026-08-25 onward (16 CI failures, no
   runtime impact): the todo fixtures used fixed delivery-date literals that fell behind
   `_all_covered_weeks`' `delivery_date >= today` filter once the anchor date passed.
