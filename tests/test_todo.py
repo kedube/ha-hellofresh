@@ -16,7 +16,7 @@ implementation quietly does the wrong thing:
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 from homeassistant.components.todo import TodoItem, TodoItemStatus
@@ -26,6 +26,15 @@ from custom_components.hellofresh.todo import (
     _format_amounts,
     _unit_key,
 )
+
+# Delivery dates are anchored to ``today`` so the ``delivery_date >= today`` filter in
+# ``_all_covered_weeks`` stays deterministic regardless of when the suite runs — the
+# original fixed literals (2026-08-25 et al.) started failing the day the anchor date
+# passed. Same convention as ``tests/test_entities.py``.
+TODAY = date.today()
+DELIVERY_1 = TODAY + timedelta(days=2)
+DELIVERY_2 = DELIVERY_1 + timedelta(days=7)
+DELIVERY_3 = DELIVERY_1 + timedelta(days=14)
 
 
 def _run(coro):
@@ -46,7 +55,7 @@ def _recipe(recipe_id: str, *, selected: bool = True) -> SimpleNamespace:
 def _week(
     week_id: str,
     recipes: list,
-    delivery: date | None = date(2026, 8, 25),
+    delivery: date | None = DELIVERY_1,
     *,
     is_skipped: bool = False,
 ) -> SimpleNamespace:
@@ -371,11 +380,11 @@ def test_new_week_clears_last_weeks_check_offs() -> None:
 
 def test_items_are_due_on_the_delivery_date() -> None:
     """The deadline for having staples on hand is the day the box lands."""
-    week = _week("2026-W35", [_recipe("r1")], delivery=date(2026, 8, 25))
+    week = _week("2026-W35", [_recipe("r1")], delivery=DELIVERY_1)
     entity = _make_entity(week, {"r1": _detail([{"name": "Salt", "shipped": False}])})
     _run(entity._async_rebuild())
 
-    assert entity.todo_items[0].due == date(2026, 8, 25)
+    assert entity.todo_items[0].due == DELIVERY_1
 
 
 def test_no_upcoming_week_yields_an_empty_list() -> None:
@@ -439,8 +448,8 @@ def test_each_entity_covers_exactly_one_week() -> None:
     They are separate entities precisely so a dashboard can give each week its own card and
     heading — HA's to-do card renders one entity, so a combined list could only ever be flat.
     """
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
     details = {
         "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}]),
         "r2": _detail([{"name": "Salt", "shipped": False}]),
@@ -454,14 +463,14 @@ def test_each_entity_covers_exactly_one_week() -> None:
     assert [i.uid for i in current.todo_items] == ["2026-W35:butter"]
     assert [i.uid for i in following.todo_items] == ["2026-W36:salt"]
     # Neither list leaks the other week's items.
-    assert current.todo_items[0].due == date(2026, 8, 25)
-    assert following.todo_items[0].due == date(2026, 9, 1)
+    assert current.todo_items[0].due == DELIVERY_1
+    assert following.todo_items[0].due == DELIVERY_2
 
 
 def test_a_staple_needed_in_both_weeks_is_not_merged() -> None:
     """Each week reports its own total; amounts are never summed across weeks."""
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
     details = {
         "r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tablespoon"}]),
         "r2": _detail([{"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"}]),
@@ -478,9 +487,9 @@ def test_a_staple_needed_in_both_weeks_is_not_merged() -> None:
 
 def test_skipped_weeks_are_never_covered() -> None:
     """A skipped box ships nothing, so coverage moves past it."""
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    skipped = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1), is_skipped=True)
-    w3 = _week("2026-W37", [_recipe("r3")], date(2026, 9, 8))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    skipped = _week("2026-W36", [_recipe("r2")], DELIVERY_2, is_skipped=True)
+    w3 = _week("2026-W37", [_recipe("r3")], DELIVERY_3)
     details = {
         "r1": _detail([{"name": "Salt", "shipped": False}]),
         "r3": _detail([{"name": "Pepper", "shipped": False}]),
@@ -499,8 +508,8 @@ def test_a_week_keeps_its_ticks_when_it_shifts_slot() -> None:
     Ticks are keyed to the week id rather than the slot, so the week that was "following"
     arrives in the current slot with everything already bought still ticked.
     """
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
     details = {
         "r1": _detail([{"name": "Salt", "shipped": False}]),
         "r2": _detail([{"name": "Pepper", "shipped": False}]),
@@ -528,7 +537,7 @@ def test_a_week_keeps_its_ticks_when_it_shifts_slot() -> None:
 
 def test_slot_beyond_the_covered_weeks_is_empty() -> None:
     """With only one box on its way, the following-week list is simply empty."""
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
     entity = _make_entity(
         w1, {"r1": _detail([{"name": "Salt", "shipped": False}])}, weeks=[w1], slot=1
     )
@@ -539,15 +548,15 @@ def test_slot_beyond_the_covered_weeks_is_empty() -> None:
 
 def test_attributes_name_the_delivery_the_list_belongs_to() -> None:
     """A dashboard heading needs the date, which the entity name does not carry."""
-    w1 = _week("2026-W35", [_recipe("r1")], date(2026, 8, 25))
-    w2 = _week("2026-W36", [_recipe("r2")], date(2026, 9, 1))
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
     details = {"r1": _detail([]), "r2": _detail([])}
 
     current = _make_entity(w1, details, weeks=[w1, w2], slot=0)
     following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
 
-    assert current.extra_state_attributes["delivery_date"] == "2026-08-25"
-    assert following.extra_state_attributes["delivery_date"] == "2026-09-01"
+    assert current.extra_state_attributes["delivery_date"] == DELIVERY_1.isoformat()
+    assert following.extra_state_attributes["delivery_date"] == DELIVERY_2.isoformat()
     assert following.extra_state_attributes["week_id"] == "2026-W36"
 
 
