@@ -262,6 +262,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Temps restant du jeton de rafraîchissement"
+      },
+      "delivery_tracking_phase": {
+        "name": "Phase de livraison"
+      },
+      "delivery_tracking_eta": {
+        "name": "Heure d'arrivée estimée"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Arrêts de livraison avant vous"
+      },
+      "delivery_tracking_driver": {
+        "name": "Livreur"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Obtenir les options de livraison",
       "description": "Renvoie les jours de livraison sélectionnables de la formule (jour de la semaine, nom, prix et celui actuellement par défaut) — le sélecteur complet utilisé par le site. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Obtenir le suivi de livraison",
+      "description": "Renvoie l'instantané de suivi en direct du dernier kilomètre (phase, nom et position GPS du livreur, arrêts avant vous, heure d'arrivée à la minute près) depuis le traqueur de la flotte de livraison de HelloFresh. Disponible uniquement dans les pays où HelloFresh livre avec sa propre flotte (actuellement les Pays-Bas) ; ailleurs la réponse l'indique comme indisponible. Lecture seule ; renvoie une réponse.",
       "fields": {
         "config_entry_id": {
           "name": "Identifiant de configuration",

@@ -4,7 +4,7 @@
 # A ready-to-use dashboard built entirely from entities and cards this integration
 # provides. No HACS frontend add-ons required.
 #
-# Seven views:
+# Eight views:
 #   • My Menu      — browse & edit each week's meal selection (meal-planner card)
 #   • Market       — browse & order HelloFresh Market add-ons (market card)
 #   • All Recipes  — browse the ~10,000-recipe public catalog (recipes card)
@@ -13,6 +13,11 @@
 #                    (built-in to-do card over `todo.<prefix>_prep_list`)
 #   • Schedule     — delivery calendar + timeline, account overview, and running cost
 #                    (schedule + subscription + cost cards, sections grid layout)
+#   • Tracking     — live last-mile delivery tracking (delivery-tracking card + map).
+#                    NETHERLANDS ONLY: the tracker rides HelloFresh's own delivery fleet
+#                    (hftrack.nl), which exists only where HelloFresh drives its own vans.
+#                    Accounts elsewhere get a "not available in your region" notice —
+#                    delete this view if that applies to you.
 #   • Diagnostics  — token expiry & integration health as tile cards, manual refresh
 #
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -131,6 +136,43 @@ views:
             logo: true
             grid_options:
               columns: full
+  # Live last-mile tracking — NETHERLANDS ONLY. The delivery-tracking card and its sensors
+  # ride HelloFresh's own delivery-fleet tracker (hftrack.nl), which only exists where
+  # HelloFresh drives its own vans. On other accounts the card shows a "not available in
+  # your region" notice and the tracking sensors are not created at all — delete this view
+  # (and this comment) if that's you. Remember the prefix find/replace: an NL account's
+  # entities are typically `sensor.hellofresh_nl_…`.
+  - title: Tracking
+    path: tracking
+    icon: mdi:truck-delivery
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: custom:hellofresh-delivery-tracking-card
+            title: Delivery Tracking
+            logo: true
+            grid_options:
+              columns: full
+      - type: grid
+        cards:
+          # The driver sensor carries bare latitude/longitude attributes while the van is on
+          # the road, so the built-in map card can plot it against home. Outside an active
+          # delivery the sensor is Unknown and the map just shows home.
+          - type: heading
+            heading: Driver location
+          - type: map
+            entities:
+              - entity: sensor.hellofresh_us_delivery_tracking_driver
+              - entity: zone.home
+            default_zoom: 12
+          - type: tile
+            entity: sensor.hellofresh_us_delivery_tracking_eta
+            name: Estimated arrival
+          - type: tile
+            entity: sensor.hellofresh_us_delivery_tracking_stops_before
+            name: Stops before you
   - title: Diagnostics
     path: diagnostics
     icon: mdi:stethoscope

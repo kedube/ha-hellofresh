@@ -262,6 +262,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Gjenstående tid for fornyelsestoken"
+      },
+      "delivery_tracking_phase": {
+        "name": "Leveringsfase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Forventet ankomsttid"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Leveringsstopp før deg"
+      },
+      "delivery_tracking_driver": {
+        "name": "Leveringssjåfør"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Hent leveringsalternativer",
       "description": "Returnerer abonnementets valgbare leveringsdager (ukedag, navn, pris og hvilken som er standard nå) — hele leveringsdagsvelgeren nettstedet bruker. Kun lesing; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Hent leveringssporing",
+      "description": "Returnerer sanntidsbildet av leveringssporingen (fase, sjåførens navn og GPS-posisjon, stopp før deg, ankomsttid på minuttet) fra HelloFreshs egen leveringsflåte-sporer. Bare tilgjengelig i land der HelloFresh leverer med egen flåte (for øyeblikket Nederland); andre steder melder svaret at det er utilgjengelig. Skrivebeskyttet; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",

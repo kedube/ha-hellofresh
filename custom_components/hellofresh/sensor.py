@@ -17,6 +17,7 @@ from .const import DOMAIN
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .sensor_helpers import (
+    humanize_status,
     sensor_extra_state_attributes,
     sensor_icon,
     sensor_native_value,
@@ -24,6 +25,7 @@ from .sensor_helpers import (
     token_minutes_remaining,
     token_seconds_remaining,
 )
+from .tracey import HelloFreshTraceyCoordinator
 
 _MONETARY_DEVICE_CLASS = getattr(SensorDeviceClass, "MONETARY", None)
 
@@ -301,6 +303,35 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
 )
 
 
+# Live last-mile tracking sensors, backed by the separate Tracey coordinator. Created ONLY
+# for accounts in TRACEY_COUNTRIES (the coordinator is None elsewhere — the underlying
+# hftrack.nl data does not exist outside HelloFresh's own-fleet markets). All report
+# Unknown outside an active delivery window rather than carrying stale values.
+TRACEY_SENSORS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="delivery_tracking_phase",
+        translation_key="delivery_tracking_phase",
+        icon="mdi:truck-delivery-outline",
+    ),
+    SensorEntityDescription(
+        key="delivery_tracking_eta",
+        translation_key="delivery_tracking_eta",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:clock-outline",
+    ),
+    SensorEntityDescription(
+        key="delivery_tracking_stops_before",
+        translation_key="delivery_tracking_stops_before",
+        icon="mdi:map-marker-path",
+    ),
+    SensorEntityDescription(
+        key="delivery_tracking_driver",
+        translation_key="delivery_tracking_driver",
+        icon="mdi:truck-fast",
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -308,7 +339,15 @@ async def async_setup_entry(
 ) -> None:
     """Set up HelloFresh sensors."""
     coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(HelloFreshSensor(coordinator, description) for description in SENSORS)
+    entities: list[SensorEntity] = [
+        HelloFreshSensor(coordinator, description) for description in SENSORS
+    ]
+    if coordinator.tracey is not None:
+        entities.extend(
+            HelloFreshTraceySensor(coordinator.tracey, description)
+            for description in TRACEY_SENSORS
+        )
+    async_add_entities(entities)
 
 
 class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
@@ -388,3 +427,73 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
             self.entity_description.key,
             self.coordinator.data,
         )
+
+
+class HelloFreshTraceySensor(HelloFreshCoordinatorEntity, SensorEntity):
+    """Live last-mile tracking sensor, driven by the fast Tracey coordinator.
+
+    Reuses the shared entity base (device grouping, pinned entity ids) — the Tracey
+    coordinator exposes the same ``config_entry`` attribute the base reads. All values
+    come from the coordinator's TraceyData snapshot and are None (Unknown) whenever no
+    delivery is actively trackable.
+    """
+
+    def __init__(
+        self,
+        coordinator: HelloFreshTraceyCoordinator,
+        description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the tracking sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+
+    @property
+    def native_value(self):
+        """Return the sensor value from the latest tracking snapshot."""
+        data = self.coordinator.data
+        if data is None or not data.active:
+            return None
+        key = self.entity_description.key
+        if key == "delivery_tracking_phase":
+            # Sentence-cased like the other status sensors ("ON_THE_WAY" -> "On the way");
+            # the raw phase constant stays available as an attribute for automations.
+            return humanize_status(data.phase)
+        if key == "delivery_tracking_eta":
+            return data.eta
+        if key == "delivery_tracking_stops_before":
+            return data.stops_before
+        if key == "delivery_tracking_driver":
+            return data.driver_name
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """Return tracking detail attributes."""
+        data = self.coordinator.data
+        if data is None:
+            return None
+        key = self.entity_description.key
+        if key == "delivery_tracking_phase":
+            return {
+                "phase": data.phase,
+                "active": data.active,
+                "tracking_link_present": data.token_present,
+                "personal_customer_message": data.message,
+                "delivery_time": data.delivery_time,
+                "driver_name": data.driver_name,
+                "amount_of_stops_before": data.stops_before,
+                "driver_location": data.driver_location,
+                "customer_location": data.customer_location,
+                "tracking_url": data.tracking_url,
+                "last_fetched": data.fetched_at.isoformat() if data.fetched_at else None,
+            }
+        if key == "delivery_tracking_driver" and data.driver_location:
+            # Bare latitude/longitude attributes make the driver plottable on Home
+            # Assistant's built-in map card, exactly like the community template sensor.
+            return {
+                "latitude": data.driver_location["latitude"],
+                "longitude": data.driver_location["longitude"],
+            }
+        return None

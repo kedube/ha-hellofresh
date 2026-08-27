@@ -262,6 +262,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Verbleibende Zeit des Refresh-Tokens"
+      },
+      "delivery_tracking_phase": {
+        "name": "Lieferphase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Voraussichtliche Ankunftszeit"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Lieferstopps vor Ihnen"
+      },
+      "delivery_tracking_driver": {
+        "name": "Lieferfahrer"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Lieferoptionen abrufen",
       "description": "Gibt die wählbaren Liefertage des Plans zurück (Wochentag, Name, Preis und welcher aktuell voreingestellt ist) — die vollständige Liefertagsauswahl der Website. Nur lesend; liefert eine Antwort.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Lieferverfolgung abrufen",
+      "description": "Gibt die Live-Momentaufnahme der Zustellung zurück (Phase, Name und GPS-Position des Fahrers, Stopps vor Ihnen, minutengenaue Ankunftszeit) aus HelloFreshs eigenem Lieferflotten-Tracker. Nur in Ländern verfügbar, in denen HelloFresh mit eigener Flotte liefert (derzeit die Niederlande); andernorts meldet die Antwort die Funktion als nicht verfügbar. Nur lesend; gibt eine Antwort zurück.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",

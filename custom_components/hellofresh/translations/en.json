@@ -244,6 +244,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Refresh token time remaining"
+      },
+      "delivery_tracking_phase": {
+        "name": "Delivery tracking phase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Delivery ETA"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Delivery stops before you"
+      },
+      "delivery_tracking_driver": {
+        "name": "Delivery driver"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Get delivery options",
       "description": "Return the plan's selectable delivery days (weekday, name, price, and which is the current default) — the full delivery-day picker the website uses. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Get delivery tracking",
+      "description": "Return the live last-mile tracking snapshot (phase, driver name and GPS position, stops before you, minute-precision ETA) from HelloFresh's own delivery-fleet tracker. Only available in countries where HelloFresh runs its own fleet (currently the Netherlands); elsewhere the response reports it as unavailable. Read-only; returns a response.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",

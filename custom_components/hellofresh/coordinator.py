@@ -83,6 +83,11 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         self.client = client
         self.config_entry = config_entry
         self._cancel_token_refresh = None
+        # Live last-mile tracking (tracey.HelloFreshTraceyCoordinator), mounted by setup
+        # only for countries in TRACEY_COUNTRIES; None everywhere else. Held here so the
+        # sensor platform and the get_delivery_tracking service can reach it without a
+        # second hass.data map.
+        self.tracey = None
         # Memoized get_weeks serialization, keyed by the data object it was built from.
         # Each poll assigns a fresh HelloFreshAccountData, so a new object is a cache miss;
         # multiple cards calling get_weeks within one poll cycle reuse one build. The key

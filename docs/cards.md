@@ -1,6 +1,6 @@
 # Card reference
 
-The integration packages seven Lovelace cards. They are **registered automatically** — no manual
+The integration packages eight Lovelace cards. They are **registered automatically** — no manual
 resource entry, no HACS frontend add-on — and each reads its data on demand from the integration's
 services rather than from entity attributes, so they show detail (full menus, images, per-item
 prices) that would never fit in a sensor.
@@ -22,6 +22,7 @@ For the ready-made dashboard that assembles these, see
 | [Schedule](#schedule-card) | `custom:hellofresh-schedule-card` | Next-box summary, delivery calendar, per-week timeline |
 | [Subscription](#subscription-card) | `custom:hellofresh-subscription-card` | Condensed account overview |
 | [Cost](#cost-card) | `custom:hellofresh-cost-card` | Spending total with a monthly chart |
+| [Delivery tracking](#delivery-tracking-card) | `custom:hellofresh-delivery-tracking-card` | Live last-mile box tracking — **Netherlands accounts only** |
 
 ## Common options
 
@@ -214,3 +215,24 @@ What it does:
 - **Stays current on its own** — re-fetches on a periodic interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view. Read-only.
 
 Place it on the Schedule tab alongside the subscription card (the example dashboard does this).
+
+## Delivery tracking card
+
+**`custom:hellofresh-delivery-tracking-card`** tracks the box on the road, live: which phase the delivery is in (box packed → on the way → delivered), the minute-precision ETA, how many stops the driver still has before you, the driver's name, and HelloFresh's personal delivery message, with a link to the official live map.
+
+> **Netherlands accounts only.** The card rides HelloFresh's own delivery-fleet tracker (the Tracey stack behind `hftrack.nl`), which only exists in markets where HelloFresh drives its own vans — currently confirmed for the Netherlands. On accounts in other countries the card shows a "not available in your region" notice (or renders nothing with `hide_if_unavailable: true`), and the [tracking sensors](entities.md#live-delivery-tracking-netherlands) are not created at all. Boxes delivered by third-party carriers get the coarser shipment status on the [Schedule card](#schedule-card) instead.
+
+```yaml
+type: custom:hellofresh-delivery-tracking-card
+# hide_if_unavailable: false  # render nothing (instead of a notice) outside supported countries
+```
+
+What it does:
+
+- **Phase timeline** — Box packed → On the way → Delivered, lit to the current phase. A **delayed** delivery keeps the timeline and adds an amber banner; a **cancelled** one gets a red banner.
+- **Live details** — estimated arrival time (with the day added only if it isn't today), **stops before you**, driver name, and the delivery window, each shown only when the tracker reports it.
+- **Personal message** — HelloFresh's per-delivery customer note, when present.
+- **Open live map** — a link to the official `hftrack.nl` tracking page for the full moving-van map. (The example dashboard also pairs the card with Home Assistant's built-in map card over `sensor.delivery_tracking_driver`, which carries the driver's live coordinates.)
+- **Paces itself** — refetches every 2 minutes while a delivery is on the road, every 15 when idle, and not at all for unsupported regions (one `available: false` answer is definitive). The integration additionally throttles the underlying endpoint fetch to once a minute across all open dashboards. Outside a delivery window the card shows your next delivery date, so it's never just blank.
+
+It reads the response-returning `hellofresh.get_delivery_tracking` service — each card refresh is a **live** fetch of the tracking endpoint, fresher than the sensors' own 5-minute poll. Read-only.

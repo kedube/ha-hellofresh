@@ -40,6 +40,7 @@ SCHEDULE_CARD_FILENAME = "hellofresh-schedule-card.js"
 SUBSCRIPTION_CARD_FILENAME = "hellofresh-subscription-card.js"
 COST_CARD_FILENAME = "hellofresh-cost-card.js"
 RECIPES_CARD_FILENAME = "hellofresh-recipes-card.js"
+DELIVERY_TRACKING_CARD_FILENAME = "hellofresh-delivery-tracking-card.js"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"
@@ -61,6 +62,7 @@ _CARDS = tuple(
         SUBSCRIPTION_CARD_FILENAME,
         COST_CARD_FILENAME,
         RECIPES_CARD_FILENAME,
+        DELIVERY_TRACKING_CARD_FILENAME,
     )
 )
 

@@ -80,6 +80,17 @@ A few conventions used in the tables:
 | Tracked shipment date | `sensor.tracked_shipment_date` | When the most recent box **actually arrived** — the carrier's handover timestamp, not the day it was scheduled for. A box delivered at 22:53 ET is already the next day in UTC, so this can differ from `last_delivery_date` (which reports the scheduled day). `None` until a box has been delivered with carrier tracking attached; it never falls back to the scheduled date. |
 | Tracked shipment URL | `sensor.next_delivery_tracking_url` | Direct carrier tracking link for the best-tracked order; `None` when no link is available. |
 
+### Live delivery tracking (Netherlands)
+
+**Created only for accounts in countries where HelloFresh runs its own delivery fleet — currently the Netherlands.** These sensors ride the unauthenticated Tracey tracker behind `hftrack.nl` (issue #6): the same live phase, driver GPS, stop count, and minute-precision ETA the official tracking page shows. Elsewhere the underlying data simply does not exist (third-party carriers expose only the coarser shipment status above), so the sensors are not created at all. All four poll on their own fast cadence — every 5 minutes while a delivery is live, every 30 when idle — independent of the account refresh interval, and read **Unknown** outside an active delivery window. They power the [Delivery tracking card](cards.md#delivery-tracking-card).
+
+| Name | Entity | Description |
+| --- | --- | --- |
+| Delivery tracking phase | `sensor.delivery_tracking_phase` | Live phase of today's delivery, sentence-cased (`At depot`, `On the way`, `Delivered home`, `Delayed`, `Cancelled`). Attributes carry the raw phase constant for automations, plus the personal customer message, driver name/location, customer location, stop count, the tracking link, and the fetch time. |
+| Delivery ETA | `sensor.delivery_tracking_eta` | Minute-precision estimated arrival time from the live tracker — an actual time, unlike the carrier day-estimate above. `Timestamp` device class. |
+| Delivery stops before you | `sensor.delivery_tracking_stops_before` | How many other stops the driver makes before yours — the "almost there" signal (the community automation notifies below 4). |
+| Delivery driver | `sensor.delivery_tracking_driver` | The driver's first name. While the van is on the road, the sensor carries bare `latitude`/`longitude` attributes with the driver's live position, so it can be dropped straight onto Home Assistant's built-in **map card**. |
+
 **History & skipped weeks**
 
 | Name | Entity | Description |
