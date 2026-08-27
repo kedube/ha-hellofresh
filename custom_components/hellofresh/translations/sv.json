@@ -262,6 +262,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Återstående tid för förnyelsetoken"
+      },
+      "delivery_tracking_phase": {
+        "name": "Leveransfas"
+      },
+      "delivery_tracking_eta": {
+        "name": "Beräknad ankomsttid"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Leveransstopp före dig"
+      },
+      "delivery_tracking_driver": {
+        "name": "Leveransförare"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Hämta leveransalternativ",
       "description": "Returnerar abonnemangets valbara leveransdagar (veckodag, namn, pris och vilken som är standard nu) — hela den leveransdagsväljare som webbplatsen använder. Endast läsning; returnerar ett svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Hämta leveransspårning",
+      "description": "Returnerar ögonblicksbilden av liveleveransspårningen (fas, förarens namn och GPS-position, stopp före dig, ankomsttid på minuten) från HelloFreshs egen leveransflottespårare. Endast tillgänglig i länder där HelloFresh levererar med egen flotta (för närvarande Nederländerna); på andra platser anger svaret att den inte är tillgänglig. Skrivskyddad; returnerar ett svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",

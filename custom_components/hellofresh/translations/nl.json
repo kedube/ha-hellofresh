@@ -262,6 +262,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Resterende tijd refresh token"
+      },
+      "delivery_tracking_phase": {
+        "name": "Bezorgfase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Verwachte bezorgtijd"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Bezorgstops vóór jou"
+      },
+      "delivery_tracking_driver": {
+        "name": "Bezorger"
       }
     },
     "binary_sensor": {
@@ -590,6 +602,16 @@
     "get_delivery_options": {
       "name": "Bezorgopties ophalen",
       "description": "Geeft de te kiezen bezorgdagen van het abonnement terug (weekdag, naam, prijs en welke nu standaard is) — de volledige bezorgdagkiezer die de website gebruikt. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Bezorgtracking ophalen",
+      "description": "Geef de live trackingmomentopname van de laatste kilometers terug (fase, naam en gps-positie van de bezorger, stops vóór jou, verwachte aankomsttijd op de minuut) uit HelloFresh' eigen bezorgvloot-tracker. Alleen beschikbaar in landen waar HelloFresh met een eigen vloot bezorgt (momenteel Nederland); elders meldt het antwoord dat dit niet beschikbaar is. Alleen-lezen; geeft een antwoord terug.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",

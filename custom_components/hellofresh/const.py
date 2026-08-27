@@ -107,6 +107,7 @@ SERVICE_GET_RECIPE_COLLECTIONS = "get_recipe_collections"
 SERVICE_GET_CATALOG_RECIPES = "get_catalog_recipes"
 SERVICE_PREVIEW_MEAL_PRICE = "preview_meal_price"
 SERVICE_GET_RECIPE_DETAIL = "get_recipe_detail"
+SERVICE_GET_DELIVERY_TRACKING = "get_delivery_tracking"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
@@ -150,6 +151,15 @@ COUNTRY_BASE_URLS: dict[str, str] = {
     "no": "https://www.hellofresh.no",
     "se": "https://www.hellofresh.se",
 }
+
+# Countries where HelloFresh runs its own last-mile delivery fleet AND the Tracey live
+# tracking stack (hftrack.nl + its cloud function) is confirmed to exist. The live-tracking
+# sensors, the get_delivery_tracking service payload, and the tracking card are only
+# mounted for these markets — elsewhere the underlying data simply does not exist (third
+# party carriers expose only coarse shipment status). Currently the Netherlands only, per
+# the community capture in issue #6; Belgium/Luxembourg likely also qualify but are
+# unverified, so they stay off until a user there confirms.
+TRACEY_COUNTRIES = frozenset({"nl"})
 
 # The config-flow key is not always the ISO 3166 country code HelloFresh's API expects.
 # Notably the UK site selects `uk` but the API uses `GB` (confirmed from a HAR:

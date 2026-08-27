@@ -5,6 +5,29 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Live last-mile delivery tracking for the Netherlands** (issue #6). In markets where
+  HelloFresh drives its own vans, the official tracking page (`hftrack.nl`) is backed by an
+  unauthenticated live API reporting the delivery phase, the driver's name and GPS position,
+  the stops remaining before you, and a minute-precision ETA — none of which exists in the
+  core API. The integration now polls it on a dedicated fast cadence (5 minutes while a
+  delivery is live, 30 when idle, independent of the account refresh interval) and, **for
+  Netherlands accounts only**, creates four new sensors: `delivery_tracking_phase` (with the
+  full snapshot as attributes), `delivery_tracking_eta`, `delivery_tracking_stops_before`,
+  and `delivery_tracking_driver` (carrying live `latitude`/`longitude` attributes, so it
+  plots on the built-in map card). Elsewhere the underlying data does not exist — third-party
+  carriers expose only the coarser shipment status — so the sensors are not created.
+- **New Delivery tracking card + dashboard Tracking tab.** A new
+  `custom:hellofresh-delivery-tracking-card` shows the phase timeline (Box packed → On the
+  way → Delivered, with delayed/cancelled banners), ETA, stops before you, driver, personal
+  message, and a link to the official live map, refetching every 2 minutes while a box is on
+  the road. It reads the new response-returning `hellofresh.get_delivery_tracking` service,
+  which answers `{"available": false}` outside supported countries — the card then explains
+  the regional restriction (or hides entirely with `hide_if_unavailable: true`). The example
+  dashboard gains a **Tracking** view pairing the card with a live driver map.
+  Currently **Netherlands only** and shipped for field verification by NL users; Belgium and
+  Luxembourg likely also qualify but stay off until confirmed.
+
 ## 2.87 — 2026-08-24
 - **Fixed `sensor.tracked_shipment_estimate` showing the wrong day.** The carrier reports its
   estimate as midnight *UTC* of the estimated day (`est_delivery_time: 2026-08-24T00:00:00Z`),

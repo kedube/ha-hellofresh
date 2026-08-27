@@ -248,6 +248,20 @@ get_delivery_options:
       selector:
         text:
 
+get_delivery_tracking:
+  name: Get delivery tracking
+  description: >-
+    Return the live last-mile tracking snapshot (phase, driver name and GPS
+    position, stops before you, minute-precision ETA) from HelloFresh's own
+    delivery-fleet tracker. Only available for accounts in countries where
+    HelloFresh runs its own fleet (currently the Netherlands); elsewhere the
+    response is {"available": false}. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
 get_plans:
   name: Get plans
   description: >-

@@ -64,6 +64,7 @@ from .const import (
     SERVICE_GET_ACCOUNT_SUMMARY,
     SERVICE_GET_CATALOG_RECIPES,
     SERVICE_GET_DELIVERY_OPTIONS,
+    SERVICE_GET_DELIVERY_TRACKING,
     SERVICE_GET_FAVORITES,
     SERVICE_GET_FOOD_PROFILE,
     SERVICE_GET_PLAN_OPTIONS,
@@ -82,10 +83,12 @@ from .const import (
     SERVICE_SET_FOOD_PROFILE,
     SERVICE_SKIP_WEEK,
     SERVICE_UNSKIP_WEEK,
+    TRACEY_COUNTRIES,
 )
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .frontend import async_register_meal_planner_card
 from .intent import async_register_intents
+from .tracey import HelloFreshTraceyCoordinator
 from .issues import (
     async_cleanup_stale_issues,
     async_create_write_actions_issue,
@@ -353,6 +356,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     coordinator.async_start_token_refresh()
+
+    # Live last-mile tracking is mounted only where the Tracey stack exists (see
+    # TRACEY_COUNTRIES) — everywhere else coordinator.tracey stays None, no tracking
+    # sensors are created, and get_delivery_tracking answers {"available": false}.
+    # Its first refresh is best-effort (async_refresh, not first_refresh): a hiccup on the
+    # unauthenticated tracking endpoint must never fail setup of the whole integration.
+    if entry.data[CONF_COUNTRY] in TRACEY_COUNTRIES:
+        tracey = HelloFreshTraceyCoordinator(hass, session, coordinator, entry)
+        await tracey.async_refresh()
+        coordinator.tracey = tracey
 
     coordinators: CoordinatorMap = hass.data.setdefault(DOMAIN, {})
     coordinators[entry.entry_id] = coordinator
@@ -725,6 +738,36 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         )
         return {"recipe": detail.as_dict()}
 
+    async def async_get_delivery_tracking(service_call: ServiceCall) -> ServiceResponse:
+        """Return the live last-mile tracking snapshot for the tracking card.
+
+        Read-only. Only meaningful for accounts in TRACEY_COUNTRIES (currently the
+        Netherlands): elsewhere the response is ``{"available": false}`` and the card
+        explains the regional restriction instead of rendering an empty tracker. When
+        available, this triggers a live fetch of the Tracey endpoint (throttled to one
+        request a minute) so the card is fresher than the sensors' own poll.
+        """
+        coordinator = _single_coordinator(service_call)
+        country = coordinator.config_entry.data.get(CONF_COUNTRY)
+        # The next delivery date gives the card something useful to say while no delivery
+        # is actively trackable ("nothing on the road until Tuesday").
+        next_delivery = sensor_native_value(
+            "next_delivery_date", coordinator.data, coordinator.client.base_url
+        )
+        base: dict[str, object] = {
+            "country": country,
+            "next_delivery_date": (
+                next_delivery.isoformat()
+                if isinstance(next_delivery, (datetime, date))
+                else next_delivery
+            ),
+        }
+        tracey = coordinator.tracey
+        if tracey is None:
+            return {**base, "available": False, "reason": "unsupported_country"}
+        snapshot = await tracey.async_fetch_latest()
+        return {**base, "available": True, **snapshot.as_dict()}
+
     async def async_add_favorite(service_call: ServiceCall) -> ServiceResponse:
         """Bookmark a recipe in the customer's cookbook."""
         coordinator = _single_coordinator(service_call)
@@ -1008,6 +1051,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_GET_DELIVERY_OPTIONS,
         async_get_delivery_options,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_DELIVERY_TRACKING,
+        async_get_delivery_tracking,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
         supports_response=SupportsResponse.ONLY,
     )
