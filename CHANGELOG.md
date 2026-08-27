@@ -27,6 +27,11 @@ version heading and publishes it as the release's Highlights.
   dashboard gains a **Tracking** view pairing the card with a live driver map.
   Currently **Netherlands only** and shipped for field verification by NL users; Belgium and
   Luxembourg likely also qualify but stay off until confirmed.
+- Fixed the prep-list test suite failing from 2026-08-25 onward (16 CI failures, no
+  runtime impact): the todo fixtures used fixed delivery-date literals that fell behind
+  `_all_covered_weeks`' `delivery_date >= today` filter once the anchor date passed.
+  Fixture dates are now anchored to the day the suite runs, the same convention
+  `tests/test_entities.py` already used.
 
 ## 2.87 — 2026-08-24
 - **Fixed `sensor.tracked_shipment_estimate` showing the wrong day.** The carrier reports its
