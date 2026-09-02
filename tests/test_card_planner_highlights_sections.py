@@ -171,3 +171,113 @@ def test_badge_chip_renders_with_its_style() -> None:
     tile = _method("_renderRecipeTile")
     assert "_badgeStyle(r)" in tile, "badge colors are parsed but never rendered"
     assert "_tileChipLabels(r)" in tile, "tile chips no longer share the alias table"
+
+
+# ---- collapsible filter panel --------------------------------------------------------------
+#
+# Six chip groups drowned the menu grid, so the panel is collapsed by default: a single
+# "Filters · N active" header plus the active selections as removable ✕ chips; expanding
+# reveals each group on its own aligned row (_filterRow).
+
+
+def _statics_literal(*names: str) -> str:
+    out = []
+    for name in names:
+        match = re.search(rf"^  static get {name}\(\) \{{.*?^  \}}", SOURCE, re.S | re.M)
+        assert match, f"{name} not found"
+        body = match.group(0).split("{", 1)[1].rsplit("}", 1)[0]
+        out.append(f"{name}: (function() {{ {body} }})()")
+    return ", ".join(out)
+
+
+def _summary(state: dict, week: dict) -> list[dict]:
+    script = f"""
+    const HelloFreshMealPlannerCard = {{ {
+        _statics_literal("PROTEIN_FILTERS", "DIET_FILTERS", "TIME_FILTERS", "HIGHLIGHT_FILTERS")
+    } }};
+    const self = {{
+      _proteinFilter: new Set({json.dumps(state.get("protein", []))}),
+      _dietFilter: new Set({json.dumps(state.get("diet", []))}),
+      _timeFilter: {json.dumps(state.get("time", ""))},
+      _highlightFilter: new Set({json.dumps(state.get("highlight", []))}),
+      _menuSection: {json.dumps(state.get("section", ""))},
+      _showVariants: {json.dumps(state.get("variants", True))},
+      {
+        _method("_activeMenuSectionIds")
+        .replace("_activeMenuSectionIds(", "activeMenuSectionIds(")
+        .replace("this.", "self.")
+    },
+      {
+        _method("_activeFilterSummary")
+        .replace("_activeFilterSummary(", "activeFilterSummary(")
+        .replace("this.", "self.")
+    },
+    }};
+    self._activeMenuSectionIds = self.activeMenuSectionIds;
+    console.log(JSON.stringify(self.activeFilterSummary({json.dumps(week)})));
+    """
+    return _run(script)
+
+
+@nodejs
+def test_active_summary_lists_every_narrowing_filter() -> None:
+    week = {"menu_categories": [{"name": "Family Menu", "slug": "family", "recipe_ids": ["a"]}]}
+    rows = _summary(
+        {
+            "protein": ["Beef"],
+            "diet": ["high-protein"],
+            "time": "under-30-min",
+            "highlight": ["new"],
+            "section": "family",
+            "variants": False,
+        },
+        week,
+    )
+    assert [r["label"] for r in rows] == [
+        "Beef",
+        "High Protein",
+        "Under 30 Minutes",
+        "New",
+        "Family Menu",
+        "Variants hidden",
+    ]
+
+
+@nodejs
+def test_summary_omits_a_section_the_week_does_not_carry() -> None:
+    """A stale slug filters nothing on this week, so it must not count as active."""
+    week = {"menu_categories": [{"name": "Family Menu", "slug": "family", "recipe_ids": ["a"]}]}
+    rows = _summary({"section": "dinners-specials"}, week)
+    assert rows == []
+
+
+def test_panel_is_collapsed_by_default_and_persisted() -> None:
+    load = _method("_loadFiltersExpanded")
+    assert re.search(r'===\s*"1"', load), "expansion must be opt-in (collapsed by default)"
+    assert "return false" in load, "storage failure must fall back to collapsed"
+    assert "hellofresh-meal-planner:filters-expanded" in SOURCE
+
+
+def test_collapsed_bar_shows_removable_chips_and_no_group_rows() -> None:
+    bar = _method("_renderFilterBar")
+    collapsed = bar.split("if (!expanded)")[1].split("const allActive")[0]
+    assert 'data-action="remove-filter"' in collapsed
+    assert "_filterRow(" not in collapsed, "group rows must only render when expanded"
+    assert 'data-action="toggle-filters"' in bar
+
+
+def test_remove_filter_routes_each_kind_to_its_toggle() -> None:
+    remove = _method("_removeFilter")
+    for needle in (
+        "_toggleProteinFilter",
+        "_toggleDietFilter",
+        '_selectTimeFilter("")',
+        "_toggleHighlightFilter",
+        '_selectMenuSection("")',
+        "_toggleShowVariants",
+    ):
+        assert needle in remove, f"{needle} not routed from the summary chips"
+    bind = re.search(r"^  _bindDelegated\(card\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert bind, "_bindDelegated not found"
+    assert "toggle-filters" in bind.group(0)
+    assert "remove-filter" in bind.group(0)

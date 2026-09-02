@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- Meal planner card: the filter bar is now a collapsible panel. Six chip groups flowing
+  into one wrapped row had become confusing, so collapsed (the default) it shows a single
+  "Filters · N active" row with each active selection as a removable ✕ chip, and expanded
+  it lays out every group on its own aligned line (label column, wrapping chips). The
+  expand/collapse state persists like the filters themselves.
+
 ## 2.90 — 2026-09-02
 - Recipes card: the search field now searches the **whole ~10k-recipe catalog** across
   every category at once (previously it only filtered the loaded view). Backed by a newly

@@ -174,20 +174,21 @@ def test_dietary_options_match_the_sites_filter_panel() -> None:
 
 def test_filter_bar_group_names_match_the_site() -> None:
     """The site's filter panel says "Main protein" / "Dietary preference" /
-    "Total cooking time"; the menu-section nav is Categories."""
+    "Total cooking time"; the menu-section nav is Categories. Each group renders as its
+    own aligned row through _filterRow."""
     bar = _method("_renderFilterBar")
-    for label in ("Main Protein", "Dietary Preference", "Total Cooking Time"):
-        assert f">{label}</span>" in bar, f"filter group not labeled {label!r}"
-    assert ">Categories</span>" in _method("_renderMenuSectionGroup")
+    for label in ("Main Protein", "Dietary Preference", "Total Cooking Time", "Highlights"):
+        assert f'_filterRow("{label}"' in bar, f"no filter row labeled {label!r}"
+    assert '_filterRow("Categories"' in _method("_renderMenuSectionGroup")
 
 
 def test_filter_bar_renders_the_diet_group() -> None:
     bar = _method("_renderFilterBar")
     assert "DIET_FILTERS.map(" in bar, "diet chips are not rendered from DIET_FILTERS"
     assert 'data-action="filter-diet"' in bar
-    assert 'data-action="filter-diet-all"' in bar, "the All chip is missing"
+    assert 'allChip("filter-diet-all"' in bar, "the All chip is missing"
     assert "TIME_FILTERS.map(" in bar, "time chips are not rendered from TIME_FILTERS"
-    assert 'data-action="filter-time-all"' in bar
+    assert 'allChip("filter-time-all"' in bar
 
 
 def test_grid_filter_consults_the_diet_and_time_filters() -> None:

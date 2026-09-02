@@ -112,6 +112,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._timeFilter = this._loadTimeFilter();
     this._highlightFilter = this._loadHighlightFilter();
     this._menuSection = this._loadMenuSection();
+    // Whether the filter panel is expanded. Collapsed by default: six chip groups above the
+    // grid drowned the menu, so the collapsed bar shows just "Filters · N active" plus the
+    // active selections as removable chips. A view preference, persisted like the filters.
+    this._filtersExpanded = this._loadFiltersExpanded();
     this._loading = false;
     this._error = null;
     this._busy = false; // a write (select/skip) is in flight
@@ -594,6 +598,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return "hellofresh-meal-planner:menu-section";
   }
 
+  static get FILTERS_EXPANDED_STORAGE_KEY() {
+    return "hellofresh-meal-planner:filters-expanded";
+  }
+
   _loadShowSelectedOnly() {
     try {
       return window.localStorage.getItem(HelloFreshMealPlannerCard.FILTER_STORAGE_KEY) === "1";
@@ -763,6 +771,68 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       /* storage unavailable */
     }
     this._render();
+  }
+
+  _loadFiltersExpanded() {
+    try {
+      return (
+        window.localStorage.getItem(HelloFreshMealPlannerCard.FILTERS_EXPANDED_STORAGE_KEY) ===
+        "1"
+      );
+    } catch (_e) {
+      return false; // collapsed by default
+    }
+  }
+
+  _toggleFiltersExpanded() {
+    this._filtersExpanded = !this._filtersExpanded;
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.FILTERS_EXPANDED_STORAGE_KEY,
+        this._filtersExpanded ? "1" : "0"
+      );
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // Everything currently narrowing the grid, as {kind, value, label} rows. Drives the
+  // collapsed header's "N active" count and its removable chips. The menu section is
+  // counted only when it actually applies to this week (a stale slug that the viewed week
+  // lacks is filtering nothing, so it must not claim to).
+  _activeFilterSummary(week) {
+    const card = HelloFreshMealPlannerCard;
+    const out = [];
+    for (const p of card.PROTEIN_FILTERS) {
+      if (this._proteinFilter.has(p)) out.push({ kind: "protein", value: p, label: p });
+    }
+    for (const f of card.DIET_FILTERS) {
+      if (this._dietFilter.has(f.key)) out.push({ kind: "diet", value: f.key, label: f.label });
+    }
+    const time = card.TIME_FILTERS.find((f) => f.key === this._timeFilter);
+    if (time) out.push({ kind: "time", value: time.key, label: time.label });
+    for (const f of card.HIGHLIGHT_FILTERS) {
+      if (this._highlightFilter.has(f.key)) {
+        out.push({ kind: "highlight", value: f.key, label: f.label });
+      }
+    }
+    if (this._activeMenuSectionIds(week)) {
+      const row = (week.menu_categories || []).find((c) => c.slug === this._menuSection);
+      if (row) out.push({ kind: "section", value: row.slug, label: row.name });
+    }
+    if (!this._showVariants) out.push({ kind: "variants", value: "", label: "Variants hidden" });
+    return out;
+  }
+
+  // Remove one filter from the collapsed summary's ✕ chips, routed to the owning toggle.
+  _removeFilter(kind, value) {
+    if (kind === "protein") this._toggleProteinFilter(value);
+    else if (kind === "diet") this._toggleDietFilter(value);
+    else if (kind === "time") this._selectTimeFilter("");
+    else if (kind === "highlight") this._toggleHighlightFilter(value);
+    else if (kind === "section") this._selectMenuSection("");
+    else if (kind === "variants") this._toggleShowVariants();
   }
 
   // Load the persisted menu-section slug (single-select; "" = all). Not validated against a
@@ -1556,10 +1626,43 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     };
   }
 
-  // The protein/variant filter bar. Shown only for current/future weeks (a past week just shows
-  // what was delivered) and hidden while "Show selected only" is active (nothing to filter).
+  // One filter group as its own aligned row: a fixed label column, then the chips (which
+  // wrap under the label on narrow cards). Every group renders through this so the rows
+  // read as a form instead of one interleaved chip soup.
+  _filterRow(label, chips) {
+    return `
+      <div class="frow">
+        <span class="flabel">${label}</span>
+        <div class="fchips">${chips}</div>
+      </div>`;
+  }
+
+  // The filter panel. Shown only for current/future weeks (a past week just shows what was
+  // delivered) and hidden while "Show selected only" is active (nothing to filter).
+  // COLLAPSIBLE: collapsed it is a single "Filters · N active" header with the active
+  // selections as removable ✕ chips; expanded, each group gets its own aligned row.
   _renderFilterBar(week) {
     if (!this._filtersApply(week)) return "";
+    const active = this._activeFilterSummary(week);
+    const expanded = this._filtersExpanded;
+    const header = `
+      <button class="fheader" data-action="toggle-filters" aria-expanded="${expanded ? "true" : "false"}">
+        <span class="fcaret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+        Filters${active.length ? ` · ${active.length} active` : ""}
+      </button>`;
+    if (!expanded) {
+      const summary = active.length
+        ? `<div class="fsummary">${active
+            .map(
+              (a) => `<button class="fbtn on fremove" data-action="remove-filter"
+                  data-kind="${this._esc(a.kind)}" data-value="${this._esc(a.value)}"
+                  title="Remove: ${this._esc(a.label)}"
+                >${this._esc(a.label)}<span class="fx" aria-hidden="true">✕</span></button>`
+            )
+            .join("")}</div>`
+        : "";
+      return `<div class="filterbar"><div class="fheadrow">${header}${summary}</div></div>`;
+    }
     const allActive = this._proteinFilter.size === 0;
     const proteinChips = HelloFreshMealPlannerCard.PROTEIN_FILTERS.map((p) => {
       const on = this._proteinFilter.has(p);
@@ -1601,53 +1704,26 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           aria-pressed="${on ? "true" : "false"}"
         >${this._esc(f.label)}</button>`;
     }).join("");
+    const allChip = (action, isOn) => `<button
+        class="fbtn ${isOn ? "on" : ""}"
+        data-action="${action}"
+        aria-pressed="${isOn ? "true" : "false"}"
+      >All</button>`;
+    const variantsChip = `<button
+        class="fbtn ${this._showVariants ? "on" : ""}"
+        data-action="toggle-variants"
+        aria-pressed="${this._showVariants ? "true" : "false"}"
+        title="Variants are the 2× protein, protein-swap and veggie-swap versions of a meal"
+      >${this._showVariants ? "Hide variants" : "Show variants"}</button>`;
     return `
-      <div class="filterbar">
+      <div class="filterbar open">
+        <div class="fheadrow">${header}</div>
         ${this._renderMenuSectionGroup(week)}
-        <div class="fgroup">
-          <span class="flabel">Main Protein</span>
-          <button
-            class="fbtn ${allActive ? "on" : ""}"
-            data-action="filter-protein-all"
-            aria-pressed="${allActive ? "true" : "false"}"
-          >All</button>
-          ${proteinChips}
-        </div>
-        <div class="fgroup">
-          <span class="flabel">Dietary Preference</span>
-          <button
-            class="fbtn ${dietAllActive ? "on" : ""}"
-            data-action="filter-diet-all"
-            aria-pressed="${dietAllActive ? "true" : "false"}"
-          >All</button>
-          ${dietChips}
-        </div>
-        <div class="fgroup">
-          <span class="flabel">Total Cooking Time</span>
-          <button
-            class="fbtn ${timeAllActive ? "on" : ""}"
-            data-action="filter-time-all"
-            aria-pressed="${timeAllActive ? "true" : "false"}"
-          >All</button>
-          ${timeChips}
-        </div>
-        <div class="fgroup">
-          <span class="flabel">Highlights</span>
-          <button
-            class="fbtn ${highlightAllActive ? "on" : ""}"
-            data-action="filter-highlight-all"
-            aria-pressed="${highlightAllActive ? "true" : "false"}"
-          >All</button>
-          ${highlightChips}
-        </div>
-        <div class="fgroup">
-          <button
-            class="fbtn ${this._showVariants ? "on" : ""}"
-            data-action="toggle-variants"
-            aria-pressed="${this._showVariants ? "true" : "false"}"
-            title="Variants are the 2× protein, protein-swap and veggie-swap versions of a meal"
-          >${this._showVariants ? "Hide variants" : "Show variants"}</button>
-        </div>
+        ${this._filterRow("Main Protein", allChip("filter-protein-all", allActive) + proteinChips)}
+        ${this._filterRow("Dietary Preference", allChip("filter-diet-all", dietAllActive) + dietChips)}
+        ${this._filterRow("Total Cooking Time", allChip("filter-time-all", timeAllActive) + timeChips)}
+        ${this._filterRow("Highlights", allChip("filter-highlight-all", highlightAllActive) + highlightChips)}
+        ${this._filterRow("Variants", variantsChip)}
       </div>
     `;
   }
@@ -1669,16 +1745,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           aria-pressed="${on ? "true" : "false"}"
         >${this._esc(s.name)}</button>`;
     }).join("");
-    return `
-      <div class="fgroup">
-        <span class="flabel">Categories</span>
-        <button
-          class="fbtn ${allActive ? "on" : ""}"
-          data-action="filter-section-all"
-          aria-pressed="${allActive ? "true" : "false"}"
-        >All</button>
-        ${chips}
-      </div>`;
+    const allChip = `<button
+        class="fbtn ${allActive ? "on" : ""}"
+        data-action="filter-section-all"
+        aria-pressed="${allActive ? "true" : "false"}"
+      >All</button>`;
+    return this._filterRow("Categories", allChip + chips);
   }
 
   _renderGrid(week) {
@@ -1947,6 +2019,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       else if (action === "filter-section")
         this._selectMenuSection(actionEl.getAttribute("data-section"));
       else if (action === "filter-section-all") this._selectMenuSection("");
+      else if (action === "toggle-filters") this._toggleFiltersExpanded();
+      else if (action === "remove-filter")
+        this._removeFilter(
+          actionEl.getAttribute("data-kind"),
+          actionEl.getAttribute("data-value")
+        );
       else if (action === "toggle-variants") this._toggleShowVariants();
       else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });
@@ -2266,15 +2344,34 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em;
       }
       .filterchip:hover { filter: brightness(0.95); }
+      /* Collapsible filter panel: a "Filters · N active" header row, then (expanded) one
+         aligned row per group — fixed label column, wrapping chips. */
       .filterbar {
-        display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 12px;
-        padding: 8px 12px; border-radius: 10px; background: var(--secondary-background-color);
+        margin: 0 0 12px; padding: 2px 12px 4px;
+        border-radius: 10px; background: var(--secondary-background-color);
       }
-      .fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .filterbar.open { padding-bottom: 10px; }
+      .fheadrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .fheader {
+        border: none; background: transparent; cursor: pointer; font: inherit;
+        font-size: 0.85em; font-weight: 600; color: var(--primary-text-color);
+        display: inline-flex; align-items: center; gap: 6px; padding: 8px 4px 8px 0;
+      }
+      .fcaret { font-size: 0.8em; color: var(--secondary-text-color); }
+      .fsummary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .fremove .fx { margin-left: 2px; font-size: 0.85em; opacity: 0.8; }
+      .fremove:hover .fx { opacity: 1; }
+      /* One group per line. flex-wrap lets the chip block drop below the label on narrow
+         cards instead of squeezing beside it. */
+      .frow {
+        display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 8px; padding: 3px 0;
+      }
       .flabel {
+        flex: 0 0 118px; padding-top: 7px;
         font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em;
-        color: var(--secondary-text-color); margin-right: 2px;
+        color: var(--secondary-text-color);
       }
+      .fchips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 240px; }
       .fbtn {
         display: inline-flex; align-items: center; gap: 6px;
         font: inherit; font-size: 0.8em; padding: 4px 10px; border-radius: 14px; cursor: pointer;
