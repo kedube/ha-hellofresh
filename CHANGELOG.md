@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.89 — 2026-09-02
 - Meal planner card: two new filter groups — Highlights (New / Bestsellers / Cooked
   Before, combining as a union like the site's browse rows) and Menu (the website's own
   sections — This Week's Menu, Health Conscious, Family Menu, Your Top Recipes, … —
