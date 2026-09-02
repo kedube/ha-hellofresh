@@ -74,6 +74,9 @@ const GROUP_LABELS = {
   petstable: "The Pets Table",
   donation: "Donations",
   lowprices: "Low Prices",
+  // Internal slug for the add-on pool the meal-modularity flows draw from (dips, sides,
+  // dessert cups). Real purchasable items, but "Modularity" is meaningless to a person.
+  modularity: "Extras",
 };
 
 class HelloFreshMarketCard extends HTMLElement {
@@ -99,6 +102,9 @@ class HelloFreshMarketCard extends HTMLElement {
     this._downgradeNotice = null;
     // Persisted "show selected only" view preference (shared across weeks, survives reloads).
     this._showSelectedOnly = this._loadShowSelectedOnly();
+    // Persisted Market-section filter (Appetizers / Breakfast / Desserts / …), a view
+    // preference like the planner card's protein filter: empty set = show every section.
+    this._sectionFilter = this._loadSectionFilter();
     // Cross-card week sync: follow a sibling HelloFresh card (e.g. the Meal Planner) to the same
     // week. If the event arrives before this card has loaded, remember the id and apply on fetch.
     this._syncPendingWeekId = null;
@@ -178,6 +184,81 @@ class HelloFreshMarketCard extends HTMLElement {
       /* storage unavailable */
     }
     this._render();
+  }
+
+  static get SECTION_STORAGE_KEY() {
+    return "hellofresh-market:section-filter";
+  }
+
+  // Load the persisted section filter as a Set of group_type slugs. Unlike the planner's
+  // protein filter there is no fixed allowlist to validate against — the sections are whatever
+  // HelloFresh's catalog serves (GROUP_LABELS is labels, not an exhaustive list) — so stored
+  // slugs are kept as-is and reconciled against the viewed week in _activeSectionFilter.
+  _loadSectionFilter() {
+    try {
+      const raw = window.localStorage.getItem(HelloFreshMarketCard.SECTION_STORAGE_KEY);
+      return new Set((raw ? JSON.parse(raw) : []).filter((s) => typeof s === "string"));
+    } catch (_e) {
+      return new Set(); // empty = show all sections
+    }
+  }
+
+  // Toggle one section in/out of the filter set, persist, and re-render.
+  _toggleSectionFilter(slug) {
+    if (!slug) return;
+    if (this._sectionFilter.has(slug)) this._sectionFilter.delete(slug);
+    else this._sectionFilter.add(slug);
+    try {
+      window.localStorage.setItem(
+        HelloFreshMarketCard.SECTION_STORAGE_KEY,
+        JSON.stringify([...this._sectionFilter])
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+    this._render();
+  }
+
+  // Clear all section filters (the "All" chip), persist, and re-render.
+  _clearSectionFilter() {
+    if (this._sectionFilter.size === 0) return;
+    this._sectionFilter.clear();
+    try {
+      window.localStorage.setItem(HelloFreshMarketCard.SECTION_STORAGE_KEY, "[]");
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // The section slugs present in a week's catalog, in order of first appearance. Only the
+  // browsable catalog carries group_type (see _renderGroups); a history-sourced week returns
+  // an empty list, which also suppresses the filter bar there.
+  _sectionsFor(week) {
+    const seen = new Set();
+    const out = [];
+    for (const item of (week && week.market_items) || []) {
+      if (item.group_type && !seen.has(item.group_type)) {
+        seen.add(item.group_type);
+        out.push(item.group_type);
+      }
+    }
+    return out;
+  }
+
+  // Whether the section filter applies to this week: only the browsable catalog of a
+  // current/future week, and not while "show selected only" is on (mirrors the planner).
+  _filtersApply(week) {
+    return Boolean(week) && !this._isPast(week) && !this._showSelectedOnly;
+  }
+
+  // The stored filter reconciled against the viewed week: only slugs that week actually has.
+  // A slug persisted from another week (or a season HelloFresh has since dropped) must not
+  // invisibly blank a week that never carried that section — with no matching chip rendered,
+  // there would be nothing to tap to understand why everything vanished.
+  _activeSectionFilter(week) {
+    const present = new Set(this._sectionsFor(week));
+    return new Set([...this._sectionFilter].filter((s) => present.has(s)));
   }
 
   // `keepWeekId`: after a write (e.g. save), stay on the week the user was on rather than
@@ -478,11 +559,13 @@ class HelloFreshMarketCard extends HTMLElement {
     this._renderQuantityChange(week, item);
   }
 
-  // Quantity edits are the hot path. With the "selected only" filter OFF, a step can't change
-  // which tiles are visible, so update just the affected tile and the status row in place. With
-  // the filter ON, visibility can change, so fall back to a full render.
+  // Quantity edits are the hot path. With the "selected only" filter OFF and no section filter
+  // active, a step can't change which tiles are visible, so update just the affected tile and
+  // the status row in place. With either filter ON, visibility can change (a filtered-out
+  // section's item is only visible via the selected-item bypass, which ends at qty 0), so fall
+  // back to a full render.
   _renderQuantityChange(week, item) {
-    if (this._showSelectedOnly || !this._shell) {
+    if (this._showSelectedOnly || this._activeSectionFilter(week).size > 0 || !this._shell) {
       this._render();
       return;
     }
@@ -633,7 +716,42 @@ class HelloFreshMarketCard extends HTMLElement {
       return `<div class="state">No market items available for any week yet.</div>
         <div class="actions"><button data-action="refresh">Refresh</button></div>`;
     }
-    return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderGroups(week)}`;
+    return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderSectionBar(week)}${this._renderGroups(week)}`;
+  }
+
+  // The Market-section filter bar (Appetizers / Breakfast / Desserts / …), mirroring the
+  // planner card's protein bar. Chips come from the sections the viewed week actually has —
+  // there is no fixed section list, HelloFresh's catalog is the authority — so the bar adapts
+  // per week and disappears on history-sourced weeks (no group_type) or single-section weeks
+  // (nothing to narrow).
+  _renderSectionBar(week) {
+    if (!this._filtersApply(week)) return "";
+    const sections = this._sectionsFor(week);
+    if (sections.length < 2) return "";
+    const allActive = this._activeSectionFilter(week).size === 0;
+    const chips = sections.map((slug) => {
+      const on = this._sectionFilter.has(slug);
+      const label = GROUP_LABELS[slug] || this._titleCase(slug);
+      return `<button
+          class="fbtn ${on ? "on" : ""}"
+          data-action="filter-section"
+          data-section="${this._esc(slug)}"
+          aria-pressed="${on ? "true" : "false"}"
+        >${this._esc(label)}</button>`;
+    }).join("");
+    return `
+      <div class="filterbar">
+        <div class="fgroup">
+          <span class="flabel">Section</span>
+          <button
+            class="fbtn ${allActive ? "on" : ""}"
+            data-action="filter-section-all"
+            aria-pressed="${allActive ? "true" : "false"}"
+          >All</button>
+          ${chips}
+        </div>
+      </div>
+    `;
   }
 
   // Inline banner shown on the week whose last save triggered a HelloFresh seamless downgrade:
@@ -740,6 +858,17 @@ class HelloFreshMarketCard extends HTMLElement {
         ? "No market items selected for this week yet."
         : "No market items selected.";
       return `<div class="state">${selectedOnly ? noneSelected : "No market items for this week."}</div>`;
+    }
+
+    // Section filter (current & future weeks only). Selected items always pass so an active
+    // filter never hides something already in your cart — same rule as the planner's meals.
+    const activeSections = this._filtersApply(week) ? this._activeSectionFilter(week) : new Set();
+    if (activeSections.size > 0) {
+      const filtered = items.filter((i) => qtyOf(i) > 0 || activeSections.has(i.group_type));
+      if (filtered.length === 0) {
+        return `<div class="state">No market items match the current filter. Adjust the filters above to see more.</div>`;
+      }
+      items = filtered;
     }
 
     // A market item's own `currency` is often null; fall back to the week's order currency so a
@@ -857,6 +986,9 @@ class HelloFreshMarketCard extends HTMLElement {
       else if (action === "save" && week) this._saveSelection(week);
       else if (action === "cancel" && week) this._cancelEdit(week);
       else if (action === "toggle-filter") this._toggleShowSelectedOnly();
+      else if (action === "filter-section")
+        this._toggleSectionFilter(actionEl.getAttribute("data-section"));
+      else if (action === "filter-section-all") this._clearSectionFilter();
       else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });
   }
@@ -991,6 +1123,28 @@ class HelloFreshMarketCard extends HTMLElement {
       .hint { font-size: 0.78em; color: var(--secondary-text-color); }
       .filterchip { border: 1px solid var(--divider-color); cursor: pointer; font: inherit; font-size: 0.8em; }
       .filterchip:hover { filter: brightness(0.95); }
+      /* Section filter bar: same classes and values as the meal-planner card's protein bar so
+         the two cards read as one system. */
+      .filterbar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 12px;
+        padding: 8px 12px; border-radius: 10px; background: var(--secondary-background-color);
+      }
+      .fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .flabel {
+        font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--secondary-text-color); margin-right: 2px;
+      }
+      .fbtn {
+        display: inline-flex; align-items: center; gap: 6px;
+        font: inherit; font-size: 0.8em; padding: 4px 10px; border-radius: 14px; cursor: pointer;
+        border: 1px solid var(--divider-color); background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+      .fbtn:hover { filter: brightness(0.95); }
+      .fbtn.on {
+        background: var(--primary-color); color: var(--text-primary-color, #fff);
+        border-color: var(--primary-color);
+      }
       .skipbtn {
         margin-left: auto; font-size: 0.85em; padding: 5px 12px; border-radius: 14px;
         border: 1px solid var(--divider-color); background: var(--card-background-color);

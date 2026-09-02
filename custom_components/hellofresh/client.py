@@ -357,6 +357,9 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
         self._apply_variation_titles(all_weeks)
         # Likewise attach each week's Market add-on catalog (appetizers, sides, desserts, ...).
         self._apply_market_items(all_weeks)
+        # ...and the website's menu sections (This Week's Menu, Family Menu, Bestsellers, ...),
+        # which the meal-planner card offers as a section filter.
+        self._apply_menu_categories(all_weeks)
         # Universal pass: a PAUSED week never shipped. Any "selected" meals on it are just the
         # system's auto-fill placeholders, so clear the selection (the catalog still shows for
         # browsing). Done last so it overrides whatever any merge path marked.

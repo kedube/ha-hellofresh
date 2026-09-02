@@ -216,3 +216,68 @@ def test_unfavoriting_in_the_cookbook_view_removes_the_row() -> None:
     assert toggle, "_toggleFavorite not found"
     assert "COOKBOOK_SLUG" in toggle.group(0)
     assert "filter" in toggle.group(0)
+
+
+# ---- search field -------------------------------------------------------------------------
+#
+# The search box filters the LOADED recipes client-side (there is no catalog text-search
+# endpoint). Two regressions worth guarding: the input must live in the static shell, since
+# _render() rewrites the header/content regions with innerHTML and an input inside either
+# would lose focus (and its value) on every keystroke; and the filtered list must actually be
+# what the grid renders — a filter that computes `visible` and then maps `this._recipes` would
+# pass a lazy structural check while doing nothing.
+
+
+def _filter_outcomes(query: str) -> list[str]:
+    """Run the real _filteredRecipes body against stub recipes; return matching names."""
+    method = re.search(r"^  _filteredRecipes\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert method, "_filteredRecipes not found"
+    script = f"""
+    const self = {{
+      _query: {json.dumps(query)},
+      _recipes: [
+        {{ name: "Crispy Chicken Tacos", headline: "with lime crema" }},
+        {{ name: "Beef Ragù", headline: "over fresh pasta" }},
+        {{ name: "Veggie Stir-Fry", headline: "with CHICKEN-style tofu" }},
+        {{ name: "Nameless", headline: null }},
+      ],
+      run() {{ {method.group(0).split("{", 1)[1].rsplit("}", 1)[0].replace("this.", "self.")} }},
+    }};
+    console.log(JSON.stringify(self.run().map((r) => r.name)));
+    """
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=True
+    )
+    return json.loads(result.stdout)
+
+
+@nodejs
+def test_search_matches_name_and_headline_case_insensitively() -> None:
+    assert _filter_outcomes("chicken") == ["Crispy Chicken Tacos", "Veggie Stir-Fry"]
+    assert _filter_outcomes("PASTA") == ["Beef Ragù"]
+
+
+@nodejs
+def test_empty_and_whitespace_queries_show_everything() -> None:
+    assert len(_filter_outcomes("")) == 4
+    assert len(_filter_outcomes("   ")) == 4
+
+
+def test_search_input_lives_in_the_static_shell() -> None:
+    """The input must survive re-renders: _ensureShell writes it once, _render never touches it."""
+    shell = re.search(r"^  _ensureShell\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert shell, "_ensureShell not found"
+    assert "searchinput" in shell.group(0), "search input is not part of the static shell"
+    for name in ("_renderHeader", "_renderBody", "_renderCollections"):
+        method = re.search(rf"^  {name}\(\) \{{.*?^  \}}", SOURCE, re.S | re.M)
+        assert method, f"{name} not found"
+        assert "searchinput" not in method.group(0), f"search input is re-rendered by {name}"
+
+
+def test_grid_renders_the_filtered_list_not_the_raw_one() -> None:
+    body = re.search(r"^  _renderBody\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert body, "_renderBody not found"
+    assert "this._filteredRecipes()" in body.group(0), "the query filter is never applied"
+    grid = re.search(r'class="grid">\$\{(\w+)\.map', body.group(0))
+    assert grid, "recipe grid not found"
+    assert grid.group(1) == "visible", "the grid maps the unfiltered recipe list"

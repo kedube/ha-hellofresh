@@ -100,8 +100,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     //  * _proteinFilter: Set of allowed protein preferences (empty = allow all).
     //  * _showVariants: when false, hide variant meals (2x protein, protein swaps, veg swaps),
     //    showing only the default meal of each group plus meals that have no variants.
+    //  * _dietFilter: Set of dietary-category keys (GLP-1 Support, Carb Conscious, …); each
+    //    selected category is a CONSTRAINT the meal must satisfy (see _passesDietFilters).
+    //  * _highlightFilter: Set of highlight keys (New / Bestsellers / Cooked Before); ORed —
+    //    they mirror the site's browse sections, so picking two shows the union.
+    //  * _menuSection: single-select website menu section slug ("" = all), matched against
+    //    the week's own menu_categories id-lists from the get_weeks payload.
     this._proteinFilter = this._loadProteinFilter();
     this._showVariants = this._loadShowVariants();
+    this._dietFilter = this._loadDietFilter();
+    this._highlightFilter = this._loadHighlightFilter();
+    this._menuSection = this._loadMenuSection();
     this._loading = false;
     this._error = null;
     this._busy = false; // a write (select/skip) is in flight
@@ -493,6 +502,82 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return "hellofresh-meal-planner:show-variants";
   }
 
+  // The dietary categories that can be filtered on, mirroring HelloFresh's own menu filter
+  // panel (whose canonical slugs on /gw/my-deliveries/courses are glp-1-friendly, carb-smart,
+  // high-protein, under-650-calories, gluten-free, low-sodium, low-sugar, and
+  // total-cooking-time=cooking-time-20/-30). The site filters SERVER-SIDE and that endpoint
+  // returns only id references, so the card matches the same categories client-side against
+  // the tags each menu recipe already carries. `tags` lists every tag spelling observed in
+  // real menu payloads (HAR-verified), compared case-insensitively as whole strings —
+  // HelloFresh renames these over time ("Calorie Smart" became "Under 650 Calories"; GLP-1
+  // appears as "GLP-1 Support", "GLP-1 Friendly" AND "GLP-1 Balance" in one season's data —
+  // and whole-string matching is what keeps "Contains Gluten" from hitting the gluten-free
+  // aliases. The optional maxCalories/maxMinutes are numeric fallbacks so a category the
+  // recipe's own numbers can answer still matches a meal HelloFresh didn't tag.
+  static get DIET_FILTERS() {
+    return [
+      {
+        key: "glp1",
+        label: "GLP-1 Support",
+        tags: ["glp-1 support", "glp-1 friendly", "glp-1 balance"],
+      },
+      {
+        key: "carb-conscious",
+        label: "Carb Conscious",
+        tags: ["carb conscious", "carb smart", "low carb", "max-20-percent-carbs"],
+      },
+      { key: "high-protein", label: "High Protein", tags: ["high protein"] },
+      {
+        key: "under-650-cal",
+        label: "Under 650 Calories",
+        tags: ["under 650 calories", "calorie smart", "calorie-smart"],
+        maxCalories: 650,
+      },
+      {
+        key: "gluten-free",
+        label: "Gluten-Free Friendly",
+        tags: ["gluten-free friendly", "gluten free friendly", "gluten-free", "gluten free"],
+      },
+      { key: "sodium-smart", label: "Sodium Smart", tags: ["sodium smart", "low sodium"] },
+      { key: "low-sugar", label: "Low Added Sugar", tags: ["low added sugar", "low sugar"] },
+      // The site's filter panel calls this "Fiber Powered" (slug fiber-smart) while its
+      // Health Conscious menu section says "High Fiber" — the tags carry both spellings.
+      {
+        key: "high-fiber",
+        label: "High Fiber",
+        tags: ["high fiber", "fiber filled", "fiber smart", "fiber powered"],
+      },
+      // A Health Conscious section on the site, though its filter slug lives under cuisine.
+      { key: "mediterranean", label: "Mediterranean", tags: ["mediterranean"] },
+      { key: "under-15-min", label: "Under 15 Minutes", tags: ["under 15 minutes"], maxMinutes: 15 },
+      { key: "under-20-min", label: "Under 20 Minutes", tags: ["under 20 minutes"], maxMinutes: 20 },
+      { key: "under-30-min", label: "Under 30 Minutes", tags: ["under 30 minutes"], maxMinutes: 30 },
+    ];
+  }
+
+  static get DIET_STORAGE_KEY() {
+    return "hellofresh-meal-planner:diet-filter";
+  }
+
+  // Highlight chips mirroring the site's browse sections. "New" and "Bestsellers" are read
+  // from the recipe's tags/badge (both spellings ship: tag "Bestseller", badge "BESTSELLER");
+  // "Cooked Before" is HelloFresh's own delivered_count — the site's "Order It Again" row.
+  static get HIGHLIGHT_FILTERS() {
+    return [
+      { key: "new", label: "New" },
+      { key: "bestseller", label: "Bestsellers" },
+      { key: "cooked-before", label: "Cooked Before" },
+    ];
+  }
+
+  static get HIGHLIGHT_STORAGE_KEY() {
+    return "hellofresh-meal-planner:highlight-filter";
+  }
+
+  static get MENU_SECTION_STORAGE_KEY() {
+    return "hellofresh-meal-planner:menu-section";
+  }
+
   _loadShowSelectedOnly() {
     try {
       return window.localStorage.getItem(HelloFreshMealPlannerCard.FILTER_STORAGE_KEY) === "1";
@@ -563,6 +648,124 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._render();
   }
 
+  // Load the persisted dietary filter as a Set, dropping any stored key no longer defined.
+  _loadDietFilter() {
+    try {
+      const raw = window.localStorage.getItem(HelloFreshMealPlannerCard.DIET_STORAGE_KEY);
+      const allowed = HelloFreshMealPlannerCard.DIET_FILTERS.map((f) => f.key);
+      return new Set((raw ? JSON.parse(raw) : []).filter((k) => allowed.includes(k)));
+    } catch (_e) {
+      return new Set(); // empty = no dietary constraints
+    }
+  }
+
+  // Toggle one dietary category in/out of the filter set, persist, and re-render.
+  _toggleDietFilter(key) {
+    if (!HelloFreshMealPlannerCard.DIET_FILTERS.some((f) => f.key === key)) return;
+    if (this._dietFilter.has(key)) this._dietFilter.delete(key);
+    else this._dietFilter.add(key);
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.DIET_STORAGE_KEY,
+        JSON.stringify([...this._dietFilter])
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+    this._render();
+  }
+
+  // Clear all dietary filters (the "All" chip), persist, and re-render.
+  _clearDietFilter() {
+    if (this._dietFilter.size === 0) return;
+    this._dietFilter.clear();
+    try {
+      window.localStorage.setItem(HelloFreshMealPlannerCard.DIET_STORAGE_KEY, "[]");
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // Load the persisted highlight filter as a Set, dropping any stored key no longer defined.
+  _loadHighlightFilter() {
+    try {
+      const raw = window.localStorage.getItem(HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY);
+      const allowed = HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.map((f) => f.key);
+      return new Set((raw ? JSON.parse(raw) : []).filter((k) => allowed.includes(k)));
+    } catch (_e) {
+      return new Set(); // empty = no highlight narrowing
+    }
+  }
+
+  // Toggle one highlight in/out of the filter set, persist, and re-render.
+  _toggleHighlightFilter(key) {
+    if (!HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.some((f) => f.key === key)) return;
+    if (this._highlightFilter.has(key)) this._highlightFilter.delete(key);
+    else this._highlightFilter.add(key);
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY,
+        JSON.stringify([...this._highlightFilter])
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+    this._render();
+  }
+
+  // Clear all highlight filters (the "All" chip), persist, and re-render.
+  _clearHighlightFilter() {
+    if (this._highlightFilter.size === 0) return;
+    this._highlightFilter.clear();
+    try {
+      window.localStorage.setItem(HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY, "[]");
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // Load the persisted menu-section slug (single-select; "" = all). Not validated against a
+  // fixed list — sections are whatever the week's menu_categories carries, and a stale slug
+  // simply deactivates via _activeMenuSectionIds when the viewed week lacks it.
+  _loadMenuSection() {
+    try {
+      return window.localStorage.getItem(HelloFreshMealPlannerCard.MENU_SECTION_STORAGE_KEY) || "";
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  // Select a menu section (tapping the active one, or All, clears), persist, and re-render.
+  _selectMenuSection(slug) {
+    this._menuSection = slug === this._menuSection ? "" : slug || "";
+    try {
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.MENU_SECTION_STORAGE_KEY,
+        this._menuSection
+      );
+    } catch (_e) {
+      /* storage unavailable */
+    }
+    this._render();
+  }
+
+  // The selected section's recipe-id Set for this week, or null when inactive — no section
+  // chosen, or the viewed week doesn't carry that section (a slug persisted from another
+  // week must not invisibly blank a week that lacks it; with no matching chip rendered there
+  // would be nothing to tap to understand why everything vanished).
+  _activeMenuSectionIds(week) {
+    if (!this._menuSection) return null;
+    const row = ((week && week.menu_categories) || []).find(
+      (c) => c.slug === this._menuSection
+    );
+    if (!row || !Array.isArray(row.recipe_ids) || !row.recipe_ids.length) return null;
+    // Bare ids on both sides: some payload paths suffix a recipe id ("<id>-…"), while the
+    // categories block always carries the bare 24-hex id.
+    return new Set(row.recipe_ids.map((id) => String(id).split("-")[0]));
+  }
+
   // Flip the "show variants" toggle, persist, and re-render.
   _toggleShowVariants() {
     this._showVariants = !this._showVariants;
@@ -583,10 +786,60 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return Boolean(week) && !this._isPast(week) && !this._showSelectedOnly;
   }
 
-  // Whether any visibility-affecting filter is active (protein narrowed, or variants hidden).
-  // Used to decide when an in-place tile update is safe vs when a full render is needed.
+  // Whether any visibility-affecting filter is active (protein/dietary/highlight narrowed,
+  // a menu section chosen, or variants hidden). Used to decide when an in-place tile update
+  // is safe vs a full render.
   _hasActiveFilters() {
-    return this._proteinFilter.size > 0 || !this._showVariants;
+    return (
+      this._proteinFilter.size > 0 ||
+      this._dietFilter.size > 0 ||
+      this._highlightFilter.size > 0 ||
+      Boolean(this._menuSection) ||
+      !this._showVariants
+    );
+  }
+
+  // Whether one recipe carries one highlight signal.
+  _matchesHighlight(r, key) {
+    if (key === "cooked-before") return (r.delivered_count || 0) > 0;
+    const tags = (r.tags || []).map((t) => String(t).toLowerCase());
+    const badge = String(r.badge || "").toLowerCase();
+    return tags.includes(key) || badge === key;
+  }
+
+  // Highlight chips OR together (a union, like the site's browse sections they mirror),
+  // unlike the dietary chips which AND — "New or Bestsellers" is a browsing gesture, not a
+  // pair of constraints a single meal should have to satisfy at once.
+  _passesHighlightFilters(r) {
+    if (this._highlightFilter.size === 0) return true;
+    return [...this._highlightFilter].some((k) => this._matchesHighlight(r, k));
+  }
+
+  // Whether one recipe satisfies one dietary category: any alias tag matches
+  // (case-insensitively), or the category's numeric fallback is met.
+  _matchesDietFilter(r, f) {
+    const tags = (r.tags || []).map((t) => String(t).toLowerCase());
+    if (f.tags.some((t) => tags.includes(t))) return true;
+    if (f.maxCalories != null && r.calories_kcal != null && r.calories_kcal <= f.maxCalories) {
+      return true;
+    }
+    if (f.maxMinutes != null) {
+      const mins = r.total_time_minutes != null ? r.total_time_minutes : r.prep_time_minutes;
+      if (mins != null && mins <= f.maxMinutes) return true;
+    }
+    return false;
+  }
+
+  // Dietary filters are constraints ANDed together, unlike the protein chips (which OR: a
+  // meal has exactly one protein, so requiring two would always be empty). Someone picking
+  // High Protein and Under 30 Minutes wants meals that are both, not a union of either.
+  // This matches HelloFresh's own semantics: the menu payload's `filters` block declares
+  // "Dietary preference" as choice MULTI-AND and "Main protein" as MULTI-OR.
+  _passesDietFilters(r) {
+    if (this._dietFilter.size === 0) return true;
+    return HelloFreshMealPlannerCard.DIET_FILTERS.every(
+      (f) => !this._dietFilter.has(f.key) || this._matchesDietFilter(r, f)
+    );
   }
 
   // A "default" meal is one shown when variants are hidden: it has no variant group, or it IS
@@ -601,6 +854,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   _passesFilters(r, ctx) {
     if (ctx.sel(r)) return true;
     if (this._proteinFilter.size > 0 && !this._proteinFilter.has(r.preference)) return false;
+    if (!this._passesDietFilters(r)) return false;
+    if (!this._passesHighlightFilters(r)) return false;
     if (!this._showVariants && !this._isDefaultMeal(r)) return false;
     return true;
   }
@@ -1268,8 +1523,29 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           aria-pressed="${on ? "true" : "false"}"
         ><span class="fdot" style="background:${color}"></span>${p}</button>`;
     }).join("");
+    const dietAllActive = this._dietFilter.size === 0;
+    const dietChips = HelloFreshMealPlannerCard.DIET_FILTERS.map((f) => {
+      const on = this._dietFilter.has(f.key);
+      return `<button
+          class="fbtn ${on ? "on" : ""}"
+          data-action="filter-diet"
+          data-diet="${f.key}"
+          aria-pressed="${on ? "true" : "false"}"
+        >${this._esc(f.label)}</button>`;
+    }).join("");
+    const highlightAllActive = this._highlightFilter.size === 0;
+    const highlightChips = HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.map((f) => {
+      const on = this._highlightFilter.has(f.key);
+      return `<button
+          class="fbtn ${on ? "on" : ""}"
+          data-action="filter-highlight"
+          data-highlight="${f.key}"
+          aria-pressed="${on ? "true" : "false"}"
+        >${this._esc(f.label)}</button>`;
+    }).join("");
     return `
       <div class="filterbar">
+        ${this._renderMenuSectionGroup(week)}
         <div class="fgroup">
           <span class="flabel">Protein</span>
           <button
@@ -1278,6 +1554,24 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             aria-pressed="${allActive ? "true" : "false"}"
           >All</button>
           ${proteinChips}
+        </div>
+        <div class="fgroup">
+          <span class="flabel">Dietary</span>
+          <button
+            class="fbtn ${dietAllActive ? "on" : ""}"
+            data-action="filter-diet-all"
+            aria-pressed="${dietAllActive ? "true" : "false"}"
+          >All</button>
+          ${dietChips}
+        </div>
+        <div class="fgroup">
+          <span class="flabel">Highlights</span>
+          <button
+            class="fbtn ${highlightAllActive ? "on" : ""}"
+            data-action="filter-highlight-all"
+            aria-pressed="${highlightAllActive ? "true" : "false"}"
+          >All</button>
+          ${highlightChips}
         </div>
         <div class="fgroup">
           <button
@@ -1289,6 +1583,35 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         </div>
       </div>
     `;
+  }
+
+  // The website's menu sections (This Week's Menu / Health Conscious / Family Menu /
+  // Bestsellers / Your Top Recipes / …) as a single-select chip group. Sections come from the
+  // week's own menu_categories (the menu payload's `categories` block), so the group adapts
+  // per week and disappears on weeks whose payload has none (history-sourced weeks).
+  _renderMenuSectionGroup(week) {
+    const sections = (week && week.menu_categories) || [];
+    if (sections.length < 2) return "";
+    const allActive = !this._activeMenuSectionIds(week);
+    const chips = sections.map((s) => {
+      const on = this._menuSection === s.slug;
+      return `<button
+          class="fbtn ${on ? "on" : ""}"
+          data-action="filter-section"
+          data-section="${this._esc(s.slug)}"
+          aria-pressed="${on ? "true" : "false"}"
+        >${this._esc(s.name)}</button>`;
+    }).join("");
+    return `
+      <div class="fgroup">
+        <span class="flabel">Menu</span>
+        <button
+          class="fbtn ${allActive ? "on" : ""}"
+          data-action="filter-section-all"
+          aria-pressed="${allActive ? "true" : "false"}"
+        >All</button>
+        ${chips}
+      </div>`;
   }
 
   _renderGrid(week) {
@@ -1316,10 +1639,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (this._showSelectedOnly && visible.length === 0) {
       return `<div class="state">No meals selected for this week yet.</div>`;
     }
-    // Protein / variant filters (current & future weeks only). Selected meals always pass so an
-    // active filter never hides a meal you've chosen.
+    // Protein / dietary / highlight / section / variant filters (current & future weeks
+    // only). Selected meals always pass so an active filter never hides a meal you've chosen.
+    // The menu-section id-set is resolved once per render, not per recipe.
     if (this._filtersApply(week)) {
-      const filtered = visible.filter((r) => this._passesFilters(r, ctx));
+      const sectionIds = this._activeMenuSectionIds(week);
+      const filtered = visible.filter(
+        (r) =>
+          this._passesFilters(r, ctx) &&
+          (!sectionIds || ctx.sel(r) || sectionIds.has(String(r.recipe_id).split("-")[0]))
+      );
       if (filtered.length === 0) {
         return `<div class="state">No meals match the current filter. Adjust the filters above to see more.</div>`;
       }
@@ -1348,6 +1677,34 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   // Render one recipe tile. `ctx` carries the per-week shared values from _tileContext.
+  // The dietary chips shown on a tile. Driven by DIET_FILTERS' alias table, matching on tags
+  // only — the numeric fallbacks that widen the FILTER would pin an "Under 650 Calories" chip
+  // on meals HelloFresh didn't label, and the time categories are skipped as chips (a tag
+  // like that has never been observed; the badge "20 Min or Less" already covers it). The
+  // double-protein tag keeps its chip under a readable name, and a chip that would merely
+  // repeat the badge text is dropped. Veggie/Vegan are conveyed by the dedicated 🌱 chip.
+  _tileChipLabels(r) {
+    const tags = (r.tags || []).map((t) => String(t).toLowerCase());
+    const labels = tags.includes("double-protein") ? ["2x Protein"] : [];
+    for (const f of HelloFreshMealPlannerCard.DIET_FILTERS) {
+      if (f.maxMinutes != null) continue;
+      if (f.tags.some((t) => tags.includes(t))) labels.push(f.label);
+    }
+    const badge = String(r.badge || "").toLowerCase();
+    return badge ? labels.filter((l) => l.toLowerCase() !== badge) : labels;
+  }
+
+  // Inline style for the badge chip using HelloFresh's own label colors when present. The
+  // integration already gates these to #hex literals; the card re-checks so a stale cached
+  // payload (or a future backend regression) still can't inject CSS into an attribute.
+  _badgeStyle(r) {
+    const ok = (c) => typeof c === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c);
+    const parts = [];
+    if (ok(r.badge_background)) parts.push(`background:${r.badge_background}`);
+    if (ok(r.badge_foreground)) parts.push(`color:${r.badge_foreground}`);
+    return parts.length ? ` style="${parts.join(";")}"` : "";
+  }
+
   _renderRecipeTile(week, r, ctx) {
     const color = PREFERENCE_COLORS[r.preference] || "var(--secondary-text-color)";
     const isSelected = ctx.sel(r);
@@ -1369,10 +1726,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // by preference (reliably set to "Veggie" for Veggie/Vegan meals) — the protein dot alone is
     // an unlabeled color. Meat meals identify their protein via that dot instead.
     const isVeggie = r.preference === "Veggie";
-    // Meaningful variant/diet tags surfaced as chips (skip internal cuisine slugs). Drop the
-    // Veggie/Vegan tags here since the dedicated chip below already conveys "meatless".
-    const VARIANT_TAGS = ["double-protein", "GLP-1 Friendly", "High Protein", "Under 650 Calories", "Carb Conscious"];
-    const tags = (r.tags || []).filter((t) => VARIANT_TAGS.includes(t));
+    // Dietary chips, driven by the SAME alias table as the filter bar (see _tileChipLabels)
+    // so a HelloFresh tag renaming can never silently drop a chip the filter still matches.
+    const tags = this._tileChipLabels(r);
     // Serving quantity for this tile (0 when not chosen). Drives the qty badge + stepper.
     const qty = isSelected ? this._displayedQuantity(week, r) : 0;
     const maxQty = HelloFreshMealPlannerCard.MAX_QUANTITY;
@@ -1425,7 +1781,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             : ""}
           ${r.badge || isVeggie || tags.length
             ? `<div class="chips">
-                 ${r.badge ? `<span class="rchip badge">${this._esc(r.badge)}</span>` : ""}
+                 ${r.badge ? `<span class="rchip badge"${this._badgeStyle(r)}>${this._esc(r.badge)}</span>` : ""}
                  ${isVeggie ? `<span class="rchip veggie">🌱 Veggie</span>` : ""}
                  ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
                </div>`
@@ -1513,6 +1869,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       else if (action === "filter-protein")
         this._toggleProteinFilter(actionEl.getAttribute("data-protein"));
       else if (action === "filter-protein-all") this._clearProteinFilter();
+      else if (action === "filter-diet")
+        this._toggleDietFilter(actionEl.getAttribute("data-diet"));
+      else if (action === "filter-diet-all") this._clearDietFilter();
+      else if (action === "filter-highlight")
+        this._toggleHighlightFilter(actionEl.getAttribute("data-highlight"));
+      else if (action === "filter-highlight-all") this._clearHighlightFilter();
+      else if (action === "filter-section")
+        this._selectMenuSection(actionEl.getAttribute("data-section"));
+      else if (action === "filter-section-all") this._selectMenuSection("");
       else if (action === "toggle-variants") this._toggleShowVariants();
       else if (action === "dismiss-downgrade") this._dismissDowngrade();
     });

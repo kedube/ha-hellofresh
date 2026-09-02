@@ -1,0 +1,173 @@
+"""Tests for the meal-planner card's Highlights chips (New / Bestsellers / Cooked Before),
+menu-section filter, alias-driven tile chips, and HelloFresh badge colors.
+
+Semantics guarded: highlight chips OR (they mirror the site's browse sections — a union),
+unlike the dietary chips which AND; the tile chips share the filter bar's DIET_FILTERS alias
+table so a HelloFresh tag renaming can't drop a chip the filter still matches; a stale menu
+section slug deactivates rather than blanking a week that lacks it; and badge colors reach an
+inline style only as strict hex.
+
+The behavioural tests run the real method bodies against stubs under Node.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+
+import pytest
+
+WWW = Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "www"
+SOURCE = (WWW / "hellofresh-meal-planner-card.js").read_text(encoding="utf-8")
+NODE = shutil.which("node")
+
+nodejs = pytest.mark.skipif(NODE is None, reason="node is not installed")
+
+
+def _method(name: str) -> str:
+    match = re.search(rf"^  {name}\((?:\w+(?:, \w+)*)?\) \{{.*?^  \}}", SOURCE, re.S | re.M)
+    assert match, f"{name} not found"
+    return match.group(0)
+
+
+def _run(script: str) -> object:
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=True
+    )
+    return json.loads(result.stdout)
+
+
+def _passes_highlight(active: list[str], recipe: dict) -> bool:
+    script = f"""
+    const self = {{
+      _highlightFilter: new Set({json.dumps(active)}),
+      {_method("_matchesHighlight").replace("_matchesHighlight(", "matchesHighlight(")},
+      {_method("_passesHighlightFilters").replace("_passesHighlightFilters(", "passesHighlightFilters(").replace("this.", "self.")},
+    }};
+    self._matchesHighlight = self.matchesHighlight;
+    console.log(JSON.stringify(self.passesHighlightFilters({json.dumps(recipe)})));
+    """
+    return _run(script)
+
+
+@nodejs
+def test_highlight_signals_come_from_tag_badge_or_delivered_count() -> None:
+    assert _passes_highlight(["new"], {"tags": ["New"]}) is True
+    assert _passes_highlight(["new"], {"tags": [], "badge": "NEW"}) is True
+    assert _passes_highlight(["bestseller"], {"tags": ["Bestseller"]}) is True
+    assert _passes_highlight(["bestseller"], {"tags": [], "badge": "BESTSELLER"}) is True
+    assert _passes_highlight(["cooked-before"], {"tags": [], "delivered_count": 2}) is True
+    assert _passes_highlight(["cooked-before"], {"tags": [], "delivered_count": 0}) is False
+
+
+@nodejs
+def test_highlight_chips_or_together_unlike_dietary() -> None:
+    """New + Bestsellers = the union (a browsing gesture), not meals that are both."""
+    only_new = {"tags": ["New"]}
+    neither = {"tags": ["Quick"]}
+    assert _passes_highlight(["new", "bestseller"], only_new) is True
+    assert _passes_highlight(["new", "bestseller"], neither) is False
+
+
+def _active_section_ids(selected: str, categories: list[dict]) -> list[str] | None:
+    script = f"""
+    const self = {{
+      _menuSection: {json.dumps(selected)},
+      {_method("_activeMenuSectionIds").replace("_activeMenuSectionIds(", "activeMenuSectionIds(").replace("this.", "self.")},
+    }};
+    const out = self.activeMenuSectionIds({{ menu_categories: {json.dumps(categories)} }});
+    console.log(JSON.stringify(out ? [...out] : null));
+    """
+    return _run(script)
+
+
+@nodejs
+def test_section_filter_resolves_against_the_weeks_own_sections() -> None:
+    cats = [{"name": "Family Menu", "slug": "family", "recipe_ids": ["aaa", "bbb-suffix"]}]
+    assert _active_section_ids("family", cats) == ["aaa", "bbb"]  # bare-id normalized
+
+
+@nodejs
+def test_a_stale_section_slug_deactivates_instead_of_blanking_the_week() -> None:
+    cats = [{"name": "Family Menu", "slug": "family", "recipe_ids": ["aaa"]}]
+    assert _active_section_ids("dinners-specials", cats) is None
+    assert _active_section_ids("", cats) is None
+
+
+def _tile_chips(recipe: dict) -> list[str]:
+    diet = re.search(r"^  static get DIET_FILTERS\(\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert diet, "DIET_FILTERS not found"
+    body = diet.group(0).split("{", 1)[1].rsplit("}", 1)[0]
+    script = f"""
+    const HelloFreshMealPlannerCard = {{ DIET_FILTERS: (function() {{ {body} }})() }};
+    const self = {{
+      {_method("_tileChipLabels").replace("_tileChipLabels(", "tileChipLabels(")},
+    }};
+    console.log(JSON.stringify(self.tileChipLabels({json.dumps(recipe)})));
+    """
+    return _run(script)
+
+
+@nodejs
+def test_tile_chips_share_the_filter_bars_alias_table() -> None:
+    """The shipped bug: tiles matched the exact string "GLP-1 Friendly", so meals tagged
+    "GLP-1 Balance"/"GLP-1 Support" silently lost their chip while the filter still worked."""
+    assert _tile_chips({"tags": ["GLP-1 Balance"]}) == ["GLP-1 Support"]
+    assert _tile_chips({"tags": ["glp-1 friendly"]}) == ["GLP-1 Support"]
+    assert _tile_chips({"tags": ["Carb Smart"]}) == ["Carb Conscious"]
+
+
+@nodejs
+def test_tile_chips_skip_time_categories_and_dedupe_against_the_badge() -> None:
+    # Numeric-only matches never earn a chip (that's the FILTER widening, not a label),
+    # and a chip that would repeat the badge text is dropped.
+    assert _tile_chips({"tags": [], "calories_kcal": 500}) == []
+    assert _tile_chips({"tags": ["GLP-1 Support"], "badge": "GLP-1 Support"}) == []
+    assert _tile_chips({"tags": ["double-protein"]}) == ["2x Protein"]
+
+
+@nodejs
+def test_badge_style_emits_only_strict_hex() -> None:
+    script = f"""
+    const self = {{
+      {_method("_badgeStyle").replace("_badgeStyle(", "badgeStyle(")},
+    }};
+    const out = [
+      self.badgeStyle({{ badge_background: "#067A46", badge_foreground: "#FFFFFF" }}),
+      self.badgeStyle({{ badge_background: 'red" onmouseover="x', badge_foreground: "white" }}),
+      self.badgeStyle({{}}),
+    ];
+    console.log(JSON.stringify(out));
+    """
+    styled, injected, empty = _run(script)
+    assert styled == ' style="background:#067A46;color:#FFFFFF"'
+    assert injected == ""
+    assert empty == ""
+
+
+def test_grid_and_bar_are_wired_for_the_new_filters() -> None:
+    grid = _method("_renderGrid")
+    assert "_activeMenuSectionIds(week)" in grid, "section filter never reaches the grid"
+    assert "ctx.sel(r) || sectionIds.has" in grid, "selected meals must bypass the section"
+    assert "_passesHighlightFilters(r)" in _method("_passesFilters")
+    bar = _method("_renderFilterBar")
+    assert "_renderMenuSectionGroup(week)" in bar
+    assert 'data-action="filter-highlight"' in bar
+    section_group = _method("_renderMenuSectionGroup")
+    assert "menu_categories" in section_group, "section chips must come from the week payload"
+    has_active = _method("_hasActiveFilters")
+    assert "_highlightFilter" in has_active
+    assert "_menuSection" in has_active
+    bind = re.search(r"^  _bindDelegated\(card\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert bind, "_bindDelegated not found"
+    for action in ("filter-highlight-all", "filter-section-all"):
+        assert action in bind.group(0), f"{action} is not routed"
+
+
+def test_badge_chip_renders_with_its_style() -> None:
+    tile = _method("_renderRecipeTile")
+    assert "_badgeStyle(r)" in tile, "badge colors are parsed but never rendered"
+    assert "_tileChipLabels(r)" in tile, "tile chips no longer share the alias table"
