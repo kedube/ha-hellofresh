@@ -33,7 +33,11 @@ def _raw_week() -> dict:
                     "items": [{"id": "aaa"}, {"id": "bbb"}],
                     "subcategories": [
                         # Subcategory ids merge in, duplicates dropped.
-                        {"name": "High Protein", "slug": "hp", "items": [{"id": "bbb"}, {"id": "ccc"}]},
+                        {
+                            "name": "High Protein",
+                            "slug": "hp",
+                            "items": [{"id": "bbb"}, {"id": "ccc"}],
+                        },
                     ],
                 },
                 {
@@ -66,7 +70,7 @@ def test_sections_merge_their_subcategory_ids() -> None:
 
 
 def test_subcategory_only_sections_are_not_empty() -> None:
-    """"Featured" lists only subcategories; their ids must carry the section."""
+    """ "Featured" lists only subcategories; their ids must carry the section."""
     rows = _norm()._build_menu_categories(_raw_week())
     featured = next(r for r in rows if r["slug"] == "featured")
     assert featured["recipe_ids"] == ["ddd"]

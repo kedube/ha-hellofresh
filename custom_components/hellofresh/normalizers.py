@@ -730,20 +730,20 @@ class HelloFreshPayloadNormalizer:
             slug = clean_optional_str(row.get("slug"))
             if not name or not slug or slug == "market":
                 continue
+            item_lists: list[Any] = [row.get("items")]
+            subcategories = row.get("subcategories")
+            for sub in subcategories if isinstance(subcategories, list) else []:
+                if isinstance(sub, dict):
+                    item_lists.append(sub.get("items"))
+
             ids: list[str] = []
             seen: set[str] = set()
-
-            def _collect(items: Any) -> None:
+            for items in item_lists:
                 for item in items if isinstance(items, list) else []:
                     item_id = item.get("id") if isinstance(item, dict) else None
                     if isinstance(item_id, str) and item_id and item_id not in seen:
                         seen.add(item_id)
                         ids.append(item_id)
-
-            _collect(row.get("items"))
-            for sub in row.get("subcategories") if isinstance(row.get("subcategories"), list) else []:
-                if isinstance(sub, dict):
-                    _collect(sub.get("items"))
             if ids:
                 out.append({"name": name, "slug": slug, "recipe_ids": ids})
         return out
