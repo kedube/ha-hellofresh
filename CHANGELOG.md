@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.90 — 2026-09-02
 - Recipes card: the search field now searches the **whole ~10k-recipe catalog** across
   every category at once (previously it only filtered the loaded view). Backed by a newly
   verified recipes-service endpoint (`GET /gw/recipes/recipes/search`) exposed through
