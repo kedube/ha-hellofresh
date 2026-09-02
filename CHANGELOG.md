@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.91 — 2026-09-02
 - Meal planner card: the filter bar is now a collapsible panel. Six chip groups flowing
   into one wrapped row had become confusing, so collapsed (the default) it shows a single
   "Filters · N active" row with each active selection as a removable ✕ chip, and expanded
