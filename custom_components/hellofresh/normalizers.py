@@ -78,6 +78,20 @@ _DEBUG_PATH_REDACTIONS = (
 )
 
 
+_CSS_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+
+
+def _safe_css_color(value: Any) -> str | None:
+    """Return ``value`` only when it is a plain hex color, else None.
+
+    Badge colors are forwarded into card inline styles, so anything but a strict
+    ``#RGB``/``#RRGGBB``/``#RRGGBBAA`` literal is dropped rather than passed through.
+    """
+    if isinstance(value, str) and _CSS_HEX_COLOR_RE.match(value):
+        return value
+    return None
+
+
 def _template_debug_path(path: str) -> str:
     """Replace per-account id segments in a diagnostics path with ``{id}`` placeholders."""
     for pattern, replacement in _DEBUG_PATH_REDACTIONS:
@@ -366,9 +380,13 @@ class HelloFreshPayloadNormalizer:
         surcharge_label = charge.get("label") or None
         surcharge_cents = coerce_int(charge.get("unitAmount"))
 
-        # Menu badge (e.g. "Premium Picks") from the recipe's `label` object.
+        # Menu badge (e.g. "Premium Picks") from the recipe's `label` object, with HelloFresh's
+        # own colors so cards can paint the badge as the website does. Colors are gated to
+        # #RGB/#RRGGBB(AA) hex: they land in inline styles, so a payload can't smuggle CSS.
         label = recipe_data.get("label") if isinstance(recipe_data.get("label"), dict) else {}
         badge = label.get("text") or None
+        badge_foreground = _safe_css_color(label.get("foregroundColor"))
+        badge_background = _safe_css_color(label.get("backgroundColor"))
 
         # Variant modifier title ("2x Bacon", "Ground Turkey", ...) resolved from the week's
         # `modularity` block by this meal's `index`. This is what actually distinguishes
@@ -423,6 +441,8 @@ class HelloFreshPayloadNormalizer:
             surcharge_label=surcharge_label,
             surcharge_cents=surcharge_cents,
             badge=badge,
+            badge_foreground=badge_foreground,
+            badge_background=badge_background,
             variation_title=variation_title,
             # Availability flags live on the MEAL/course wrapper (menus-service), not on the
             # recipe node, so they are read from raw_meal regardless of which node won above.
@@ -684,6 +704,58 @@ class HelloFreshPayloadNormalizer:
             items = self._build_market_items(week.raw)
             if items:
                 week.market_items = items
+
+    def _build_menu_categories(self, raw_week: dict[str, Any]) -> list[dict[str, Any]]:
+        """Parse the menu payload's ``categories`` block into the week's menu sections.
+
+        These are the sections the website's menu page shows (This Week's Menu, Health
+        Conscious Menu, Family Menu, Bestsellers, Your Top Recipes, ...). Each output row is
+        ``{name, slug, recipe_ids}``; ``recipe_ids`` merges the section's own ``items`` with
+        every subcategory's, because a section like "Featured" lists ONLY subcategories and
+        would otherwise come out empty. The Market pseudo-section (slug ``market``) is
+        skipped — its members are add-ons, not meals, so it can never match the recipe grid.
+        """
+        block = raw_week.get("categories")
+        if not isinstance(block, dict):
+            nested = raw_week.get("_menu_payload")
+            if isinstance(nested, dict):
+                block = nested.get("categories")
+        rows = block.get("categories") if isinstance(block, dict) else None
+
+        out: list[dict[str, Any]] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            name = clean_optional_str(row.get("name"))
+            slug = clean_optional_str(row.get("slug"))
+            if not name or not slug or slug == "market":
+                continue
+            ids: list[str] = []
+            seen: set[str] = set()
+
+            def _collect(items: Any) -> None:
+                for item in items if isinstance(items, list) else []:
+                    item_id = item.get("id") if isinstance(item, dict) else None
+                    if isinstance(item_id, str) and item_id and item_id not in seen:
+                        seen.add(item_id)
+                        ids.append(item_id)
+
+            _collect(row.get("items"))
+            for sub in row.get("subcategories") if isinstance(row.get("subcategories"), list) else []:
+                if isinstance(sub, dict):
+                    _collect(sub.get("items"))
+            if ids:
+                out.append({"name": name, "slug": slug, "recipe_ids": ids})
+        return out
+
+    def _apply_menu_categories(self, weeks: Sequence[HelloFreshWeek]) -> None:
+        """Attach each week's menu sections, parsed from its menu payload."""
+        for week in weeks:
+            if week.menu_categories or not isinstance(week.raw, dict):
+                continue
+            categories = self._build_menu_categories(week.raw)
+            if categories:
+                week.menu_categories = categories
 
     def _clear_paused_week_selection(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Clear phantom selections on paused/skipped weeks — nothing was ever delivered.

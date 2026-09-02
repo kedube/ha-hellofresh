@@ -110,8 +110,12 @@ class HelloFreshRecipe:
     # otherwise same-named portion/premium variants that the catalog lists separately.
     surcharge_label: str | None = None
     surcharge_cents: int | None = None
-    # Menu badge text (e.g. "Premium Picks"), from `recipe.label.text`.
+    # Menu badge text (e.g. "Premium Picks"), from `recipe.label.text`, plus HelloFresh's own
+    # badge colors (`label.foregroundColor`/`backgroundColor`, "#RRGGBB") so cards can paint
+    # the badge the way the website does instead of a one-size-fits-all pill.
     badge: str | None = None
+    badge_foreground: str | None = None
+    badge_background: str | None = None
     # Human-readable modifier that names how this variant differs from the base dish, from the
     # menu's `modularity` block (e.g. "2x Bacon", "Ground Turkey", "Added Broccoli"). This is the
     # clearest distinguisher for same-named variants whose price/nutrition look identical.
@@ -183,6 +187,8 @@ class HelloFreshRecipe:
             "surcharge_label": self.surcharge_label,
             "surcharge_cents": self.surcharge_cents,
             "badge": self.badge,
+            "badge_foreground": self.badge_foreground,
+            "badge_background": self.badge_background,
             "variation_title": self.variation_title,
             "variation_group": self.variation_group,
             "is_favorite": self.is_favorite,
@@ -290,6 +296,12 @@ class HelloFreshWeek:
     meals_preselected: bool = False
     recipes: list[HelloFreshRecipe] = field(default_factory=list)
     market_items: list[HelloFreshMarketItem] = field(default_factory=list)
+    # The website's menu sections, from the menu payload's `categories` block: each row is
+    # {name, slug, recipe_ids} with the ids drawn from the section's own items plus its
+    # subcategories' (a section like "Featured" lists ONLY subcategories). Menu-payload weeks
+    # only; empty for history-sourced weeks. Lets the meal-planner card offer the same
+    # section browsing the site's menu page grew, without re-deriving sections from tags.
+    menu_categories: list[dict[str, Any]] = field(default_factory=list)
     source: str = "account"
     menu_title: str | None = None
     slot_label: str | None = None
@@ -465,6 +477,7 @@ class HelloFreshWeek:
             "allowed_actions": self.allowed_actions,
             "recipes": [recipe.as_dict() for recipe in self.recipes],
             "market_items": [item.as_dict() for item in self.market_items],
+            "menu_categories": self.menu_categories,
         }
 
 

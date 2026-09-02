@@ -88,6 +88,10 @@ class HelloFreshRecipesCard extends HTMLElement {
     this._busyIds = new Set();
     this._flashMessage = null;
     this._flashIsError = false;
+    // Text filter over the recipes currently loaded in the card. There is no catalog
+    // text-search endpoint (see docs/HELLOFRESH_API.md), so this narrows the fetched view
+    // (category / cookbook / Top rated) client-side by name and headline.
+    this._query = "";
   }
 
   setConfig(config) {
@@ -245,6 +249,15 @@ class HelloFreshRecipesCard extends HTMLElement {
     }
   }
 
+  _clearSearch() {
+    this._query = "";
+    // The input is static shell markup, so its value must be reset by hand here.
+    this._shell.search.value = "";
+    this._shell.searchClear.hidden = true;
+    this._shell.search.focus();
+    this._render();
+  }
+
   _flash(message, isError = false) {
     this._flashMessage = message;
     this._flashIsError = isError;
@@ -270,8 +283,17 @@ class HelloFreshRecipesCard extends HTMLElement {
   _ensureShell() {
     if (this._shell) return;
     const card = document.createElement("ha-card");
+    // The search row is part of the STATIC shell, written once: _render() rewrites the
+    // header/content regions with innerHTML, which would destroy the input (and its focus)
+    // on every keystroke if it lived inside either of them.
     card.innerHTML = `
       <div class="js-header"></div>
+      <div class="searchrow">
+        <input class="searchinput" type="search" placeholder="Search recipes…"
+               aria-label="Search recipes" spellcheck="false">
+        <button class="searchclear" data-action="clear-search" title="Clear search"
+                aria-label="Clear search" hidden>✕</button>
+      </div>
       <div class="js-content"></div>
       <div class="js-toast"></div>`;
     this.shadowRoot.appendChild(card);
@@ -279,7 +301,15 @@ class HelloFreshRecipesCard extends HTMLElement {
       header: card.querySelector(".js-header"),
       content: card.querySelector(".js-content"),
       toast: card.querySelector(".js-toast"),
+      search: card.querySelector(".searchinput"),
+      searchClear: card.querySelector(".searchclear"),
     };
+    this._shell.search.addEventListener("input", () => {
+      this._query = this._shell.search.value;
+      this._shell.searchClear.hidden = !this._query;
+      // Only the content region depends on the query; the input itself is never re-rendered.
+      this._render();
+    });
     this._bindDelegated(card);
   }
 
@@ -312,7 +342,24 @@ class HelloFreshRecipesCard extends HTMLElement {
         : "No recipes found.";
       return `${chips}<div class="msg">${empty}</div>`;
     }
-    return `${chips}<div class="grid">${this._recipes.map((r) => this._renderRecipe(r)).join("")}</div>`;
+    const visible = this._filteredRecipes();
+    if (!visible.length) {
+      // Distinct from an empty fetch: recipes ARE loaded, the query just matches none of them.
+      // The search only covers what is loaded (there is no catalog text-search endpoint), so
+      // point at the other categories rather than implying the whole catalog was searched.
+      return `${chips}<div class="msg">No loaded recipes match
+        “${this._esc(this._query.trim())}”. Try another category, or clear the search.</div>`;
+    }
+    return `${chips}<div class="grid">${visible.map((r) => this._renderRecipe(r)).join("")}</div>`;
+  }
+
+  // Recipes passing the current text query, matched case-insensitively on name and headline.
+  _filteredRecipes() {
+    const query = this._query.trim().toLowerCase();
+    if (!query) return this._recipes;
+    return this._recipes.filter((r) =>
+      `${r.name || ""}\n${r.headline || ""}`.toLowerCase().includes(query)
+    );
   }
 
   _renderCollections() {
@@ -408,7 +455,10 @@ class HelloFreshRecipesCard extends HTMLElement {
         return;
       }
       const action = ev.target.closest("[data-action]");
-      if (action && action.getAttribute("data-action") === "refresh") this._fetch();
+      if (!action) return;
+      const name = action.getAttribute("data-action");
+      if (name === "refresh") this._fetch();
+      else if (name === "clear-search") this._clearSearch();
     });
   }
 
@@ -462,6 +512,23 @@ class HelloFreshRecipesCard extends HTMLElement {
         }
         .iconbtn:hover:not([disabled]) { background: var(--divider-color); }
         .iconbtn[disabled] { opacity: 0.4; cursor: default; }
+        .searchrow { position: relative; padding: 0 16px 8px; }
+        .searchinput {
+          width: 100%; box-sizing: border-box; padding: 7px 32px 7px 12px;
+          border: 1px solid var(--divider-color); border-radius: 14px;
+          background: transparent; color: var(--primary-text-color);
+          font: inherit; font-size: 0.88em; outline: none;
+        }
+        .searchinput::placeholder { color: var(--secondary-text-color); }
+        .searchinput:focus { border-color: var(--primary-color); }
+        /* The card draws its own clear button, so drop the native webkit one. */
+        .searchinput::-webkit-search-cancel-button { display: none; }
+        .searchclear {
+          position: absolute; right: 22px; top: 50%; transform: translate(0, calc(-50% - 4px));
+          border: none; background: transparent; cursor: pointer; line-height: 1;
+          color: var(--secondary-text-color); font-size: 0.9em; padding: 4px; border-radius: 50%;
+        }
+        .searchclear:hover { color: var(--primary-text-color); }
         .chips {
           display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 12px;
         }
