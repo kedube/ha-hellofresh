@@ -1379,6 +1379,59 @@ class HelloFreshClient(HelloFreshPayloadNormalizer):
                 recipe.is_favorite = recipe.recipe_id in favorites
         return recipes
 
+    # Full-catalog text search on the recipes service — the SAME plain /gw API family as
+    # recipe detail, so unlike the browse catalog it needs no build-id scraping and cannot
+    # break on a website deploy. Verified live (2026-09): GET with country/locale/q/take
+    # returns {items, count, skip, take, total}, each item a full recipe-detail-shaped row;
+    # a non-matching query returns an empty items list.
+    _RECIPE_SEARCH_PATH = "/gw/recipes/recipes/search"
+
+    async def async_search_catalog_recipes(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+        include_favorites: bool = True,
+    ) -> list[HelloFreshCatalogRecipe]:
+        """Search the whole public recipe catalog (~10k recipes) by free text.
+
+        Unlike :meth:`async_get_catalog_recipes`, which lists one browse category, this
+        spans every category at once — it is the API behind the website's own recipe
+        search. When ``include_favorites`` is set, each result is flagged with its bookmark
+        state in one extra batched request, exactly as the category listings are.
+        """
+        text = str(query or "").strip()
+        if not text:
+            return []
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+            "q": text,
+            "take": str(max(1, min(int(limit or 50), 250))),
+        }
+        response = await self._async_api_get(self._RECIPE_SEARCH_PATH, params=params)
+        if response.status >= 400:
+            raise HelloFreshError(f"HelloFresh recipe search failed (HTTP {response.status})")
+        payload = await self._async_response_json(response)
+        rows = payload.get("items") if isinstance(payload, dict) else None
+
+        recipes: list[HelloFreshCatalogRecipe] = []
+        seen: set[str] = set()
+        for row in rows if isinstance(rows, list) else []:
+            parsed = HelloFreshCatalogRecipe.from_api(row, image_base=self._CATALOG_IMAGE_BASE)
+            if parsed is None or parsed.recipe_id in seen:
+                continue
+            seen.add(parsed.recipe_id)
+            recipes.append(parsed)
+            if len(recipes) >= limit:
+                break
+
+        if include_favorites and recipes:
+            favorites = await self.async_get_favorite_recipe_ids([r.recipe_id for r in recipes])
+            for recipe in recipes:
+                recipe.is_favorite = recipe.recipe_id in favorites
+        return recipes
+
     async def async_get_catalog_page(
         self,
         collection: str | None = None,

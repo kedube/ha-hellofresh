@@ -281,3 +281,50 @@ def test_grid_renders_the_filtered_list_not_the_raw_one() -> None:
     grid = re.search(r'class="grid">\$\{(\w+)\.map', body.group(0))
     assert grid, "recipe grid not found"
     assert grid.group(1) == "visible", "the grid maps the unfiltered recipe list"
+
+
+# ---- catalog-wide server search ------------------------------------------------------------
+#
+# The search field originally filtered only the recipes already loaded for the selected
+# category. It now sends the query (debounced) to get_catalog_recipes' `search`, which
+# text-searches the whole ~10k-recipe catalog server-side; only the Cookbook view still
+# filters locally (it is the customer's own bookmarks, unknown to the catalog search).
+
+
+def _card_method(name: str) -> str:
+    match = re.search(
+        rf"^  (?:async )?{name}\((?:\w+(?:, \w+)*)?\) \{{.*?^  \}}", SOURCE, re.S | re.M
+    )
+    assert match, f"{name} not found"
+    return match.group(0)
+
+
+def test_catalog_queries_search_the_server_not_the_loaded_view() -> None:
+    schedule = _card_method("_scheduleSearch")
+    assert "setTimeout" in schedule, "server search must be debounced"
+    assert "COOKBOOK_SLUG" in schedule, "the cookbook must keep filtering locally"
+    run = _card_method("_runSearch")
+    assert '_call("get_catalog_recipes"' in run
+    assert "search: query" in run, "the query must go to the service's `search` field"
+    body = _card_method("_renderBody")
+    assert "_searchResults.map(" in body, "search results are fetched but never rendered"
+
+
+def test_stale_search_responses_are_dropped() -> None:
+    """A slow response for an old query must not clobber a newer query's results."""
+    run = _card_method("_runSearch")
+    assert "_searchSeq" in run
+    assert "seq !== this._searchSeq" in run
+
+
+def test_switching_category_leaves_search_mode() -> None:
+    """Tapping a category chip is navigation: the query clears so the category shows."""
+    assert "_resetSearch()" in _card_method("_selectCollection")
+
+
+def test_favorite_toggle_uses_the_list_on_screen() -> None:
+    """Hearts on search results: the lookup must use the visible list, which may be the
+    catalog-wide results rather than the fetched category list."""
+    bind = re.search(r"^  _bindDelegated\(card\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert bind, "_bindDelegated not found"
+    assert "_visibleRecipes().find" in bind.group(0)

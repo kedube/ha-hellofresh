@@ -1170,9 +1170,13 @@ class HelloFreshCatalogRecipe:
             image_url=image_url,
             url=raw.get("websiteUrl"),
             rating=_coerce_number(raw.get("aggregateRating") or raw.get("averageRating")),
+            # Website catalog rows spell it `aggregateRatingsCount`; the /gw recipes-service
+            # search rows spell it `ratingsCount`.
             ratings_count=(
                 int(raw["aggregateRatingsCount"])
                 if isinstance(raw.get("aggregateRatingsCount"), (int, float))
+                else int(raw["ratingsCount"])
+                if isinstance(raw.get("ratingsCount"), (int, float))
                 else None
             ),
             prep_time_minutes=_iso_duration_to_minutes(raw.get("prepTime")),

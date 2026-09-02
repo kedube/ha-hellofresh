@@ -88,10 +88,15 @@ class HelloFreshRecipesCard extends HTMLElement {
     this._busyIds = new Set();
     this._flashMessage = null;
     this._flashIsError = false;
-    // Text filter over the recipes currently loaded in the card. There is no catalog
-    // text-search endpoint (see docs/HELLOFRESH_API.md), so this narrows the fetched view
-    // (category / cookbook / Top rated) client-side by name and headline.
+    // Free-text search. In catalog views the query is sent (debounced) to the
+    // hellofresh.get_catalog_recipes service's `search`, which text-searches the WHOLE
+    // ~10k-recipe catalog server-side — every category at once, not just the loaded view.
+    // The Cookbook view instead filters the saved list client-side: it is the customer's
+    // own bookmarks, which the catalog-wide search knows nothing about.
     this._query = "";
+    this._searchResults = null; // catalog-wide results for the active query, or null
+    this._searchLoading = false;
+    this._searchSeq = 0; // guards a slow response from clobbering a newer query's results
   }
 
   setConfig(config) {
@@ -120,6 +125,7 @@ class HelloFreshRecipesCard extends HTMLElement {
 
   disconnectedCallback() {
     clearTimeout(this._flashTimer);
+    clearTimeout(this._searchTimer);
     this._flashMessage = null;
     // The detail overlay sits beside the card in the shadow root and holds a document-level
     // key listener, so it must be torn down explicitly rather than with the card's markup.
@@ -207,7 +213,59 @@ class HelloFreshRecipesCard extends HTMLElement {
     if (this._loading || slug === this._collection) return;
     this._collection = slug;
     this._recipes = [];
+    // A category tap is a navigation: leave search mode so the category actually shows
+    // (catalog-wide results would otherwise keep covering it).
+    if (this._query) this._resetSearch();
     await this._fetch();
+  }
+
+  // Debounce, then search the whole catalog server-side. The cookbook view never searches
+  // the server — its list is the customer's own bookmarks, filtered locally as you type.
+  _scheduleSearch() {
+    clearTimeout(this._searchTimer);
+    const query = this._query.trim();
+    if (!query || this._collection === COOKBOOK_SLUG) {
+      this._searchResults = null;
+      this._searchLoading = false;
+      return;
+    }
+    this._searchLoading = true;
+    this._searchTimer = setTimeout(() => this._runSearch(query), 350);
+  }
+
+  async _runSearch(query) {
+    const seq = ++this._searchSeq;
+    try {
+      const payload = await this._call("get_catalog_recipes", {
+        search: query,
+        limit: Number(this._config.limit) || DEFAULT_LIMIT,
+      });
+      // A newer query (or a cleared one) supersedes this response; drop it silently.
+      if (seq !== this._searchSeq || this._query.trim() !== query) return;
+      this._searchResults = payload.recipes || [];
+    } catch (err) {
+      if (seq !== this._searchSeq) return;
+      this._searchResults = null;
+      this._flash(`Search failed: ${(err && err.message) || err}`, true);
+    } finally {
+      if (seq === this._searchSeq) {
+        this._searchLoading = false;
+        this._render();
+      }
+    }
+  }
+
+  _resetSearch() {
+    clearTimeout(this._searchTimer);
+    this._searchSeq++; // orphan any in-flight response
+    this._query = "";
+    this._searchResults = null;
+    this._searchLoading = false;
+    if (this._shell) {
+      // The input is static shell markup, so its value must be reset by hand.
+      this._shell.search.value = "";
+      this._shell.searchClear.hidden = true;
+    }
   }
 
   async _toggleFavorite(recipe) {
@@ -250,10 +308,7 @@ class HelloFreshRecipesCard extends HTMLElement {
   }
 
   _clearSearch() {
-    this._query = "";
-    // The input is static shell markup, so its value must be reset by hand here.
-    this._shell.search.value = "";
-    this._shell.searchClear.hidden = true;
+    this._resetSearch();
     this._shell.search.focus();
     this._render();
   }
@@ -307,6 +362,7 @@ class HelloFreshRecipesCard extends HTMLElement {
     this._shell.search.addEventListener("input", () => {
       this._query = this._shell.search.value;
       this._shell.searchClear.hidden = !this._query;
+      this._scheduleSearch();
       // Only the content region depends on the query; the input itself is never re-rendered.
       this._render();
     });
@@ -332,6 +388,21 @@ class HelloFreshRecipesCard extends HTMLElement {
       return `<div class="msg err">${this._esc(this._error)}</div>`;
     }
     const chips = this._renderCollections();
+    // Catalog-wide search mode: the server searched ALL categories at once, so its results
+    // replace the category view outright (independent of what the category had loaded).
+    // Stale results keep showing while a refined query is in flight — less flicker per key.
+    if (this._query.trim() && this._collection !== COOKBOOK_SLUG) {
+      if (this._searchResults === null) {
+        return `${chips}<div class="msg">${
+          this._searchLoading ? "Searching all recipes…" : "No recipes found."
+        }</div>`;
+      }
+      if (!this._searchResults.length) {
+        return `${chips}<div class="msg">No recipes in the catalog match
+          “${this._esc(this._query.trim())}”.</div>`;
+      }
+      return `${chips}<div class="grid">${this._searchResults.map((r) => this._renderRecipe(r)).join("")}</div>`;
+    }
     if (this._loading && !this._recipes.length) {
       return `${chips}<div class="msg">Loading recipes…</div>`;
     }
@@ -344,16 +415,24 @@ class HelloFreshRecipesCard extends HTMLElement {
     }
     const visible = this._filteredRecipes();
     if (!visible.length) {
-      // Distinct from an empty fetch: recipes ARE loaded, the query just matches none of them.
-      // The search only covers what is loaded (there is no catalog text-search endpoint), so
-      // point at the other categories rather than implying the whole catalog was searched.
-      return `${chips}<div class="msg">No loaded recipes match
-        “${this._esc(this._query.trim())}”. Try another category, or clear the search.</div>`;
+      // Only the cookbook filters locally (a query on a catalog view took the branch above),
+      // so an empty result means none of the SAVED recipes match.
+      return `${chips}<div class="msg">No saved recipes match
+        “${this._esc(this._query.trim())}”.</div>`;
     }
     return `${chips}<div class="grid">${visible.map((r) => this._renderRecipe(r)).join("")}</div>`;
   }
 
-  // Recipes passing the current text query, matched case-insensitively on name and headline.
+  // The recipe list the grid is currently showing: catalog-wide search results when a
+  // query is active on a catalog view, else the fetched category/cookbook list.
+  _visibleRecipes() {
+    if (this._query.trim() && this._collection !== COOKBOOK_SLUG && this._searchResults) {
+      return this._searchResults;
+    }
+    return this._recipes;
+  }
+
+  // Cookbook-only local filter: saved recipes matching the query on name and headline.
   _filteredRecipes() {
     const query = this._query.trim().toLowerCase();
     if (!query) return this._recipes;
@@ -438,7 +517,9 @@ class HelloFreshRecipesCard extends HTMLElement {
       const favBtn = ev.target.closest("[data-fav]");
       if (favBtn && !favBtn.disabled) {
         const id = favBtn.getAttribute("data-fav");
-        const recipe = this._recipes.find((r) => r.recipe_id === id);
+        // The grid may be showing catalog-wide search results rather than the fetched
+        // category list, so the lookup must use whichever list is actually on screen.
+        const recipe = this._visibleRecipes().find((r) => r.recipe_id === id);
         if (recipe) this._toggleFavorite(recipe);
         return;
       }

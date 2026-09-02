@@ -359,6 +359,11 @@ get_catalog_recipes:
       example: chicken-recipes
       selector:
         text:
+    search:
+      required: false
+      example: paneer tikka
+      selector:
+        text:
     limit:
       required: false
       default: 50

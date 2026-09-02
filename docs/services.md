@@ -114,7 +114,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_catalog_recipes`
 
-**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
+**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Pass `search` to **text-search the whole catalog** instead — every category at once, via HelloFresh's own recipes-service search API (`collection` is ignored then, and no `subcollections` are returned since results span categories). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
 
 ### `hellofresh.get_recipe_detail`
 

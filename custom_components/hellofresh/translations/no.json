@@ -499,6 +499,10 @@
           "name": "Kategori",
           "description": "Valgfri kategoriidentifikator for å begrense resultatene til den kategorien."
         },
+        "search": {
+          "name": "Søk",
+          "description": "Fritekstsøk i hele katalogen, på tvers av alle kategorier. Hvis angitt ignoreres kolleksjonen."
+        },
         "limit": {
           "name": "Grense",
           "description": "Høyeste antall oppskrifter som returneres."
