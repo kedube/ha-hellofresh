@@ -5,6 +5,21 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- Recipes card: the search field now searches the **whole ~10k-recipe catalog** across
+  every category at once (previously it only filtered the loaded view). Backed by a newly
+  verified recipes-service endpoint (`GET /gw/recipes/recipes/search`) exposed through
+  `hellofresh.get_catalog_recipes`' new `search` field; debounced as you type, with
+  stale-response guarding, and immune to the website build-id fragility of the browse
+  catalog. The Cookbook view still filters your saved list locally.
+- Meal planner card: filter bar aligned with the HelloFresh website's own filter panel —
+  groups renamed to Categories (was Menu), Main Protein, Dietary Preference, and a new
+  Total Cooking Time group (Under 15/20/30 Minutes, single-select as on the site) split
+  out of Dietary. Dietary options now mirror the site's list exactly: Vegetarian and
+  Organic Protein added, High Fiber renamed to Fiber Powered, Mediterranean removed
+  (it is a cuisine on the site, not a dietary preference).
+- Market card: renamed the filter bar's group label from "Section" to "Categories".
+
 ## 2.89 — 2026-09-02
 - Meal planner card: two new filter groups — Highlights (New / Bestsellers / Cooked
   Before, combining as a union like the site's browse rows) and Menu (the website's own

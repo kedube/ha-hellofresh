@@ -499,6 +499,10 @@
           "name": "Catégorie",
           "description": "Identifiant de catégorie facultatif pour limiter les résultats à cette catégorie."
         },
+        "search": {
+          "name": "Recherche",
+          "description": "Recherche en texte libre dans tout le catalogue, toutes catégories confondues. Si renseignée, la collection est ignorée."
+        },
         "limit": {
           "name": "Limite",
           "description": "Nombre maximal de recettes à renvoyer."

@@ -742,7 +742,7 @@ class HelloFreshMarketCard extends HTMLElement {
     return `
       <div class="filterbar">
         <div class="fgroup">
-          <span class="flabel">Section</span>
+          <span class="flabel">Categories</span>
           <button
             class="fbtn ${allActive ? "on" : ""}"
             data-action="filter-section-all"

@@ -499,6 +499,10 @@
           "name": "Kategorie",
           "description": "Optionale Kategoriekennung, um die Ergebnisse auf diese Kategorie zu beschränken."
         },
+        "search": {
+          "name": "Suche",
+          "description": "Freitextsuche über den gesamten Katalog, alle Kategorien auf einmal. Wenn gesetzt, wird die Kategorie ignoriert."
+        },
         "limit": {
           "name": "Anzahl",
           "description": "Maximale Anzahl zurückzugebender Rezepte."

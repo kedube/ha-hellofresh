@@ -499,6 +499,10 @@
           "name": "Categorie",
           "description": "Optionele categorie-identificatie om de resultaten tot die categorie te beperken."
         },
+        "search": {
+          "name": "Zoeken",
+          "description": "Vrije tekst zoeken in de hele catalogus, alle categorieën tegelijk. Indien ingevuld wordt de collectie genegeerd."
+        },
         "limit": {
           "name": "Maximum",
           "description": "Maximaal aantal terug te geven recepten."

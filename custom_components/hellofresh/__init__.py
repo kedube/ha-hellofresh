@@ -30,6 +30,7 @@ from .const import (
     ATTR_QUANTITIES,
     ATTR_RECIPE_ID,
     ATTR_RECIPE_IDS,
+    ATTR_SEARCH,
     ATTR_SERVINGS,
     ATTR_SUBSCRIPTION_ID,
     ATTR_TASTE,
@@ -750,11 +751,26 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         return {"collections": [collection.as_dict() for collection in collections]}
 
     async def async_get_catalog_recipes(service_call: ServiceCall) -> ServiceResponse:
-        """Return recipes from the public catalog, optionally filtered to one collection."""
+        """Return recipes from the public catalog, optionally filtered to one collection.
+
+        With ``search``, text-search the WHOLE catalog instead (every category at once, via
+        the recipes-service search API); ``collection`` is ignored then, and no
+        subcollections are returned since results span categories.
+        """
         coordinator = _single_coordinator(service_call)
+        query = str(service_call.data.get(ATTR_SEARCH) or "").strip()
+        limit = int(service_call.data.get(ATTR_LIMIT, 50))
+        if query:
+            recipes = await coordinator.client.async_search_catalog_recipes(query, limit=limit)
+            return {
+                "collection": None,
+                "search": query,
+                "recipes": [recipe.as_dict() for recipe in recipes],
+                "subcollections": [],
+            }
         page = await coordinator.client.async_get_catalog_page(
             service_call.data.get(ATTR_COLLECTION),
-            limit=int(service_call.data.get(ATTR_LIMIT, 50)),
+            limit=limit,
         )
         return {
             "collection": page["collection"],
@@ -1117,6 +1133,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
                 # Collection slug from get_recipe_collections; omit for the top-level listing.
                 vol.Optional(ATTR_COLLECTION): str,
+                # Free-text search across the WHOLE catalog; overrides `collection`.
+                vol.Optional(ATTR_SEARCH): str,
                 vol.Optional(ATTR_LIMIT, default=50): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=200)
                 ),

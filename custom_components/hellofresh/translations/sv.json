@@ -499,6 +499,10 @@
           "name": "Kategori",
           "description": "Valfri kategoriidentifierare för att begränsa resultaten till den kategorin."
         },
+        "search": {
+          "name": "Sök",
+          "description": "Fritextsökning i hela katalogen, över alla kategorier samtidigt. Om angiven ignoreras kollektionen."
+        },
         "limit": {
           "name": "Gräns",
           "description": "Högsta antal recept som returneras."
