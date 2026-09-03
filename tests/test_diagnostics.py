@@ -82,6 +82,35 @@ def test_new_identifier_keys_redacted() -> None:
     assert redacted["runtime"]["subscriptions"][0]["coupon_code"] == "**REDACTED**"
 
 
+def test_pricing_attempt_payload_ids_redacted() -> None:
+    """The cart-pricing debug trace records its full json_payload, whose ID keys use the
+    all-caps-ID spelling (customerID/subscriptionID/planID) — async_redact_data is
+    case-sensitive, so each spelling must be listed or the export leaks stable ids."""
+    diagnostics = {
+        "runtime": {
+            "debug_trace": {
+                "pricing_attempts": [
+                    {
+                        "path": "/gw/api/cart/price",
+                        "json_payload": {
+                            "customerID": 12345678,
+                            "subscriptionID": 6959884,
+                            "planID": "1e989989-eb15-49b3-94e2-a089bc0e2082",
+                            "boxSize": 3,
+                        },
+                    }
+                ],
+            }
+        }
+    }
+
+    payload = _redact(diagnostics)["runtime"]["debug_trace"]["pricing_attempts"][0]["json_payload"]
+    assert payload["customerID"] == "**REDACTED**"
+    assert payload["subscriptionID"] == "**REDACTED**"
+    assert payload["planID"] == "**REDACTED**"
+    assert payload["boxSize"] == 3  # non-identifying request shape is kept for debugging
+
+
 def test_template_debug_path_strips_account_identifiers() -> None:
     """Ids baked into a path string (unreachable by key-name redaction) are templated out."""
     cases = {

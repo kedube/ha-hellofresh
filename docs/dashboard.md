@@ -1,17 +1,16 @@
-# Card reference
+# Dashboard & card reference
 
 The integration packages seven Lovelace cards. They are **registered automatically** — no manual
 resource entry, no HACS frontend add-on — and each reads its data on demand from the integration's
 services rather than from entity attributes, so they show detail (full menus, images, per-item
 prices) that would never fit in a sensor.
 
-For the ready-made dashboard that assembles these, see
+For the ready-made dashboard that assembles these into views, see
 [`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml) and the
-[HelloFresh Dashboard](../README.md#hellofresh-dashboard) section of the README.
-
-> **Not on this page:** the *Missing Ingredients* view uses Home Assistant's **built-in** to-do
-> card over the `todo.prep_list` entities, not a packaged card, so it is documented under
-> [Prep lists](entities.md#prep-lists) instead.
+[HelloFresh Dashboard](../README.md#hellofresh-dashboard) section of the README. This page covers
+each packaged card, plus the one dashboard view built without one
+(the [Missing Ingredients view](#missing-ingredients-view), which uses Home Assistant's built-in
+to-do card).
 
 | Card | Type | What it is for |
 |---|---|---|
@@ -31,7 +30,7 @@ Every card accepts these, so they are omitted from the per-card examples below:
 |---|---|---|
 | `title` | all | Replaces the card's default header text. |
 | `config_entry_id` | all | **Only needed with more than one HelloFresh account** — picks which one the card reads. With a single account, omit it. |
-| `logo` | all except meal planner | Set `true` to show the bundled HelloFresh logo in the header. |
+| `logo` | all | Set `true` to show the bundled HelloFresh logo in the header (or a URL for a custom image). |
 | `image_width` | cards showing food images | Width in pixels for recipe/item images (default 400). Larger looks sharper on wide screens at the cost of more data. |
 
 A minimal card is just its type:
@@ -55,7 +54,7 @@ type: custom:hellofresh-meal-planner-card
 What it does:
 
 - **Week cursor** (‹ ›) across past, current, and upcoming weeks, **opening on the current week** by date. A **Current Week** button jumps back to it, and the header shows the delivery date plus how far off it is (e.g. `Mon, Jul 6 · in 3 days`).
-- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, and calories. Your chosen meals are highlighted with a ✓, and the per-week **meal count** appears alongside your plan's count (e.g. `2 meals (plan: 3)` on a resized week). The grid is **sorted** so selected meals lead, with the rest grouped by dish so a meal's variants sit together.
+- **Recipe grid** with lazy-loaded images (resized via HelloFresh's Cloudinary transform), a protein-color dot, description, calories, and the total cooking time (the same headline number the HelloFresh site shows on its tiles). Your chosen meals are highlighted with a ✓, and the per-week **meal count** appears alongside your plan's count (e.g. `2 meals (plan: 3)` on a resized week). The grid is **sorted** so selected meals lead, with the rest grouped by dish so a meal's variants sit together.
 - **Past weeks** show what actually shipped, not the planning menu:
   - Within the [**Full menu history** window](../README.md#options) (2 weeks by default) a delivered week keeps its **full browsable menu** — the one HelloFresh really published — with delivered meals marked ✓, so the current week doesn't collapse the day after the box arrives.
   - **Older** weeks show **only the delivered meals**, sourced from delivery history — never the browsable catalog or its auto-fill.
@@ -64,14 +63,16 @@ What it does:
 - **Recipe videos** — a handful of meals each week ship with a short promo clip; those tiles get a ▶ button that opens the video in a lightbox over the card (Escape or a backdrop tap closes it). Coverage is sparse by HelloFresh's own doing — typically a few meals out of several hundred — but delivered meals on **past** weeks keep their clips too. HelloFresh serves a mix of `.mp4` and `.mov`, but both are delivered as `video/mp4` and play everywhere once the player declares that type rather than letting the browser guess from the file suffix. A clip that genuinely fails to load says so instead of showing a black box, the player offers an "open it directly" link, and the still image always remains the tile's base layer.
 - **Favorite hearts** — meals in your cookbook show a ♥. Read-only here, matching HelloFresh's own site; add and remove favorites from the [Recipes card](#recipes-card). Turn the hearts off with the [**Show favorite hearts** option](../README.md#options).
 - **Per-serving price** — each tile shows what the meal actually costs per serving (from HelloFresh's own `itemPrice`), separate from the premium surcharge badge, which shows only the uplift over a classic meal.
-- **Menu badges & dietary chips** — a meal's HelloFresh badge (BESTSELLER, NEW, 20 Min or Less, Premium Picks, …) renders in HelloFresh's own colors for that badge, and dietary chips (GLP-1 Support, Carb Conscious, …) appear on tiles under their current names via the same spelling-proof matching the filter bar uses — a HelloFresh tag renaming can't silently drop a chip the filter still matches.
+- **Menu badges & dietary chips** — a meal's HelloFresh badge (BESTSELLER, NEW, 20 Min or Less, Premium Picks, …) renders in HelloFresh's own colors for that badge, and dietary chips (GLP-1 Support, Carb Conscious, …) appear on tiles as quiet outlined pills — a deliberate second tier, so solid color always means HelloFresh's own badge — under their current names via the same spelling-proof matching the filter bar uses — a HelloFresh tag renaming can't silently drop a chip the filter still matches.
 - **"You've had this before"** — meals HelloFresh has previously delivered to you show an ordered-count and the week of the last one; meals you have rated show your star rating. Both come from HelloFresh's own records and appear only on the minority of meals that have them.
-- **Full recipe view** — tap any meal on a week you can no longer change (a past or locked box) to open the complete recipe: ingredients with amounts, a servings switcher, step-by-step instructions, utensils, allergens, nutrition, and the printable recipe-card PDF. On an *editable* week the tap still changes your selection, so the recipe opens from the small **ⓘ** button on the tile instead. Same sheet the [Recipes card](#recipes-card) uses.
-- **Sold-out meals** — a meal HelloFresh has marked sold out is greyed out with a **Sold out** ribbon. This is **advisory, not enforced**: the tile stays tappable and `select_meals` still submits, logging a warning. See the note below for why.
+- **Full recipe view** — tap any meal on **any week** to open the complete recipe: ingredients with amounts, a servings switcher, step-by-step instructions, utensils, allergens, nutrition, and the printable recipe-card PDF. Selection never competes with the tap: on editable weeks meals are chosen with the **+ Add** pill and the **− N +** stepper instead (the same model as the [Market card](#market-card)) — and the sheet itself carries a pinned footer with the same **+ Add** / servings controls, so you can read a recipe and add it without leaving the sheet ("Not in this week's box" / "In this week's box"). On weeks you can't edit, the footer simply isn't there. Same sheet the [Recipes card](#recipes-card) uses. Tiles are keyboard-accessible: Tab to one and press Enter or Space to open the recipe (here, in the Market card, and in the Recipes card alike).
+
+  ![The meal-planner card's full recipe view: a recipe opened over the menu grid with its photo, time, calories, difficulty and rating, allergens, a servings switcher, the ingredient list with amounts (pantry items marked "not in box"), and step-by-step cooking instructions](../images/hellofresh_screenshot-7.png)
+- **Sold-out meals** — a meal HelloFresh has marked sold out is greyed out with a **Sold out** ribbon. This is **advisory, not enforced**: the **+ Add** pill stays tappable and `select_meals` still submits, logging a warning. See the note below for why.
 - **Variant differentiation** — when HelloFresh lists the same dish in several forms, the tile calls out exactly what differs: the modifier (e.g. "2x Bacon", "Gluten-Free Linguine"), any per-serving surcharge, and protein/calorie deltas. The plain, unmodified base option in such a set carries no modifier label. Genuinely identical duplicate listings are collapsed into a single tile.
-- **Edit, quantity & save** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): tap recipes to build a pending selection, use the **− N +** stepper to set per-meal servings (a doubled portion fills two box slots), then **Save selection** submits it via `hellofresh.select_meals` and re-reads to confirm (**Cancel** discards the edit). You can choose **more or fewer** distinct meals than your plan — the box **resizes** for that week (and HelloFresh reprices it accordingly), down to a minimum of **2 meals**. While the selection saves, a "Please wait while saving selections…" banner is shown, and afterward the card stays on the week you edited. If HelloFresh **downsizes the box** to fit your save (a seamless downgrade), a dismissable amber warning appears on that week. Locked/past weeks render read-only.
+- **Edit, quantity & save** on editable weeks (when `allowed_actions.mealSwap` is true and the selection deadline hasn't passed): build a pending selection with each meal's **+ Add** pill, use the **− N +** stepper to set per-meal servings (a doubled portion fills two box slots; **−** at one serving removes the meal), then **Save selection** submits it via `hellofresh.select_meals` and re-reads to confirm (**Cancel** discards the edit). You can choose **more or fewer** distinct meals than your plan — the box **resizes** for that week (and HelloFresh reprices it accordingly), down to a minimum of **2 meals**. While the selection saves, a "Please wait while saving selections…" banner is shown, and afterward the card stays on the week you edited. If HelloFresh **downsizes the box** to fit your save (a seamless downgrade), a dismissable amber warning appears on that week. Locked/past weeks render read-only.
 - **Order strip** at the top of each week showing that week's order detail (status, carrier, tracking number/link, the **delivered date** on boxes that have arrived — the actual carrier delivery timestamp from HelloFresh's tracking feed, shown in your local timezone — billed total, order ID), falling back to the standing plan price for weeks not yet billed.
-- **Meal filters** (current & upcoming weeks) — a **collapsible filter panel** whose groups match the HelloFresh website's own filter panel, name for name. Collapsed (the default) it is a single **Filters · N active** row, with each active selection shown as a chip you can remove with its ✕ right there; tap the row to expand it into one aligned line per group (the expand/collapse state is remembered). The groups: **Categories** (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, Bestsellers, Your Top Recipes, Order It Again, … — single-select, drawn from each week's menu payload so they track whatever HelloFresh publishes), **Main Protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear), **Dietary Preference** (the site's exact list: Vegetarian, Under 650 Calories, High Protein, Carb Conscious, Fiber Powered, Gluten-Free Friendly, Sodium Smart, Low Added Sugar, Organic Protein, GLP-1 Support), **Total Cooking Time** (Under 15 / 20 / 30 Minutes — single-select, as on the site), **Highlights** (New, Bestsellers, Cooked Before — read from HelloFresh's own badges, tags and delivered-count, combining as a union like the site's browse rows), and a **hide variants** toggle so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Protein chips widen the selection (a meal has one protein), while each dietary chip adds a constraint — pick High Protein *and* Sodium Smart to see meals that are both, matching the site's own MULTI-AND declaration. Dietary categories match the tags HelloFresh puts on each recipe (under every spelling it has used — e.g. GLP-1 meals are tagged "GLP-1 Support", "GLP-1 Friendly" or "GLP-1 Balance" depending on the season), and the calorie/time categories also accept an untagged meal whose own numbers qualify. Your currently selected meals always stay visible regardless of the filter. The bar is hidden on weeks past the [**Full menu history** window](../README.md#options) (which just show what was delivered); a just-delivered week still has its full menu, so it keeps the filters.
+- **Meal filters** (current & upcoming weeks) — a **collapsible filter panel** whose groups match the HelloFresh website's own filter panel, name for name. Collapsed (the default) it is a single **Filters · N active** row, with each active selection shown as a chip you can remove with its ✕ right there; tap the row to expand it into one aligned line per group (the expand/collapse state is remembered). The groups: **Categories** (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, Bestsellers, Your Top Recipes, Order It Again, … — single-select, drawn from each week's menu payload so they track whatever HelloFresh publishes), **Main Protein** (Beef, Poultry, Pork, Seafood, Lamb, Veggie — tap any combination, or **All** to clear), **Dietary Preference** (the site's exact list: Vegetarian, Under 650 Calories, High Protein, Carb Conscious, Fiber Powered, Gluten-Free Friendly, Sodium Smart, Low Added Sugar, Organic Protein, GLP-1 Support), **Total Cooking Time** (Under 15 / 20 / 30 Minutes — single-select, as on the site), **Highlights** (New, Bestsellers, Cooked Before — read from HelloFresh's own badges, tags and delivered-count; single-select, since these are mutually exclusive views of the menu), and a **hide variants** toggle so only the base meal of each dish shows (the 2× protein, protein-swap and veggie-swap versions are collapsed away). Protein chips widen the selection (a meal has one protein), while each dietary chip adds a constraint — pick High Protein *and* Sodium Smart to see meals that are both, matching the site's own MULTI-AND declaration. Dietary categories match the tags HelloFresh puts on each recipe (under every spelling it has used — e.g. GLP-1 meals are tagged "GLP-1 Support", "GLP-1 Friendly" or "GLP-1 Balance" depending on the season), and the calorie/time categories also accept an untagged meal whose own numbers qualify. Your currently selected meals always stay visible regardless of the filter. The bar is hidden on weeks past the [**Full menu history** window](../README.md#options) (which just show what was delivered); a just-delivered week still has its full menu, so it keeps the filters.
 - **Week actions** — a **Show selected only** toggle (hide everything but your picks), **Skip / Unskip** the displayed week (shown only where the action can still change something — editable weeks, or skipped weeks whose deadline hasn't passed — matching the [Schedule card](#schedule-card)'s pill; locked, delivered, and past weeks get no dead button), a **refresh** button, and a banner summarizing any weeks that still need a selection (tap it to jump to the first one). Filter and view choices are remembered across weeks and reloads.
 - **Week stays in sync with the Market card** — navigating to a week here moves the [Market card](#market-card) to the same week (and vice versa), even when the two cards are on different dashboard views. The selected week is remembered across reloads and tab switches.
 
@@ -81,7 +82,7 @@ What it does:
 
 > Meal-selection writes are confirmed on the US and UK sites; other regions fall back to best-effort guesses (see [Current Scope](../README.md#current-scope)). Browsing works everywhere the menu loads.
 
-> **YAML-mode dashboards only.** Storage-mode dashboards register every card automatically — nothing to do. In **YAML mode**, add each card once under **Settings → Dashboards → Resources** as a *JavaScript module*: `/hellofresh/hellofresh-<name>-card.js?v=<integration version>` (e.g. `?v=2.68`). The `?v=` must match your installed version, and you must update it after each upgrade or browsers keep serving the cached card. The startup log prints the exact URLs. (`hellofresh-recipe-detail.js` is a shared module the cards import themselves — not a resource you register.)
+> **YAML-mode dashboards only.** Storage-mode dashboards register every card automatically — nothing to do. In **YAML mode**, add each card once under **Settings → Dashboards → Resources** as a *JavaScript module*: `/hellofresh/hellofresh-<name>-card.js?v=<integration version>` (e.g. `?v=2.68`). The `?v=` must match your installed version, and you must update it after each upgrade or browsers keep serving the cached card. The startup log prints the exact URLs. (`hellofresh-recipe-detail.js` and `hellofresh-shared.js` are shared modules the cards import themselves — not resources you register.)
 
 ## Market card
 
@@ -148,6 +149,30 @@ What it does, driven entirely by the options catalog so new HelloFresh options a
 - **Completion progress** — a slim bar showing how many profile fields HelloFresh considers answered (its own reckoning, not a guess), so it's obvious when something is still worth filling in. It disappears once the profile is complete, and is simply omitted if HelloFresh doesn't report it.
 - **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes.
 
+## Missing Ingredients view
+
+![The example dashboard's Missing Ingredients view: two built-in to-do list cards side by side — "Ingredients needed for this week" and "Ingredients needed for next week" — each listing pantry staples like salt, butter, cooking oil and sugar with summed amounts and a due label for the week's delivery](../images/hellofresh_screenshot-8.png)
+
+The one dashboard view built **without** a packaged card: two of Home Assistant's built-in
+**to-do list** cards side by side, one per delivery week, over `todo.prep_list` and
+`todo.prep_list_week_2`. They list the pantry staples HelloFresh does **not** ship — salt, oil,
+butter, eggs — for the meals selected on your next two boxes, with quantities summed per week and
+each item due-dated to its week's delivery, so you can check things off as you shop.
+
+```yaml
+- type: heading
+  heading: Ingredients needed for this week
+- type: todo-list
+  entity: todo.hellofresh_us_prep_list
+```
+
+(Substitute your own entity prefix, and repeat with `todo.hellofresh_us_prep_list_week_2` for the
+second week — the [example dashboard](../dashboard/hellofresh.yaml) lays both out in a `sections`
+grid.) The lists themselves are ordinary to-do entities, so they also work from the companion app
+or a voice assistant. How they are built — the two-entity design, what qualifies as "not
+shipped", and the exact-conversion rules for summed quantities — is documented under
+[Prep lists](entities.md#prep-lists).
+
 ## Schedule card
 
 ![HelloFresh schedule dashboard in Home Assistant](../images/hellofresh_screenshot-6.png)
@@ -166,7 +191,7 @@ type: custom:hellofresh-schedule-card
 What it does:
 
 - **Next-box summary** — the nearest upcoming delivery's date (with a relative "in 3 days"), the courier **delivery window**, the selection-deadline countdown (highlighted red when under 24h), the next payment date, the active coupon, and the order status with the box total. When nothing is upcoming (paused subscription, end of data) it shows the most recent box, labelled **Last box**.
-- **Delivery calendar** — a built-in month grid with every delivery day marked in its week's state colour (green delivered/set, amber needs picking, struck-through for skipped), with ‹ › month navigation and a Today button. Navigation stops at the edges of the loaded data (the arrows disable) instead of paging into empty months. It covers the full loaded range (your configured past history through the scheduled weeks ahead), so a separate `calendar.delivery_schedule` dashboard widget is no longer needed. Clicking a marked day — or a timeline row — jumps the [Meal planner](#meal-planner-card) and [Market](#market-card) cards to that week, even across dashboard views, and the week those cards are currently showing gets a green ring on the calendar.
+- **Delivery calendar** — a built-in month grid with every delivery day marked in its week's state colour (green delivered/set, amber needs picking, struck-through for skipped), with ‹ › month navigation and a Today button. Navigation stops at the edges of the loaded data (the arrows disable) instead of paging into empty months. It covers the full loaded range (your configured past history through the scheduled weeks ahead), so a separate `calendar.delivery_schedule` dashboard widget is no longer needed. Clicking a marked day — or a timeline row — jumps the [Meal planner](#meal-planner-card) and [Market](#market-card) cards to that week, even across dashboard views, and the week those cards are currently showing gets a green ring on the calendar. Timeline rows are keyboard-accessible (Tab to a row, Enter/Space selects the week).
 - **Timeline** — a chronological row per week, **following the calendar's displayed month**, so navigating months swaps the list to that month's delivery weeks and the two always agree. (With `calendar: false` it instead shows the last `past_weeks` deliveries plus up to `max_weeks` upcoming.)
   - A month with more than one week opens with a **roll-up line**: boxes, skipped weeks, and the summed billed cost.
   - Past deliveries are dated by when the box **actually arrived**. Future weeks beyond HelloFresh's published menus (empty scheduling shells with no meal data) are hidden, but skipped weeks always appear so the gap stays visible.

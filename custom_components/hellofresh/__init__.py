@@ -97,7 +97,6 @@ from .sensor_helpers import sensor_native_value
 
 _LOGGER = logging.getLogger(__name__)
 
-CoordinatorMap = dict[str, HelloFreshDataUpdateCoordinator]
 INTENTS_REGISTERED_KEY = f"{DOMAIN}_intents_registered"
 # Tracks entry IDs whose most recent config-entry write was a token-only refresh, so the
 # update listener can skip a full reload for those writes.
@@ -232,7 +231,6 @@ def _heal_credential_storage(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the HelloFresh component."""
-    hass.data.setdefault(DOMAIN, {})
     if not hass.data.get(INTENTS_REGISTERED_KEY):
         async_register_intents(hass)
         hass.data[INTENTS_REGISTERED_KEY] = True
@@ -355,8 +353,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     coordinator.async_start_token_refresh()
 
-    coordinators: CoordinatorMap = hass.data.setdefault(DOMAIN, {})
-    coordinators[entry.entry_id] = coordinator
+    # HA's per-entry storage: platforms, services, diagnostics and intents all read the
+    # coordinator from here. HA clears it when the entry unloads.
+    entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -367,7 +366,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        # The coordinator lives in entry.runtime_data, which HA clears on unload.
         # Drop any pending token-only flag so a removed entry's id can't linger in the set.
         token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)
         if token_only is not None:
@@ -400,19 +399,36 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_REFRESH_DATA):
         return
 
+    def _loaded_coordinators() -> list[HelloFreshDataUpdateCoordinator]:
+        """Every loaded entry's coordinator, read from entry.runtime_data.
+
+        ``getattr`` with a default rather than direct attribute access: entries that are
+        set up but not (yet/anymore) loaded have no runtime_data.
+        """
+        return [
+            coordinator
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if (coordinator := getattr(entry, "runtime_data", None)) is not None
+        ]
+
     def _get_target_coordinators(
         service_call: ServiceCall,
     ) -> list[HelloFreshDataUpdateCoordinator]:
-        coordinators: CoordinatorMap = hass.data.get(DOMAIN, {})
         target_entry_id = service_call.data.get(ATTR_CONFIG_ENTRY_ID)
         if target_entry_id:
-            coordinator = coordinators.get(target_entry_id)
+            entry = hass.config_entries.async_get_entry(target_entry_id)
+            # Guard the domain: async_get_entry resolves ANY integration's entry id, and a
+            # foreign entry's runtime_data would be some other integration's object.
+            if entry is not None and getattr(entry, "domain", DOMAIN) != DOMAIN:
+                entry = None
+            coordinator = getattr(entry, "runtime_data", None) if entry else None
             if coordinator is None:
                 raise HomeAssistantError(f"HelloFresh config entry not found: {target_entry_id}")
             return [coordinator]
 
+        coordinators = _loaded_coordinators()
         if len(coordinators) == 1:
-            return list(coordinators.values())
+            return coordinators
 
         if not coordinators:
             raise HomeAssistantError(

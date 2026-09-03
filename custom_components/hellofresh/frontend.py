@@ -84,8 +84,11 @@ async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
     try:
         # Serve the whole www/ directory so the card JS and logo image are both reachable
         # under /hellofresh/ (e.g. /hellofresh/hellofresh-logo.png) from a single mount.
+        # cache_headers=True is what makes the ?v= scheme work: browsers may cache each
+        # file indefinitely because every upgrade registers a NEW URL (the ?v= stamp
+        # changes), so staleness is busted by the URL, not by refetching on every load.
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(WWW_URL_BASE, str(www_dir), cache_headers=False)]
+            [StaticPathConfig(WWW_URL_BASE, str(www_dir), cache_headers=True)]
         )
     except Exception:  # noqa: BLE001 - static serving is best-effort, never block setup
         _LOGGER.exception("HelloFresh could not serve the frontend assets")

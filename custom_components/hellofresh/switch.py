@@ -15,7 +15,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import HelloFreshError
-from .const import DOMAIN
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .issues import async_create_write_actions_issue, async_delete_write_actions_issue
@@ -29,13 +28,18 @@ SWITCHES: tuple[SwitchEntityDescription, ...] = (
 )
 
 
+# Coordinator-based: entities never poll on their own, so entity-update parallelism is
+# irrelevant — declared 0 (unlimited) per the integration quality scale's convention.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up HelloFresh switches."""
-    coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
     async_add_entities(HelloFreshSwitch(coordinator, description) for description in SWITCHES)
 
 

@@ -34,8 +34,12 @@ async def async_setup_intents(hass) -> None:
 
 
 def _coordinators(hass):
-    """Return all configured HelloFresh coordinators."""
-    return list(hass.data.get(DOMAIN, {}).values())
+    """Return every loaded entry's coordinator (from entry.runtime_data)."""
+    return [
+        coordinator
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if (coordinator := getattr(entry, "runtime_data", None)) is not None
+    ]
 
 
 class HelloFreshBaseIntentHandler(intent.IntentHandler):

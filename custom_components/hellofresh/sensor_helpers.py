@@ -459,9 +459,12 @@ def sensor_extra_state_attributes(
         }
 
     if key == "api_base_url":
+        # Summary only: the full serialized subscriptions carry delivery_address,
+        # payment_method and coupon_code — PII that doesn't belong in recorder-stored
+        # attributes. The diagnostics export carries the full (redacted) blob instead.
         return {
             "capabilities": data.capabilities.as_dict(),
-            "subscriptions": data.serialized_subscriptions,
+            "subscription_count": data.subscription_count,
         }
 
     return None

@@ -1,8 +1,9 @@
 """Tests for the meal-planner card's Highlights chips (New / Bestsellers / Cooked Before),
 menu-section filter, alias-driven tile chips, and HelloFresh badge colors.
 
-Semantics guarded: highlight chips OR (they mirror the site's browse sections — a union),
-unlike the dietary chips which AND; the tile chips share the filter bar's DIET_FILTERS alias
+Semantics guarded: highlight chips are SINGLE-SELECT (mutually exclusive views — a meal
+can't be new AND cooked before, and a new meal isn't a bestseller yet), with the old
+multi-select stored-array format migrated; the tile chips share the filter bar's DIET_FILTERS alias
 table so a HelloFresh tag renaming can't drop a chip the filter still matches; a stale menu
 section slug deactivates rather than blanking a week that lacks it; and badge colors reach an
 inline style only as strict hex.
@@ -40,36 +41,84 @@ def _run(script: str) -> object:
     return json.loads(result.stdout)
 
 
-def _passes_highlight(active: list[str], recipe: dict) -> bool:
+def _passes_highlight(selected: str, recipe: dict) -> bool:
     script = f"""
     const self = {{
-      _highlightFilter: new Set({json.dumps(active)}),
+      _highlightFilter: {json.dumps(selected)},
       {_method("_matchesHighlight").replace("_matchesHighlight(", "matchesHighlight(")},
-      {_method("_passesHighlightFilters").replace("_passesHighlightFilters(", "passesHighlightFilters(").replace("this.", "self.")},
+      {_method("_passesHighlightFilter").replace("_passesHighlightFilter(", "passesHighlightFilter(").replace("this.", "self.")},
     }};
     self._matchesHighlight = self.matchesHighlight;
-    console.log(JSON.stringify(self.passesHighlightFilters({json.dumps(recipe)})));
+    console.log(JSON.stringify(self.passesHighlightFilter({json.dumps(recipe)})));
     """
     return _run(script)
 
 
 @nodejs
 def test_highlight_signals_come_from_tag_badge_or_delivered_count() -> None:
-    assert _passes_highlight(["new"], {"tags": ["New"]}) is True
-    assert _passes_highlight(["new"], {"tags": [], "badge": "NEW"}) is True
-    assert _passes_highlight(["bestseller"], {"tags": ["Bestseller"]}) is True
-    assert _passes_highlight(["bestseller"], {"tags": [], "badge": "BESTSELLER"}) is True
-    assert _passes_highlight(["cooked-before"], {"tags": [], "delivered_count": 2}) is True
-    assert _passes_highlight(["cooked-before"], {"tags": [], "delivered_count": 0}) is False
+    assert _passes_highlight("new", {"tags": ["New"]}) is True
+    assert _passes_highlight("new", {"tags": [], "badge": "NEW"}) is True
+    assert _passes_highlight("bestseller", {"tags": ["Bestseller"]}) is True
+    assert _passes_highlight("bestseller", {"tags": [], "badge": "BESTSELLER"}) is True
+    assert _passes_highlight("cooked-before", {"tags": [], "delivered_count": 2}) is True
+    assert _passes_highlight("cooked-before", {"tags": [], "delivered_count": 0}) is False
+    assert _passes_highlight("", {"tags": ["Quick"]}) is True  # nothing selected: all pass
 
 
 @nodejs
-def test_highlight_chips_or_together_unlike_dietary() -> None:
-    """New + Bestsellers = the union (a browsing gesture), not meals that are both."""
-    only_new = {"tags": ["New"]}
-    neither = {"tags": ["Quick"]}
-    assert _passes_highlight(["new", "bestseller"], only_new) is True
-    assert _passes_highlight(["new", "bestseller"], neither) is False
+def test_highlights_are_single_select_and_reselecting_clears() -> None:
+    """The highlights are mutually exclusive views (a meal can't be new AND cooked before),
+    so the chips single-select like the cooking-time group: picking one replaces the other,
+    and tapping the active chip (or All) clears."""
+    select = (
+        _method("_selectHighlightFilter")
+        .replace("_selectHighlightFilter(", "selectHighlightFilter(")
+        .replace("this.", "self.")
+    )
+    script = f"""
+    const HelloFreshMealPlannerCard = {{
+      HIGHLIGHT_FILTERS: [{{ key: "new" }}, {{ key: "bestseller" }}, {{ key: "cooked-before" }}],
+      HIGHLIGHT_STORAGE_KEY: "k",
+    }};
+    const window = {{ localStorage: {{ setItem() {{}} }} }};
+    const self = {{ _highlightFilter: "", _render() {{}}, {select} }};
+    const out = [];
+    self.selectHighlightFilter("new");
+    out.push(self._highlightFilter);
+    self.selectHighlightFilter("bestseller"); // replaces, never combines
+    out.push(self._highlightFilter);
+    self.selectHighlightFilter("bestseller"); // tap the active chip: clears
+    out.push(self._highlightFilter);
+    self.selectHighlightFilter("nonsense"); // unknown key: clears rather than sticking
+    out.push(self._highlightFilter);
+    console.log(JSON.stringify(out));
+    """
+    assert _run(script) == ["new", "bestseller", "", ""]
+
+
+@nodejs
+def test_stored_multi_select_arrays_migrate_to_one_key() -> None:
+    """Earlier versions stored a JSON array; the first still-valid key survives the upgrade."""
+    load = (
+        _method("_loadHighlightFilter")
+        .replace("_loadHighlightFilter(", "loadHighlightFilter(")
+        .replace("this.", "self.")
+    )
+    script = f"""
+    const HelloFreshMealPlannerCard = {{
+      HIGHLIGHT_FILTERS: [{{ key: "new" }}, {{ key: "bestseller" }}, {{ key: "cooked-before" }}],
+      HIGHLIGHT_STORAGE_KEY: "k",
+    }};
+    let stored;
+    const window = {{ localStorage: {{ getItem: () => stored }} }};
+    const self = {{ {load} }};
+    const out = [];
+    for (stored of ["bestseller", '["gone","new"]', "[]", "stale", null]) {{
+      out.push(self.loadHighlightFilter());
+    }}
+    console.log(JSON.stringify(out));
+    """
+    assert _run(script) == ["bestseller", "new", "", "", ""]
 
 
 def _active_section_ids(selected: str, categories: list[dict]) -> list[str] | None:
@@ -152,7 +201,7 @@ def test_grid_and_bar_are_wired_for_the_new_filters() -> None:
     grid = _method("_renderGrid")
     assert "_activeMenuSectionIds(week)" in grid, "section filter never reaches the grid"
     assert "ctx.sel(r) || sectionIds.has" in grid, "selected meals must bypass the section"
-    assert "_passesHighlightFilters(r)" in _method("_passesFilters")
+    assert "_passesHighlightFilter(r)" in _method("_passesFilters")
     bar = _method("_renderFilterBar")
     assert "_renderMenuSectionGroup(week)" in bar
     assert 'data-action="filter-highlight"' in bar
@@ -171,6 +220,25 @@ def test_badge_chip_renders_with_its_style() -> None:
     tile = _method("_renderRecipeTile")
     assert "_badgeStyle(r)" in tile, "badge colors are parsed but never rendered"
     assert "_tileChipLabels(r)" in tile, "tile chips no longer share the alias table"
+
+
+def test_skip_resync_stays_on_the_toggled_week() -> None:
+    """Skipping/unskipping refetches; without keepWeekId the landing logic jumps the view
+    back to the current week, losing the user's place (saves already passed it)."""
+    toggle = re.search(r"^  async _toggleSkip\(week\) \{.*?^  \}", SOURCE, re.S | re.M)
+    assert toggle, "_toggleSkip not found"
+    assert "_fetchWeeks(week.week_id)" in toggle.group(0)
+
+
+def test_tile_stats_show_the_headline_cooking_time() -> None:
+    """The stats line shows the same headline time the website's tile does. The payload's
+    naming is swapped (prep_time_minutes IS the headline number), so the tile must prefer
+    prep over total — the same choice the Total Cooking Time filter makes."""
+    tile = _method("_renderRecipeTile")
+    assert re.search(
+        r"r\.prep_time_minutes != null \? r\.prep_time_minutes : r\.total_time_minutes", tile
+    ), "tile time must prefer the headline prep_time_minutes"
+    assert "min`" in tile, "the minutes stat is not rendered"
 
 
 # ---- collapsible filter panel --------------------------------------------------------------
@@ -199,7 +267,7 @@ def _summary(state: dict, week: dict) -> list[dict]:
       _proteinFilter: new Set({json.dumps(state.get("protein", []))}),
       _dietFilter: new Set({json.dumps(state.get("diet", []))}),
       _timeFilter: {json.dumps(state.get("time", ""))},
-      _highlightFilter: new Set({json.dumps(state.get("highlight", []))}),
+      _highlightFilter: {json.dumps(state.get("highlight", ""))},
       _menuSection: {json.dumps(state.get("section", ""))},
       _showVariants: {json.dumps(state.get("variants", True))},
       {
@@ -227,7 +295,7 @@ def test_active_summary_lists_every_narrowing_filter() -> None:
             "protein": ["Beef"],
             "diet": ["high-protein"],
             "time": "under-30-min",
-            "highlight": ["new"],
+            "highlight": "new",
             "section": "family",
             "variants": False,
         },
@@ -272,7 +340,7 @@ def test_remove_filter_routes_each_kind_to_its_toggle() -> None:
         "_toggleProteinFilter",
         "_toggleDietFilter",
         '_selectTimeFilter("")',
-        "_toggleHighlightFilter",
+        '_selectHighlightFilter("")',
         '_selectMenuSection("")',
         "_toggleShowVariants",
     ):

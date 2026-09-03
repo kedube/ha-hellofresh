@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import timedelta
 import logging
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceResponse, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_interval
@@ -90,6 +91,11 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         # a memory address that CPython reuses once the old object is freed, which let a
         # later poll's data collide with the cached key and serve stale weeks to the cards.
         self._weeks_response_cache: tuple[HelloFreshAccountData, ServiceResponse] | None = None
+        # Ticked-off prep-list ingredients, keyed (week_id, ingredient_key). SHARED between
+        # both prep-list entities (the slots are positional, so a week moving from "next
+        # week" to "this week" must arrive with its ticks — a per-entity set stranded them
+        # on the old slot), and restored across restarts by each entity's RestoreEntity data.
+        self.prep_completed: set[tuple[str, str]] = set()
 
     def get_weeks_response(
         self,
@@ -198,3 +204,9 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
             async_delete_write_actions_issue(self.hass, self.config_entry.entry_id)
 
         return data
+
+
+# The typed config entry: `entry.runtime_data` carries the coordinator (HA's modern
+# per-entry storage, replacing hass.data[DOMAIN][entry_id]). Platforms annotate their
+# async_setup_entry with this so the coordinator comes out typed.
+HelloFreshConfigEntry = ConfigEntry[HelloFreshDataUpdateCoordinator]

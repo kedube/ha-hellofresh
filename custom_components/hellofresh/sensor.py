@@ -13,7 +13,6 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .sensor_helpers import (
@@ -301,13 +300,18 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
 )
 
 
+# Coordinator-based: entities never poll on their own, so entity-update parallelism is
+# irrelevant — declared 0 (unlimited) per the integration quality scale's convention.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up HelloFresh sensors."""
-    coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
     async_add_entities(HelloFreshSensor(coordinator, description) for description in SENSORS)
 
 

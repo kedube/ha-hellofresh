@@ -27,9 +27,10 @@ def _coerce_number(value: Any) -> float | None:
 def _iso_duration_to_minutes(value: Any) -> int | None:
     """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` to whole minutes.
 
-    Cookbook and catalog payloads express times this way, unlike the weekly menu which uses
-    plain integer minutes. Only hours and minutes appear in practice; anything unparseable
-    yields None rather than a misleading zero.
+    Cookbook, catalog, AND (as of 2026-W35) the authenticated weekly-menu payloads all
+    express times this way — normalizers coerces int-first, then falls back to this. Only
+    hours and minutes appear in practice; anything unparseable yields None rather than a
+    misleading zero.
     """
     if not isinstance(value, str):
         return None
@@ -1721,7 +1722,7 @@ class HelloFreshAccountData:
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
 
-        # The most recent DELIVERED week — its date drives the "Last delivery date" sensor.
+        # The most recent DELIVERED week — its date drives the "Last delivery day" sensor.
         #
         # Prefer the dedicated past-deliveries history, but that endpoint also returns the
         # UPCOMING week (e.g. it lists W28/Jul 6 alongside the delivered W27/Jun 29), so a naive

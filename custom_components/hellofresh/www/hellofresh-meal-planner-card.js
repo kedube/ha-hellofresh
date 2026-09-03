@@ -102,8 +102,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     //    showing only the default meal of each group plus meals that have no variants.
     //  * _dietFilter: Set of dietary-category keys (GLP-1 Support, Carb Conscious, …); each
     //    selected category is a CONSTRAINT the meal must satisfy (see _passesDietFilters).
-    //  * _highlightFilter: Set of highlight keys (New / Bestsellers / Cooked Before); ORed —
-    //    they mirror the site's browse sections, so picking two shows the union.
+    //  * _highlightFilter: single-select highlight key ("" = all). New / Bestsellers /
+    //    Cooked Before are mutually exclusive views — a meal can't be new AND cooked
+    //    before, and a genuinely new meal isn't a bestseller yet — so combining them
+    //    would only ever confuse.
     //  * _menuSection: single-select website menu section slug ("" = all), matched against
     //    the week's own menu_categories id-lists from the get_weeks payload.
     this._proteinFilter = this._loadProteinFilter();
@@ -734,41 +736,36 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     this._render();
   }
 
-  // Load the persisted highlight filter as a Set, dropping any stored key no longer defined.
+  // Load the persisted highlight selection (single-select; "" = all), dropping a stored key
+  // no longer defined. Earlier versions multi-selected and stored a JSON array; migrate by
+  // keeping the first still-valid key rather than silently losing the choice.
   _loadHighlightFilter() {
     try {
-      const raw = window.localStorage.getItem(HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY);
+      const raw =
+        window.localStorage.getItem(HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY) || "";
       const allowed = HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.map((f) => f.key);
-      return new Set((raw ? JSON.parse(raw) : []).filter((k) => allowed.includes(k)));
+      if (allowed.includes(raw)) return raw;
+      if (raw.startsWith("[")) {
+        const first = JSON.parse(raw).find((k) => allowed.includes(k));
+        if (first) return first;
+      }
+      return "";
     } catch (_e) {
-      return new Set(); // empty = no highlight narrowing
+      return ""; // "" = no highlight narrowing
     }
   }
 
-  // Toggle one highlight in/out of the filter set, persist, and re-render.
-  _toggleHighlightFilter(key) {
-    if (!HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.some((f) => f.key === key)) return;
-    if (this._highlightFilter.has(key)) this._highlightFilter.delete(key);
-    else this._highlightFilter.add(key);
+  // Select one highlight (tapping the active chip, or All, clears), persist, and re-render.
+  _selectHighlightFilter(key) {
+    const valid = HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.some((f) => f.key === key);
+    this._highlightFilter = valid && key !== this._highlightFilter ? key : "";
     try {
       window.localStorage.setItem(
         HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY,
-        JSON.stringify([...this._highlightFilter])
+        this._highlightFilter
       );
     } catch (_e) {
       /* storage unavailable: keep the in-memory setting for this session */
-    }
-    this._render();
-  }
-
-  // Clear all highlight filters (the "All" chip), persist, and re-render.
-  _clearHighlightFilter() {
-    if (this._highlightFilter.size === 0) return;
-    this._highlightFilter.clear();
-    try {
-      window.localStorage.setItem(HelloFreshMealPlannerCard.HIGHLIGHT_STORAGE_KEY, "[]");
-    } catch (_e) {
-      /* storage unavailable */
     }
     this._render();
   }
@@ -812,10 +809,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
     const time = card.TIME_FILTERS.find((f) => f.key === this._timeFilter);
     if (time) out.push({ kind: "time", value: time.key, label: time.label });
-    for (const f of card.HIGHLIGHT_FILTERS) {
-      if (this._highlightFilter.has(f.key)) {
-        out.push({ kind: "highlight", value: f.key, label: f.label });
-      }
+    const highlight = card.HIGHLIGHT_FILTERS.find((f) => f.key === this._highlightFilter);
+    if (highlight) {
+      out.push({ kind: "highlight", value: highlight.key, label: highlight.label });
     }
     if (this._activeMenuSectionIds(week)) {
       const row = (week.menu_categories || []).find((c) => c.slug === this._menuSection);
@@ -830,7 +826,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (kind === "protein") this._toggleProteinFilter(value);
     else if (kind === "diet") this._toggleDietFilter(value);
     else if (kind === "time") this._selectTimeFilter("");
-    else if (kind === "highlight") this._toggleHighlightFilter(value);
+    else if (kind === "highlight") this._selectHighlightFilter("");
     else if (kind === "section") this._selectMenuSection("");
     else if (kind === "variants") this._toggleShowVariants();
   }
@@ -903,7 +899,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._proteinFilter.size > 0 ||
       this._dietFilter.size > 0 ||
       Boolean(this._timeFilter) ||
-      this._highlightFilter.size > 0 ||
+      Boolean(this._highlightFilter) ||
       Boolean(this._menuSection) ||
       !this._showVariants
     );
@@ -924,12 +920,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return tags.includes(key) || badge === key;
   }
 
-  // Highlight chips OR together (a union, like the site's browse sections they mirror),
-  // unlike the dietary chips which AND — "New or Bestsellers" is a browsing gesture, not a
-  // pair of constraints a single meal should have to satisfy at once.
-  _passesHighlightFilters(r) {
-    if (this._highlightFilter.size === 0) return true;
-    return [...this._highlightFilter].some((k) => this._matchesHighlight(r, k));
+  // Whether one recipe carries the selected highlight (always true with none selected).
+  // Single-select: the highlights are mutually exclusive views — a meal can't be new AND
+  // cooked before, and a genuinely new meal isn't a bestseller yet.
+  _passesHighlightFilter(r) {
+    if (!this._highlightFilter) return true;
+    return this._matchesHighlight(r, this._highlightFilter);
   }
 
   // Whether one recipe satisfies one dietary category: any alias tag matches
@@ -941,7 +937,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       return true;
     }
     if (f.maxMinutes != null) {
-      const mins = r.total_time_minutes != null ? r.total_time_minutes : r.prep_time_minutes;
+      // HelloFresh's menu payload swaps the time names: prep_time_minutes carries the
+      // headline time the website shows on the tile ("35 min"), total_time_minutes the
+      // SMALLER hands-on number (PT5M) — and the site's own Total-cooking-time filter
+      // matches the headline number (HAR-verified by result counts: under-15 returns the
+      // fewest meals, impossible if the tiny totalTime values were the criterion). So
+      // prefer prep; total is only a fallback for rows that lack it.
+      const mins = r.prep_time_minutes != null ? r.prep_time_minutes : r.total_time_minutes;
       if (mins != null && mins <= f.maxMinutes) return true;
     }
     return false;
@@ -973,7 +975,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (this._proteinFilter.size > 0 && !this._proteinFilter.has(r.preference)) return false;
     if (!this._passesDietFilters(r)) return false;
     if (!this._passesTimeFilter(r)) return false;
-    if (!this._passesHighlightFilters(r)) return false;
+    if (!this._passesHighlightFilter(r)) return false;
     if (!this._showVariants && !this._isDefaultMeal(r)) return false;
     return true;
   }
@@ -1067,17 +1069,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return chosen !== undefined ? chosen : recipe.course_index;
   }
 
-  // Tap a recipe tile: toggle it in/out of the selection at quantity 1 (or remove if present).
-  _toggleRecipe(week, recipe) {
+  // "+ Add" pill: put a meal into the selection at quantity 1. Removal happens through the
+  // stepper (− down to zero) — the tile tap itself opens the full recipe on every week,
+  // mirroring the market card, so selection never shares a surface with reading.
+  _addRecipe(week, recipe) {
     if (this._busy || !this._canEdit(week)) return;
     const pending = this._ensurePending(week);
     const idx = this._activeIndex(pending, recipe);
-    if (pending.has(idx)) {
-      pending.delete(idx);
-    } else {
-      this._nudgeIfOver(week, pending, true); // adding a new distinct meal
-      pending.set(idx, 1);
-    }
+    if (pending.has(idx)) return; // already chosen (stale pill tap): nothing to do
+    this._nudgeIfOver(week, pending, true); // adding a new distinct meal
+    pending.set(idx, 1);
     this._renderSelectionChange(week, recipe);
   }
 
@@ -1229,7 +1230,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._flash(`${service} failed: ${(err && err.message) || err}`, true);
     } finally {
       this._busy = false;
-      await this._fetchWeeks();
+      // Stay on the week that was just skipped/unskipped — like save does — instead of
+      // letting the resync's landing logic jump the view back to the current week.
+      await this._fetchWeeks(week.week_id);
     }
   }
 
@@ -1541,7 +1544,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         ${editable && this._showSelectedOnly
           ? `<span class="hint">Switch to “Show all meals” to change your selection.</span>`
           : editable
-            ? `<span class="hint">Tap meals to choose, then Save.</span>`
+            ? `<span class="hint">Choose with + Add, then Save · tap a meal for its recipe.</span>`
             : ""}
         ${dirty
           ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Save selection</button>
@@ -1694,9 +1697,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           aria-pressed="${on ? "true" : "false"}"
         >${this._esc(f.label)}</button>`;
     }).join("");
-    const highlightAllActive = this._highlightFilter.size === 0;
+    const highlightAllActive = !this._highlightFilter;
     const highlightChips = HelloFreshMealPlannerCard.HIGHLIGHT_FILTERS.map((f) => {
-      const on = this._highlightFilter.has(f.key);
+      const on = this._highlightFilter === f.key;
       return `<button
           class="fbtn ${on ? "on" : ""}"
           data-action="filter-highlight"
@@ -1853,6 +1856,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const stats = [];
     if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
     if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
+    // The headline total cooking time HelloFresh shows on its own tiles. The payload's
+    // naming is swapped — prep_time_minutes carries that headline number, total_time_minutes
+    // the small hands-on one (see _matchesDietFilter) — so prefer prep, like the time filter.
+    const mins = r.prep_time_minutes != null ? r.prep_time_minutes : r.total_time_minutes;
+    if (mins != null) stats.push(`${mins} min`);
     // HelloFresh's own "you've had this before" count, and your star rating when you gave one.
     // Both are optional and only ever present on a minority of meals.
     if (r.delivered_count) {
@@ -1892,7 +1900,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const soldOut = r.is_sold_out === true && ctx.showSoldOut !== false;
     return `
       <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""} ${soldOut ? "soldout" : ""}"
-           data-index="${idxAttr}">
+           data-index="${idxAttr}" role="button" tabindex="0"
+           aria-label="Open recipe: ${this._esc(r.name)}">
         <div class="imgwrap">
           ${r.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
@@ -1900,9 +1909,6 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
           ${videoUrl
             ? `<button class="playbtn" data-video="${idxAttr}" title="Play recipe video" aria-label="Play video for ${this._esc(r.name)}">▶</button>`
-            : ""}
-          ${ctx.editable
-            ? `<button class="infobtn" data-info="${idxAttr}" title="Full recipe" aria-label="Full recipe for ${this._esc(r.name)}">ⓘ</button>`
             : ""}
           ${r.is_favorite === true ? `<div class="fav" title="In your HelloFresh cookbook">♥</div>` : ""}
           ${isSelected ? `<div class="check">✓</div>` : ""}
@@ -1927,11 +1933,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${ctx.editable && isSelected
             ? `<div class="stepper" data-stepper="${idxAttr}">
-                 <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="Fewer servings">−</button>
+                 <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="${qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
                  <span class="qval">${qty}</span>
                  <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
                  <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
                </div>`
+            : ""}
+          ${ctx.editable && !isSelected
+            ? `<button class="addbtn" data-add="${idxAttr}" aria-label="Add ${this._esc(r.name)} to your box">+ Add</button>`
             : ""}
         </div>
       </div>`;
@@ -1940,6 +1949,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // A SINGLE delegated click listener on the card, attached once. It reads data attributes off
   // the clicked element's ancestry, so re-rendering inner HTML never re-attaches handlers.
   _bindDelegated(card) {
+    // Tiles are focusable (role="button" tabindex="0") because the tile tap is the only way
+    // to open a recipe. Enter/Space on a FOCUSED TILE opens it; the guard skips events
+    // bubbling up from the real <button>s inside (+ Add, ± , ▶), whose Enter/Space already
+    // fires a native click handled by the click listener below.
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const tile = ev.target.closest(".recipe");
+      if (!tile || ev.target.closest("button")) return;
+      ev.preventDefault(); // Space must open the recipe, not scroll the page
+      const recipe = this._findRenderedRecipe(tile.getAttribute("data-index"));
+      if (recipe) this._openRecipeDetail(recipe);
+    });
     card.addEventListener("click", (ev) => {
       const week = this._weeks ? this._weeks[this._cursor] : null;
 
@@ -1966,28 +1987,22 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // NOTE: the video overlay is dismissed by its own listener in _openVideo, not here — it
       // lives beside <ha-card> in the shadow root, so its clicks never reach this handler.
 
-      // Tapping a tile on a week you CAN'T change opens the full recipe instead. On an
-      // editable week the tap still toggles the selection (below) — changing the meal is the
-      // point there, and the ⓘ button opens the recipe without touching the selection.
-      const infoBtn = ev.target.closest(".infobtn");
-      if (infoBtn) {
+      // "+ Add" pill: selecting a meal, like the ± steppers, must not also open the recipe.
+      const addBtn = ev.target.closest(".addbtn");
+      if (addBtn) {
         ev.stopPropagation();
-        const recipe = this._findRenderedRecipe(infoBtn.getAttribute("data-info"));
-        if (recipe) this._openRecipeDetail(recipe);
-        return;
-      }
-      const readOnlyTile = ev.target.closest(".recipe:not(.editable)");
-      if (readOnlyTile) {
-        const recipe = this._findRenderedRecipe(readOnlyTile.getAttribute("data-index"));
-        if (recipe) this._openRecipeDetail(recipe);
+        const recipe = this._findRenderedRecipe(addBtn.getAttribute("data-add"));
+        if (week && recipe) this._addRecipe(week, recipe);
         return;
       }
 
-      // Recipe tile tap (only meaningful on editable weeks).
-      const tile = ev.target.closest(".recipe.editable");
+      // Tapping a tile opens the full recipe on EVERY week, mirroring the market card:
+      // selection lives on the + Add pill and the ± steppers (all of which stop propagation
+      // above), so the tile surface is free for reading, editable or not.
+      const tile = ev.target.closest(".recipe");
       if (tile) {
         const recipe = this._findRenderedRecipe(tile.getAttribute("data-index"));
-        if (week && recipe) this._toggleRecipe(week, recipe);
+        if (recipe) this._openRecipeDetail(recipe);
         return;
       }
 
@@ -2014,8 +2029,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         this._selectTimeFilter(actionEl.getAttribute("data-time"));
       else if (action === "filter-time-all") this._selectTimeFilter("");
       else if (action === "filter-highlight")
-        this._toggleHighlightFilter(actionEl.getAttribute("data-highlight"));
-      else if (action === "filter-highlight-all") this._clearHighlightFilter();
+        this._selectHighlightFilter(actionEl.getAttribute("data-highlight"));
+      else if (action === "filter-highlight-all") this._selectHighlightFilter("");
       else if (action === "filter-section")
         this._selectMenuSection(actionEl.getAttribute("data-section"));
       else if (action === "filter-section-all") this._selectMenuSection("");
@@ -2036,12 +2051,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   async _openRecipeDetail(recipe) {
     const recipeId = recipe && recipe.recipe_id;
     if (!recipeId || !this._hass) return;
+    // Remembered for the sheet's selection footer: the sheet knows only a recipe_id, but
+    // selection is keyed by course index (variants of one dish share a recipe family), so
+    // hand it the exact recipe object the tap came from. The backdrop blocks the grid while
+    // the sheet is open, so the cursor/week can't change underneath it.
+    this._detailRecipe = recipe;
     try {
       if (!this._detailOverlay) {
         const { RecipeDetailOverlay } = await detailModule;
         this._detailOverlay = new RecipeDetailOverlay({
           getRoot: () => this.shadowRoot,
           callService: (service, data) => this._callResponseService(service, data),
+          getSelection: () => this._detailSelection(),
         });
       }
       await this._detailOverlay.open(recipeId);
@@ -2049,6 +2070,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // eslint-disable-next-line no-console
       console.warn("hellofresh: recipe detail unavailable", err);
     }
+  }
+
+  // Selection state + mutators for the recipe open in the detail sheet — the "read it, then
+  // decide" flow. Null on weeks that can't be edited (or mid-save), which renders the sheet
+  // read-only. The mutators are the SAME methods the + Add pill and tile steppers use, so
+  // the grid underneath updates in step with the sheet's footer.
+  _detailSelection() {
+    const week = this._weeks ? this._weeks[this._cursor] : null;
+    const recipe = this._detailRecipe;
+    if (!week || !recipe || this._busy || !this._canEdit(week)) return null;
+    return {
+      qty: this._displayedQuantity(week, recipe),
+      maxQty: HelloFreshMealPlannerCard.MAX_QUANTITY,
+      add: () => this._addRecipe(week, recipe),
+      inc: () => this._changeQuantity(week, recipe, 1),
+      dec: () => this._changeQuantity(week, recipe, -1),
+    };
   }
 
   // Response-returning service call shaped for the detail module (which knows nothing about
@@ -2470,19 +2508,19 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .playbtn:hover { background: rgba(0, 0, 0, 0.75); }
       .playbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-      /* On an editable week the tile tap toggles the selection, so opening the full recipe
-         needs its own affordance. Bottom-left keeps it clear of the ♥ (top-right), the
-         sold-out ribbon (top-left) and the centred ▶. */
-      .infobtn {
-        position: absolute; left: 6px; bottom: 6px;
-        width: 24px; height: 24px; border: none; border-radius: 50%; cursor: pointer;
-        background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 0.85em; line-height: 1;
-        padding: 0; display: flex; align-items: center; justify-content: center;
+      /* Every tile tap opens the recipe (selection lives on + Add / the steppers), so every
+         tile should say so — and be reachable by keyboard, since it's the only affordance. */
+      .recipe { cursor: pointer; }
+      .recipe:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      /* "+ Add" pill on unselected editable tiles — the market card's model: an explicit
+         select affordance keeps the tile tap free to open the recipe. */
+      .addbtn {
+        margin-top: 8px; padding: 4px 16px; border-radius: 14px; cursor: pointer;
+        border: 1px solid var(--primary-color); background: transparent;
+        color: var(--primary-color); font-weight: 600; font-size: 0.85em;
       }
-      .infobtn:hover { background: rgba(0, 0, 0, 0.75); }
-      .infobtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-      /* A read-only tile is now tappable (it opens the recipe), so it should say so. */
-      .recipe:not(.editable) { cursor: pointer; }
+      .addbtn:hover { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .addbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       .videowrap {
         position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.75);
         display: flex; align-items: center; justify-content: center; padding: 16px;
@@ -2547,12 +2585,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       }
       .desc { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
       .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      /* Two deliberate chip tiers: dietary chips (derived from tags) are quiet outlined
+         pills, so solid color stays reserved for chips whose color IS data — HelloFresh's
+         own badge (its colors, via _badgeStyle) and the Veggie marker. */
       .rchip {
         font-size: 0.68em; padding: 1px 7px; border-radius: 10px;
-        background: var(--secondary-background-color); color: var(--primary-text-color);
+        border: 1px solid var(--divider-color, rgba(127, 127, 127, 0.4));
+        background: transparent; color: var(--secondary-text-color);
       }
-      .rchip.badge { background: #333332; color: #fff; }
-      .rchip.veggie { background: #4caf50; color: #fff; font-weight: 600; }
+      .rchip.badge { background: #333332; color: #fff; border-color: transparent; }
+      .rchip.veggie { background: #4caf50; color: #fff; font-weight: 600; border-color: transparent; }
       .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
       .toast {
         margin: 4px 16px 12px; padding: 8px 12px; border-radius: 8px;

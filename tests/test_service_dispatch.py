@@ -40,12 +40,19 @@ class _Services:
 
 def _hass(coordinators: dict) -> SimpleNamespace:
     # `async_get_entry` is reached via the Repairs path when a write action is unsupported.
+    # Coordinators live on each entry's runtime_data (HA's per-entry storage), which is
+    # what `_get_target_coordinators` reads.
     entries = {
-        entry_id: SimpleNamespace(entry_id=entry_id, title=f"HelloFresh {entry_id}", options={})
-        for entry_id in coordinators
+        entry_id: SimpleNamespace(
+            entry_id=entry_id,
+            title=f"HelloFresh {entry_id}",
+            options={},
+            domain=DOMAIN,
+            runtime_data=coordinator,
+        )
+        for entry_id, coordinator in coordinators.items()
     }
     return SimpleNamespace(
-        data={DOMAIN: coordinators},
         services=_Services(),
         config_entries=SimpleNamespace(
             async_entries=lambda _d: list(entries.values()),
