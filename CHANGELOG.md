@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.92 — 2026-09-03
 - **Dashboards load faster**: the card files are now served with browser caching enabled.
   The `?v=` version stamp already guarantees freshness (every upgrade registers a new
   URL), but caching was disabled, so browsers re-downloaded every card's JS on every
