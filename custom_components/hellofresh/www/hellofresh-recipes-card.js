@@ -487,7 +487,8 @@ class HelloFreshRecipesCard extends HTMLElement {
     const time = formatMinutes(recipe.prep_time_minutes);
     if (time) stats.push(time);
     return `
-      <div class="recipe" data-detail="${this._esc(recipe.recipe_id)}">
+      <div class="recipe" data-detail="${this._esc(recipe.recipe_id)}"
+           role="button" tabindex="0" aria-label="Open recipe: ${this._esc(recipe.name)}">
         <div class="imgwrap">
           ${img
             ? `<img loading="lazy" src="${this._esc(img)}" alt="${this._esc(recipe.name)}">`
@@ -513,6 +514,16 @@ class HelloFreshRecipesCard extends HTMLElement {
 
   // A SINGLE delegated listener, attached once, so re-rendering never re-binds handlers.
   _bindDelegated(card) {
+    // Tiles are focusable (role="button" tabindex="0") because the tile tap is the only way
+    // to open a recipe's detail. Enter/Space on a FOCUSED TILE opens it; the guard skips
+    // events bubbling from the inner ♥ <button> and the name's <a>, which handle their own.
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const tile = ev.target.closest("[data-detail]");
+      if (!tile || ev.target.closest("button, a")) return;
+      ev.preventDefault(); // Space must open the recipe, not scroll the page
+      this._openDetail(tile.getAttribute("data-detail"));
+    });
     card.addEventListener("click", (ev) => {
       const favBtn = ev.target.closest("[data-fav]");
       if (favBtn && !favBtn.disabled) {
@@ -664,6 +675,7 @@ class HelloFreshRecipesCard extends HTMLElement {
         }
         .stats { font-size: 0.76em; color: var(--secondary-text-color); }
         .recipe { cursor: pointer; }
+        .recipe:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
         .recipe:hover { border-color: var(--primary-color); }
         .msg { padding: 8px 16px 20px; color: var(--secondary-text-color); }
         .msg.err { color: var(--error-color, #db4437); }

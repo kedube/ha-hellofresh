@@ -219,7 +219,7 @@
         "name": "Mottatte matkasser"
       },
       "last_delivery_date": {
-        "name": "Dato for siste levering"
+        "name": "Siste leveringsdag"
       },
       "next_delivery_week": {
         "name": "Neste leveringsuke"

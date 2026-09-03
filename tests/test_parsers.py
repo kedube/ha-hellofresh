@@ -322,3 +322,43 @@ def test_find_nested_collection_dict_first_vs_list_first_ordering() -> None:
     assert find_nested_collection(bare_list, ("primary",), _has_id, dict_first=False) == [
         {"id": "from-list"}
     ]
+
+
+# ---- safe_error_summary (log safety) --------------------------------------------------------
+#
+# Logs are NOT run through the diagnostics redactor and users attach them to public GitHub
+# issues, so raw API error bodies (server-controlled free text that can echo the submitted
+# email) must never reach a log line or exception message verbatim.
+
+
+def test_safe_error_summary_keeps_machine_error_fields() -> None:
+    from custom_components.hellofresh.parsers import safe_error_summary
+
+    body = json.dumps(
+        {"error": "invalid_grant", "error_description": "Unknown or invalid refresh token."}
+    )
+    summary = safe_error_summary(body)
+    assert summary == "error=invalid_grant; error_description=Unknown or invalid refresh token."
+
+
+def test_safe_error_summary_never_echoes_free_text() -> None:
+    from custom_components.hellofresh.parsers import safe_error_summary
+
+    reflected = "Login failed for account user@example.com from 203.0.113.7"
+    assert "user@example.com" not in safe_error_summary(reflected)
+    assert safe_error_summary(reflected) == f"unparseable body ({len(reflected)} bytes)"
+    # A JSON body whose only content is unexpected keys reveals key NAMES, never values.
+    body = json.dumps({"customerEmail": "user@example.com"})
+    summary = safe_error_summary(body)
+    assert "user@example.com" not in summary
+    assert "customerEmail" in summary
+
+
+def test_safe_error_summary_edge_shapes() -> None:
+    from custom_components.hellofresh.parsers import safe_error_summary
+
+    assert safe_error_summary(None) == "empty body"
+    assert safe_error_summary("") == "empty body"
+    assert safe_error_summary("[1, 2]") == "unparseable body (6 bytes)"
+    long_message = json.dumps({"message": "x" * 500})
+    assert len(safe_error_summary(long_message)) < 200  # capped per field

@@ -149,15 +149,24 @@ def test_calorie_category_falls_back_to_the_recipes_own_number() -> None:
 
 
 @nodejs
-def test_time_categories_use_total_time_with_prep_fallback() -> None:
+def test_time_filter_prefers_the_headline_prep_time() -> None:
+    """The menu payload's naming is swapped: prep_time_minutes is the headline time the
+    site shows ("35 min"), total_time_minutes the SMALLER hands-on number (PT5M). The
+    shipped bug preferred total, so a 35-minute meal passed "Under 15 Minutes"."""
+    swapped = {"tags": [], "prep_time_minutes": 35, "total_time_minutes": 5}
+    assert _passes_time("under-15-min", swapped) is False
+    assert _passes_time("under-30-min", swapped) is False
+    assert _passes_time("", swapped) is True  # nothing selected: everything passes
+    quick = {"tags": [], "prep_time_minutes": 20, "total_time_minutes": 5}
+    assert _passes_time("under-20-min", quick) is True
+
+
+@nodejs
+def test_time_filter_falls_back_to_total_when_prep_is_missing() -> None:
     assert _passes_time("under-20-min", {"tags": [], "total_time_minutes": 20}) is True
     assert _passes_time("under-20-min", {"tags": [], "total_time_minutes": 25}) is False
-    # total missing: prep time answers instead of the meal silently failing the filter.
-    assert _passes_time("under-30-min", {"tags": [], "prep_time_minutes": 30}) is True
     # neither time known and no tag: the meal cannot claim the category.
     assert _passes_time("under-30-min", {"tags": []}) is False
-    # nothing selected: everything passes.
-    assert _passes_time("", {"tags": []}) is True
 
 
 def test_dietary_options_match_the_sites_filter_panel() -> None:

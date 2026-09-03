@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
+import logging
 import re
 from typing import Any
 
@@ -18,6 +19,7 @@ from .models import (
     HelloFreshRecipe,
     HelloFreshSubscription,
     HelloFreshWeek,
+    _iso_duration_to_minutes,
 )
 from .parsers import (
     MAX_SEARCH_DEPTH,
@@ -36,6 +38,8 @@ from .parsers import (
     parse_datetime,
     slugify,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 # Fallback billing currency per config-flow country key, used only when a payload carries no
 # currency of its own (see _extract_currency_code). Keys must stay in sync with
@@ -76,6 +80,20 @@ _DEBUG_PATH_REDACTIONS = (
     # /gw/scm/tracking-ids/track/public-id/<uuid>
     (re.compile(r"(/public-id/)[^/?]+"), r"\1{id}"),
 )
+
+
+def _coerce_minutes(value: Any) -> int | None:
+    """Whole minutes from either spelling HelloFresh uses for a time field.
+
+    Some payloads carry plain integer minutes; the authenticated weekly menu carries
+    ISO-8601 durations (``"PT35M"``, observed 2026-W35). Coercing with ``int()`` alone
+    silently dropped the ISO form, leaving every menu recipe with no time data — which
+    made the meal-planner card's Total Cooking Time filter match nothing.
+    """
+    result = coerce_int(value)
+    if result is not None:
+        return result
+    return _iso_duration_to_minutes(value)
 
 
 _CSS_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
@@ -147,127 +165,145 @@ class HelloFreshPayloadNormalizer:
         orders: list[HelloFreshOrder] = []
 
         for index, raw_week in enumerate(raw_weeks):
-            raw_subscription_id = raw_week.get("subscriptionId") or raw_week.get("subscription_id")
-            if (
-                raw_subscription_id is not None
-                and str(raw_subscription_id) != subscription.subscription_id
-            ):
+            try:
+                raw_subscription_id = raw_week.get("subscriptionId") or raw_week.get(
+                    "subscription_id"
+                )
+                if (
+                    raw_subscription_id is not None
+                    and str(raw_subscription_id) != subscription.subscription_id
+                ):
+                    continue
+                week_id = (
+                    raw_week.get("id")
+                    or raw_week.get("week")
+                    or raw_week.get("deliveryWeek")
+                    or raw_week.get("calendarWeek")
+                    or f"week-{index}"
+                )
+                display_name = (
+                    raw_week.get("label")
+                    or raw_week.get("title")
+                    or raw_week.get("displayName")
+                    or self._find_first_nested_value(
+                        raw_week, ("name", "displayName", "deliveryName")
+                    )
+                    or str(week_id)
+                )
+                raw_meals = self._extract_delivery_week_recipe_candidates(raw_week)
+                recipes = [self._recipe_from_raw_meal(raw_meal) for raw_meal in raw_meals]
+
+                # Explicit None checks, not ``or``: a real ``mealsSelected: 0`` (nothing chosen
+                # yet) must win over the recipe-derived fallback, which counts HelloFresh's
+                # auto-fill picks as selected and would fabricate a full selection.
+                meals_selected_raw: Any = raw_week.get("mealsSelected")
+                if meals_selected_raw is None:
+                    meals_selected_raw = raw_week.get("selectedMealCount")
+                if meals_selected_raw is None:
+                    meals_selected_raw = self._find_first_nested_value(
+                        raw_week,
+                        (
+                            "mealsSelected",
+                            "selectedMealCount",
+                            "selectedRecipesCount",
+                            "mealCountSelected",
+                        ),
+                    )
+                if meals_selected_raw is None and raw_meals:
+                    meals_selected_raw = sum(1 for recipe in recipes if recipe.is_selected)
+                meals_selected = coerce_int(meals_selected_raw)
+                # A week's required meal count is the size of ITS OWN box, which can differ from the
+                # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
+                # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
+                # to fuzzier fields and the subscription plan when the week doesn't carry its own box.
+                meals_required = coerce_int(
+                    self._week_box_meal_count(raw_week)
+                    or raw_week.get("mealsRequired")
+                    or raw_week.get("requiredMealCount")
+                    or raw_week.get("recipeCount")
+                    or self._find_first_nested_value(
+                        raw_week,
+                        (
+                            "mealsRequired",
+                            "requiredMealCount",
+                            "recipeCount",
+                            "numberOfRecipes",
+                            "meals",
+                        ),
+                    )
+                    or subscription.meals_required
+                )
+
+                week = HelloFreshWeek(
+                    week_id=str(week_id),
+                    display_name=display_name,
+                    subscription_id=(
+                        str(raw_subscription_id)
+                        if raw_subscription_id is not None
+                        else subscription.subscription_id
+                    ),
+                    delivery_date=parse_date(
+                        raw_week.get("deliveryDate")
+                        or raw_week.get("date")
+                        or raw_week.get("shipmentDate")
+                        or raw_week.get("expectedDeliveryDate")
+                    ),
+                    delivered_at=self._delivered_at_from_raw(raw_week),
+                    selection_deadline=parse_datetime(
+                        raw_week.get("selectionDeadline")
+                        or raw_week.get("cutoffDate")
+                        or raw_week.get("deadline")
+                    ),
+                    status=self._effective_week_status(raw_week),
+                    meals_required=meals_required,
+                    meals_selected=meals_selected,
+                    is_skipped=bool(
+                        raw_week.get("skipped")
+                        or raw_week.get("isSkipped")
+                        or raw_week.get("status") == "skipped"
+                    ),
+                    recipes=recipes,
+                    source="account",
+                    menu_title=raw_week.get("menuTitle")
+                    or raw_week.get("title")
+                    or self._find_first_nested_value(raw_week, ("name", "displayName")),
+                    slot_label=raw_week.get("timeSlot")
+                    or raw_week.get("slotLabel")
+                    or self._find_first_nested_value(
+                        raw_week,
+                        ("deliveryName", "deliveryFrom", "deliveryTo"),
+                    ),
+                    shipping_method=raw_week.get("shippingMethod")
+                    or self._find_first_nested_value(raw_week, ("type", "deliveryType"))
+                    or subscription.shipping_method,
+                    box_size=raw_week.get("boxSize") or subscription.box_size,
+                    sub_status=raw_week.get("subStatus"),
+                    delivery_state=raw_week.get("state"),
+                    actionable=bool(raw_week.get("actionable")),
+                    prepaid=bool(raw_week.get("prepaid")),
+                    delivery_blocked=bool(
+                        raw_week.get("deliveryBlocked") or raw_week.get("isBlocked")
+                    ),
+                    holiday_delivery_date=parse_date(raw_week.get("holidayDelivery")),
+                    holiday_message=raw_week.get("holidayMessage"),
+                    holiday_shift_visible=bool(raw_week.get("isHolidayShiftVisible")),
+                    allowed_actions=extract_allowed_actions(raw_week),
+                    available_one_off_options=self._extract_available_one_off_options(raw_week),
+                    raw=raw_week,
+                )
+                weeks.append(week)
+                orders.append(self._order_from_raw_week(raw_week=raw_week, week=week))
+
+            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
+                # One malformed week must cost THAT week, not the whole poll — an
+                # unguarded raise here failed the entire refresh. Drop it with a
+                # warning and let every other week land.
+                _LOGGER.warning(
+                    "HelloFresh week entry %s could not be parsed and was skipped: %s",
+                    index,
+                    err,
+                )
                 continue
-            week_id = (
-                raw_week.get("id")
-                or raw_week.get("week")
-                or raw_week.get("deliveryWeek")
-                or raw_week.get("calendarWeek")
-                or f"week-{index}"
-            )
-            display_name = (
-                raw_week.get("label")
-                or raw_week.get("title")
-                or raw_week.get("displayName")
-                or self._find_first_nested_value(raw_week, ("name", "displayName", "deliveryName"))
-                or str(week_id)
-            )
-            raw_meals = self._extract_delivery_week_recipe_candidates(raw_week)
-            recipes = [self._recipe_from_raw_meal(raw_meal) for raw_meal in raw_meals]
-
-            # Explicit None checks, not ``or``: a real ``mealsSelected: 0`` (nothing chosen
-            # yet) must win over the recipe-derived fallback, which counts HelloFresh's
-            # auto-fill picks as selected and would fabricate a full selection.
-            meals_selected_raw: Any = raw_week.get("mealsSelected")
-            if meals_selected_raw is None:
-                meals_selected_raw = raw_week.get("selectedMealCount")
-            if meals_selected_raw is None:
-                meals_selected_raw = self._find_first_nested_value(
-                    raw_week,
-                    (
-                        "mealsSelected",
-                        "selectedMealCount",
-                        "selectedRecipesCount",
-                        "mealCountSelected",
-                    ),
-                )
-            if meals_selected_raw is None and raw_meals:
-                meals_selected_raw = sum(1 for recipe in recipes if recipe.is_selected)
-            meals_selected = coerce_int(meals_selected_raw)
-            # A week's required meal count is the size of ITS OWN box, which can differ from the
-            # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
-            # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
-            # to fuzzier fields and the subscription plan when the week doesn't carry its own box.
-            meals_required = coerce_int(
-                self._week_box_meal_count(raw_week)
-                or raw_week.get("mealsRequired")
-                or raw_week.get("requiredMealCount")
-                or raw_week.get("recipeCount")
-                or self._find_first_nested_value(
-                    raw_week,
-                    (
-                        "mealsRequired",
-                        "requiredMealCount",
-                        "recipeCount",
-                        "numberOfRecipes",
-                        "meals",
-                    ),
-                )
-                or subscription.meals_required
-            )
-
-            week = HelloFreshWeek(
-                week_id=str(week_id),
-                display_name=display_name,
-                subscription_id=(
-                    str(raw_subscription_id)
-                    if raw_subscription_id is not None
-                    else subscription.subscription_id
-                ),
-                delivery_date=parse_date(
-                    raw_week.get("deliveryDate")
-                    or raw_week.get("date")
-                    or raw_week.get("shipmentDate")
-                    or raw_week.get("expectedDeliveryDate")
-                ),
-                delivered_at=self._delivered_at_from_raw(raw_week),
-                selection_deadline=parse_datetime(
-                    raw_week.get("selectionDeadline")
-                    or raw_week.get("cutoffDate")
-                    or raw_week.get("deadline")
-                ),
-                status=self._effective_week_status(raw_week),
-                meals_required=meals_required,
-                meals_selected=meals_selected,
-                is_skipped=bool(
-                    raw_week.get("skipped")
-                    or raw_week.get("isSkipped")
-                    or raw_week.get("status") == "skipped"
-                ),
-                recipes=recipes,
-                source="account",
-                menu_title=raw_week.get("menuTitle")
-                or raw_week.get("title")
-                or self._find_first_nested_value(raw_week, ("name", "displayName")),
-                slot_label=raw_week.get("timeSlot")
-                or raw_week.get("slotLabel")
-                or self._find_first_nested_value(
-                    raw_week,
-                    ("deliveryName", "deliveryFrom", "deliveryTo"),
-                ),
-                shipping_method=raw_week.get("shippingMethod")
-                or self._find_first_nested_value(raw_week, ("type", "deliveryType"))
-                or subscription.shipping_method,
-                box_size=raw_week.get("boxSize") or subscription.box_size,
-                sub_status=raw_week.get("subStatus"),
-                delivery_state=raw_week.get("state"),
-                actionable=bool(raw_week.get("actionable")),
-                prepaid=bool(raw_week.get("prepaid")),
-                delivery_blocked=bool(raw_week.get("deliveryBlocked") or raw_week.get("isBlocked")),
-                holiday_delivery_date=parse_date(raw_week.get("holidayDelivery")),
-                holiday_message=raw_week.get("holidayMessage"),
-                holiday_shift_visible=bool(raw_week.get("isHolidayShiftVisible")),
-                allowed_actions=extract_allowed_actions(raw_week),
-                available_one_off_options=self._extract_available_one_off_options(raw_week),
-                raw=raw_week,
-            )
-            weeks.append(week)
-            orders.append(self._order_from_raw_week(raw_week=raw_week, week=week))
 
         return weeks, orders
 
@@ -344,9 +380,17 @@ class HelloFreshPayloadNormalizer:
             or nutrition.get("calories")
             or nutrition.get("kcal")
         )
-        cook_time = coerce_int(recipe_data.get("cookTime") or recipe_data.get("cookTimeMinutes"))
-        prep_time = coerce_int(recipe_data.get("prepTime") or recipe_data.get("prepTimeMinutes"))
-        total_time = coerce_int(
+        # NOTE the swapped naming in the authenticated menu payload: `prepTime` (PT35M) is
+        # the headline time the website shows on the tile, while `totalTime` (PT5M) is the
+        # smaller hands-on number. Both are mapped verbatim — consumers that want "the time
+        # HelloFresh displays" must read prep_time_minutes (the card's time filter does).
+        cook_time = _coerce_minutes(
+            recipe_data.get("cookTime") or recipe_data.get("cookTimeMinutes")
+        )
+        prep_time = _coerce_minutes(
+            recipe_data.get("prepTime") or recipe_data.get("prepTimeMinutes")
+        )
+        total_time = _coerce_minutes(
             recipe_data.get("totalTime")
             or recipe_data.get("totalTimeMinutes")
             or ((cook_time or 0) + (prep_time or 0) if cook_time or prep_time else None)
@@ -1940,7 +1984,7 @@ class HelloFreshPayloadNormalizer:
             )
             # The /gw/my-deliveries/past-deliveries payload identifies each delivered week by its
             # ISO ``week`` id ONLY (no explicit date), so derive the date from the week id when no
-            # date field is present — otherwise these weeks stay date-less and "Last delivery date"
+            # date field is present — otherwise these weeks stay date-less and "Last delivery day"
             # is Unknown even though the box shipped.
             if delivery_date is None:
                 delivery_date = date_from_iso_week(week_id)

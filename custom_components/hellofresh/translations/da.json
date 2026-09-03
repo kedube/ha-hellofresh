@@ -219,7 +219,7 @@
         "name": "Modtagne måltidskasser"
       },
       "last_delivery_date": {
-        "name": "Dato for seneste levering"
+        "name": "Seneste leveringsdag"
       },
       "next_delivery_week": {
         "name": "Næste leveringsuge"

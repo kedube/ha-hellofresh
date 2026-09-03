@@ -574,7 +574,11 @@ class HelloFreshMarketCard extends HTMLElement {
     if (tile) {
       const editable = this._canEdit(week);
       const qty = this._displaySelection(week).get(item.item_id) || 0;
-      const frag = this._fragment(this._renderTile(week, item, editable, qty));
+      // Same fallback the full render passes — omitting it made an item without its own
+      // currency lose its price the moment its quantity changed in place.
+      const frag = this._fragment(
+        this._renderTile(week, item, editable, qty, week?.order?.currency)
+      );
       if (frag.firstElementChild) tile.replaceWith(frag.firstElementChild);
     }
     this._shell.body.querySelector(".statusrow")?.replaceWith(
@@ -925,7 +929,8 @@ class HelloFreshMarketCard extends HTMLElement {
     // Sold-out items can't be added (but a still-selected sold-out item can be reduced/removed).
     const soldOut = item.is_sold_out === true;
     return `
-      <div class="item ${qty > 0 ? "selected" : ""} ${soldOut ? "soldout" : ""}" data-id="${idAttr}">
+      <div class="item ${qty > 0 ? "selected" : ""} ${soldOut ? "soldout" : ""}" data-id="${idAttr}"
+           role="button" tabindex="0" aria-label="Open recipe: ${this._esc(item.name)}">
         <div class="imgwrap">
           ${item.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(item.image_url, this._config.image_width))}" alt="${this._esc(item.name)}">`
@@ -951,6 +956,20 @@ class HelloFreshMarketCard extends HTMLElement {
 
   // A SINGLE delegated click listener on the card, attached once.
   _bindDelegated(card) {
+    // Tiles are focusable (role="button" tabindex="0") because the tile tap is the only way
+    // to open an item's recipe. Enter/Space on a FOCUSED TILE opens it; the guard skips
+    // events bubbling from the real ± <button>s, whose Enter/Space already fires a click.
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const tile = ev.target.closest(".item");
+      if (!tile || ev.target.closest("button")) return;
+      ev.preventDefault(); // Space must open the recipe, not scroll the page
+      const week = this._weeks ? this._weeks[this._cursor] : null;
+      const item = week && (week.market_items || []).find(
+        (i) => i.item_id === tile.getAttribute("data-id")
+      );
+      if (item) this._openRecipeDetail(item);
+    });
     card.addEventListener("click", (ev) => {
       const week = this._weeks ? this._weeks[this._cursor] : null;
 
@@ -1173,6 +1192,7 @@ class HelloFreshMarketCard extends HTMLElement {
         cursor: pointer;
       }
       .item.selected { border-color: var(--primary-color); }
+      .item:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       .imgwrap { position: relative; aspect-ratio: 1 / 1; background: var(--divider-color); }
       .imgwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .noimg { width: 100%; height: 100%; }

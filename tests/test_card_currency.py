@@ -59,3 +59,11 @@ def test_market_tiles_fall_back_to_the_order_currency() -> None:
 
 def test_market_total_falls_back_to_the_order_currency() -> None:
     assert "week.market_items.find((i) => i.currency) || week.order || {}" in MARKET
+
+
+def test_market_in_place_rerender_keeps_the_currency_fallback() -> None:
+    """The quantity fast path re-renders one tile via _renderTile; omitting the currency
+    argument there made an item without its own currency lose its price the moment its
+    quantity changed in place."""
+    body = MARKET.split("_renderQuantityChange(week, item) {")[1].split("\n  }")[0]
+    assert "week?.order?.currency" in body, "in-place _renderTile call drops fallbackCurrency"

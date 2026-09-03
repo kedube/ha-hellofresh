@@ -84,7 +84,7 @@ A few conventions used in the tables:
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Last delivery date | `sensor.last_delivery_date` | Delivery date of the most recently completed week from delivery history. `Date` device class. |
+| Last delivery day | `sensor.last_delivery_date` | The day your most recent past box was **scheduled** for (the week's `deliveryDate` from delivery history) — a plain date, available even where carrier tracking isn't. For the carrier's actual arrival timestamp see **Tracked shipment date**; the two can legitimately differ by a day (the carrier timestamp is UTC, so a late-evening handover lands on the next calendar day). `Date` device class. |
 | Skipped week count | `sensor.skipped_week_count` | Number of upcoming weeks marked as skipped. |
 | Next skipped week | `sensor.next_skipped_week` | Display name of the nearest upcoming skipped week (e.g. `2026-W24`); shows **`None`** when no weeks are skipped. |
 
@@ -127,7 +127,8 @@ A few conventions used in the tables:
 in the box — salt, oil, butter, eggs — for the meals you have selected on your next two
 deliveries, so you can have them on hand before each box lands instead of discovering them
 mid-recipe. Add each to a **To-do list** card; the [example dashboard](../dashboard/hellofresh.yaml)
-puts them side by side under a *Missing Ingredients* view.
+puts them side by side under a
+[*Missing Ingredients* view](dashboard.md#missing-ingredients-view).
 
 **Two entities, one per week.** Home Assistant's to-do card renders exactly one entity and has no
 filtering, so a single entity spanning both weeks could only ever be one flat list. Two entities
