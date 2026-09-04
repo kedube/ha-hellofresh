@@ -8,7 +8,8 @@ version heading and publishes it as the release's Highlights.
 ## 2.93 — 2026-09-04
 - Meal planner and market cards: the **+ Add** pill and the ± steppers are pinned to the
   bottom edge of each tile, so the selection controls line up across a row instead of
-  landing at different heights under meals with longer descriptions or more chips.
+  landing at different heights under meals with longer descriptions or more chips. The
+  planner's + Add pill is now filled (primary color, light text) and sits bottom-right.
 
 ## 2.92 — 2026-09-03
 - **Dashboards load faster**: the card files are now served with browser caching enabled.

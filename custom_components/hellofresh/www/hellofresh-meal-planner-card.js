@@ -2517,13 +2517,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .recipe { cursor: pointer; }
       .recipe:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       /* "+ Add" pill on unselected editable tiles — the market card's model: an explicit
-         select affordance keeps the tile tap free to open the recipe. */
+         select affordance keeps the tile tap free to open the recipe. Filled and pushed
+         to the tile's bottom-right corner. */
       .addbtn {
+        display: block; margin-left: auto;
         padding: 4px 16px; border-radius: 14px; cursor: pointer;
-        border: 1px solid var(--primary-color); background: transparent;
-        color: var(--primary-color); font-weight: 600; font-size: 0.85em;
+        border: 1px solid var(--primary-color); background: var(--primary-color);
+        color: var(--text-primary-color, #fff); font-weight: 600; font-size: 0.85em;
       }
-      .addbtn:hover { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+      .addbtn:hover { filter: brightness(1.1); }
       .addbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       .videowrap {
         position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.75);
