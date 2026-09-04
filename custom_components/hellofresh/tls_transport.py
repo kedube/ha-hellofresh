@@ -28,8 +28,11 @@ from importlib import util
 import json as _json
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import ClientError, ClientResponse, ClientSession
+
+from .normalizers import _template_debug_path
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,7 +173,14 @@ async def _try_curl_cffi(
             method, url, params=params, json_payload=json_payload, headers=headers
         )
     except Exception as err:  # noqa: BLE001 - any curl_cffi failure should degrade, not crash
-        _LOGGER.debug("curl_cffi %s to %s failed (%s); falling back to aiohttp", method, url, err)
+        # Path only, ids templated: full URLs can embed subscription/plan ids, and debug
+        # logs get attached to public GitHub issues.
+        _LOGGER.debug(
+            "curl_cffi %s to %s failed (%s); falling back to aiohttp",
+            method,
+            _template_debug_path(urlsplit(url).path),
+            err,
+        )
         return None
 
 

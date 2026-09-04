@@ -60,8 +60,8 @@ reindenting it will break extraction — the script fails loudly rather than sil
 - `.github/scripts/` contains the CI helper scripts, including the card checks described above.
 - `docs/` contains the user reference documentation split out of the README. Keep the README as the
   narrative landing page (install → configure → what you get → troubleshoot) and put detail here:
-  - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch and button.
-  - [`docs/cards.md`](docs/cards.md) — the seven Lovelace cards. Options shared by every card live
+  - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch, button, the delivery calendar, and the prep-list to-do entities.
+  - [`docs/dashboard.md`](docs/dashboard.md) — the seven Lovelace cards. Options shared by every card live
     in its **Common options** table, so per-card examples stay minimal; don't repeat them.
   - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
   - [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md) — the endpoint and normalization reference.

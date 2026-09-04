@@ -219,7 +219,7 @@
         "name": "Modtagne måltidskasser"
       },
       "last_delivery_date": {
-        "name": "Dato for seneste levering"
+        "name": "Seneste leveringsdag"
       },
       "next_delivery_week": {
         "name": "Næste leveringsuge"
@@ -510,6 +510,10 @@
         "collection": {
           "name": "Kategori",
           "description": "Valgfri kategoriidentifikator for at begrænse resultaterne til den kategori."
+        },
+        "search": {
+          "name": "Søg",
+          "description": "Fritekstsøgning i hele kataloget, på tværs af alle kategorier. Hvis udfyldt ignoreres kollektionen."
         },
         "limit": {
           "name": "Grænse",

@@ -15,7 +15,7 @@ import json
 import math
 import re
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 # Maximum recursion depth when heuristically searching nested payloads.
 MAX_SEARCH_DEPTH = 8
@@ -72,11 +72,15 @@ _ISO_WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
 
 
 def date_from_iso_week(week_id: str | None) -> date | None:
-    """Return the delivery date for a ``YYYY-Www`` ISO week, or ``None``.
+    """Return the Monday of a ``YYYY-Www`` ISO week as a placeholder date, or ``None``.
 
     Some HelloFresh history payloads (notably ``/gw/my-deliveries/past-deliveries``) identify a
-    delivered week by its ISO week id only, with no explicit delivery date. The delivery falls in
-    that ISO week; HelloFresh's own UI labels it with the week's Monday, so use ISO weekday 1.
+    delivered week by its ISO week id only, with no explicit delivery date. HelloFresh's own UI
+    labels such a week with its Monday, so ISO weekday 1 keeps the week sortable and datable.
+    The result is NOT the day the box was scheduled for or delivered — a Wednesday delivery in
+    that week still gets the Monday — so callers must treat it as a placeholder: the account
+    aggregate replaces it with the real scheduled ``deliveryDate`` when the matching account
+    week is known, and the "Last delivery day" sensor never reads it.
     """
     if not isinstance(week_id, str):
         return None
@@ -389,6 +393,44 @@ def extract_name_list(raw_value: Any) -> list[str]:
             if isinstance(value, str) and value not in names:
                 names.append(value)
     return names
+
+
+def _seg(value: Any) -> str:
+    """Percent-encode one URL path segment.
+
+    Defense-in-depth: interpolated ids come from HelloFresh's own payloads, but an id
+    containing ``/``, ``?`` or ``#`` would silently rewrite the request path. Encoding
+    every dynamic segment makes that structurally impossible.
+    """
+    return quote(str(value), safe="")
+
+
+def safe_error_summary(body: str | None, limit: int = 120) -> str:
+    """A log-safe summary of an API error body.
+
+    Raw bodies are server-controlled and can echo request contents (a login rejection can
+    echo the submitted account email), so log lines and exception messages must never carry
+    them verbatim — logs are not run through the diagnostics redactor, and users are asked
+    to attach them to public GitHub issues. JSON error envelopes keep their machine fields
+    (``error``, ``error_description``, ``message``, ``code``, ``detail``) — the part
+    debugging actually needs; anything else collapses to a length note.
+    """
+    if not body:
+        return "empty body"
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return f"unparseable body ({len(body)} bytes)"
+    if not isinstance(payload, dict):
+        return f"unparseable body ({len(body)} bytes)"
+    parts = []
+    for key in ("error", "error_description", "message", "code", "detail"):
+        value = payload.get(key)
+        if isinstance(value, str | int) and str(value).strip():
+            parts.append(f"{key}={str(value)[:limit]}")
+    if parts:
+        return "; ".join(parts)
+    return f"JSON body with keys {sorted(payload)[:8]}"
 
 
 def extract_allowed_actions(raw_week: dict[str, Any]) -> dict[str, bool]:

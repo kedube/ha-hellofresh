@@ -26,7 +26,7 @@ Change what is in a box.
 
 ### `hellofresh.get_weeks`
 
-**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons) and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner](cards.md#meal-planner-card), [Market](cards.md#market-card), and [Schedule](cards.md#schedule-card) cards.
+**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, the menu `badge` (BESTSELLER, NEW, Premium Picks, …) with HelloFresh's own hex-gated `badge_foreground`/`badge_background` colors, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons), its `menu_categories` (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, … — as `{name, slug, recipe_ids}` rows, present only on weeks with a browsable menu payload), and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner](dashboard.md#meal-planner-card), [Market](dashboard.md#market-card), and [Schedule](dashboard.md#schedule-card) cards.
 
 ### `hellofresh.select_meals`
 
@@ -66,7 +66,7 @@ change the recurring delivery day (affects all future deliveries)
 
 ### `hellofresh.get_delivery_tracking`
 
-**Returns a response.** The live last-mile tracking snapshot from HelloFresh's own delivery-fleet tracker (`hftrack.nl`): the delivery `phase`, `driver_name`, live `driver_location` and `customer_location` (latitude/longitude), `stops_before` you, a minute-precision `eta`, the personal customer `message`, and the `tracking_url` of the official live map, plus `next_delivery_date` for idle-day context. Each call performs a live fetch of the tracking endpoint (throttled to once a minute), so it is always at least as fresh as the [tracking sensors](entities.md#live-delivery-tracking-netherlands). **Only meaningful for accounts in supported own-fleet countries — currently the Netherlands**; elsewhere the response is `{"available": false, "reason": "unsupported_country"}`. Read-only. Powers the [Delivery tracking card](cards.md#delivery-tracking-card).
+**Returns a response.** The live last-mile tracking snapshot from HelloFresh's own delivery-fleet tracker (`hftrack.nl`): the delivery `phase`, `driver_name`, live `driver_location` and `customer_location` (latitude/longitude), `stops_before` you, a minute-precision `eta`, the personal customer `message`, and the `tracking_url` of the official live map, plus `next_delivery_date` for idle-day context. Each call performs a live fetch of the tracking endpoint (throttled to once a minute), so it is always at least as fresh as the [tracking sensors](entities.md#live-delivery-tracking-netherlands). **Only meaningful for accounts in supported own-fleet countries — currently the Netherlands**; elsewhere the response is `{"available": false, "reason": "unsupported_country"}`. Read-only. Powers the [Delivery tracking card](dashboard.md#delivery-tracking-card).
 
 ## Plan and account
 
@@ -74,7 +74,7 @@ Read or change the subscription itself.
 
 ### `hellofresh.get_account_summary`
 
-**Returns a response.** The account/subscription headline values (status, plan and plan total, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report. Read-only. Powers the [Subscription card](cards.md#subscription-card).
+**Returns a response.** The account/subscription headline values (status, plan and plan total, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report. Read-only. Powers the [Subscription card](dashboard.md#subscription-card).
 
 ### `hellofresh.get_plan_options`
 
@@ -94,7 +94,7 @@ change the recurring box size (`product_handle` from `get_plan_options`). Affect
 
 ### `hellofresh.get_spending`
 
-**Returns a response.** Your HelloFresh spending ledger built from the full billing history — `weeks` (per-box delivery date + amount, newest first), `months` (per-month rollup with box count and total), and a running `total` (lifetime spend across past deliveries, with box count). Upcoming boxes are flagged and excluded from the running total. Read-only. Powers the [Cost card](cards.md#cost-card).
+**Returns a response.** Your HelloFresh spending ledger built from the full billing history — `weeks` (per-box delivery date + amount, newest first), `months` (per-month rollup with box count and total), and a running `total` (lifetime spend across past deliveries, with box count). Upcoming boxes are flagged and excluded from the running total. Read-only. Powers the [Cost card](dashboard.md#cost-card).
 
 ## Food profile
 
@@ -102,7 +102,7 @@ The preferences HelloFresh uses to auto-preselect meals.
 
 ### `hellofresh.get_food_profile`
 
-**Returns a response.** The customer's food profile (the preferences HelloFresh uses to auto-preselect meals), a `completion` summary (how many profile fields HelloFresh considers answered, and which are still outstanding), plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](cards.md#food-profile-card).
+**Returns a response.** The customer's food profile (the preferences HelloFresh uses to auto-preselect meals), a `completion` summary (how many profile fields HelloFresh considers answered, and which are still outstanding), plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](dashboard.md#food-profile-card).
 
 ### `hellofresh.set_food_profile`
 
@@ -114,15 +114,15 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_recipe_collections`
 
-**Returns a response.** The browsable categories of HelloFresh's public recipe catalog (Chicken Recipes, Carb Smart, Hall of Fame, …), each with a slug, name, and thumbnail. Read-only. Powers the [Recipes card](cards.md#recipes-card).
+**Returns a response.** The browsable categories of HelloFresh's public recipe catalog (Chicken Recipes, Carb Smart, Hall of Fame, …), each with a slug, name, and thumbnail. Read-only. Powers the [Recipes card](dashboard.md#recipes-card).
 
 ### `hellofresh.get_catalog_recipes`
 
-**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
+**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Pass `search` to **text-search the whole catalog** instead — every category at once, via HelloFresh's own recipes-service search API (`collection` is ignored then, and no `subcollections` are returned since results span categories). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
 
 ### `hellofresh.get_recipe_detail`
 
-**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps`, `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](cards.md#recipes-card).
+**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps`, `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](dashboard.md#recipes-card).
 
 ### `hellofresh.get_favorites`
 
@@ -147,8 +147,8 @@ refresh account data immediately, outside the normal polling interval
 If a meal or Market change is accepted but HelloFresh **silently downsizes the box** to fit (a
 "seamless downgrade"), the integration raises a persistent notification so you know the saved
 selection is smaller than you asked for. `select_meals` and `select_market_items` also report it
-in their `{"downgraded": true}` response, which the [Meal planner](cards.md#meal-planner-card) and
-[Market](cards.md#market-card) cards use to show an inline, dismissable warning on the affected
+in their `{"downgraded": true}` response, which the [Meal planner](dashboard.md#meal-planner-card) and
+[Market](dashboard.md#market-card) cards use to show an inline, dismissable warning on the affected
 week.
 
 ## Calling these without YAML
@@ -158,9 +158,9 @@ by hand:
 
 | Instead of calling | Use |
 |---|---|
-| `select_meals`, `skip_week`, `unskip_week` | [Meal planner card](cards.md#meal-planner-card) |
-| `select_market_items` | [Market card](cards.md#market-card) |
-| `get_food_profile`, `set_food_profile` | [Food Profile card](cards.md#food-profile-card) |
+| `select_meals`, `skip_week`, `unskip_week` | [Meal planner card](dashboard.md#meal-planner-card) |
+| `select_market_items` | [Market card](dashboard.md#market-card) |
+| `get_food_profile`, `set_food_profile` | [Food Profile card](dashboard.md#food-profile-card) |
 | `skip_week` for the next editable week | The **Skip next selectable delivery week** switch |
 
 Write actions (meal/Market selection, skip/unskip) use the website's verified endpoints first and

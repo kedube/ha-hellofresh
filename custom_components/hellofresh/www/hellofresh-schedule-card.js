@@ -513,6 +513,17 @@ class HelloFreshScheduleCard extends HTMLElement {
     card.innerHTML = `<div class="head"></div><div class="body"></div>`;
     this.shadowRoot.appendChild(card);
     this._shell = { card, head: card.querySelector(".head"), body: card.querySelector(".body") };
+    // Timeline rows are focusable divs (role="button" tabindex="0") — the calendar days
+    // and every other control here are real <button>s with native keyboard handling, so
+    // this covers only the row's week-select, guarding against keystrokes bubbling up
+    // from the buttons and links inside the row.
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const row = ev.target.closest('.row[data-action="cal-week"]');
+      if (!row || ev.target.closest("button, a")) return;
+      ev.preventDefault(); // Space must select the week, not scroll the page
+      this._selectWeek(row.getAttribute("data-week-id"));
+    });
     card.addEventListener("click", (ev) => {
       // Real links (the tracking number) must navigate, not trigger the row's week-select.
       if (ev.target.closest("a")) return;
@@ -849,6 +860,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       : "";
     return `
       <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}${isSelected ? " selected" : ""}" data-action="cal-week"
+        role="button" tabindex="0"
         data-week-id="${this._esc(week.week_id)}"
         title="Show ${this._esc(week.display_name || week.week_id)} in the meal planner and market cards">
         <span class="dot ${state}" title="${this._esc(label)}">${meta.icon}</span>
@@ -1226,6 +1238,7 @@ class HelloFreshScheduleCard extends HTMLElement {
         border-bottom: 1px solid var(--divider-color); cursor: pointer;
       }
       .row:last-child { border-bottom: none; }
+      .row:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
       .row:hover { background: var(--secondary-background-color); border-radius: 10px; }
       .row.current { background: color-mix(in srgb, var(--hf-green) 10%, transparent); border-radius: 10px; }
       /* Same green ring as the calendar's selected day — clicking either highlights both. */

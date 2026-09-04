@@ -77,12 +77,12 @@ A few conventions used in the tables:
 | Tracked shipment number | `sensor.shipment_tracking_number` | Parcel/tracking number for the tracked shipment; shares attributes with the tracking-status sensor. |
 | Tracked shipment carrier | `sensor.tracked_shipment_carrier` | Carrier for the tracked shipment (e.g. `Veho`, `UPS`, `FedEx`, `DoorDash`). Resolved from HelloFresh's shipment-tracking lookup — the delivery payload itself carries no carrier field — so it is `None` for weeks with no published tracking, and appears once a box is in transit. |
 | Tracked shipment estimate | `sensor.tracked_shipment_estimate` | The **carrier's own** estimated delivery **day** for the tracked shipment, from the shipment-tracking lookup. It is a `date`, not a timestamp, because the carrier reports midnight-UTC of the estimated day rather than a real time — declaring it a timestamp made a US-Eastern viewer see "Aug 23 @ 8:00 PM" for a box estimated for Aug 24. It answers "which day does the carrier now think this arrives?", not "what time". **HelloFresh's API exposes no delivery time window** — the narrower window in HelloFresh's own push notifications (e.g. 6:25–9:25 PM) comes from the carrier's site and is not in any endpoint the integration can reach. `None` until a box has published tracking. |
-| Tracked shipment date | `sensor.tracked_shipment_date` | When the most recent box **actually arrived** — the carrier's handover timestamp, not the day it was scheduled for. A box delivered at 22:53 ET is already the next day in UTC, so this can differ from `last_delivery_date` (which reports the scheduled day). `None` until a box has been delivered with carrier tracking attached; it never falls back to the scheduled date. |
+| Tracked shipment date | `sensor.tracked_shipment_date` | When the most recent box **actually arrived** — the carrier's handover timestamp, not the day it was scheduled for. **Last delivery day** is this same arrival rendered as a calendar day in your Home Assistant timezone. `None` until a box has been delivered with carrier tracking attached; it never falls back to the scheduled date. |
 | Tracked shipment URL | `sensor.next_delivery_tracking_url` | Direct carrier tracking link for the best-tracked order; `None` when no link is available. |
 
 ### Live delivery tracking (Netherlands)
 
-**Created only for accounts in countries where HelloFresh runs its own delivery fleet — currently the Netherlands.** These sensors ride the unauthenticated Tracey tracker behind `hftrack.nl` (issue #6): the same live phase, driver GPS, stop count, and minute-precision ETA the official tracking page shows. Elsewhere the underlying data simply does not exist (third-party carriers expose only the coarser shipment status above), so the sensors are not created at all. All four poll on their own fast cadence — every 5 minutes while a delivery is live, every 30 when idle — independent of the account refresh interval, and read **Unknown** outside an active delivery window. They power the [Delivery tracking card](cards.md#delivery-tracking-card).
+**Created only for accounts in countries where HelloFresh runs its own delivery fleet — currently the Netherlands.** These sensors ride the unauthenticated Tracey tracker behind `hftrack.nl` (issue #6): the same live phase, driver GPS, stop count, and minute-precision ETA the official tracking page shows. Elsewhere the underlying data simply does not exist (third-party carriers expose only the coarser shipment status above), so the sensors are not created at all. All four poll on their own fast cadence — every 5 minutes while a delivery is live, every 30 when idle — independent of the account refresh interval, and read **Unknown** outside an active delivery window. They power the [Delivery tracking card](dashboard.md#delivery-tracking-card).
 
 | Name | Entity | Description |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ A few conventions used in the tables:
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Last delivery date | `sensor.last_delivery_date` | Delivery date of the most recently completed week from delivery history. `Date` device class. |
+| Last delivery day | `sensor.last_delivery_date` | The day your most recent box **actually arrived**, from the carrier's handover timestamp (`tracking.delivery_date`) converted to your Home Assistant timezone — never the scheduled day. A box scheduled for Wednesday that lands Thursday reports Thursday. While a new box is on the way the sensor keeps the previous week's arrival, and moves to the new box once the carrier marks it delivered. **Unknown** when no delivered box carries carrier tracking; the scheduled date is never substituted. `Date` device class. |
 | Skipped week count | `sensor.skipped_week_count` | Number of upcoming weeks marked as skipped. |
 | Next skipped week | `sensor.next_skipped_week` | Display name of the nearest upcoming skipped week (e.g. `2026-W24`); shows **`None`** when no weeks are skipped. |
 
@@ -138,7 +138,8 @@ A few conventions used in the tables:
 in the box — salt, oil, butter, eggs — for the meals you have selected on your next two
 deliveries, so you can have them on hand before each box lands instead of discovering them
 mid-recipe. Add each to a **To-do list** card; the [example dashboard](../dashboard/hellofresh.yaml)
-puts them side by side under a *Missing Ingredients* view.
+puts them side by side under a
+[*Missing Ingredients* view](dashboard.md#missing-ingredients-view).
 
 **Two entities, one per week.** Home Assistant's to-do card renders exactly one entity and has no
 filtering, so a single entity spanning both weeks could only ever be one flat list. Two entities

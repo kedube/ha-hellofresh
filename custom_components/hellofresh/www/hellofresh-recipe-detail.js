@@ -21,6 +21,13 @@
  *
  * The host card supplies a `callService(service, data)` function and its shadow root; this
  * module owns everything else, including its own styles.
+ *
+ * A host may also supply `getSelection()` — consulted on every render while the sheet is
+ * open. Returning null renders a plain read-only sheet; returning
+ * `{ qty, maxQty, add, inc, dec }` pins a selection footer to the sheet ("+ Add" when
+ * qty is 0, a ± servings stepper otherwise), completing the "read it, then decide" flow
+ * on the meal planner's editable weeks. The callbacks mutate the HOST's pending selection
+ * (the host re-renders its own grid); the sheet only re-renders its footer.
  */
 
 // ---- helpers (self-contained: this module must not depend on a host card's internals) ------
@@ -121,6 +128,26 @@ export const DETAIL_STYLES = `
   .detaillinks a { font-size: 0.85em; color: var(--primary-color); }
   .detailbox .msg { padding: 24px 8px; text-align: center; color: var(--secondary-text-color); }
   .detailbox .msg.err { color: var(--error-color, #db4437); }
+  /* Selection footer (hosts that supply getSelection): pinned below the scroll area so the
+     Add/servings controls stay reachable however long the recipe is. */
+  .selfooter {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 14px; border-top: 1px solid var(--divider-color);
+  }
+  .sadd {
+    border: none; border-radius: 16px; cursor: pointer; padding: 7px 18px;
+    background: var(--primary-color); color: var(--text-primary-color, #fff);
+    font-weight: 600; font-size: 0.9em;
+  }
+  .selstate { font-size: 0.85em; color: var(--secondary-text-color); }
+  .selstep { display: flex; align-items: center; gap: 8px; }
+  .sqbtn {
+    width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--divider-color);
+    background: var(--card-background-color); color: var(--primary-text-color);
+    cursor: pointer; font-size: 1em; line-height: 1;
+  }
+  .sqbtn:disabled { opacity: 0.4; cursor: default; }
+  .sqval { min-width: 18px; text-align: center; font-weight: 600; }
 `;
 
 /**
@@ -129,11 +156,14 @@ export const DETAIL_STYLES = `
  * @param {object} options
  * @param {() => ShadowRoot|null} options.getRoot        where to append the overlay
  * @param {(service: string, data: object) => Promise<object>} options.callService
+ * @param {(() => ({qty: number, maxQty: number, add: Function, inc: Function, dec: Function}|null))=} options.getSelection
+ *        optional: selection state + mutators for the OPEN recipe, or null for read-only
  */
 export class RecipeDetailOverlay {
-  constructor({ getRoot, callService }) {
+  constructor({ getRoot, callService, getSelection }) {
     this._getRoot = getRoot;
     this._callService = callService;
+    this._getSelection = getSelection || null;
     this._id = null;
     this._servings = null;
     this._detail = null;
@@ -141,6 +171,7 @@ export class RecipeDetailOverlay {
     this._loading = false;
     this._overlay = null;
     this._keyHandler = null;
+    this._seq = 0; // stale-response guard: comparing ids alone can't tell servings apart
   }
 
   get isOpen() {
@@ -150,6 +181,10 @@ export class RecipeDetailOverlay {
   /** Fetch and show one recipe. Safe to call repeatedly; a stale response is discarded. */
   async open(recipeId, servings) {
     if (!recipeId) return;
+    // A per-call sequence, not just the id: rapid taps on the servings switcher issue
+    // several fetches for the SAME id, and whichever response lands last would otherwise
+    // win — showing amounts for a serving size the user has already switched away from.
+    const seq = ++this._seq;
     this._id = String(recipeId);
     this._servings = servings || null;
     this._detail = null;
@@ -161,20 +196,24 @@ export class RecipeDetailOverlay {
         recipe_id: this._id,
         ...(servings ? { servings } : {}),
       });
-      // Ignore a response for a recipe the user has already navigated away from.
-      if (this._id !== String(recipeId)) return;
+      // Ignore a response the user has already navigated away from (another recipe, another
+      // serving size, or a closed sheet).
+      if (seq !== this._seq || this._id === null) return;
       this._detail = (payload && payload.recipe) || null;
     } catch (err) {
-      if (this._id !== String(recipeId)) return;
+      if (seq !== this._seq || this._id === null) return;
       this._error = (err && err.message) || String(err);
     } finally {
-      this._loading = false;
-      this._render();
+      if (seq === this._seq) {
+        this._loading = false;
+        this._render();
+      }
     }
   }
 
   /** Tear the sheet down, including its document-level key listener. */
   close() {
+    this._seq += 1; // orphan any in-flight fetch
     this._id = null;
     this._detail = null;
     this._error = null;
@@ -206,6 +245,20 @@ export class RecipeDetailOverlay {
         const servingsBtn = ev.target.closest("[data-servings]");
         if (servingsBtn) {
           this.open(this._id, Number(servingsBtn.getAttribute("data-servings")));
+          return;
+        }
+        // Selection footer: mutate the host's pending selection, then re-render so the
+        // footer reflects the new quantity (the host re-renders its own grid itself).
+        const selBtn = ev.target.closest("[data-sel]");
+        if (selBtn && !selBtn.disabled) {
+          const sel = this._getSelection && this._getSelection();
+          if (sel) {
+            const action = selBtn.getAttribute("data-sel");
+            if (action === "add") sel.add();
+            else if (action === "inc") sel.inc();
+            else if (action === "dec") sel.dec();
+            this._render();
+          }
           return;
         }
         if (ev.target === overlay || ev.target.closest(".detailclose")) this.close();
@@ -302,6 +355,32 @@ export class RecipeDetailOverlay {
             ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">View on hellofresh.com</a>` : ""}
           </div>
         </div>
+        ${this._selectionBar()}
       </div>`;
+  }
+
+  // The pinned Add/servings footer, rendered only when the host supplies selection state for
+  // the open recipe (i.e. the meal planner on an editable week). Mirrors the tile controls:
+  // "+ Add" selects at one serving; − at one serving removes the meal.
+  _selectionBar() {
+    const sel = this._getSelection && this._getSelection();
+    if (!sel) return "";
+    if (!sel.qty) {
+      return `<div class="selfooter">
+                <span class="selstate">Not in this week's box</span>
+                <button class="sadd" data-sel="add">+ Add</button>
+              </div>`;
+    }
+    return `<div class="selfooter">
+              <span class="selstate">In this week's box</span>
+              <span class="selstep">
+                <button class="sqbtn" data-sel="dec"
+                  title="${sel.qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
+                <span class="sqval">${Number(sel.qty)}</span>
+                <button class="sqbtn" data-sel="inc" ${sel.qty >= sel.maxQty ? "disabled" : ""}
+                  title="More servings">+</button>
+                <span class="slabel">serving${sel.qty === 1 ? "" : "s"}</span>
+              </span>
+            </div>`;
   }
 }

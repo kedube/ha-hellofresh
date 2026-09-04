@@ -11,12 +11,12 @@ the badge is claimable — and the status below tracks them on that basis.
 
 ## Current Status
 
-- Config flow setup (email/password and token paths) and reauthentication are implemented, plus an options flow for refresh interval, history window, menu grace window, and the public-menu fallback toggle. Options changes reload the entry automatically.
+- Config flow setup (email/password and token paths) and reauthentication are implemented, plus an options flow for refresh interval, history window, menu grace window, the public-menu fallback toggle, the favorite-hearts toggle, and the data-quality repair-warnings toggle. Options changes reload the entry automatically.
 - Reconfiguration (`async_step_reconfigure`) lets the country and credentials (or token) be corrected without deleting the entry; it refuses to repoint an entry at a different HelloFresh account.
 - Diagnostics are implemented with sensitive account, address, and token values redacted (by key name at any nesting depth, including captured request params), and include token-health timing and a `frontend` block comparing expected vs. registered card resource versions.
 - Repairs issues are raised for payload-shape changes, fallback menu behavior, and unsupported write actions.
-- Entities use `has_entity_name`, device classes where applicable, and diagnostic entity categories; user-facing strings live in `strings.json`/`translations/en.json`.
-- The test suite (250+ tests) covers API parsing and normalization, entity behavior, config and options flow, diagnostics redaction, the token-refresh lifecycle (including a simulation harness), the TLS transport, and frontend resource registration/versioning.
+- Entities use `has_entity_name`, device classes where applicable, and diagnostic entity categories; user-facing strings live in `strings.json`/`translations/en.json`. Every platform declares `PARALLEL_UPDATES = 0` (coordinator-based), the coordinator lives in `entry.runtime_data` (typed via `HelloFreshConfigEntry`), and the prep-list to-do check-offs persist across restarts via `RestoreEntity`.
+- The test suite (800+ tests) covers API parsing and normalization, entity behavior, config and options flow, diagnostics redaction, the token-refresh lifecycle (including a simulation harness), the TLS transport, and frontend resource registration/versioning.
 - GitHub Actions run ruff, pytest, Hassfest, and HACS validation on every push; releases are tagged and published automatically with the manifest version bump.
 
 ## Remaining Work

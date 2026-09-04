@@ -8,9 +8,10 @@ exists at all:
 
 | Value | Source | Meaning |
 | --- | --- | --- |
-| `sensor.last_delivery_date` | week `deliveryDate` | the **scheduled** day (a noon anchor) |
+| week `deliveryDate` | (not a sensor) | the **scheduled** day (a noon anchor) |
 | `sensor.tracked_shipment_estimate` | SCM `est_delivery_time` | the carrier's **estimate** |
 | `sensor.tracked_shipment_date` | week `tracking.delivery_date` | when it **actually** arrived |
+| `sensor.last_delivery_date` | week `tracking.delivery_date` | that arrival as a **local** day |
 
 A box handed over at 22:53 ET is already the next day in UTC, so the scheduled and actual values
 legitimately disagree — asserted below with verbatim capture data.
@@ -68,16 +69,48 @@ def test_value_is_timezone_aware() -> None:
     assert _value(_week()).tzinfo is not None
 
 
-def test_it_differs_from_the_scheduled_delivery_date() -> None:
+def test_last_delivery_date_follows_the_actual_arrival_not_the_scheduled_day() -> None:
     """The whole point: scheduled day != actual arrival.
 
-    If these always agreed the sensor would be redundant with `last_delivery_date`.
+    A box scheduled for Jun 23 that the carrier delivers on Jun 24 reports Jun 24 for
+    ``last_delivery_date`` — the scheduled ``deliveryDate`` is never used.
     """
-    data = HelloFreshAccountData(past_delivery_weeks=[_week()]).finalize()
+    late = _week(delivered_at=datetime(2026, 6, 24, 15, 2, 11, tzinfo=UTC))
+    data = HelloFreshAccountData(past_delivery_weeks=[late]).finalize()
     actual = sensor_native_value("tracked_shipment_date", data, "https://x")
-    scheduled = sensor_native_value("last_delivery_date", data, "https://x")
-    assert scheduled == date(2026, 6, 23)
-    assert actual.hour == 14 and actual.minute == 37  # a real handover time, not noon
+    last_day = sensor_native_value("last_delivery_date", data, "https://x")
+    assert late.delivery_date == date(2026, 6, 23)
+    assert last_day == date(2026, 6, 24)
+    assert actual.hour == 15 and actual.minute == 2  # a real handover time, not noon
+
+
+def test_last_delivery_date_is_the_local_calendar_day() -> None:
+    """The carrier timestamp is UTC: a 22:53 ET handover on Jun 23 is 02:53 UTC on Jun 24.
+
+    ``last_delivery_date`` must report the day in Home Assistant's timezone (Jun 23), not the
+    UTC day — otherwise an evening delivery shows up as the next day.
+    """
+    from zoneinfo import ZoneInfo
+
+    from homeassistant.util import dt as dt_util
+
+    evening_et = _week(delivered_at=datetime(2026, 6, 24, 2, 53, 0, tzinfo=UTC))
+    data = HelloFreshAccountData(past_delivery_weeks=[evening_et]).finalize()
+
+    previous = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(ZoneInfo("America/New_York"))
+    try:
+        assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 6, 23)
+    finally:
+        dt_util.set_default_time_zone(previous)
+    # And in UTC the same handover is the 24th.
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 6, 24)
+
+
+def test_last_delivery_date_is_unknown_without_a_carrier_arrival() -> None:
+    """No carrier timestamp means Unknown — never the scheduled day as a stand-in."""
+    data = HelloFreshAccountData(past_delivery_weeks=[_week(delivered_at=None)]).finalize()
+    assert sensor_native_value("last_delivery_date", data, "https://x") is None
 
 
 def test_parses_from_the_captured_delivered_week() -> None:
@@ -120,11 +153,11 @@ def test_uses_the_most_recent_delivered_week() -> None:
 def test_backfills_the_carrier_timestamp_onto_a_past_deliveries_week() -> None:
     """Regression: the sensor read Unknown for a box the web UI showed as delivered.
 
-    ``last_delivery_week`` prefers the past-deliveries history, but that endpoint reports no
-    carrier timestamp — only the ranged deliveries payload carries ``tracking.delivery_date``.
-    The winning week therefore had ``delivered_at`` unset even though the same week's account
-    entry knew exactly when the box arrived. The real arrival time is now back-filled from the
-    matching account week.
+    The past-deliveries history endpoint reports no carrier timestamp — only the ranged
+    deliveries payload carries ``tracking.delivery_date`` — so the recipe-bearing history week
+    had ``delivered_at`` unset even though the same week's account entry knew exactly when the
+    box arrived. The real arrival time is back-filled from the matching account week before
+    selection, and on the resulting tie the history week (with its recipes) is the one exposed.
     """
     account_week = _week(delivered_at=datetime(2026, 6, 23, 14, 37, 34, tzinfo=UTC))
     history_week = _week(delivered_at=None, status="delivered", source="past_deliveries")
@@ -141,7 +174,8 @@ def test_backfills_the_carrier_timestamp_onto_a_past_deliveries_week() -> None:
 
 def test_backfill_does_not_cross_subscriptions() -> None:
     """With two subscriptions the same ISO week is two different boxes — a timestamp from
-    another subscription's week must not be stamped onto this one."""
+    another subscription's week must not be stamped onto this one. The other subscription's
+    box was genuinely delivered, so IT is the last delivery, not the borrowed history week."""
     other_sub_week = _week(
         subscription_id="sub-2", delivered_at=datetime(2026, 6, 23, 14, 37, 34, tzinfo=UTC)
     )
@@ -151,4 +185,5 @@ def test_backfill_does_not_cross_subscriptions() -> None:
         weeks=[other_sub_week], past_delivery_weeks=[history_week]
     ).finalize()
 
-    assert sensor_native_value("tracked_shipment_date", data, "https://x") is None
+    assert history_week.delivered_at is None
+    assert data.last_delivery_week is other_sub_week

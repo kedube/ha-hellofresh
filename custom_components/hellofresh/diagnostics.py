@@ -11,7 +11,6 @@ from .const import (
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_USERNAME,
-    DOMAIN,
 )
 from .frontend import async_get_frontend_diagnostics
 
@@ -40,6 +39,12 @@ TO_REDACT = {
     "customerId",
     "customer_id",
     "customerUUID",  # stable customer UUID in the balance-transactions params
+    # The cart-pricing debug trace (pricing_attempts) records its full json_payload, whose
+    # ID keys use yet another spelling — all-caps ID. async_redact_data is case-sensitive,
+    # so each spelling must be listed.
+    "customerID",
+    "subscriptionID",
+    "planID",
     "public_id",  # tracking public id — reconstructs the unauthenticated tracking page
     # Active voucher/credit code on the subscription — a single-use code could be burned by
     # anyone who reads a shared export. Redact both the model field and any camelCase param.
@@ -63,7 +68,7 @@ async def async_get_config_entry_diagnostics(
     config_entry: ConfigEntry,
 ) -> dict:
     """Return diagnostics for a config entry."""
-    coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
+    coordinator = getattr(config_entry, "runtime_data", None)
     data = coordinator.data if coordinator is not None and coordinator.data else None
     client = getattr(coordinator, "client", None)
 

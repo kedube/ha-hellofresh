@@ -201,7 +201,7 @@
         "name": "Boxes received"
       },
       "last_delivery_date": {
-        "name": "Last delivery date"
+        "name": "Last delivery day"
       },
       "next_delivery_week": {
         "name": "Next delivery week"
@@ -510,6 +510,10 @@
         "collection": {
           "name": "Collection",
           "description": "Collection slug from Get recipe collections (e.g. chicken-recipes). Omit for the top-level listing."
+        },
+        "search": {
+          "name": "Search",
+          "description": "Free-text search across the whole catalog, spanning every category at once. When set, Collection is ignored."
         },
         "limit": {
           "name": "Limit",

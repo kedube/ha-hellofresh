@@ -219,7 +219,7 @@
         "name": "Mottatte matkasser"
       },
       "last_delivery_date": {
-        "name": "Dato for siste levering"
+        "name": "Siste leveringsdag"
       },
       "next_delivery_week": {
         "name": "Neste leveringsuke"
@@ -510,6 +510,10 @@
         "collection": {
           "name": "Kategori",
           "description": "Valgfri kategoriidentifikator for å begrense resultatene til den kategorien."
+        },
+        "search": {
+          "name": "Søk",
+          "description": "Fritekstsøk i hele katalogen, på tvers av alle kategorier. Hvis angitt ignoreres kolleksjonen."
         },
         "limit": {
           "name": "Grense",

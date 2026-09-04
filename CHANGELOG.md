@@ -27,6 +27,175 @@ version heading and publishes it as the release's Highlights.
   dashboard gains a **Tracking** view pairing the card with a live driver map.
   Currently **Netherlands only** and shipped for field verification by NL users; Belgium and
   Luxembourg likely also qualify but stay off until confirmed.
+- Delivery tracking card: now registers in the dashboard card picker (`window.customCards`)
+  like the other seven cards, and its docs moved with the rest to `docs/dashboard.md`.
+
+## 2.95 — 2026-09-04
+- **Last delivery day now reports the day the box actually arrived** (#6). It was reporting
+  the Monday of the ISO week for anyone whose box is delivered on another day: the delivery
+  history endpoint carries no dates, so its weeks were stamped with the week's Monday, and that
+  guess beat the real date. The sensor now follows the carrier's handover timestamp
+  (`tracking.delivery_date`), converted to your Home Assistant timezone, so a box scheduled for
+  Wednesday that lands Thursday reports Thursday. While a new box is in transit the sensor keeps
+  the previous week's arrival until the carrier marks the new one delivered, and it reads
+  **Unknown** instead of a scheduled date when no delivered box carries carrier tracking.
+  **Tracked shipment date** now always refers to the same box, and the sensor's
+  `last_delivery_week.delivery_date` attribute now carries the real scheduled day instead of
+  the week's Monday placeholder.
+
+## 2.93 — 2026-09-04
+- Meal planner and market cards: the **+ Add** pill and the ± steppers are pinned to the
+  bottom edge of each tile, so the selection controls line up across a row instead of
+  landing at different heights under meals with longer descriptions or more chips. The
+  planner's + Add pill is now filled (primary color, light text) and sits bottom-right.
+
+## 2.92 — 2026-09-03
+- **Dashboards load faster**: the card files are now served with browser caching enabled.
+  The `?v=` version stamp already guarantees freshness (every upgrade registers a new
+  URL), but caching was disabled, so browsers re-downloaded every card's JS on every
+  dashboard load.
+- **Prep-list check-offs survive a Home Assistant restart** (RestoreEntity), and now
+  reliably travel with a week when a box lands and the weeks shift up — the tick set is
+  shared between the two list entities instead of stranded per entity.
+- One malformed week entry in a HelloFresh payload no longer fails the entire refresh:
+  the bad week is dropped with a warning and every other week still lands.
+- Recipe sheet: rapidly switching serving sizes can no longer show a stale response's
+  amounts (per-request sequence guard).
+- Sold-out overlay: reads the availability flags straight from the raw menus-service
+  payload instead of running the full week normalizer per poll — same matching, a
+  fraction of the work.
+- Hardening: every dynamic id interpolated into an API path is percent-encoded, and the
+  bearer token is no longer sent to HelloFresh's public website pages (catalog browse,
+  build-id fetch) that never needed it.
+- Housekeeping: platforms declare `PARALLEL_UPDATES`, the coordinator moved to HA's
+  `entry.runtime_data`, and the cookbook-favorites and cart-pricing areas moved out of
+  `client.py` into their own modules (no behavior change).
+- **Privacy (logs)**: log lines and error messages no longer carry raw account
+  identifiers or raw API response bodies. Request paths in errors and INFO logs now use
+  the same `{id}` templating diagnostics already applied (subscription/plan/customer
+  ids), and auth/login/write failures log a parsed error summary (`error=invalid_grant;
+  error_description=…`) instead of a raw body slice — a rejected login body can echo the
+  submitted email, and logs (unlike diagnostics exports) are not redacted before users
+  attach them to GitHub issues. A full audit of every log call found no tokens,
+  passwords, addresses, or emails logged anywhere; fingerprint-only token logging holds.
+- Docs: corrected the `logo` card option (it works on every card, meal planner
+  included), noted keyboard accessibility in the card reference, listed all six options
+  in QUALITY_SCALE.md, mentioned both shared JS modules in the YAML-resources note, and
+  added the `?v=` cache-bust to the example dashboard's YAML-mode instructions.
+- Meal planner card: the recipe sheet now completes the "read it, then decide" flow — on
+  editable weeks it carries a pinned footer with the same **+ Add** / **− N +** servings
+  controls as the tiles, so you can add or resize a meal right from its ingredients and
+  instructions. The footer drives the same pending selection as the grid (Save/Cancel as
+  usual) and disappears on weeks you can't edit. Recipes and Market sheets are unchanged.
+- **Privacy**: the cart-pricing debug trace's recorded request payloads are now redacted
+  in diagnostics exports (`customerID`/`subscriptionID`/`planID` used a spelling missing
+  from the redaction list), and the `api_base_url` diagnostic sensor no longer dumps the
+  full serialized subscriptions (delivery address, payment descriptor, coupon code) into
+  its recorder-stored attributes — it carries a capabilities summary and a subscription
+  count instead.
+- Meal planner, Market and Recipes cards: recipe tiles are now **keyboard-accessible** —
+  tab to a tile and press Enter or Space to open its recipe (with a visible focus
+  outline). Since the tile tap is the only way to open a recipe, it has to work without
+  a pointer. The Schedule card's timeline rows (which drive the planner/market week sync)
+  got the same treatment; every other control was already a real button.
+- Subscription card: now registers in the dashboard card picker (`window.customCards`) —
+  it was the only one of the seven cards missing, so "Add card" never offered it.
+- Market card: fixed an item's price vanishing from its tile the moment its quantity was
+  changed, when the item relies on the order's fallback currency (the in-place re-render
+  dropped the fallback the full render passes).
+- Meal planner card: skipping or unskipping a week now stays on that week after the
+  resync instead of jumping back to the current week (saves already behaved this way).
+- Meal planner card: **tapping a meal now opens its full recipe on every week** —
+  ingredients, instructions, nutrition — matching the Market card. On editable weeks,
+  selection moved off the tile onto an explicit **+ Add** pill (unselected meals) and the
+  existing **− N +** servings stepper (**−** at one serving removes the meal), so reading
+  a recipe can never accidentally change your box. The ⓘ button is gone — the whole tile
+  is the recipe now.
+- README: documented the **Show data-quality repair warnings** option (it was missing
+  from the Options list) and aligned the Market card blurb with its renamed
+  **Categories** filter bar.
+- Docs: `docs/cards.md` is now **`docs/dashboard.md`** — it covers the dashboard's
+  views, not just the packaged cards, including a new **Missing Ingredients view**
+  section (the two prep-list to-do cards) with a screenshot. Also added a screenshot of
+  the meal planner's full recipe view (ingredients and cooking instructions). All
+  in-repo links updated; update any bookmarks pointing at the old path.
+- Renamed the **Last delivery date** sensor's display name to **Last delivery day** (all
+  languages): the value is the day your last box was *scheduled* for (HelloFresh's own
+  `deliveryDate`), not the carrier's actual arrival — that's **Tracked shipment date**.
+  Display-name only: the entity ID (`sensor.last_delivery_date`), dashboards, automations
+  and recorded history are untouched. The entities doc now spells out the difference.
+- Meal planner card: tiles now show the **total cooking time** after the calories
+  (`53g protein · 780 kcal · 35 min`) — the same headline number the HelloFresh site
+  shows on its tiles, and the number the Total Cooking Time filter matches.
+- Meal planner card: dietary tile chips (Under 650 Calories, GLP-1 Support, …) are now
+  styled as outlined pills — a deliberate second tier — so a solid-colored chip always
+  means HelloFresh's own badge in its own colors (Premium Picks, Night Market Flavors,
+  20 Min or Less, …) rather than looking like an inconsistency.
+- Meal planner card: the **Highlights** chips (New / Bestsellers / Cooked Before) are now
+  **single-select** like Total Cooking Time — they are mutually exclusive views of the
+  menu (a meal can't be new *and* cooked before), so combining them only ever confused.
+  Picking one replaces the other; tapping the active chip (or All) clears. A previously
+  stored multi-selection keeps its first choice.
+- **Fixed the meal planner's Total Cooking Time filter matching nothing.** Two stacked
+  bugs: the weekly-menu payload sends times as ISO-8601 durations (`prepTime: "PT35M"`),
+  which the week normalizer's integer coercion silently dropped — every menu recipe had
+  no time data at all — and HelloFresh's field names are swapped (`prepTime` is the
+  headline time the site shows; `totalTime` is the smaller hands-on number), so the
+  filter now matches the headline time, exactly as the website's own filter does
+  (HAR-verified by result counts). Times parse int-first then ISO, so payloads using
+  plain minutes keep working.
+
+## 2.91 — 2026-09-02
+- Meal planner card: the filter bar is now a collapsible panel. Six chip groups flowing
+  into one wrapped row had become confusing, so collapsed (the default) it shows a single
+  "Filters · N active" row with each active selection as a removable ✕ chip, and expanded
+  it lays out every group on its own aligned line (label column, wrapping chips). The
+  expand/collapse state persists like the filters themselves.
+
+## 2.90 — 2026-09-02
+- Recipes card: the search field now searches the **whole ~10k-recipe catalog** across
+  every category at once (previously it only filtered the loaded view). Backed by a newly
+  verified recipes-service endpoint (`GET /gw/recipes/recipes/search`) exposed through
+  `hellofresh.get_catalog_recipes`' new `search` field; debounced as you type, with
+  stale-response guarding, and immune to the website build-id fragility of the browse
+  catalog. The Cookbook view still filters your saved list locally.
+- Meal planner card: filter bar aligned with the HelloFresh website's own filter panel —
+  groups renamed to Categories (was Menu), Main Protein, Dietary Preference, and a new
+  Total Cooking Time group (Under 15/20/30 Minutes, single-select as on the site) split
+  out of Dietary. Dietary options now mirror the site's list exactly: Vegetarian and
+  Organic Protein added, High Fiber renamed to Fiber Powered, Mediterranean removed
+  (it is a cuisine on the site, not a dietary preference).
+- Market card: renamed the filter bar's group label from "Section" to "Categories".
+
+## 2.89 — 2026-09-02
+- Meal planner card: two new filter groups — Highlights (New / Bestsellers / Cooked
+  Before, combining as a union like the site's browse rows) and Menu (the website's own
+  sections — This Week's Menu, Health Conscious, Family Menu, Your Top Recipes, … —
+  single-select, from the newly parsed `categories` block in each week's menu payload).
+- Meal planner card: tile dietary chips now share the filter bar's alias table, fixing
+  GLP-1 chips silently vanishing after HelloFresh renamed the tag; menu badges
+  (BESTSELLER, NEW, …) now render in HelloFresh's own per-badge colors (hex-gated in the
+  integration and re-checked in the card).
+- Market card: the internal "modularity" add-on shelf (dips, sides, dessert cups) is now
+  labeled "Extras" instead of leaking its internal slug as a heading and filter chip.
+- Meal planner card: added dietary filter chips matching HelloFresh's own menu categories
+  — GLP-1 Support, Carb Conscious, High Protein, Under 650 Calories, Gluten-Free
+  Friendly, Sodium Smart, Low Added Sugar, High Fiber, Mediterranean, and Under
+  15/20/30 Minutes. Matched client-side against recipe tags under every HAR-observed
+  spelling (GLP-1 alone ships as three different tags), with numeric fallbacks for the
+  calorie/time categories; selected chips combine as constraints (AND, matching the menu
+  payload's own MULTI-AND declaration), and chosen meals always stay visible.
+- Docs: adjudicated the menu payload's `categories` block (the source of the website's
+  new sectioned menu), the `filters` block (authoritative filter slugs and MULTI-AND/OR
+  semantics), and the expanded `recipe.label` badge shape in HELLOFRESH_API.md.
+- Market card: added a section filter bar (All / Appetizers / Breakfast / Desserts /
+  Lunch / …) mirroring the meal planner's protein filter — chips built from the viewed
+  week's own catalog sections, persisted across reloads, with cart items always visible.
+- Recipes card: added a search field under the header that filters the loaded view
+  (category, Cookbook, or Top rated) as you type, matching recipe names and headlines.
+  Client-side only — HelloFresh exposes no catalog text-search endpoint.
+
+## 2.88 — 2026-08-27
 - Fixed the prep-list test suite failing from 2026-08-25 onward (16 CI failures, no
   runtime impact): the todo fixtures used fixed delivery-date literals that fell behind
   `_all_covered_weeks`' `delivery_date >= today` filter once the anchor date passed.
@@ -176,7 +345,7 @@ version heading and publishes it as the release's Highlights.
   field alongside a comparison table against the similarly-named `addOns` catalog.
 - **README restructured for browsability** — it had grown to 581 lines, with the seven card
   references (204 lines) and the service list sitting in the middle of the page everyone scrolls
-  through. Those are now [`docs/cards.md`](docs/cards.md) and [`docs/services.md`](docs/services.md),
+  through. Those are now [`docs/dashboard.md`](docs/dashboard.md) and [`docs/services.md`](docs/services.md),
   leaving the README as the narrative path: install → configure → what you get → troubleshoot.
   **581 → 408 lines**, with no content lost.
 - Card options shared by every card (`title`, `config_entry_id`, `logo`, `image_width`) were
