@@ -441,6 +441,14 @@ class HelloFreshDeliveryTrackingCard extends HTMLElement {
 
 customElements.define("hellofresh-delivery-tracking-card", HelloFreshDeliveryTrackingCard);
 
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "hellofresh-delivery-tracking-card",
+  name: "HelloFresh Delivery Tracking Card",
+  description:
+    "Live last-mile box tracking: phase, ETA, stops before you, and driver (Netherlands only).",
+});
+
 console.info(
   `%c HELLOFRESH-DELIVERY-TRACKING-CARD %c v${TRACKING_CARD_VERSION} `,
   "color: #fff; background: #91c11e; font-weight: 700;",

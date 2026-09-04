@@ -5,7 +5,6 @@ No HTTP, no aiohttp, no BeautifulSoup — just dataclasses and exceptions.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 import re
@@ -27,9 +26,10 @@ def _coerce_number(value: Any) -> float | None:
 def _iso_duration_to_minutes(value: Any) -> int | None:
     """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` to whole minutes.
 
-    Cookbook and catalog payloads express times this way, unlike the weekly menu which uses
-    plain integer minutes. Only hours and minutes appear in practice; anything unparseable
-    yields None rather than a misleading zero.
+    Cookbook, catalog, AND (as of 2026-W35) the authenticated weekly-menu payloads all
+    express times this way — normalizers coerces int-first, then falls back to this. Only
+    hours and minutes appear in practice; anything unparseable yields None rather than a
+    misleading zero.
     """
     if not isinstance(value, str):
         return None
@@ -110,8 +110,12 @@ class HelloFreshRecipe:
     # otherwise same-named portion/premium variants that the catalog lists separately.
     surcharge_label: str | None = None
     surcharge_cents: int | None = None
-    # Menu badge text (e.g. "Premium Picks"), from `recipe.label.text`.
+    # Menu badge text (e.g. "Premium Picks"), from `recipe.label.text`, plus HelloFresh's own
+    # badge colors (`label.foregroundColor`/`backgroundColor`, "#RRGGBB") so cards can paint
+    # the badge the way the website does instead of a one-size-fits-all pill.
     badge: str | None = None
+    badge_foreground: str | None = None
+    badge_background: str | None = None
     # Human-readable modifier that names how this variant differs from the base dish, from the
     # menu's `modularity` block (e.g. "2x Bacon", "Ground Turkey", "Added Broccoli"). This is the
     # clearest distinguisher for same-named variants whose price/nutrition look identical.
@@ -183,6 +187,8 @@ class HelloFreshRecipe:
             "surcharge_label": self.surcharge_label,
             "surcharge_cents": self.surcharge_cents,
             "badge": self.badge,
+            "badge_foreground": self.badge_foreground,
+            "badge_background": self.badge_background,
             "variation_title": self.variation_title,
             "variation_group": self.variation_group,
             "is_favorite": self.is_favorite,
@@ -290,6 +296,12 @@ class HelloFreshWeek:
     meals_preselected: bool = False
     recipes: list[HelloFreshRecipe] = field(default_factory=list)
     market_items: list[HelloFreshMarketItem] = field(default_factory=list)
+    # The website's menu sections, from the menu payload's `categories` block: each row is
+    # {name, slug, recipe_ids} with the ids drawn from the section's own items plus its
+    # subcategories' (a section like "Featured" lists ONLY subcategories). Menu-payload weeks
+    # only; empty for history-sourced weeks. Lets the meal-planner card offer the same
+    # section browsing the site's menu page grew, without re-deriving sections from tags.
+    menu_categories: list[dict[str, Any]] = field(default_factory=list)
     source: str = "account"
     menu_title: str | None = None
     slot_label: str | None = None
@@ -465,6 +477,7 @@ class HelloFreshWeek:
             "allowed_actions": self.allowed_actions,
             "recipes": [recipe.as_dict() for recipe in self.recipes],
             "market_items": [item.as_dict() for item in self.market_items],
+            "menu_categories": self.menu_categories,
         }
 
 
@@ -1157,9 +1170,13 @@ class HelloFreshCatalogRecipe:
             image_url=image_url,
             url=raw.get("websiteUrl"),
             rating=_coerce_number(raw.get("aggregateRating") or raw.get("averageRating")),
+            # Website catalog rows spell it `aggregateRatingsCount`; the /gw recipes-service
+            # search rows spell it `ratingsCount`.
             ratings_count=(
                 int(raw["aggregateRatingsCount"])
                 if isinstance(raw.get("aggregateRatingsCount"), (int, float))
+                else int(raw["ratingsCount"])
+                if isinstance(raw.get("ratingsCount"), (int, float))
                 else None
             ),
             prep_time_minutes=_iso_duration_to_minutes(raw.get("prepTime")),
@@ -1704,50 +1721,64 @@ class HelloFreshAccountData:
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
 
-        # The most recent DELIVERED week — its date drives the "Last delivery date" sensor.
+        # The most recent DELIVERED box — its carrier arrival drives "Last delivery day" and
+        # "Tracked shipment date".
         #
-        # Prefer the dedicated past-deliveries history, but that endpoint also returns the
-        # UPCOMING week (e.g. it lists W28/Jul 6 alongside the delivered W27/Jun 29), so a naive
-        # "newest week" would report a future box as the last delivery. Restrict to weeks dated
-        # strictly before today. When history yields nothing usable, fall back to the newest
-        # past-dated, non-skipped week from the main deliveries list, so the sensor still resolves
-        # for accounts/regions where the history endpoint is empty.
-        def _newest_past(weeks: Iterable[HelloFreshWeek]) -> HelloFreshWeek | None:
-            return max(
-                (
-                    week
-                    for week in weeks
-                    if week.delivery_date is not None
-                    and week.delivery_date < today
-                    and not week.is_skipped
-                ),
-                default=None,
-                key=lambda week: (week.delivery_date, week.week_id),
-            )
-
-        self._last_delivery_week = _newest_past(self.past_delivery_weeks) or _newest_past(
-            self.weeks
-        )
-
-        # The past-deliveries endpoint reports no carrier timestamp, so a week chosen from that
-        # list has `delivered_at` unset and "Tracked shipment date" would read Unknown even
-        # though the box arrived. Only the ranged deliveries payload carries
-        # `tracking.delivery_date`, so back-fill the real arrival time from the matching account
-        # week. Match on week id, requiring subscription ids to agree when BOTH sides carry one
-        # (with two subscriptions the same ISO week is two different boxes).
-        if self._last_delivery_week is not None and self._last_delivery_week.delivered_at is None:
+        # Selection is by the real carrier timestamp (``delivered_at``, from the ranged
+        # deliveries payload's ``tracking.delivery_date``), never by the scheduled day:
+        #   * the past-deliveries history endpoint carries no date at all, so its weeks are
+        #     stamped with the ISO week's MONDAY (``date_from_iso_week``); picking by that date
+        #     reported Aug 31 for a box scheduled for Wed Sep 2 (issue #6);
+        #   * a box still in transit has no ``delivered_at`` (the extractor is gated on the
+        #     DELIVERED status), so the previously delivered week keeps winning until the new
+        #     box actually lands — no "newest week dated before today" guesswork;
+        #   * with no carrier timestamp anywhere the sensors read Unknown rather than a
+        #     scheduled or fabricated date.
+        #
+        # The history endpoint reports no carrier timestamp, so first back-fill each history
+        # week's ``delivered_at`` from the matching account week. Match on week id, requiring
+        # subscription ids to agree when BOTH sides carry one (with two subscriptions the same
+        # ISO week is two different boxes). History weeks are considered first so that on a tie
+        # the recipe-bearing history week is the one exposed.
+        #
+        # The same match also replaces the history week's ``delivery_date`` — the ISO-week
+        # Monday placeholder — with the account week's real scheduled ``deliveryDate``, so the
+        # ``delivery_date`` attribute on "Last delivery day" reports the day the box was
+        # scheduled for rather than the start of its week.
+        for history_week in self.past_delivery_weeks:
+            if history_week.delivered_at is not None:
+                continue
             for account_week in self.weeks:
                 if (
-                    account_week.week_id == self._last_delivery_week.week_id
+                    account_week.week_id == history_week.week_id
                     and account_week.delivered_at is not None
                     and (
                         account_week.subscription_id is None
-                        or self._last_delivery_week.subscription_id is None
-                        or account_week.subscription_id == self._last_delivery_week.subscription_id
+                        or history_week.subscription_id is None
+                        or account_week.subscription_id == history_week.subscription_id
                     )
                 ):
-                    self._last_delivery_week.delivered_at = account_week.delivered_at
+                    history_week.delivered_at = account_week.delivered_at
+                    if account_week.delivery_date is not None:
+                        history_week.delivery_date = account_week.delivery_date
                     break
+
+        def _delivered_key(week: HelloFreshWeek) -> datetime:
+            # A carrier timestamp without an offset is UTC; normalise so aware and naive
+            # values compare instead of raising.
+            delivered_at = week.delivered_at
+            assert delivered_at is not None
+            return delivered_at if delivered_at.tzinfo else delivered_at.replace(tzinfo=UTC)
+
+        self._last_delivery_week = max(
+            (
+                week
+                for week in (*self.past_delivery_weeks, *self.weeks)
+                if week.delivered_at is not None and not week.is_skipped
+            ),
+            default=None,
+            key=_delivered_key,
+        )
         self._serialized_orders = None
         self._serialized_weeks = None
         self._serialized_past_delivery_weeks = None

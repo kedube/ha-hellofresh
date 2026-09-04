@@ -382,7 +382,7 @@ Recognized top-level arrays:
 
 The ranged deliveries payload carries per-week **counts, dates, deadlines, `allowedActions`, and tracking** but **no recipe list** — the chosen recipes are not in this response. Recipe data and the per-recipe selection state come from the authenticated menu endpoint instead (see [Selection-state resolution](#selection-state-resolution)). When a delivery payload *does* list recipes (some account shapes), they are still parsed as a fallback.
 
-**Actual delivered timestamp.** Each week's `tracking` node carries `delivery_date` / `estimated_delivery_time` — once the box has arrived (effective status `DELIVERED`), that is the **real carrier delivery moment** in UTC (e.g. `2026-06-29T22:20:50+0000`), unlike the week's `deliveryDate`, which is a scheduled-noon anchor. Before delivery the same field holds a scheduled placeholder, so `_delivered_at_from_raw` only trusts it on DELIVERED weeks (respecting the stale-status guard: `status="DELIVERED"` with a live non-delivered `state` doesn't count). It is stored as `HelloFreshWeek.delivered_at` and serialized with its full offset, so the cards render the delivered **date in the viewer's timezone** — an evening ET delivery is already the next day in UTC (`test_delivered_at_extracted_from_tracking_for_delivered_weeks_only`). It is exposed as `sensor.tracked_shipment_date` (the newest delivered week's value), and the meal-planner card's order-strip "Delivered" field and the schedule card's past rows and calendar marks all prefer `delivered_at` over the scheduled date. (The same node also appears on `GET /gw/api/subscriptions/{id}/delivery_dates/{week}`.)
+**Actual delivered timestamp.** Each week's `tracking` node carries `delivery_date` / `estimated_delivery_time` — once the box has arrived (effective status `DELIVERED`), that is the **real carrier delivery moment** in UTC (e.g. `2026-06-29T22:20:50+0000`), unlike the week's `deliveryDate`, which is a scheduled-noon anchor. Before delivery the same field holds a scheduled placeholder, so `_delivered_at_from_raw` only trusts it on DELIVERED weeks (respecting the stale-status guard: `status="DELIVERED"` with a live non-delivered `state` doesn't count). It is stored as `HelloFreshWeek.delivered_at` and serialized with its full offset, so the cards render the delivered **date in the viewer's timezone** — an evening ET delivery is already the next day in UTC (`test_delivered_at_extracted_from_tracking_for_delivered_weeks_only`). It is exposed as `sensor.tracked_shipment_date` (the newest delivered week's value) and, reduced to a calendar day in Home Assistant's timezone, as `sensor.last_delivery_date` — the two always describe the same box, because `HelloFreshAccountData.last_delivery_week` is chosen by this timestamp (see [Account aggregate](#account-aggregation-behavior)). The scheduled `deliveryDate` is never substituted for it: a box still in transit has no `delivered_at`, so the previously delivered week stays the "last delivery" until the carrier marks the new box delivered, and with no carrier timestamp on any week both sensors are Unknown. The meal-planner card's order-strip "Delivered" field and the schedule card's past rows and calendar marks all prefer `delivered_at` over the scheduled date. (The same node also appears on `GET /gw/api/subscriptions/{id}/delivery_dates/{week}`.)
 
 ### Order history and payment dates
 
@@ -510,6 +510,7 @@ These endpoints are **not interchangeable**, and this matters for getting past-w
 - `/gw/customer-complaints/users/me/deliveries` only knows the most recent couple of weeks.
 - `/gw/api/customers/me/deliveries` (ranged) returns ~a year of weeks but as **metadata-only shells with no recipe list**.
 - `/gw/my-deliveries/past-deliveries` is the comprehensive source that carries the **actually-delivered recipes per week** (`weeks[].meals[]` with stable recipe ids). It is **paginated**: each page returns ~4 delivered weeks plus a `nextWeek` cursor, and only weeks that actually shipped appear (paused/skipped weeks are absent, so the cursor jumps over them).
+- **`past-deliveries` weeks carry no date.** Each entry is identified by its ISO `week` id only (`{"week": "2026-W36", "menuId": ..., "meals": [...]}`). `_normalize_past_delivery_payload` stamps such a week with the ISO week's **Monday** (`date_from_iso_week`) purely as a sortable placeholder so the week is not date-less. That placeholder is **not** a delivery date: `finalize()` replaces it with the matching account week's real scheduled `deliveryDate` (matched by week id, and by subscription when both sides carry one), and `sensor.last_delivery_date` never reads it at all — it follows the carrier's `tracking.delivery_date` (issue #6: the Monday placeholder was previously surfacing as Aug 31 for a box scheduled for Wed Sep 2).
 
 Rather than returning the first endpoint that answers, the integration **accumulates recipe-bearing weeks from every candidate keyed by week id, with `past-deliveries` winning per week**, and follows the `nextWeek` cursor back to the history floor. A previous version returned whichever endpoint answered first; because the recipe-less candidates often win, an old week never received its delivered meals and the dashboard showed a fabricated selection (regression test `test_past_delivery_history_prefers_recipe_bearing_endpoint`).
 
@@ -682,7 +683,7 @@ These additional read endpoints the web app uses are exposed as optional read-on
   }
   ```
 
-  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](cards.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
+  Deliveries dated after today are flagged `upcoming: true` and **excluded from `total`** (a running cost is money already spent). Returns empty structures (never an error) when the billing endpoint is unavailable, so the [Cost card](dashboard.md#cost-card) degrades gracefully. This is the full history — deeper than the schedule window's ~6-month week list.
 
 ### Cookbook favorites (`/gw/cookbook/v1/…`)
 
@@ -702,7 +703,7 @@ Row shape: `{bookmark_id, id, title, headline, thumbnail_url, url, prep_time, to
 
 **Paging is cursor-based, not offset-based.** The response's `pagination.next_cursor` is an opaque token that must be echoed back as `cursor=`; there is no `offset`. An offset-style implementation silently returns only page one. The integration stops on a missing cursor, a page that adds no new rows, or a page cap, and warns if it collected fewer rows than `total_count`.
 
-> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](cards.md#recipes-card)'s ♥ Cookbook chip shows all of it.
+> **Why "list the whole cookbook" matters:** HelloFresh's own cookbook page renders only a 3-item preview, which makes it look as though nothing more is stored. The endpoint reports the true total and pages the rest — the [Recipes card](dashboard.md#recipes-card)'s ♥ Cookbook chip shows all of it.
 
 ### Secondary favorites store (`/gw/cfs/v2/favorites/recipe`)
 
@@ -713,6 +714,9 @@ A **second, separate** favorites service backs HelloFresh's `/recipes/favorites`
 | Purpose | Method | Path | Params |
 | --- | --- | --- | --- |
 | Full recipe | `GET` | `/gw/recipes/recipes/{recipe_id}` | `country=<CC>`, `locale=<locale>` |
+| **Catalog text search** | `GET` | `/gw/recipes/recipes/search` | `country=<CC>`, `locale=<locale>`, `q=<text>`, `take=<n>`, `skip=<n>` |
+
+**Catalog search.** The recipes service also answers free-text search across the whole public catalog — every category at once — returning `{items, count, skip, take, total}` where each `items[]` row is a full recipe-detail-shaped object (`ratingsCount`/`averageRating` spellings, ISO-8601 `prepTime`, the same `imagePath`/dead-`imageLink` pair as detail). A non-matching query returns an empty list. Verified live (2026-09) with a plain `client_credentials` bearer; never observed in HAR captures (an earlier revision of this document wrongly concluded no such endpoint existed — it was simply never captured). This is what powers the All Recipes card's search field via `get_catalog_recipes`' `search` param, and being a plain `/gw/` API it shares none of the browse catalog's build-id fragility.
 
 Carries ingredients, `yields[]`, `steps[]`, `utensils`, `allergens`, `nutrition`, `cardLink` (printable PDF), and `videoLink`. Ingredient **amounts** live per-yield: each `yields[]` entry has its own `ingredients[]` with amounts for that serving count, so rescaling servings means re-reading the matching entry (the integration defaults to the smallest yield, matching the website).
 
@@ -787,7 +791,7 @@ returns chosen option **ids**, and only the catalog maps those to display names.
 partial update — only the sections supplied (`taste`, `household`, `goals`) are changed.
 
 Exposed as the `hellofresh.get_food_profile` and `hellofresh.set_food_profile` services, which back
-the [Food profile card](cards.md#food-profile-card). The same `GET` doubles as the fallback source
+the [Food profile card](dashboard.md#food-profile-card). The same `GET` doubles as the fallback source
 for [plan preference](#plan-preference).
 
 ### Food profile completion (`/gw/profile-service/v2/…/profile/completion`)
@@ -796,7 +800,7 @@ for [plan preference](#plan-preference).
 | --- | --- | --- |
 | Profile completion progress | `GET` | `/gw/profile-service/v2/customers/me/profile/completion` |
 
-Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](cards.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
+Reports how many profile fields HelloFresh considers answered and which are outstanding, shown as a progress bar in the [Food profile card](dashboard.md#food-profile-card). Best-effort: omitted rather than fatal when the endpoint does not answer.
 
 ## Read Endpoints — Pricing
 
@@ -947,7 +951,7 @@ Each `meals[]` entry may wrap the actual recipe in a nested `recipe` object and 
 
 - `meals[].selection.quantity` — when present and `> 0`, the meal is **currently chosen** (this is how `is_selected` is resolved for recipes). `meals[].selection.selected` (a bool) is honored when present.
 - `meals[].charge` — `{label, unitAmount, totalAmount, reason, strategy}` for premium/variant meals; `label` (e.g. `+7.99/serving`) and `unitAmount` (cents) drive a tile's surcharge display.
-- `meals[].recipe.label.text` — a badge such as `Premium Picks`.
+- `meals[].recipe.label.text` — a badge such as `Premium Picks`. As of the 2026-W35 capture the object is `{text, handle, displayLabel, foregroundColor, backgroundColor}` and appears on most meals (292 of 420), with ~15 distinct texts observed (`BESTSELLER`, `20 Min or Less`, `NEW`, `Premium Picks`, `GLP-1 Support`, `PREP & BAKE`, `Picky Eater Approved`, `TEST KITCHEN`, `Umami Feast`, `Low-Lift Dinner`, `XL Meal`, `GLOBAL FEAST`, `20-MIN PREMIUM`, `Super High Protein`, `Air Fryer Fave`). These are the "labels on the meal description" the website shows. The integration reads only `text` (surfaced as `badge`); `handle` is a stable slug (`bestseller`, `glp-1-friendly`, …) should matching ever need to be spelling-proof. One label per recipe.
 - **`modularity[]`** — the variant system. Each group has a `defaultCourseIndex` (the base meal) plus `variations[]` / `addOns[]` whose `{index, title}` name how each variant differs (e.g. `"2x Bacon"`, `"Ground Turkey"`). The `index` equals a meal's own `index`, so the integration joins them to attach a human-readable `variation_title` to each recipe. This is what distinguishes same-named meals whose price/nutrition can otherwise look identical. In the meal-planner card, a variant tile shows its `variation_title`; the base meal in such a set (the one with **no** modifier, i.e. `defaultCourseIndex`) carries no modifier label. The integration also stamps each member of a group (base + every variation) with a `variation_group` equal to the group's `defaultCourseIndex`, so the card can cluster a dish's variants together **even when a variant carries a different name** (e.g. a Salmon dish whose group includes an "Icelandic Cod" swap) — grouping by name alone would scatter the renamed swap.
 
 #### `addOns` — HelloFresh Market catalog
@@ -1021,6 +1025,12 @@ For scale, the largest `/gw/` responses observed anywhere:
 **Trust caveat:** this is the *anonymous regional* catalog. It has not been confirmed to track per-customer availability, so the flag is treated as advisory — `select_meals` logs a warning and submits anyway rather than blocking a selection HelloFresh might well accept.
 
 **`mealsReady`.** `/gw/my-deliveries/menu` gained a top-level `mealsReady` boolean at some point. It is `true` in all 14 observed responses, so what `false` signifies (menu not yet published for that week?) cannot be determined from observed traffic, and nothing reads it. Noted here so a future reader knows it was seen and deliberately left alone rather than missed.
+
+**Menu filters: `/gw/my-deliveries/courses` (observed, not used).** The website's menu filter panel calls `GET /gw/my-deliveries/courses?country=US&locale=en-US&week=<YYYY-Www>` with the active filters as query params and gets back only id references (`courses[]` of `{index, parent, recipeFamily, recipeId}`) to intersect with the already-loaded menu — filtering is server-side, the response carries no recipe data. Observed params and values (HAR, 2026-09): `diet=` `carb-smart`, `fiber-smart`, `glp-1-friendly`, `gluten-free`, `high-protein`, `low-sodium`, `low-sugar`, `organic-protein`, `under-650-calories`, `vegetarian`; `total-cooking-time=` `cooking-time-15/-20/-30`; `main-protein=` `beef`, `fish-seafood`, `pork`, `poultry`, `vegetarian`; plus `dish-type`, `cuisine`, `exclude-allergens`, and `sort-by`. The integration does **not** call it: the meal-planner card implements the same dietary categories client-side against the tags each menu recipe already carries (every observed tag spelling is aliased — the GLP-1 category alone has appeared as `GLP-1 Support`, `GLP-1 Friendly` and `GLP-1 Balance` in one season's payloads), which needs no extra round-trip per filter click and works identically on cached weeks.
+
+**The `filters` block (in the menu payload) is the authority on those params.** `/gw/my-deliveries/menu` ships the filter definitions the panel renders: `filters[]` of `{name, type, choice, options[]}` where each option is `{name, type, default}` — `type` is the slug the `courses` endpoint accepts and `name` is the display label (so the mapping `"Carb Conscious"` ↔ `carb-smart`, `"GLP-1 Support"` ↔ `glp-1-friendly`, `"Fiber Powered"` ↔ `fiber-smart`, `"Sodium Smart"` ↔ `low-sodium` is data, not guesswork). `choice` declares the combination semantics: `Dietary preference` and `Ingredients to avoid` are **MULTI-AND**, `Main protein`, `Cuisine type` and `Dish type` are **MULTI-OR**, `Total cooking time` (and top-level `sorting`) are **SINGLE**. The meal-planner card's filter bar mirrors these semantics (dietary chips AND, protein chips OR) but matches on recipe tags rather than reading this block.
+
+**The `categories` block is what sections the website's menu.** Long a documented-but-unparsed top-level key, as of 2026-W35 it is `{mainCategory: "dinners", categories: [...]}` — 12 observed rows of `{name, slug, imagePath, items[], subcategories[], related[], applicablePromiseType}` where `items[]` is a list of `{id}` recipe references and `subcategories[]` nests the same shape. Observed rows: `This Week's Menu` (`dinners`, 420 items, subcategories High Protein / Pasta & Noodles / Soups, Salads & Bowls / Burgers, Tacos & More / Classic Plates / Veggie), `Health Conscious Menu` (`nutrition-menu`, 329, subcategories High Protein / Under 650 Calories / Carb Conscious / Mediterranean / High Fiber / Gluten-Free Friendly / GLP-1 Support / Sodium Smart / Low Added Sugar), `Quick & Easy Menu` (`extra-convenient`, subcategories Dinner in 20 / Low-Lift Dinners / Prep & Bake), `Double Protein`, `Family Menu`, `New`, `Bestsellers`, `Specialties`, `Featured`, `Your Top Recipes`, `Order It Again`, and `HelloFresh Market` (`market`, whose subcategories are the Market shelves). `applicablePromiseType` values seen: `PROMISE_TYPE_SUBSCRIPTION`, `PROMISE_TYPE_PREMIUM_SURCHARGE`, `PROMISE_TYPE_ADDON_BASKET`. The sibling `menuCollections[]` (`{handle, name, description, authors[]}`) is editorial copy for a few of those categories; the integration ignores it. The `categories` block itself **is parsed** (`_build_menu_categories`) into each week's `menu_categories` — `[{name, slug, recipe_ids}]`, with a section's `items[]` merged with its subcategories' (a section like `Featured` lists only subcategories) and the `market` pseudo-section skipped (its members are add-ons, not meals) — which the meal-planner card offers as its single-select **Categories** filter. Included in the `get_weeks` service response only, never entity attributes.
 
 ### Public menu fallback (last resort)
 
@@ -1112,6 +1122,7 @@ The raw subscription payload also contains useful next-week fallback fields that
 | `delivery_blocked` | `deliveryBlocked`, `isBlocked` — HelloFresh blocked delivery for the week (area out of zone, carrier/weather disruption, no-delivery holiday). Imposed by HelloFresh, distinct from a customer skip. |
 | `holiday_delivery_date` | `holidayDelivery` — rescheduled date when the week's box is shifted for a holiday; `null` when no shift applies. |
 | `holiday_message` | `holidayMessage` — HelloFresh's holiday-shift notice; `null` when none. |
+| `menu_categories` | the menu payload's `categories` block, parsed to `[{name, slug, recipe_ids}]` (a section's `items[]` merged with its subcategories'; the `market` pseudo-section skipped). The website's menu sections; drives the meal-planner card's **Categories** filter. In the `get_weeks` service response only, never entity attributes. |
 
 Delivery recipe payloads may be wrapped in nested containers such as:
 
@@ -1213,15 +1224,16 @@ Backfill notes:
 | `ingredients` | `ingredients`, `ingredientLines`, `ingredientNames` |
 | `allergens` | `allergens` |
 | `tags` | `tags`, `labels` |
-| `cook_time_minutes` | `cookTime`, `cookTimeMinutes` |
-| `prep_time_minutes` | `prepTime`, `prepTimeMinutes` |
-| `total_time_minutes` | `totalTime`, `totalTimeMinutes`, or `cook + prep` |
+| `cook_time_minutes` | `cookTime`, `cookTimeMinutes` — plain int **or** ISO-8601 duration (`"PT35M"`); both parse (int-first, then ISO). |
+| `prep_time_minutes` | `prepTime`, `prepTimeMinutes` — same dual format. **Naming trap:** in the authenticated menu payload `prepTime` (PT35M) is the **headline time the website shows on the tile**, not hands-on prep. Consumers wanting "the displayed time" read this field; the meal-planner card's Total Cooking Time filter does (matching the site's own filter, verified by result counts). |
+| `total_time_minutes` | `totalTime`, `totalTimeMinutes`, or `cook + prep` — same dual format. In the menu payload `totalTime` (PT5M) is the **smaller** hands-on-ish number, despite the name. |
 | `calories_kcal` | `caloriesKcal`, `calories`, `nutrition.calories`, `nutrition.kcal` |
 | `protein_g` | `nutrition.protein`, `protein` |
 | `difficulty` | `difficulty`, `skillLevel` |
 | `selected_quantity` | `selection.quantity` (servings of this meal; `1` when selected without an explicit count) |
 | `surcharge_label`, `surcharge_cents` | `charge.label` (e.g. `+7.99/serving`), `charge.unitAmount` (cents) |
 | `badge` | `recipe.label.text` (e.g. `Premium Picks`) |
+| `badge_foreground`, `badge_background` | `recipe.label.foregroundColor` / `.backgroundColor` — HelloFresh's own badge colors, forwarded **only** as strict `#RGB`/`#RRGGBB`/`#RRGGBBAA` hex (`_safe_css_color`); anything else becomes `None`, since these land in card inline styles. |
 | `variation_title` | resolved from the week's `modularity` block by `course_index` (e.g. `2x Bacon`) — names how a same-named variant differs |
 | `variation_group` | the `defaultCourseIndex` of the `modularity` group this recipe belongs to (base meal + every variation/add-on member share it); `null` for a meal that has no variants. A recipe is the group's **base ("Default")** meal when its own `course_index == variation_group`. Lets the card cluster a dish's variants — including renamed protein swaps — and hide variants down to the default. |
 | `video_url` | `videoLink` — a HelloFresh promo clip. Sparse (a few meals per week) and present on past and upcoming weeks alike. Formats are mixed `.mp4`/`.mov`; `.mov` will not play in Chrome/Firefox, which the card surfaces as an open-directly link. |
@@ -1452,7 +1464,7 @@ Sensors backed by authenticated profile and history endpoints:
 | Sensor key | Backing data | Notes |
 | --- | --- | --- |
 | `boxes_received` | `HelloFreshAccountData.boxes_received` | Long-lived account metric from authenticated profile endpoints |
-| `last_delivery_date` | `HelloFreshAccountData.last_delivery_week.delivery_date` | Most recent delivered week date from normalized history |
+| `last_delivery_date` | `HelloFreshAccountData.last_delivery_week.delivered_at` (local date) | Calendar day the newest box was actually delivered per the carrier (`tracking.delivery_date` on the ranged deliveries payload); `last_delivery_week` is chosen by that timestamp, so an in-transit box never displaces the previous delivery. Unknown without a carrier timestamp |
 
 Sensors backed by subscription data (primary subscription):
 
@@ -1907,7 +1919,7 @@ And it derives summary views such as:
 - `boxes_received`
 - `past_delivery_weeks`
 - `past_delivery_count`
-- `last_delivery_week`
+- `last_delivery_week` — the box the carrier has most recently **actually delivered**: the non-skipped week with the newest `delivered_at` across history and account weeks. Before selecting, each history week is back-filled from its matching account week (same week id, and same subscription when both carry one) with `delivered_at` and the real scheduled `delivery_date`, replacing the history week's ISO-Monday placeholder; on a tie the recipe-bearing history week wins. `None` when no week carries a carrier timestamp — scheduled dates never stand in. Backs `last_delivery_date` (local calendar day) and `tracked_shipment_date` (the timestamp)
 
 For diagnostics and entity attributes, the account aggregate also serializes:
 

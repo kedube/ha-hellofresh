@@ -16,8 +16,13 @@ and each is checked here:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
+
+import pytest
 
 WWW = Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "www"
 DETAIL_MODULE = WWW / "hellofresh-recipe-detail.js"
@@ -108,24 +113,38 @@ def test_every_consumer_closes_the_sheet_on_disconnect() -> None:
         )
 
 
-def test_planner_opens_the_sheet_on_a_read_only_tile() -> None:
-    """The requested behaviour: a week you can't edit opens the recipe instead of doing nothing.
-
-    On an editable week the tap still toggles the selection — changing the meal is the point
-    there — so that path keeps its own handler and the ⓘ button covers the read-only case.
-    """
+def test_planner_opens_the_sheet_from_every_tile() -> None:
+    """The market card's model, mirrored: the tile tap opens the recipe on EVERY week —
+    editable or not — because selection lives on the + Add pill and the ± steppers, which
+    stop propagation before the tile handler runs."""
     source = _source(CONSUMERS["planner"])
-    assert ".recipe:not(.editable)" in source, "no read-only tile handler"
+    assert 'ev.target.closest(".recipe")' in source, "no universal tile → recipe handler"
     assert "_openRecipeDetail" in source
-    # The editable path must still toggle rather than open.
-    assert "_toggleRecipe(week, recipe)" in source
+    # The old split model must be gone: no editable-tap-toggles path, no ⓘ fallback.
+    assert "_toggleRecipe" not in source
+    assert "infobtn" not in source
 
 
-def test_planner_offers_an_info_button_on_editable_weeks() -> None:
-    """An editable tile's tap is taken by selection, so the recipe needs its own affordance."""
+def test_planner_selects_with_the_add_pill() -> None:
+    """Unselected editable tiles carry a + Add pill that selects at one serving; its handler
+    must stop propagation so adding a meal doesn't also open the recipe sheet."""
     source = _source(CONSUMERS["planner"])
-    assert 'class="infobtn"' in source
-    assert "data-info=" in source
+    assert 'class="addbtn"' in source
+    assert "data-add=" in source
+    add_handler = re.search(
+        r'closest\("\.addbtn"\).*?ev\.stopPropagation\(\).*?_addRecipe\(week, recipe\)',
+        source,
+        re.S,
+    )
+    assert add_handler, "the + Add pill must stopPropagation and route to _addRecipe"
+    # Both selection controls render inside .metafoot, which the flex-column tile pins to
+    # its bottom edge — so + Add pills and steppers align across a grid row no matter how
+    # long each meal's description and chips run.
+    assert '<div class="metafoot"><button class="addbtn"' in source
+    assert '<div class="metafoot"><div class="stepper"' in source
+    assert ".metafoot { margin-top: auto;" in source
+    # Removal goes through the stepper: reaching 0 servings deselects.
+    assert "if (next === 0)" in source
 
 
 def test_market_opens_the_sheet_from_a_tile() -> None:
@@ -133,6 +152,101 @@ def test_market_opens_the_sheet_from_a_tile() -> None:
     source = _source(CONSUMERS["market"])
     assert "_openRecipeDetail" in source
     assert 'ev.target.closest(".item")' in source
+    # Like the planner, the stepper is bottom-pinned via .metafoot so it lines up
+    # across a grid row regardless of description length.
+    assert '<div class="metafoot"><div class="stepper"' in source
+    assert ".metafoot { margin-top: auto;" in source
+
+
+def test_tiles_are_keyboard_accessible() -> None:
+    """Every clickable-div surface must be reachable and activatable by keyboard: focusable
+    with role=button, an Enter/Space keydown handler, and a guard so keystrokes on the real
+    inner <button>s/<a>s (whose Enter/Space already fires natively) don't double-fire.
+    Covers the recipe tiles (the ONLY way to open a recipe) in the planner, market and
+    recipes cards, and the schedule card's week-select timeline rows."""
+    surfaces = (
+        ("planner", CONSUMERS["planner"], '.recipe"'),
+        ("market", CONSUMERS["market"], '.item"'),
+        ("recipes", WWW / "hellofresh-recipes-card.js", '[data-detail]"'),
+        ("schedule", WWW / "hellofresh-schedule-card.js", "cal-week\"]'"),
+    )
+    for name, path, tile_selector in surfaces:
+        source = _source(path)
+        assert 'role="button" tabindex="0"' in source, f"{name} tiles are not focusable"
+        keydown = re.search(r'addEventListener\("keydown".*?\}\);', source, re.S)
+        assert keydown, f"{name} has no keydown handler"
+        body = keydown.group(0)
+        assert tile_selector in body, f"{name} keydown does not target its tile selector"
+        assert re.search(r'ev\.target\.closest\("button', body), (
+            f"{name} would double-fire inner buttons"
+        )
+        assert "ev.preventDefault()" in body, f"{name}: Space would scroll instead of open"
+
+
+# ---- selection footer ("read it, then decide") ---------------------------------------------
+#
+# On editable planner weeks the sheet carries an Add/servings footer, fed by an optional
+# `getSelection` hook so the shared module stays selection-agnostic: hosts that don't supply
+# it (recipes, market) render exactly the read-only sheet they always did.
+
+NODE = shutil.which("node")
+
+
+def _footer(selection: dict | None, with_hook: bool = True) -> str:
+    """Render the real _selectionBar under Node against a stubbed host."""
+    hook = f"() => ({json.dumps(selection)})" if with_hook else "undefined"
+    script = f"""
+    import {{ RecipeDetailOverlay }} from {json.dumps(DETAIL_MODULE.as_uri())};
+    const o = new RecipeDetailOverlay({{
+      getRoot: () => null,
+      callService: async () => ({{}}),
+      getSelection: {hook},
+    }});
+    console.log(JSON.stringify(o._selectionBar()));
+    """
+    result = subprocess.run(
+        [NODE, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_sheet_footer_renders_only_when_the_host_supplies_selection_state() -> None:
+    assert _footer(None, with_hook=False) == ""  # recipes/market: no hook, no footer
+    assert _footer(None) == ""  # planner on a read-only week: hook returns null
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_sheet_footer_offers_add_then_a_servings_stepper() -> None:
+    unselected = _footer({"qty": 0, "maxQty": 4})
+    assert 'data-sel="add"' in unselected and "+ Add" in unselected
+    assert 'data-sel="inc"' not in unselected
+
+    one = _footer({"qty": 1, "maxQty": 4})
+    assert 'data-sel="dec"' in one and 'data-sel="inc"' in one
+    assert "Remove meal" in one  # − at one serving removes, and says so
+    assert "disabled" not in one
+
+    maxed = _footer({"qty": 4, "maxQty": 4})
+    assert 'data-sel="inc" disabled' in maxed
+
+
+def test_planner_feeds_the_sheet_its_selection_mutators() -> None:
+    """The footer must drive the SAME pending-selection methods as the + Add pill and the
+    tile steppers, so the grid underneath stays in step with the sheet."""
+    source = _source(CONSUMERS["planner"])
+    assert "getSelection: () => this._detailSelection()" in source
+    sel = re.search(r"  _detailSelection\(\) \{.*?\n  \}", source, re.S)
+    assert sel, "_detailSelection not found"
+    body = sel.group(0)
+    assert "_addRecipe(week, recipe)" in body
+    assert "_changeQuantity(week, recipe, 1)" in body
+    assert "_changeQuantity(week, recipe, -1)" in body
+    assert "_canEdit(week)" in body, "a locked week must render the sheet read-only"
 
 
 def test_market_items_expose_a_recipe_id() -> None:

@@ -22,7 +22,6 @@ from custom_components.hellofresh.api import (
     HelloFreshWeek,
 )
 from custom_components.hellofresh.const import (
-    DOMAIN,
     INTENT_GET_MEAL_SELECTION,
     INTENT_GET_NEXT_DELIVERY,
     INTENT_REFRESH,
@@ -62,7 +61,11 @@ def _run(coro):
 
 def _speak(handler, *coordinators) -> str:
     """Run a handler against the given coordinators and return the spoken text."""
-    hass = SimpleNamespace(data={DOMAIN: {f"entry-{i}": c for i, c in enumerate(coordinators)}})
+    # Coordinators are read from each loaded entry's runtime_data (not hass.data).
+    entries = [
+        SimpleNamespace(entry_id=f"entry-{i}", runtime_data=c) for i, c in enumerate(coordinators)
+    ]
+    hass = SimpleNamespace(config_entries=SimpleNamespace(async_entries=lambda _domain: entries))
     intent_obj = _Intent(hass)
     _run(handler.async_handle(intent_obj))
     return intent_obj.response.speech

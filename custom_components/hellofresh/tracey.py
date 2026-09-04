@@ -25,7 +25,6 @@ import time
 from typing import Any
 
 import aiohttp
-
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -252,9 +251,7 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         self._last_fetch_monotonic = time.monotonic()
         data = parse_tracey_payload(payload, tracking_url=tracking_url)
         self.update_interval = (
-            ACTIVE_UPDATE_INTERVAL
-            if data.phase in ACTIVE_PHASES
-            else IDLE_UPDATE_INTERVAL
+            ACTIVE_UPDATE_INTERVAL if data.phase in ACTIVE_PHASES else IDLE_UPDATE_INTERVAL
         )
         return data
 

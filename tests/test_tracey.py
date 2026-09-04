@@ -259,7 +259,7 @@ def test_tracey_is_netherlands_only_for_now() -> None:
     Belgium/Luxembourg likely qualify (own-fleet markets) but are unverified — widen the
     set only with a confirmation from a user there, per the discussion on issue #6.
     """
-    assert TRACEY_COUNTRIES == frozenset({"nl"})
+    assert frozenset({"nl"}) == TRACEY_COUNTRIES
 
 
 # ---- sensors ---------------------------------------------------------------------------

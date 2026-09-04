@@ -530,6 +530,13 @@ class HelloFreshSubscriptionCard extends HTMLElement {
 
 customElements.define("hellofresh-subscription-card", HelloFreshSubscriptionCard);
 
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "hellofresh-subscription-card",
+  name: "HelloFresh Subscription Card",
+  description: "Condensed HelloFresh account overview: plan, status, credit, and notices.",
+});
+
 console.info(
   `%c HELLOFRESH-SUBSCRIPTION-CARD %c v${SUBSCRIPTION_CARD_VERSION} `,
   "color: #fff; background: #91c11e; font-weight: 700;",

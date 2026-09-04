@@ -219,7 +219,7 @@
         "name": "Box reçues"
       },
       "last_delivery_date": {
-        "name": "Date de la dernière livraison"
+        "name": "Jour de la dernière livraison"
       },
       "next_delivery_week": {
         "name": "Semaine de la prochaine livraison"
@@ -510,6 +510,10 @@
         "collection": {
           "name": "Catégorie",
           "description": "Identifiant de catégorie facultatif pour limiter les résultats à cette catégorie."
+        },
+        "search": {
+          "name": "Recherche",
+          "description": "Recherche en texte libre dans tout le catalogue, toutes catégories confondues. Si renseignée, la collection est ignorée."
         },
         "limit": {
           "name": "Limite",

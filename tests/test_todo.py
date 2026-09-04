@@ -105,11 +105,13 @@ def _make_entity(
         data=data,
         client=SimpleNamespace(async_get_recipe_detail=fake_detail),
         config_entry=SimpleNamespace(entry_id="e1", title="HelloFresh (US)"),
+        # The tick set lives on the coordinator so both slot entities SHARE it (the week
+        # handover between slots is what makes ticks survive a box landing).
+        prep_completed=set(),
     )
     entity = HelloFreshPrepListTodo.__new__(HelloFreshPrepListTodo)
     entity.coordinator = coordinator  # type: ignore[attr-defined]
     entity._slot = slot
-    entity._completed = set()
     entity._items = []
     entity._built_for = ()
     entity.async_write_ha_state = lambda: None  # type: ignore[method-assign]
@@ -505,8 +507,10 @@ def test_skipped_weeks_are_never_covered() -> None:
 def test_a_week_keeps_its_ticks_when_it_shifts_slot() -> None:
     """When the current box lands, next week's check-offs move up with it.
 
-    Ticks are keyed to the week id rather than the slot, so the week that was "following"
-    arrives in the current slot with everything already bought still ticked.
+    Ticks are keyed to the week id rather than the slot AND live in one set shared by both
+    entities via the coordinator, so the week that was "following" arrives in the current
+    slot — on the OTHER entity — with everything already bought still ticked. (A per-entity
+    set was the shipped bug: the handover between entities stranded the ticks.)
     """
     w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
     w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
@@ -526,9 +530,10 @@ def test_a_week_keeps_its_ticks_when_it_shifts_slot() -> None:
     assert entity.todo_items[0].status is TodoItemStatus.COMPLETED
 
     # W35 lands. W36 shifts into slot 0, so this same entity now points at slot 1 = nothing,
-    # while the slot-0 entity picks W36 up — carrying the tick with the week.
+    # while the slot-0 entity picks W36 up — carrying the tick with the week through the
+    # coordinator's shared set (no copying: the new entity reads the same set).
     current = _make_entity(w2, details, weeks=[w2], slot=0)
-    current._completed = set(entity._completed)
+    current.coordinator.prep_completed = entity.coordinator.prep_completed
     _run(current._async_rebuild())
 
     assert [i.uid for i in current.todo_items] == ["2026-W36:pepper"]
@@ -597,3 +602,44 @@ def test_compound_units_still_respect_the_conversion_guards() -> None:
     assert (
         _format_amounts([(1, "cup (c)"), (1, "teaspoon (tsp)")]) == "1 cup (c) + 1 teaspoon (tsp)"
     )
+
+
+def test_prune_keeps_the_sibling_entitys_week() -> None:
+    """Rebuilding one slot must not throw away the OTHER slot's ticks.
+
+    The shipped prune kept only the entity's own week; with the set now shared between
+    both entities, that would have erased next week's check-offs on every rebuild of the
+    current week. Only weeks NEITHER entity covers any more get dropped.
+    """
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
+    details = {"r1": _detail([{"name": "Salt", "shipped": False}]), "r2": _detail([])}
+
+    entity = _make_entity(w1, details, weeks=[w1, w2], slot=0)
+    entity.coordinator.prep_completed.update(
+        {("2026-W35", "salt"), ("2026-W36", "pepper"), ("2026-W30", "stale-long-gone")}
+    )
+    _run(entity._async_rebuild())
+
+    assert entity.coordinator.prep_completed == {
+        ("2026-W35", "salt"),
+        ("2026-W36", "pepper"),
+    }
+
+
+def test_restore_payload_round_trips_the_ticks() -> None:
+    """The RestoreEntity extra data must serialize every tick and reload losslessly."""
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    entity = _make_entity(w1, {"r1": _detail([])}, weeks=[w1], slot=0)
+    entity.coordinator.prep_completed.update({("2026-W35", "salt"), ("2026-W36", "pepper")})
+
+    stored = entity.extra_restore_state_data.as_dict()
+    assert stored == {"ticks": [["2026-W35", "salt"], ["2026-W36", "pepper"]]}
+
+    # A fresh session seeds its shared set from the stored payload (the same parse
+    # async_added_to_hass performs).
+    fresh = _make_entity(w1, {"r1": _detail([])}, weeks=[w1], slot=0)
+    for entry in stored["ticks"]:
+        assert isinstance(entry, list) and len(entry) == 2
+        fresh.coordinator.prep_completed.add((str(entry[0]), str(entry[1])))
+    assert fresh.coordinator.prep_completed == entity.coordinator.prep_completed

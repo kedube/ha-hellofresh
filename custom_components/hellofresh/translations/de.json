@@ -219,7 +219,7 @@
         "name": "Erhaltene Kochboxen"
       },
       "last_delivery_date": {
-        "name": "Datum der letzten Lieferung"
+        "name": "Letzter Liefertag"
       },
       "next_delivery_week": {
         "name": "Nächste Lieferwoche"
@@ -510,6 +510,10 @@
         "collection": {
           "name": "Kategorie",
           "description": "Optionale Kategoriekennung, um die Ergebnisse auf diese Kategorie zu beschränken."
+        },
+        "search": {
+          "name": "Suche",
+          "description": "Freitextsuche über den gesamten Katalog, alle Kategorien auf einmal. Wenn gesetzt, wird die Kategorie ignoriert."
         },
         "limit": {
           "name": "Anzahl",

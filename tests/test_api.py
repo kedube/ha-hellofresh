@@ -239,6 +239,20 @@ def test_sensor_attributes_stay_under_recorder_cap_with_large_menu() -> None:
         assert size <= _RECORDER_ATTR_CAP_BYTES, f"{key} attributes are {size} bytes (over cap)"
 
 
+def test_api_base_url_attributes_carry_no_subscription_pii() -> None:
+    """The diagnostic sensor's attributes go to the recorder UNREDACTED, so the full
+    serialized subscriptions (delivery_address, payment_method, coupon_code) must never
+    ride along — only a count. The redacted diagnostics export carries the full blob."""
+    data = _account_data_with_large_menu()
+    attributes = sensor_extra_state_attributes("api_base_url", data)
+    assert attributes is not None
+    # Exactly the summary shape — no serialized subscription blobs (or anything else) may
+    # creep back in. (String-scanning is too blunt: capability FLAG NAMES legitimately
+    # mention e.g. delivery_address.)
+    assert sorted(attributes) == ["capabilities", "subscription_count"]
+    assert attributes["subscription_count"] == 1
+
+
 def test_week_summary_dict_omits_recipes_but_full_dict_keeps_them() -> None:
     """as_summary_dict drops recipes/action lists; as_dict (diagnostics) keeps them."""
     data = _account_data_with_large_menu()
@@ -310,6 +324,9 @@ def test_account_data_finalize_builds_serialized_views() -> None:
                 display_name="Jun 03 - Jun 09",
                 subscription_id="sub-1",
                 delivery_date=last_week,
+                delivered_at=datetime(
+                    last_week.year, last_week.month, last_week.day, 14, 37, tzinfo=UTC
+                ),
                 status="delivered",
                 source="past_deliveries",
             )
@@ -344,32 +361,44 @@ def test_account_data_finalize_builds_serialized_views() -> None:
     assert data.last_delivery_week.week_id == last_week_id
 
 
-def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> None:
-    """When the past-deliveries endpoint returns nothing, the "Last delivery date" sensor must
-    still resolve — from the newest past-dated, non-skipped week in the main deliveries list —
-    instead of showing Unknown for an account that has clearly shipped boxes.
+def test_last_delivery_week_is_the_newest_box_with_a_carrier_arrival() -> None:
+    """ "Last delivery day" resolves from the newest box the carrier has ACTUALLY delivered
+    (``delivered_at``), from the main deliveries list when history is empty — and a box still
+    in transit (past its scheduled day, but no carrier arrival yet) must not displace it.
     """
     today = date.today()
     data = HelloFreshAccountData(
         weeks=[
-            # A skipped past week must NOT win even though it's the newest past-dated one.
+            # Scheduled two days ago but still on the truck: no carrier arrival, so it is
+            # NOT the last delivery even though it is the newest past-dated week.
+            HelloFreshWeek(
+                week_id="in-transit",
+                display_name="In transit",
+                delivery_date=today - timedelta(days=2),
+                status="SHIPPED",
+            ),
+            # A skipped week never ships; guard against a stray timestamp anyway.
             HelloFreshWeek(
                 week_id="skipped-recent",
                 display_name="Skipped",
-                delivery_date=today - timedelta(days=2),
+                delivery_date=today - timedelta(days=3),
+                delivered_at=datetime.now(UTC) - timedelta(days=3),
                 is_skipped=True,
             ),
             HelloFreshWeek(
                 week_id="delivered-newest",
                 display_name="Delivered Newest",
                 delivery_date=today - timedelta(days=9),
+                delivered_at=datetime.now(UTC) - timedelta(days=9),
+                status="DELIVERED",
             ),
             HelloFreshWeek(
                 week_id="delivered-older",
                 display_name="Delivered Older",
                 delivery_date=today - timedelta(days=16),
+                delivered_at=datetime.now(UTC) - timedelta(days=16),
+                status="DELIVERED",
             ),
-            # A future week must never be treated as "delivered".
             HelloFreshWeek(
                 week_id="future",
                 display_name="Future",
@@ -392,24 +421,31 @@ def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> Non
     assert data.last_delivery_week.week_id == "delivered-newest"
 
 
-def test_last_delivery_week_excludes_future_week_from_history() -> None:
-    """The past-deliveries endpoint also lists the UPCOMING week, so "Last delivery date" must
-    pick the newest week dated strictly before today — not the future box the endpoint includes.
+def test_last_delivery_week_is_none_without_a_carrier_arrival() -> None:
+    """Scheduled dates alone never produce a last delivery: with no carrier arrival on any
+    week the sensor is Unknown rather than the scheduled day or the ISO week's Monday.
 
-    Reproduces the real payload: history returns W28 (future) alongside the delivered W27.
+    The past-deliveries endpoint carries no dates at all (its weeks get stamped with the ISO
+    week's Monday) and no carrier timestamps, so history-only data cannot resolve it.
     """
     today = date.today()
     data = HelloFreshAccountData(
-        weeks=[],
+        weeks=[
+            HelloFreshWeek(
+                week_id="scheduled-past",
+                display_name="Scheduled, no tracking",
+                delivery_date=today - timedelta(days=5),
+                status="DELIVERED",
+            ),
+        ],
         orders=[],
         past_delivery_weeks=[
             HelloFreshWeek(
-                week_id="delivered",
-                display_name="Delivered",
-                delivery_date=today - timedelta(days=5),
+                week_id="history",
+                display_name="History",
+                delivery_date=today - timedelta(days=7),
                 source="past_deliveries",
             ),
-            # The upcoming week the history endpoint also returns — must be ignored here.
             HelloFreshWeek(
                 week_id="upcoming",
                 display_name="Upcoming",
@@ -427,8 +463,86 @@ def test_last_delivery_week_excludes_future_week_from_history() -> None:
         capabilities=HelloFreshCapabilities(),
     ).finalize()
 
+    assert data.last_delivery_week is None
+    assert sensor_native_value("last_delivery_date", data, "https://x") is None
+
+
+def test_last_delivery_date_is_the_actual_arrival_not_the_iso_week_monday() -> None:
+    """Regression for issue #6: a box scheduled for Wednesday Sep 2 reported Aug 31.
+
+    ``/gw/my-deliveries/past-deliveries`` identifies a week only by its ISO id, so the history
+    week is stamped with that week's MONDAY. The sensor must instead report the day the
+    carrier actually delivered the box, taken from the matching account week.
+    """
+    history_week = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="2026-W36",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 8, 31),  # Monday of ISO week 36 — a placeholder
+        status="delivered",
+        source="past_deliveries",
+    )
+    account_week = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="Aug 31 - Sep 6",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 2),  # scheduled for Wednesday
+        delivered_at=datetime(2026, 9, 2, 18, 20, 50, tzinfo=UTC),  # arrived Wednesday
+        status="DELIVERED",
+    )
+    data = HelloFreshAccountData(
+        weeks=[account_week],
+        orders=[],
+        past_delivery_weeks=[history_week],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+
     assert data.last_delivery_week is not None
-    assert data.last_delivery_week.week_id == "delivered"
+    assert data.last_delivery_week.week_id == "2026-W36"
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 2)
+    # The history week wins (it carries the recipes), but its Monday placeholder is replaced
+    # by the real scheduled day, so the sensor's attributes don't contradict its state.
+    assert data.last_delivery_week is history_week
+    attributes = sensor_extra_state_attributes("last_delivery_date", data)
+    assert attributes["last_delivery_week"]["delivery_date"] == "2026-09-02"
+    assert attributes["last_delivery_week"]["delivered_at"] == "2026-09-02T18:20:50+00:00"
+
+
+def test_last_delivery_date_keeps_previous_box_while_the_next_is_on_the_way() -> None:
+    """With a new box shipped but not yet delivered, the sensor keeps reporting the previous
+    week's arrival, then moves to the new box once the carrier marks it delivered."""
+    delivered = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="2026-W36",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 2),
+        delivered_at=datetime(2026, 9, 2, 18, 20, tzinfo=UTC),
+        status="DELIVERED",
+    )
+    on_the_way = HelloFreshWeek(
+        week_id="2026-W37",
+        display_name="2026-W37",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 9),
+        status="SHIPPED",
+    )
+    data = HelloFreshAccountData(
+        weeks=[delivered, on_the_way],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 2)
+
+    # The carrier hands the new box over a day late — the sensor follows the real arrival.
+    on_the_way.status = "DELIVERED"
+    on_the_way.delivered_at = datetime(2026, 9, 10, 15, 5, tzinfo=UTC)
+    data = HelloFreshAccountData(
+        weeks=[delivered, on_the_way],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 10)
 
 
 def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
@@ -591,9 +705,11 @@ def test_normalize_past_delivery_payload_extracts_recipe_history() -> None:
 def test_normalize_past_delivery_derives_date_from_iso_week_when_absent() -> None:
     """The /gw/my-deliveries/past-deliveries payload gives only a ``week`` id (no date field).
 
-    The delivery date must be derived from the ISO week (Monday) so the week isn't date-less —
-    otherwise "Last delivery date" is Unknown even though the box shipped. Matches the real HAR
-    shape: ``{"week": ..., "menuId": ..., "meals": [...]}``.
+    The week is stamped with the ISO week's Monday as a placeholder so it isn't date-less and
+    sorts correctly. It is only a placeholder: ``finalize`` swaps in the matching account
+    week's real scheduled date, and "Last delivery day" follows the carrier arrival instead
+    (see ``test_last_delivery_date_is_the_actual_arrival_not_the_iso_week_monday``). Matches
+    the real HAR shape: ``{"week": ..., "menuId": ..., "meals": [...]}``.
     """
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     subscription = HelloFreshSubscription(
@@ -697,7 +813,21 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
         ]
 
     async def fake_get_upcoming_deliveries(_subscription):
-        return ([], [])
+        # The ranged deliveries payload is the only source of the carrier arrival timestamp;
+        # the history week above is matched to it by week id.
+        return (
+            [
+                HelloFreshWeek(
+                    week_id="2026-W23",
+                    display_name="Week 23",
+                    subscription_id="sub-1",
+                    delivery_date=date(2026, 6, 8),
+                    delivered_at=datetime(2026, 6, 8, 20, 15, tzinfo=UTC),
+                    status="DELIVERED",
+                )
+            ],
+            [],
+        )
 
     async def fake_get_account_menu_data(_subscriptions, _weeks):
         return None
@@ -724,6 +854,7 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     assert result.past_delivery_count == 1
     assert result.last_delivery_week is not None
     assert result.last_delivery_week.week_id == "2026-W23"
+    assert result.last_delivery_week.delivered_at == datetime(2026, 6, 8, 20, 15, tzinfo=UTC)
 
 
 def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
@@ -861,6 +992,29 @@ def test_initial_account_payloads_are_fetched_concurrently() -> None:
     assert len(weeks) == 2
     assert len(orders) == 2
     assert payload_found is True
+
+
+def test_one_malformed_week_is_dropped_not_fatal() -> None:
+    """A single unparseable week entry must cost THAT week, not the whole poll.
+
+    Regression guard: the loop had no per-item protection, so one week shaped wrongly
+    (here: not a dict at all, which raises AttributeError on .get) failed the entire
+    refresh — every sensor went unavailable over one bad row. Oddly-shaped dict weeks
+    are handled by the extractors' own defensiveness and still parse.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")
+    payload = {
+        "items": [
+            "not-a-week-dict",
+            {"id": "week-odd", "meals": [{"recipe": "not-a-dict"}]},
+            {"id": "week-good", "deliveryDate": "2026-06-12", "meals": []},
+        ]
+    }
+
+    weeks, _orders = client._normalize_weeks_payload(payload, subscription=subscription)
+
+    assert [week.week_id for week in weeks] == ["week-odd", "week-good"]
 
 
 def test_normalize_weeks_payload_extracts_tracking_and_meals() -> None:
@@ -4170,7 +4324,9 @@ def test_account_data_enriches_order_price_from_cart_endpoint() -> None:
 
     pricing_requests: list[dict[str, object | None]] = []
 
-    async def fake_api_request(method: str, path: str, params=None, json_payload=None):
+    async def fake_api_request(
+        method: str, path: str, params=None, json_payload=None, authenticated=True
+    ):
         pricing_requests.append(
             {
                 "method": method,
@@ -5881,7 +6037,9 @@ def test_cart_price_is_cached_for_identical_request() -> None:
     async def fake_build(_sub, _week):
         return {"boxSize": 2, "products": [{"handle": "X"}]}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         nonlocal post_count
         post_count += 1
         return object()
@@ -5908,7 +6066,7 @@ def test_cart_price_is_cached_for_identical_request() -> None:
 
 def test_cart_price_cache_is_fifo_bounded() -> None:
     """The pricing cache must not grow without bound over the client's lifetime."""
-    from custom_components.hellofresh.client import _CART_PRICE_CACHE_MAX
+    from custom_components.hellofresh.client_pricing import _CART_PRICE_CACHE_MAX
 
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     for i in range(_CART_PRICE_CACHE_MAX + 10):
@@ -5939,7 +6097,9 @@ def test_order_price_falls_back_to_calculate_when_cart_price_has_no_total() -> N
 
     calls: list[str] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         calls.append(path)
         return object()
 
@@ -5982,7 +6142,9 @@ def test_enrich_selected_plan_price_reads_recurring_grand_total() -> None:
 
     requests: list[dict[str, object | None]] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         requests.append({"method": method, "path": path, "json_payload": json_payload})
         return object()
 
@@ -6022,7 +6184,9 @@ def test_enrich_selected_plan_price_skips_when_payload_cannot_be_built() -> None
 
     called = False
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         nonlocal called
         called = True
         return object()
@@ -6047,7 +6211,9 @@ def test_mutation_remembers_winning_endpoint_combo() -> None:
     winning_path = "/gw/api/customers/me/subscriptions/sub-1/weeks/2026-W25/skip"
     attempts: list[str] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         attempts.append(f"{method} {path}")
         if path == winning_path:
             return object()
@@ -6106,7 +6272,9 @@ def test_skip_week_uses_verified_delivery_status_patch() -> None:
 
     captured: dict[str, object] = {}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         captured.update(method=method, path=path, params=params, json_payload=json_payload)
         return object()
 
@@ -6145,7 +6313,9 @@ def test_unskip_week_sets_status_running() -> None:
 
     captured: dict[str, object] = {}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         captured.update(method=method, json_payload=json_payload)
         return object()
 
@@ -6166,7 +6336,9 @@ def test_skip_week_falls_back_to_guessed_paths_without_dates() -> None:
 
     paths: list[str] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         paths.append(path)
         # Accept the first guessed skip path so the fallback resolves.
         if path.endswith("/skip"):
@@ -6195,7 +6367,9 @@ def test_reschedule_week_posts_oneoff_with_verified_body() -> None:
     client = _client_with_known_week(week)
     captured: dict[str, object] = {}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         captured.update(method=method, path=path, params=params, json_payload=json_payload)
         return object()
 
@@ -6254,7 +6428,9 @@ def test_change_delivery_weekday_patches_the_subscription() -> None:
     ]
     captured: dict[str, object] = {}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         captured.update(method=method, path=path, json_payload=json_payload)
         return object()
 
@@ -6634,7 +6810,6 @@ def test_async_unload_entry_clears_token_only_flag() -> None:
     from types import SimpleNamespace
 
     from custom_components.hellofresh import TOKEN_ONLY_UPDATE_KEY, async_unload_entry
-    from custom_components.hellofresh.const import DOMAIN
 
     entry_id = "entry-xyz"
 
@@ -6642,10 +6817,7 @@ def test_async_unload_entry_clears_token_only_flag() -> None:
         return True
 
     hass = SimpleNamespace(
-        data={
-            DOMAIN: {entry_id: object()},
-            TOKEN_ONLY_UPDATE_KEY: {entry_id, "other-entry"},
-        },
+        data={TOKEN_ONLY_UPDATE_KEY: {entry_id, "other-entry"}},
         config_entries=SimpleNamespace(async_unload_platforms=_unload_platforms),
     )
     entry = SimpleNamespace(entry_id=entry_id)
@@ -6655,7 +6827,6 @@ def test_async_unload_entry_clears_token_only_flag() -> None:
     result = loop.run_until_complete(async_unload_entry(hass, entry))  # type: ignore[arg-type]
 
     assert result is True
-    assert entry_id not in hass.data[DOMAIN]
     assert entry_id not in hass.data[TOKEN_ONLY_UPDATE_KEY]
     # Unrelated entries in the set are untouched.
     assert "other-entry" in hass.data[TOKEN_ONLY_UPDATE_KEY]
@@ -6666,7 +6837,6 @@ def test_async_unload_entry_handles_absent_token_only_set() -> None:
     from types import SimpleNamespace
 
     from custom_components.hellofresh import async_unload_entry
-    from custom_components.hellofresh.const import DOMAIN
 
     entry_id = "entry-abc"
 
@@ -6674,7 +6844,7 @@ def test_async_unload_entry_handles_absent_token_only_set() -> None:
         return True
 
     hass = SimpleNamespace(
-        data={DOMAIN: {entry_id: object()}},
+        data={},
         config_entries=SimpleNamespace(async_unload_platforms=_unload_platforms),
     )
     entry = SimpleNamespace(entry_id=entry_id)
@@ -6682,7 +6852,6 @@ def test_async_unload_entry_handles_absent_token_only_set() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     assert loop.run_until_complete(async_unload_entry(hass, entry)) is True  # type: ignore[arg-type]
-    assert entry_id not in hass.data[DOMAIN]
 
 
 class _FakeEntry:
@@ -7912,7 +8081,9 @@ def test_favorite_search_batches_and_maps_bookmark_ids() -> None:
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     sent: list[list[str]] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         assert method == "POST"
         assert path.endswith("/internal-recipes/search")
         sent.append(list(json_payload["bookmark_ids"]))
@@ -7944,7 +8115,9 @@ def test_favorite_search_requests_are_batched() -> None:
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     batch_sizes: list[int] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         batch_sizes.append(len(json_payload["bookmark_ids"]))
         return _StubResponse(200)
 
@@ -8045,7 +8218,9 @@ def test_add_favorite_parses_created_bookmark() -> None:
     """The 201 body is rich (title, image, nutrition) — all of it should survive."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         assert method == "POST"
         assert json_payload == {
             "bookmark_id": "694053fe353e00bd89ba2d3e-en-US",
@@ -8118,7 +8293,9 @@ def test_remove_favorite_deletes_row_under_external_recipes() -> None:
             )
         }, True
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         called["method"] = method
         called["path"] = path
         return _StubResponse(204)
@@ -8148,7 +8325,9 @@ def test_remove_favorite_raises_on_rejected_delete() -> None:
             )
         }, True
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         return _StubResponse(403)
 
     client._async_search_favorites = fake_search  # type: ignore[method-assign]
@@ -8204,7 +8383,9 @@ def test_list_favorites_pages_with_the_opaque_cursor() -> None:
     ]
     seen_params: list[dict] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         assert method == "GET"
         assert path == "/gw/cookbook/v1/external-recipes"
         seen_params.append(dict(params or {}))
@@ -8357,7 +8538,9 @@ def test_catalog_build_id_is_refreshed_once_on_404() -> None:
     client._build_id = "stale-build"
     requested: list[str] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         requested.append(path)
         if path == "/recipes":
             return _StubResponse(200, text='window.x = {"buildId":"fresh-build"};')
@@ -8405,7 +8588,9 @@ def test_catalog_falls_back_to_page_html_when_the_data_url_404s() -> None:
     # The HTML blob wraps the payload under `props`; the data URL does not.
     blob = {"props": {"pageProps": {"ssrPayload": {"marker": "from-html"}}}}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         requested.append(path)
         if path.startswith("/_next/data/"):
             return _StubResponse(404)
@@ -8432,7 +8617,9 @@ def test_catalog_html_fallback_maps_a_category_page_to_its_path() -> None:
     requested: list[str] = []
     blob = {"props": {"pageProps": {"ssrPayload": {"marker": "indian"}}}}
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         requested.append(path)
         if path.startswith("/_next/data/"):
             return _StubResponse(404)
@@ -8453,9 +8640,13 @@ def test_catalog_prefers_the_data_url_when_it_works() -> None:
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     client._build_id = "b1"
     requested: list[str] = []
+    auth_flags: list[bool] = []
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         requested.append(path)
+        auth_flags.append(authenticated)
         return _StubResponse(200)
 
     async def fake_response_json(_response):
@@ -8470,6 +8661,8 @@ def test_catalog_prefers_the_data_url_when_it_works() -> None:
 
     assert result == {"pageProps": {"ssrPayload": {"marker": "from-json"}}}
     assert requested == ["/_next/data/b1/recipes.json"], "an extra page fetch was made"
+    # Public website document: the bearer token must NOT ride along.
+    assert auth_flags == [False]
 
 
 def test_catalog_html_fallback_survives_an_unparseable_page() -> None:
@@ -8477,7 +8670,9 @@ def test_catalog_html_fallback_survives_an_unparseable_page() -> None:
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     client._build_id = "b1"
 
-    async def fake_api_request(method, path, params=None, json_payload=None, extra_headers=None):
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
         if path.startswith("/_next/data/"):
             return _StubResponse(404)
         return _StubResponse(200, text="<html><body>no blob here</body></html>")

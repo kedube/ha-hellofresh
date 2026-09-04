@@ -26,7 +26,7 @@ from .const import (
     api_locale,
 )
 from .models import HelloFreshAuthError, HelloFreshError
-from .parsers import coerce_int, decode_jwt_claims
+from .parsers import coerce_int, decode_jwt_claims, safe_error_summary
 from .tls_transport import AuthResponse, async_auth_post, tls_impersonation_available
 
 _LOGGER = logging.getLogger(__name__)
@@ -466,7 +466,9 @@ class TokenManager:
                 "HelloFresh token refresh REJECTED HTTP %s: %s (refresh_token fp=%s, "
                 "refresh_token_issued_at=%s)",
                 response.status,
-                error_body[:300],
+                # Never the raw body: it is server-controlled free text and logs are not
+                # redacted the way diagnostics exports are.
+                safe_error_summary(error_body),
                 _token_fingerprint(self._refresh_token),
                 self._refresh_token_issued_at,
             )
@@ -480,7 +482,7 @@ class TokenManager:
                 "HelloFresh token refresh failed (transient); will retry on next poll: "
                 "HTTP %s (%s)",
                 response.status,
-                details[:200],
+                safe_error_summary(details),
             )
             raise HelloFreshError(
                 f"HelloFresh token refresh transient failure: HTTP {response.status}"
@@ -533,16 +535,18 @@ class TokenManager:
                 raise HelloFreshError(
                     f"HelloFresh login blocked by bot protection: HTTP {response.status}"
                 )
+            # Never the raw body: a login rejection can echo the submitted email, and logs
+            # are shared on GitHub issues without redaction.
             _LOGGER.warning(
                 "HelloFresh login REJECTED HTTP %s: %s",
                 response.status,
-                error_body[:300],
+                safe_error_summary(error_body),
             )
             raise HelloFreshAuthError(f"HelloFresh login failed: HTTP {response.status}")
         if response.status >= _HTTP_BAD_REQUEST:
             details = await response.text()
             raise HelloFreshError(
-                f"HelloFresh login failed: HTTP {response.status} ({details[:200]})"
+                f"HelloFresh login failed: HTTP {response.status} ({safe_error_summary(details)})"
             )
 
         payload = await self._async_auth_payload(response, context="login")

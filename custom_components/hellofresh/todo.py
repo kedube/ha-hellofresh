@@ -20,6 +20,7 @@ Amounts are never summed *across* weeks: each box is its own shopping trip. See
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 import logging
 from typing import Any
@@ -34,8 +35,8 @@ from homeassistant.components.todo import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
-from .const import DOMAIN
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .models import HelloFreshWeek
@@ -52,14 +53,29 @@ _WEEKS_COVERED = 2
 _MAX_RECIPE_FETCHES = 24
 
 
+# Coordinator-based: entities never poll on their own, so entity-update parallelism is
+# irrelevant — declared 0 (unlimited) per the integration quality scale's convention.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up one prep-list entity per covered delivery week."""
-    coordinator: HelloFreshDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
     async_add_entities(HelloFreshPrepListTodo(coordinator, slot) for slot in range(_WEEKS_COVERED))
+
+
+@dataclass
+class _PrepTicksExtraData(ExtraStoredData):
+    """Restore-state payload: the ticked-off (week_id, ingredient_key) pairs."""
+
+    ticks: list[list[str]]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ticks": self.ticks}
 
 
 def _ingredient_key(name: str) -> str:
@@ -313,7 +329,7 @@ def _format_amounts(amounts: list[tuple[Any, Any]]) -> str:
     return " + ".join([*rendered, *literals])
 
 
-class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
+class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, RestoreEntity):
     """Pantry staples to have on hand before one HelloFresh box arrives.
 
     One entity per covered delivery week (``slot`` 0 is the box on its way, 1 the one after
@@ -336,12 +352,19 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
         self._attr_translation_key = key
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{key}"
         self._pin_entity_id(ENTITY_ID_FORMAT, key)
-        # Ticked-off items, keyed by (week_id, ingredient_key). Keying on the week id rather
-        # than the slot means a box landing (which shifts every week up one slot) carries the
-        # ticks with the week they belong to instead of stranding them on the old position.
-        self._completed: set[tuple[str, str]] = set()
         self._items: list[TodoItem] = []
         self._built_for: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    @property
+    def _completed(self) -> set[tuple[str, str]]:
+        """Ticked-off items, keyed by (week_id, ingredient_key).
+
+        Keying on the week id (not the slot) AND sharing one set across both entities via
+        the coordinator means a box landing — which shifts every week up one slot, onto the
+        OTHER entity — carries the ticks with the week they belong to. A per-entity set
+        stranded them on the old slot.
+        """
+        return self.coordinator.prep_completed
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
@@ -418,9 +441,21 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
                 ids.append(recipe_id)
         return ids
 
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        """Persist the shared tick set so check-offs survive a Home Assistant restart."""
+        return _PrepTicksExtraData([list(entry) for entry in sorted(self._completed)])
+
     async def async_added_to_hass(self) -> None:
-        """Build the list once the entity is live."""
+        """Restore saved ticks, then build the list once the entity is live."""
         await super().async_added_to_hass()
+        last = await self.async_get_last_extra_data()
+        if last is not None:
+            for entry in last.as_dict().get("ticks", []):
+                if isinstance(entry, list | tuple) and len(entry) == 2:
+                    # Union into the SHARED set: both entities persist the same set, so
+                    # whichever restores first seeds it and the second is a no-op.
+                    self._completed.add((str(entry[0]), str(entry[1])))
         await self._async_rebuild()
         self.async_write_ha_state()
 
@@ -463,10 +498,14 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity):
         if fingerprint == self._built_for:
             return
 
-        # Ticks belong to a week, not a slot. Dropping everything for other weeks keeps the
-        # set from growing without bound, while a week shifting from slot 1 to slot 0 (its
-        # predecessor landed) arrives with its check-offs intact.
-        self._completed = {entry for entry in self._completed if entry[0] == week.week_id}
+        # Ticks belong to a week, not a slot. Dropping weeks NEITHER entity still covers
+        # keeps the shared set from growing without bound, while a week shifting from
+        # slot 1 to slot 0 (its predecessor landed) arrives with its check-offs intact —
+        # the shared set is exactly what makes that survive the entity handover.
+        covered_ids = {w.week_id for w in self._all_covered_weeks()}
+        self._completed.intersection_update(
+            {entry for entry in self._completed if entry[0] in covered_ids}
+        )
 
         servings = None
         subscription = self.coordinator.data.primary_subscription if self.coordinator.data else None

@@ -140,6 +140,17 @@ def test_registered_cards_exist_on_disk() -> None:
     assert not missing, f"frontend.py registers cards that do not exist: {sorted(missing)}"
 
 
+def test_every_card_registers_in_the_card_picker() -> None:
+    """Each Lovelace card must push itself onto window.customCards, or it silently never
+    appears in the dashboard's card picker (the subscription card shipped that way)."""
+    frontend_src = (COMPONENT / "frontend.py").read_text(encoding="utf-8")
+    for name in re.findall(r'"(hellofresh-[a-z0-9-]+\.js)"', frontend_src):
+        card_src = (COMPONENT / "www" / name).read_text(encoding="utf-8")
+        card_type = name.removesuffix(".js")
+        assert "window.customCards.push" in card_src, f"{name} never registers in the picker"
+        assert f'type: "{card_type}"' in card_src, f"{name} registers under the wrong type"
+
+
 def test_shared_modules_are_not_registered_as_cards() -> None:
     """The shared ES modules are imported BY cards, not registered as Lovelace resources.
 
@@ -171,7 +182,7 @@ DOCS = [
     "CONTRIBUTING.md",
     "docs/HELLOFRESH_API.md",
     "docs/entities.md",
-    "docs/cards.md",
+    "docs/dashboard.md",
     "docs/services.md",
 ]
 
@@ -216,5 +227,5 @@ def test_readme_stays_browsable() -> None:
     length = len((REPO / "README.md").read_text(encoding="utf-8").splitlines())
     assert length < 500, (
         f"README.md is {length} lines. Move reference detail into docs/ "
-        f"(see docs/cards.md and docs/services.md for the pattern)."
+        f"(see docs/dashboard.md and docs/services.md for the pattern)."
     )

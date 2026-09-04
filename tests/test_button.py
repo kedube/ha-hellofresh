@@ -17,7 +17,6 @@ from custom_components.hellofresh.button import (
     HelloFreshButton,
     async_setup_entry,
 )
-from custom_components.hellofresh.const import DOMAIN
 
 
 def _coordinator() -> SimpleNamespace:
@@ -101,10 +100,10 @@ def test_press_ignores_unknown_keys() -> None:
 
 
 def test_setup_entry_adds_one_button_per_description() -> None:
-    """Setup reads the coordinator from ``hass.data`` under the entry id."""
+    """Setup reads the coordinator from the entry's ``runtime_data``."""
     coordinator = _coordinator()
-    hass = SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
-    entry = SimpleNamespace(entry_id="entry-1", title="HelloFresh US")
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry-1", title="HelloFresh US", runtime_data=coordinator)
     added: list[HelloFreshButton] = []
 
     _run(async_setup_entry(hass, entry, lambda entities: added.extend(entities)))
