@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.95 — 2026-09-04
 - **Last delivery day now reports the day the box actually arrived** (#6). It was reporting
   the Monday of the ISO week for anyone whose box is delivered on another day: the delivery
   history endpoint carries no dates, so its weeks were stamped with the week's Monday, and that
