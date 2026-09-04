@@ -324,6 +324,9 @@ def test_account_data_finalize_builds_serialized_views() -> None:
                 display_name="Jun 03 - Jun 09",
                 subscription_id="sub-1",
                 delivery_date=last_week,
+                delivered_at=datetime(
+                    last_week.year, last_week.month, last_week.day, 14, 37, tzinfo=UTC
+                ),
                 status="delivered",
                 source="past_deliveries",
             )
@@ -358,32 +361,44 @@ def test_account_data_finalize_builds_serialized_views() -> None:
     assert data.last_delivery_week.week_id == last_week_id
 
 
-def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> None:
-    """When the past-deliveries endpoint returns nothing, the "Last delivery day" sensor must
-    still resolve — from the newest past-dated, non-skipped week in the main deliveries list —
-    instead of showing Unknown for an account that has clearly shipped boxes.
+def test_last_delivery_week_is_the_newest_box_with_a_carrier_arrival() -> None:
+    """ "Last delivery day" resolves from the newest box the carrier has ACTUALLY delivered
+    (``delivered_at``), from the main deliveries list when history is empty — and a box still
+    in transit (past its scheduled day, but no carrier arrival yet) must not displace it.
     """
     today = date.today()
     data = HelloFreshAccountData(
         weeks=[
-            # A skipped past week must NOT win even though it's the newest past-dated one.
+            # Scheduled two days ago but still on the truck: no carrier arrival, so it is
+            # NOT the last delivery even though it is the newest past-dated week.
+            HelloFreshWeek(
+                week_id="in-transit",
+                display_name="In transit",
+                delivery_date=today - timedelta(days=2),
+                status="SHIPPED",
+            ),
+            # A skipped week never ships; guard against a stray timestamp anyway.
             HelloFreshWeek(
                 week_id="skipped-recent",
                 display_name="Skipped",
-                delivery_date=today - timedelta(days=2),
+                delivery_date=today - timedelta(days=3),
+                delivered_at=datetime.now(UTC) - timedelta(days=3),
                 is_skipped=True,
             ),
             HelloFreshWeek(
                 week_id="delivered-newest",
                 display_name="Delivered Newest",
                 delivery_date=today - timedelta(days=9),
+                delivered_at=datetime.now(UTC) - timedelta(days=9),
+                status="DELIVERED",
             ),
             HelloFreshWeek(
                 week_id="delivered-older",
                 display_name="Delivered Older",
                 delivery_date=today - timedelta(days=16),
+                delivered_at=datetime.now(UTC) - timedelta(days=16),
+                status="DELIVERED",
             ),
-            # A future week must never be treated as "delivered".
             HelloFreshWeek(
                 week_id="future",
                 display_name="Future",
@@ -406,24 +421,31 @@ def test_last_delivery_week_falls_back_to_main_weeks_when_history_empty() -> Non
     assert data.last_delivery_week.week_id == "delivered-newest"
 
 
-def test_last_delivery_week_excludes_future_week_from_history() -> None:
-    """The past-deliveries endpoint also lists the UPCOMING week, so "Last delivery day" must
-    pick the newest week dated strictly before today — not the future box the endpoint includes.
+def test_last_delivery_week_is_none_without_a_carrier_arrival() -> None:
+    """Scheduled dates alone never produce a last delivery: with no carrier arrival on any
+    week the sensor is Unknown rather than the scheduled day or the ISO week's Monday.
 
-    Reproduces the real payload: history returns W28 (future) alongside the delivered W27.
+    The past-deliveries endpoint carries no dates at all (its weeks get stamped with the ISO
+    week's Monday) and no carrier timestamps, so history-only data cannot resolve it.
     """
     today = date.today()
     data = HelloFreshAccountData(
-        weeks=[],
+        weeks=[
+            HelloFreshWeek(
+                week_id="scheduled-past",
+                display_name="Scheduled, no tracking",
+                delivery_date=today - timedelta(days=5),
+                status="DELIVERED",
+            ),
+        ],
         orders=[],
         past_delivery_weeks=[
             HelloFreshWeek(
-                week_id="delivered",
-                display_name="Delivered",
-                delivery_date=today - timedelta(days=5),
+                week_id="history",
+                display_name="History",
+                delivery_date=today - timedelta(days=7),
                 source="past_deliveries",
             ),
-            # The upcoming week the history endpoint also returns — must be ignored here.
             HelloFreshWeek(
                 week_id="upcoming",
                 display_name="Upcoming",
@@ -441,8 +463,86 @@ def test_last_delivery_week_excludes_future_week_from_history() -> None:
         capabilities=HelloFreshCapabilities(),
     ).finalize()
 
+    assert data.last_delivery_week is None
+    assert sensor_native_value("last_delivery_date", data, "https://x") is None
+
+
+def test_last_delivery_date_is_the_actual_arrival_not_the_iso_week_monday() -> None:
+    """Regression for issue #6: a box scheduled for Wednesday Sep 2 reported Aug 31.
+
+    ``/gw/my-deliveries/past-deliveries`` identifies a week only by its ISO id, so the history
+    week is stamped with that week's MONDAY. The sensor must instead report the day the
+    carrier actually delivered the box, taken from the matching account week.
+    """
+    history_week = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="2026-W36",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 8, 31),  # Monday of ISO week 36 — a placeholder
+        status="delivered",
+        source="past_deliveries",
+    )
+    account_week = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="Aug 31 - Sep 6",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 2),  # scheduled for Wednesday
+        delivered_at=datetime(2026, 9, 2, 18, 20, 50, tzinfo=UTC),  # arrived Wednesday
+        status="DELIVERED",
+    )
+    data = HelloFreshAccountData(
+        weeks=[account_week],
+        orders=[],
+        past_delivery_weeks=[history_week],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+
     assert data.last_delivery_week is not None
-    assert data.last_delivery_week.week_id == "delivered"
+    assert data.last_delivery_week.week_id == "2026-W36"
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 2)
+    # The history week wins (it carries the recipes), but its Monday placeholder is replaced
+    # by the real scheduled day, so the sensor's attributes don't contradict its state.
+    assert data.last_delivery_week is history_week
+    attributes = sensor_extra_state_attributes("last_delivery_date", data)
+    assert attributes["last_delivery_week"]["delivery_date"] == "2026-09-02"
+    assert attributes["last_delivery_week"]["delivered_at"] == "2026-09-02T18:20:50+00:00"
+
+
+def test_last_delivery_date_keeps_previous_box_while_the_next_is_on_the_way() -> None:
+    """With a new box shipped but not yet delivered, the sensor keeps reporting the previous
+    week's arrival, then moves to the new box once the carrier marks it delivered."""
+    delivered = HelloFreshWeek(
+        week_id="2026-W36",
+        display_name="2026-W36",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 2),
+        delivered_at=datetime(2026, 9, 2, 18, 20, tzinfo=UTC),
+        status="DELIVERED",
+    )
+    on_the_way = HelloFreshWeek(
+        week_id="2026-W37",
+        display_name="2026-W37",
+        subscription_id="sub-1",
+        delivery_date=date(2026, 9, 9),
+        status="SHIPPED",
+    )
+    data = HelloFreshAccountData(
+        weeks=[delivered, on_the_way],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 2)
+
+    # The carrier hands the new box over a day late — the sensor follows the real arrival.
+    on_the_way.status = "DELIVERED"
+    on_the_way.delivered_at = datetime(2026, 9, 10, 15, 5, tzinfo=UTC)
+    data = HelloFreshAccountData(
+        weeks=[delivered, on_the_way],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")],
+        capabilities=HelloFreshCapabilities(),
+    ).finalize()
+    assert sensor_native_value("last_delivery_date", data, "https://x") == date(2026, 9, 10)
 
 
 def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
@@ -605,9 +705,11 @@ def test_normalize_past_delivery_payload_extracts_recipe_history() -> None:
 def test_normalize_past_delivery_derives_date_from_iso_week_when_absent() -> None:
     """The /gw/my-deliveries/past-deliveries payload gives only a ``week`` id (no date field).
 
-    The delivery date must be derived from the ISO week (Monday) so the week isn't date-less —
-    otherwise "Last delivery day" is Unknown even though the box shipped. Matches the real HAR
-    shape: ``{"week": ..., "menuId": ..., "meals": [...]}``.
+    The week is stamped with the ISO week's Monday as a placeholder so it isn't date-less and
+    sorts correctly. It is only a placeholder: ``finalize`` swaps in the matching account
+    week's real scheduled date, and "Last delivery day" follows the carrier arrival instead
+    (see ``test_last_delivery_date_is_the_actual_arrival_not_the_iso_week_monday``). Matches
+    the real HAR shape: ``{"week": ..., "menuId": ..., "meals": [...]}``.
     """
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     subscription = HelloFreshSubscription(
@@ -711,7 +813,21 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
         ]
 
     async def fake_get_upcoming_deliveries(_subscription):
-        return ([], [])
+        # The ranged deliveries payload is the only source of the carrier arrival timestamp;
+        # the history week above is matched to it by week id.
+        return (
+            [
+                HelloFreshWeek(
+                    week_id="2026-W23",
+                    display_name="Week 23",
+                    subscription_id="sub-1",
+                    delivery_date=date(2026, 6, 8),
+                    delivered_at=datetime(2026, 6, 8, 20, 15, tzinfo=UTC),
+                    status="DELIVERED",
+                )
+            ],
+            [],
+        )
 
     async def fake_get_account_menu_data(_subscriptions, _weeks):
         return None
@@ -738,6 +854,7 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     assert result.past_delivery_count == 1
     assert result.last_delivery_week is not None
     assert result.last_delivery_week.week_id == "2026-W23"
+    assert result.last_delivery_week.delivered_at == datetime(2026, 6, 8, 20, 15, tzinfo=UTC)
 
 
 def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:

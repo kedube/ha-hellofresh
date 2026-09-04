@@ -87,6 +87,10 @@ def _build_coordinator() -> SimpleNamespace:
         display_name="Week 23",
         subscription_id="sub-1",
         delivery_date=past_delivery,
+        # "Last delivery day" is the carrier's actual arrival, not the scheduled day.
+        delivered_at=datetime(
+            past_delivery.year, past_delivery.month, past_delivery.day, 14, 37, tzinfo=UTC
+        ),
         status="delivered",
     )
     data = HelloFreshAccountData(

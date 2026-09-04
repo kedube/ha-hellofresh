@@ -72,11 +72,15 @@ _ISO_WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
 
 
 def date_from_iso_week(week_id: str | None) -> date | None:
-    """Return the delivery date for a ``YYYY-Www`` ISO week, or ``None``.
+    """Return the Monday of a ``YYYY-Www`` ISO week as a placeholder date, or ``None``.
 
     Some HelloFresh history payloads (notably ``/gw/my-deliveries/past-deliveries``) identify a
-    delivered week by its ISO week id only, with no explicit delivery date. The delivery falls in
-    that ISO week; HelloFresh's own UI labels it with the week's Monday, so use ISO weekday 1.
+    delivered week by its ISO week id only, with no explicit delivery date. HelloFresh's own UI
+    labels such a week with its Monday, so ISO weekday 1 keeps the week sortable and datable.
+    The result is NOT the day the box was scheduled for or delivered — a Wednesday delivery in
+    that week still gets the Monday — so callers must treat it as a placeholder: the account
+    aggregate replaces it with the real scheduled ``deliveryDate`` when the matching account
+    week is known, and the "Last delivery day" sensor never reads it.
     """
     if not isinstance(week_id, str):
         return None
