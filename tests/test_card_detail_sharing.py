@@ -137,6 +137,12 @@ def test_planner_selects_with_the_add_pill() -> None:
         re.S,
     )
     assert add_handler, "the + Add pill must stopPropagation and route to _addRecipe"
+    # Both selection controls render inside .metafoot, which the flex-column tile pins to
+    # its bottom edge — so + Add pills and steppers align across a grid row no matter how
+    # long each meal's description and chips run.
+    assert '<div class="metafoot"><button class="addbtn"' in source
+    assert '<div class="metafoot"><div class="stepper"' in source
+    assert ".metafoot { margin-top: auto;" in source
     # Removal goes through the stepper: reaching 0 servings deselects.
     assert "if (next === 0)" in source
 
@@ -146,6 +152,10 @@ def test_market_opens_the_sheet_from_a_tile() -> None:
     source = _source(CONSUMERS["market"])
     assert "_openRecipeDetail" in source
     assert 'ev.target.closest(".item")' in source
+    # Like the planner, the stepper is bottom-pinned via .metafoot so it lines up
+    # across a grid row regardless of description length.
+    assert '<div class="metafoot"><div class="stepper"' in source
+    assert ".metafoot { margin-top: auto;" in source
 
 
 def test_tiles_are_keyboard_accessible() -> None:
