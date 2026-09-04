@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.93 — 2026-09-04
 - Meal planner and market cards: the **+ Add** pill and the ± steppers are pinned to the
   bottom edge of each tile, so the selection controls line up across a row instead of
   landing at different heights under meals with longer descriptions or more chips.
