@@ -5,6 +5,19 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Last delivery day now reports the day the box actually arrived** (#6). It was reporting
+  the Monday of the ISO week for anyone whose box is delivered on another day: the delivery
+  history endpoint carries no dates, so its weeks were stamped with the week's Monday, and that
+  guess beat the real date. The sensor now follows the carrier's handover timestamp
+  (`tracking.delivery_date`), converted to your Home Assistant timezone, so a box scheduled for
+  Wednesday that lands Thursday reports Thursday. While a new box is in transit the sensor keeps
+  the previous week's arrival until the carrier marks the new one delivered, and it reads
+  **Unknown** instead of a scheduled date when no delivered box carries carrier tracking.
+  **Tracked shipment date** now always refers to the same box, and the sensor's
+  `last_delivery_week.delivery_date` attribute now carries the real scheduled day instead of
+  the week's Monday placeholder.
+
 ## 2.93 — 2026-09-04
 - Meal planner and market cards: the **+ Add** pill and the ± steppers are pinned to the
   bottom edge of each tile, so the selection controls line up across a row instead of

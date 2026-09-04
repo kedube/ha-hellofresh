@@ -1983,9 +1983,11 @@ class HelloFreshPayloadNormalizer:
                 or raw_week.get("date")
             )
             # The /gw/my-deliveries/past-deliveries payload identifies each delivered week by its
-            # ISO ``week`` id ONLY (no explicit date), so derive the date from the week id when no
-            # date field is present — otherwise these weeks stay date-less and "Last delivery day"
-            # is Unknown even though the box shipped.
+            # ISO ``week`` id ONLY (no explicit date), so stamp the week with that ISO week's
+            # Monday as a sortable PLACEHOLDER rather than leaving it date-less. It is not a
+            # delivery date: ``HelloFreshAccountData.finalize`` replaces it with the matching
+            # account week's real scheduled ``deliveryDate``, and "Last delivery day" never reads
+            # it — that sensor follows the carrier's ``tracking.delivery_date`` (issue #6).
             if delivery_date is None:
                 delivery_date = date_from_iso_week(week_id)
             if week_id.startswith("past-week-") and delivery_date is None:

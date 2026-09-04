@@ -6,6 +6,8 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from .models import HelloFreshAccountData
 from .parsers import iso_week_label
 
@@ -120,6 +122,25 @@ def _sub_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:
     )
 
 
+def _last_delivery_day(data: HelloFreshAccountData) -> date | None:
+    """Return the calendar day the most recent box ACTUALLY arrived, in Home Assistant's timezone.
+
+    Derived from the carrier's handover timestamp (``delivered_at``), never from the scheduled
+    ``deliveryDate``: a box scheduled for Wednesday that lands on Thursday reports Thursday, and
+    a box still in transit leaves the previous delivery in place until it lands. The carrier
+    timestamp is UTC, so it is converted to the local timezone before the date is taken — a
+    22:53 ET handover is already the next day in UTC and must not shift the reported day.
+    ``None`` (Unknown) when no delivered box carries a carrier timestamp.
+    """
+    week = data.last_delivery_week
+    if week is None or week.delivered_at is None:
+        return None
+    delivered_at = week.delivered_at
+    if delivered_at.tzinfo is None:
+        delivered_at = delivered_at.replace(tzinfo=UTC)
+    return dt_util.as_local(delivered_at).date()
+
+
 VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "next_delivery_date": _sub_value("next_delivery"),
     "next_order_status": _next_order_value("status"),
@@ -134,8 +155,7 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "tracked_shipment_carrier": _tracked_order_value("carrier"),
     "tracked_shipment_estimate": lambda data: _estimated_delivery_date(data),
     # The moment the box actually arrived, from the newest DELIVERED week's carrier timestamp.
-    # Distinct from `last_delivery_date`, which reports that week's SCHEDULED day: a box handed
-    # over at 22:53 ET is already the next day in UTC, so the two legitimately disagree.
+    # `last_delivery_date` is the same arrival rendered as a local calendar day.
     "tracked_shipment_date": lambda data: (
         data.last_delivery_week.delivered_at if data.last_delivery_week else None
     ),
@@ -237,9 +257,7 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
         data.next_skipped_week.display_name if data.next_skipped_week else None
     ),
     "boxes_received": lambda data: data.boxes_received,
-    "last_delivery_date": lambda data: (
-        data.last_delivery_week.delivery_date if data.last_delivery_week else None
-    ),
+    "last_delivery_date": lambda data: _last_delivery_day(data),
     "account_id": lambda data: data.account_id,
     "recent_order_id": lambda data: data.recent_order_id,
     "next_box_coupon": _sub_value("coupon_code"),

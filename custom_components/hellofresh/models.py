@@ -5,7 +5,6 @@ No HTTP, no aiohttp, no BeautifulSoup — just dataclasses and exceptions.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 import re
@@ -1722,50 +1721,64 @@ class HelloFreshAccountData:
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
 
-        # The most recent DELIVERED week — its date drives the "Last delivery day" sensor.
+        # The most recent DELIVERED box — its carrier arrival drives "Last delivery day" and
+        # "Tracked shipment date".
         #
-        # Prefer the dedicated past-deliveries history, but that endpoint also returns the
-        # UPCOMING week (e.g. it lists W28/Jul 6 alongside the delivered W27/Jun 29), so a naive
-        # "newest week" would report a future box as the last delivery. Restrict to weeks dated
-        # strictly before today. When history yields nothing usable, fall back to the newest
-        # past-dated, non-skipped week from the main deliveries list, so the sensor still resolves
-        # for accounts/regions where the history endpoint is empty.
-        def _newest_past(weeks: Iterable[HelloFreshWeek]) -> HelloFreshWeek | None:
-            return max(
-                (
-                    week
-                    for week in weeks
-                    if week.delivery_date is not None
-                    and week.delivery_date < today
-                    and not week.is_skipped
-                ),
-                default=None,
-                key=lambda week: (week.delivery_date, week.week_id),
-            )
-
-        self._last_delivery_week = _newest_past(self.past_delivery_weeks) or _newest_past(
-            self.weeks
-        )
-
-        # The past-deliveries endpoint reports no carrier timestamp, so a week chosen from that
-        # list has `delivered_at` unset and "Tracked shipment date" would read Unknown even
-        # though the box arrived. Only the ranged deliveries payload carries
-        # `tracking.delivery_date`, so back-fill the real arrival time from the matching account
-        # week. Match on week id, requiring subscription ids to agree when BOTH sides carry one
-        # (with two subscriptions the same ISO week is two different boxes).
-        if self._last_delivery_week is not None and self._last_delivery_week.delivered_at is None:
+        # Selection is by the real carrier timestamp (``delivered_at``, from the ranged
+        # deliveries payload's ``tracking.delivery_date``), never by the scheduled day:
+        #   * the past-deliveries history endpoint carries no date at all, so its weeks are
+        #     stamped with the ISO week's MONDAY (``date_from_iso_week``); picking by that date
+        #     reported Aug 31 for a box scheduled for Wed Sep 2 (issue #6);
+        #   * a box still in transit has no ``delivered_at`` (the extractor is gated on the
+        #     DELIVERED status), so the previously delivered week keeps winning until the new
+        #     box actually lands — no "newest week dated before today" guesswork;
+        #   * with no carrier timestamp anywhere the sensors read Unknown rather than a
+        #     scheduled or fabricated date.
+        #
+        # The history endpoint reports no carrier timestamp, so first back-fill each history
+        # week's ``delivered_at`` from the matching account week. Match on week id, requiring
+        # subscription ids to agree when BOTH sides carry one (with two subscriptions the same
+        # ISO week is two different boxes). History weeks are considered first so that on a tie
+        # the recipe-bearing history week is the one exposed.
+        #
+        # The same match also replaces the history week's ``delivery_date`` — the ISO-week
+        # Monday placeholder — with the account week's real scheduled ``deliveryDate``, so the
+        # ``delivery_date`` attribute on "Last delivery day" reports the day the box was
+        # scheduled for rather than the start of its week.
+        for history_week in self.past_delivery_weeks:
+            if history_week.delivered_at is not None:
+                continue
             for account_week in self.weeks:
                 if (
-                    account_week.week_id == self._last_delivery_week.week_id
+                    account_week.week_id == history_week.week_id
                     and account_week.delivered_at is not None
                     and (
                         account_week.subscription_id is None
-                        or self._last_delivery_week.subscription_id is None
-                        or account_week.subscription_id == self._last_delivery_week.subscription_id
+                        or history_week.subscription_id is None
+                        or account_week.subscription_id == history_week.subscription_id
                     )
                 ):
-                    self._last_delivery_week.delivered_at = account_week.delivered_at
+                    history_week.delivered_at = account_week.delivered_at
+                    if account_week.delivery_date is not None:
+                        history_week.delivery_date = account_week.delivery_date
                     break
+
+        def _delivered_key(week: HelloFreshWeek) -> datetime:
+            # A carrier timestamp without an offset is UTC; normalise so aware and naive
+            # values compare instead of raising.
+            delivered_at = week.delivered_at
+            assert delivered_at is not None
+            return delivered_at if delivered_at.tzinfo else delivered_at.replace(tzinfo=UTC)
+
+        self._last_delivery_week = max(
+            (
+                week
+                for week in (*self.past_delivery_weeks, *self.weeks)
+                if week.delivered_at is not None and not week.is_skipped
+            ),
+            default=None,
+            key=_delivered_key,
+        )
         self._serialized_orders = None
         self._serialized_weeks = None
         self._serialized_past_delivery_weeks = None
