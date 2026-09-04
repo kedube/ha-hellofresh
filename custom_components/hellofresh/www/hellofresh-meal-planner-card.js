@@ -1932,15 +1932,15 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             : ""}
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${ctx.editable && isSelected
-            ? `<div class="stepper" data-stepper="${idxAttr}">
+            ? `<div class="metafoot"><div class="stepper" data-stepper="${idxAttr}">
                  <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="${qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
                  <span class="qval">${qty}</span>
                  <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
                  <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
-               </div>`
+               </div></div>`
             : ""}
           ${ctx.editable && !isSelected
-            ? `<button class="addbtn" data-add="${idxAttr}" aria-label="Add ${this._esc(r.name)} to your box">+ Add</button>`
+            ? `<div class="metafoot"><button class="addbtn" data-add="${idxAttr}" aria-label="Add ${this._esc(r.name)} to your box">+ Add</button></div>`
             : ""}
         </div>
       </div>`;
@@ -2458,9 +2458,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
       }
       .grid.busy { opacity: 0.6; pointer-events: none; }
+      /* Flex column so .metafoot can pin the + Add pill / servings stepper to the bottom
+         edge: grid rows already stretch tiles to equal height, so the selection controls
+         line up across a row no matter how long each meal's description and chips run. */
       .recipe {
         border: 2px solid transparent; border-radius: 10px; overflow: hidden;
         background: var(--secondary-background-color); transition: border-color 0.15s, transform 0.1s;
+        display: flex; flex-direction: column;
       }
       .recipe.editable { cursor: pointer; }
       .recipe.editable:hover { transform: translateY(-2px); }
@@ -2515,7 +2519,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       /* "+ Add" pill on unselected editable tiles — the market card's model: an explicit
          select affordance keeps the tile tap free to open the recipe. */
       .addbtn {
-        margin-top: 8px; padding: 4px 16px; border-radius: 14px; cursor: pointer;
+        padding: 4px 16px; border-radius: 14px; cursor: pointer;
         border: 1px solid var(--primary-color); background: transparent;
         color: var(--primary-color); font-weight: 600; font-size: 0.85em;
       }
@@ -2559,7 +2563,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         background: rgba(0,0,0,0.72); color: #fff; font-size: 0.72em; font-weight: 700;
       }
       .stepper {
-        display: flex; align-items: center; gap: 8px; margin-top: 8px;
+        display: flex; align-items: center; gap: 8px;
       }
       .qbtn {
         width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--divider-color);
@@ -2577,7 +2581,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         background: var(--warning-color, #ff9800); color: #fff; font-size: 0.68em; font-weight: 700;
         letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      .meta { padding: 8px; }
+      .meta { padding: 8px; flex: 1; display: flex; flex-direction: column; }
+      .metafoot { margin-top: auto; padding-top: 8px; }
       .name { font-size: 0.9em; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
       .variation {

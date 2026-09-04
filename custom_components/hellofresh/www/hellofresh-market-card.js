@@ -944,12 +944,12 @@ class HelloFreshMarketCard extends HTMLElement {
           ${item.description ? `<div class="desc">${this._esc(item.description)}</div>` : ""}
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${editable
-            ? `<div class="stepper">
+            ? `<div class="metafoot"><div class="stepper">
                  <button class="qbtn" data-qty="dec" data-id="${idAttr}" ${qty <= 0 ? "disabled" : ""} title="Fewer">−</button>
                  <span class="qval">${qty}</span>
                  <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap || soldOut ? "disabled" : ""} title="More">+</button>
-               </div>`
-            : qty > 0 ? `<div class="cals">${qty} selected</div>` : ""}
+               </div></div>`
+            : qty > 0 ? `<div class="metafoot"><div class="cals">${qty} selected</div></div>` : ""}
         </div>
       </div>`;
   }
@@ -1185,9 +1185,13 @@ class HelloFreshMarketCard extends HTMLElement {
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       }
       .grid.busy { opacity: 0.6; pointer-events: none; }
+      /* Flex column so .metafoot can pin the ± stepper to the tile's bottom edge: grid
+         rows stretch tiles to equal height, so steppers line up across a row no matter
+         how long each item's description runs. */
       .item {
         border: 2px solid transparent; border-radius: 10px; overflow: hidden;
         background: var(--secondary-background-color);
+        display: flex; flex-direction: column;
         /* Tapping the tile opens the full recipe (quantity is changed with the ± steppers). */
         cursor: pointer;
       }
@@ -1212,11 +1216,13 @@ class HelloFreshMarketCard extends HTMLElement {
         background: rgba(0,0,0,0.78); color: #fff; font-size: 0.68em; font-weight: 700;
         text-transform: uppercase; letter-spacing: 0.03em;
       }
-      .meta { padding: 8px; }
+      .meta { padding: 8px; flex: 1; display: flex; flex-direction: column; }
+      .metafoot { margin-top: auto; padding-top: 8px; }
+      .metafoot > .cals { margin-top: 0; }
       .name { font-size: 0.9em; font-weight: 600; }
       .desc { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
       .cals { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 4px; font-weight: 600; }
-      .stepper { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+      .stepper { display: flex; align-items: center; gap: 8px; }
       .qbtn {
         width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--divider-color);
         background: var(--card-background-color); color: var(--primary-text-color);
