@@ -536,6 +536,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             # the schedule card can show the discount applied to the box it summarizes.
             "next_delivery_price_breakdown": data.next_delivery_price_breakdown,
             "next_delivery_total_currency": data.next_delivery_total_currency,
+            # The wallet promise that applies to the next box ("$10 off premium meals"), for
+            # the schedule card's Voucher row; each week's own list rides on the week.
+            "next_box_discount": data.next_box_discount,
             # Subscription-level next charge date and coupon (matching the next_payment_date
             # and next_box_coupon sensors); shown in the schedule card's next-box summary.
             "next_payment_date": (
@@ -634,6 +637,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         summary["payment_card_brand"] = data.payment_card_brand
         summary["payment_card_last4"] = data.payment_card_last4
         summary["payment_card_expiry"] = data.payment_card_expiry
+        summary["next_box_discount"] = data.next_box_discount
         return summary
 
     async def async_get_food_profile(service_call: ServiceCall) -> ServiceResponse:

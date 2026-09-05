@@ -163,6 +163,9 @@
       "next_box_total_price": {
         "name": "Totaalprijs volgende bezorging"
       },
+      "next_box_discount": {
+        "name": "Korting op volgende box"
+      },
       "account_credit": {
         "name": "Tegoed"
       },

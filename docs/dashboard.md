@@ -142,12 +142,15 @@ type: custom:hellofresh-food-profile-card
 
 What it does, driven entirely by the options catalog so new HelloFresh options appear automatically:
 
-- **Dietary preference** — single-select (flexitarian, mostly-meat, vegetarian, pescatarian).
-- **Multi-select chips** — taste exclusions (with a "None" choice where HelloFresh allows it), nutrition goals, meal types, and goals.
+- **Dietary preference** — single-select (I eat everything, flexitarian, vegetarian, pescatarian), with HelloFresh's own one-line description of each.
+- **Proteins follow the diet** — the protein list is the one HelloFresh shows for the chosen diet: the omnivore set for "I eat everything" and flexitarian, seafood (tuna, salmon, cod, …) for pescatarian, meat-free proteins (tofu, halloumi, legumes, …) for vegetarian, each under the site's question for that diet ("Which seafood do you enjoy?"). Switching to a diet with a different protein set starts the new set fully liked, as the site does; switching between diets that share a set keeps your likes and dislikes.
+- **Multi-select chips** — taste exclusions (with a "None" choice where HelloFresh allows it), nutrition goals, cooking styles (with the site's description of each on hover), and personal goals.
 - **Like / Dislike** — a tri-state 👍/👎 toggle per item for cuisines, flavors, dish types, and proteins (👍 = +100, 👎 = −100, neither = neutral), exactly matching how HelloFresh weights them.
-- **Household** — adults / children selectors.
-- **Completion progress** — a slim bar showing how many profile fields HelloFresh considers answered (its own reckoning, not a guess), so it's obvious when something is still worth filling in. It disappears once the profile is complete, and is simply omitted if HelloFresh doesn't report it.
-- **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes.
+- **Household** — adults / kids (under 12) steppers.
+- **The site's own rules and labels** — personal goals are capped at three ("Pick up to 3 that matter most to you"; the remaining chips grey out), at least one cooking style is required (Save stays disabled with the reason shown until one is picked), and every option is labelled as hellofresh.com labels it ("GLP-1 friendly", "Soups or Stews", "Cook easier", …).
+- **Completion prompts** — a slim bar showing how many profile fields HelloFresh considers answered (its own reckoning, not a guess). The sections it still wants carry a **Tell us more** badge and open themselves on first load, so the bar leads somewhere. The bar disappears once the profile is complete, and is simply omitted if HelloFresh doesn't report it.
+- **Notices** — a heads-up under the exclusions list that some menu recipes may still include those ingredients, and a note beside Save that changes apply to future automatic selections while meals you picked yourself stay as they are.
+- **Save / Reset** — Save writes only the changed sections via `hellofresh.set_food_profile`; Reset reverts the draft to the server's current profile. The Save button is enabled only when there are unsaved changes that pass the rules above.
 
 ## Missing Ingredients view
 
@@ -191,6 +194,7 @@ type: custom:hellofresh-schedule-card
 What it does:
 
 - **Next-box summary** — the nearest upcoming delivery's date (with a relative "in 3 days"), the courier **delivery window**, the selection-deadline countdown (highlighted red when under 24h), the next payment date, the active coupon, and the order status with the box total. When nothing is upcoming (paused subscription, end of data) it shows the most recent box, labelled **Last box**. A **Discount** row appears when a discount is applied to that box (from HelloFresh's own price calculation), so a coupon or credit promise is visible where the box is.
+- **Weekly discounts** — a week whose box HelloFresh's wallet will discount ("$10 off premium meals", the promise the deliveries page shows) carries a green voucher badge in its row, and the next-box summary gains a **Voucher** row with the promise, its expiry and whether it is one-time. Backed by each week's `benefits` and the account payload's `next_box_discount` from `get_weeks` (the same data as `sensor.next_box_discount`). The meal planner shows the same label under the week title.
 - **Delivery calendar** — a built-in month grid with every delivery day marked in its week's state colour (green delivered/set, amber needs picking, struck-through for skipped), with ‹ › month navigation and a Today button. Navigation stops at the edges of the loaded data (the arrows disable) instead of paging into empty months. It covers the full loaded range (your configured past history through the scheduled weeks ahead), so a separate `calendar.delivery_schedule` dashboard widget is no longer needed. Clicking a marked day — or a timeline row — jumps the [Meal planner](#meal-planner-card) and [Market](#market-card) cards to that week, even across dashboard views, and the week those cards are currently showing gets a green ring on the calendar. Timeline rows are keyboard-accessible (Tab to a row, Enter/Space selects the week).
 - **Timeline** — a chronological row per week, **following the calendar's displayed month**, so navigating months swaps the list to that month's delivery weeks and the two always agree. (With `calendar: false` it instead shows the last `past_weeks` deliveries plus up to `max_weeks` upcoming.)
   - A month with more than one week opens with a **roll-up line**: boxes, skipped weeks, and the summed billed cost.
@@ -238,7 +242,7 @@ What it does:
 - **Running total headline** — the lifetime amount spent across all delivered boxes, its box count, and a derived per-box average.
 - **Monthly cost chart** — a self-contained SVG histogram of the last year's monthly box cost (`chart_months` slots), with the dollar amount printed above each bar and a trend line connecting the bar tops. Months with no delivery (paused/skipped) render as empty slots so the timeline stays unbroken, and the trend line bridges them rather than dipping to zero. No external chart library — it draws inside the card's sandbox and scales to the card width.
 - **By-month roll-up** — below the chart, a list giving each month's exact total and box count with a bar scaled to the largest month in view (newest first, capped by `months`).
-- **Recent boxes** — a per-box list of delivery date + amount (newest first, capped by `weeks`).
+- **Recent boxes** — a per-box list of delivery date + amount (newest first, capped by `weeks`), with the voucher taken off that box (−$10.00, hover for the code) when the billing ledger shows one. The **Total spent** line adds "… saved with vouchers" once any past box carried a discount.
 - **Upcoming boxes** — a box that's been scheduled/charged but not yet delivered is shown with an "upcoming" tag and **excluded from the running total** (a running cost is money already spent).
 - **Stays current on its own** — re-fetches on a periodic interval, when the tab becomes visible again after the data has aged, and immediately after a sibling card saves a change; a failed refresh shows an inline notice over the last good view. Read-only.
 

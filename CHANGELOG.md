@@ -5,6 +5,33 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Weekly discounts.** New monetary **`sensor.next_box_discount`**: the wallet promise
+  HelloFresh will apply to the next box that ships ("$10 off premium meals"), with the voucher's
+  target, expiry, one-time flag and every promise on the account as attributes — read from the
+  same `customer-wallet` benefit-distribution call the deliveries page makes, which neither
+  the cart-pricing split nor the subscription coupon ever reflected. Each week in `get_weeks`
+  now carries its `benefits`; the schedule card badges those weeks and adds a **Voucher** row
+  to the next-box summary, and the meal planner shows the label under the week title.
+- **Realized discounts from the billing ledger.** Orders keep their `coupon_code` and
+  `discount_amount` (the coupon lines HelloFresh actually took off), `sensor.next_box_total_price`
+  gains a `billed_discount` attribute, and `get_spending` reports `discount` per week and month
+  plus a running `total.discount` — the cost card shows the voucher taken off each box and a
+  "saved with vouchers" total.
+- **Docs:** the API reference's wallet note was wrong (it called benefit-distribution free-box
+  credit machinery); it now documents the voucher system and the realized coupon lines.
+- **Food profile card matches the HelloFresh page.** The protein list now follows the diet
+  (seafood for pescatarian, meat-free proteins for vegetarian, the omnivore set otherwise —
+  from the options catalog's `primaryProteinsGroups`), under the site's question for that
+  diet, and switching to a diet with a different protein set starts it fully liked as the site
+  does. The site's rules apply before Save: personal goals cap at three and at least one
+  cooking style is required, with the reason shown inline. Sections HelloFresh's completion
+  check still wants carry a **Tell us more** badge and open on first load. Every option is
+  labelled as hellofresh.com labels it ("I eat everything", "GLP-1 friendly", "Soups or
+  Stews", "Cook easier", …), cooking styles explain themselves on hover, household reads
+  "Adults" / "Kids (under 12)", and two notices were added: the exclusions heads-up and a
+  note that saved changes apply to future automatic selections only.
+
 ## 2.96 — 2026-09-05
 - **Boxes land on the dashboard within minutes, not hours.** A delivery-day watch re-reads
   just the deliveries payload and the carrier lookup every 15 minutes on the day a box is due

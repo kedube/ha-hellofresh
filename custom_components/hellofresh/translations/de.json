@@ -163,6 +163,9 @@
       "next_box_total_price": {
         "name": "Gesamtpreis der nächsten Lieferung"
       },
+      "next_box_discount": {
+        "name": "Rabatt auf die nächste Box"
+      },
       "account_credit": {
         "name": "Guthaben"
       },

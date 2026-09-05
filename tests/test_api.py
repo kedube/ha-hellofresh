@@ -847,6 +847,7 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     client._async_enrich_subscription_payment_dates = fake_enrich_subscription_payments  # type: ignore[method-assign]
     client._async_enrich_payment_method_status = fake_enrich_subscription_payments  # type: ignore[method-assign]
     client._async_enrich_next_box_price_breakdown = fake_enrich_subscription_payments  # type: ignore[method-assign]
+    client._async_enrich_wallet_benefits = fake_enrich_subscription_payments  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -917,6 +918,7 @@ def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
     client._async_enrich_account_credit = fake_noop  # type: ignore[method-assign]
     client._async_enrich_payment_method_status = fake_noop  # type: ignore[method-assign]
     client._async_enrich_next_box_price_breakdown = fake_noop  # type: ignore[method-assign]
+    client._async_enrich_wallet_benefits = fake_noop  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -7013,7 +7015,7 @@ def test_accumulate_order_prices_sums_multiple_charges_same_date() -> None:
         _billing_item("sub-1", "2026-06-15", 15.98),
         _billing_item("sub-1", "2026-06-15", 76.93),
     ]
-    _, _, _, price_by_key = client._accumulate_order_prices(items)
+    _, _, _, price_by_key, _ = client._accumulate_order_prices(items)
 
     assert ("sub-1", date(2026, 6, 15)) in price_by_key
     total, currency = price_by_key[("sub-1", date(2026, 6, 15))]
@@ -7052,7 +7054,7 @@ def test_accumulate_order_prices_separates_different_dates() -> None:
         _billing_item("sub-1", "2026-06-08", 80.00, created_at="2026-06-01T00:00:00Z"),
         _billing_item("sub-1", "2026-06-15", 97.50),
     ]
-    _, _, _, price_by_key = client._accumulate_order_prices(items)
+    _, _, _, price_by_key, _ = client._accumulate_order_prices(items)
 
     assert round(price_by_key[("sub-1", date(2026, 6, 8))][0], 2) == 80.00
     assert round(price_by_key[("sub-1", date(2026, 6, 15))][0], 2) == 97.50
@@ -7085,7 +7087,7 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
             created_at=f"{recent_charge.isoformat()}T00:00:00Z",
         ),
     ]
-    latest, future, _, _ = client._accumulate_order_prices(items)
+    latest, future, _, _, _ = client._accumulate_order_prices(items)
 
     assert "sub-1" in latest
     assert latest["sub-1"].date() == recent_charge  # most recent CHARGE, not last delivery
@@ -7103,7 +7105,7 @@ def test_accumulate_order_prices_next_order_nr_is_earliest_future() -> None:
         _billing_item("sub-1", farther_future.isoformat(), 90.00, order_nr="99999999999"),
         _billing_item("sub-1", nearest_future.isoformat(), 97.50, order_nr="28192254942"),
     ]
-    _, _, next_order_nr, _ = client._accumulate_order_prices(items)
+    _, _, next_order_nr, _, _ = client._accumulate_order_prices(items)
 
     assert next_order_nr.get("sub-1") == "28192254942"
 
@@ -7171,7 +7173,7 @@ def test_recent_payment_date_is_most_recent_actual_charge() -> None:
             created_at=f"{recent_charge.isoformat()}T00:00:00Z",  # but already billed
         ),
     ]
-    latest, future, _, _ = client._accumulate_order_prices(items)
+    latest, future, _, _, _ = client._accumulate_order_prices(items)
 
     subscriptions = [HelloFreshSubscription(subscription_id="sub-1")]
     client._apply_recent_payment_dates(subscriptions, latest, future)
@@ -7192,7 +7194,7 @@ def test_recent_payment_date_none_when_charge_is_still_in_the_future() -> None:
             created_at=f"{future_charge.isoformat()}T00:00:00Z",
         ),
     ]
-    latest, future, _, _ = client._accumulate_order_prices(items)
+    latest, future, _, _, _ = client._accumulate_order_prices(items)
 
     subscriptions = [HelloFreshSubscription(subscription_id="sub-1")]
     client._apply_recent_payment_dates(subscriptions, latest, future)
@@ -7868,7 +7870,7 @@ def test_build_spending_dataset_aggregates_ledger() -> None:
     assert months["2026-05"]["amount"] == 80.0
 
     # Running total is the lifetime spend across all past deliveries.
-    assert dataset["total"] == {"amount": 262.5, "currency": "USD", "box_count": 3}
+    assert dataset["total"] == {"amount": 262.5, "currency": "USD", "box_count": 3, "discount": 0.0}
 
 
 def test_build_spending_dataset_excludes_upcoming_from_running_total() -> None:
@@ -7886,7 +7888,7 @@ def test_build_spending_dataset_excludes_upcoming_from_running_total() -> None:
     assert by_date[future.isoformat()]["upcoming"] is True
     assert by_date[past.isoformat()]["upcoming"] is False
     # Only the past box counts toward the running total.
-    assert dataset["total"] == {"amount": 90.0, "currency": "USD", "box_count": 1}
+    assert dataset["total"] == {"amount": 90.0, "currency": "USD", "box_count": 1, "discount": 0.0}
 
 
 def test_get_spending_fetches_orders_and_returns_ledger() -> None:
@@ -7943,7 +7945,7 @@ def test_get_spending_fetches_orders_and_returns_ledger() -> None:
     assert captured["path"] == "/gw/api/customers/me/orders"
     assert captured["params"]["limit"] == 200
     assert [w["delivery_date"] for w in dataset["weeks"]] == ["2026-06-01", "2026-05-25"]
-    assert dataset["total"] == {"amount": 162.5, "currency": "USD", "box_count": 2}
+    assert dataset["total"] == {"amount": 162.5, "currency": "USD", "box_count": 2, "discount": 0.0}
 
 
 def test_get_spending_returns_empty_when_no_subscriptions() -> None:

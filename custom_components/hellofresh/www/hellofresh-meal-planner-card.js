@@ -1644,6 +1644,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             ${week.delivery_date ? `${this._esc(this._fmtDate(week.delivery_date))}` : ""}
             ${rel ? ` · ${this._esc(rel)}` : ""}
             ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
+            ${this._weekBenefitLabel(week) ? ` · <span class="benefit">${this._esc(this._weekBenefitLabel(week))}</span>` : ""}
           </div>
           ${this._renderCurrentWeek()}
         </div>
@@ -1651,6 +1652,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       </div>
       ${this._renderStatusRow(week)}
     `;
+  }
+
+  // The weekly discount HelloFresh's wallet will apply to this box ("$10 off premium meals"),
+  // from the week's `benefits` list; null when none is available or the week is skipped.
+  _weekBenefitLabel(week) {
+    if (!week || week.is_skipped || !Array.isArray(week.benefits)) return null;
+    const benefit = week.benefits.find((b) => b && b.status === "available" && b.label);
+    return benefit ? benefit.label : null;
   }
 
   // A "Current Week" button that jumps the cursor to the week matching today's date. Lives
@@ -2568,6 +2577,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       .header { display: flex; align-items: center; gap: 8px; }
       .header .weekinfo { flex: 1; text-align: center; }
       .weektitle { font-size: 1.2em; font-weight: 600; }
+      .weeksub .benefit { color: var(--hf-green, #91c11e); font-weight: 600; }
       .weeksub { color: var(--secondary-text-color); font-size: 0.9em; }
       .skipped { color: var(--error-color); font-weight: 600; }
       .nav {

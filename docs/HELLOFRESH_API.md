@@ -494,6 +494,43 @@ HAR-verified (captures 33/34/43/49): the account pages POST an **empty body** to
 
 The subscription card renders the kept fields as "Visa ending in 4242 · exp. May 2029" (and names the card the same way in its expiring/expired banner). Best-effort: a gateway failure leaves the sensor unavailable. The companion `GET /gw/payments/us/subscription/{id}` and `/gw/payments/us/customers` (`x-requested-by: activations-rte`) return the same token object without the flags and are not called; `/gw/payments-status/us/subscription/{id}/payment-change-status` (`{"status": "ok"}`) and `/gw/payments/v1/getpaynoworders` (404 `Orders not found` in every capture — its shape when a payment actually fails is unobserved) are not called either.
 
+### Weekly discounts — wallet promises (`/gw/customer-wallet/v2/benefit-distribution`)
+
+HAR-verified (captures 37–51): the deliveries page POSTs its upcoming weeks to `POST /gw/customer-wallet/v2/benefit-distribution?externalPartnerBenefits=true&subscription={id}` with `x-requested-by: upselling`:
+
+```json
+{"deliveries": [{"delivery": {"hfWeek": "2026-W38", "state": "RUNNING", "cutoffDateTime": "2026-09-09T23:59:59-0700"},
+                 "selections": {"mealboxHandle": "US-CBU-3-2-0"}, "subscriptionId": 6959884}, …]}
+```
+
+and gets back, per week, the promises available for it plus the promise definitions:
+
+```json
+{"deliveries": [{"hfWeek": "2026-W38", "units": [{"promiseId": "5bd7…", "status": "available", "box": null, "alternatives": []}]},
+                {"hfWeek": "2026-W39", "units": []}, …],
+ "promises": [{"id": "5bd7…", "voucherCode": "RX-…", "source": "unspecified",
+               "expirationDateTime": "2026-09-09T23:59:59-0700", "attachmentDateTime": "2026-08-09T13:34:00Z",
+               "unlimited": true, "type": "premiumSurcharge", "campaign": {"type": "default"}, "storeSlug": null,
+               "units": [{"box": null, "used": null,
+                          "benefits": [{"id": "…", "applicableTo": "premiumSurcharge", "budget": {"type": "fixed", "value": 1000}}]}]}]}
+```
+
+A promise is the **weekly discount** the site advertises as "$10 off premium meals" (`budget.value` is in minor units; `unlimited: true` means one per box on every box it covers, otherwise one-time). It attaches to every upcoming week until its `expirationDateTime` — the one above was available on W35–W38 in August and only on W38 by September, with nothing after. Two things make it worth its own call: the cart-pricing call (`/gw/v1/carts/{week}/price`) reports `discountAmount: 0` and empty `benefitInfos` for a week the voucher covers, and the subscription's `couponCode` is null — so neither `next_box_coupon` nor the calculate split ever shows it. The billing ledger does: the order for each covered week carries `couponCode` and a `couponMoneyValue` of 10 on the premium-charge line (unit price minus ten equals paid price).
+
+`_async_enrich_wallet_benefits` sends the same body (from each upcoming week's raw `state`, `cutoffDate` and `product.handle`), one request per subscription per poll, and keeps:
+
+| Field | Where | Notes |
+| --- | --- | --- |
+| `HelloFreshWeek.benefits` | `get_weeks` weeks (summary form) | `[{promise_id, voucher_code, type, applies_to, amount, amount_type, currency, label, one_time, expires_at, attached_at, source, campaign, status}]` for the promises named on that week; `status` is the unit's (`available`, …). |
+| `HelloFreshAccountData.wallet_benefits` | `sensor.next_box_discount` → `benefits` | Every promise, each with `weeks`: the upcoming week ids it is available for. |
+| `HelloFreshAccountData.next_box_discount` | `sensor.next_box_discount` (state = `amount`), `get_weeks` account payload, account summary | The first available promise on the earliest upcoming non-skipped week, plus that `week_id`. |
+
+`label` is worded the way the site does it: `applicableTo` → "premium meals" / "shipping" / "your box" / …, `budget.type: fixed` → `$10` (symbol by currency, else `10 SEK`), `percent` → `15%`. Only the fixed premium-surcharge kind has been observed; `applicableTo` and `budget.type` are carried generically so other kinds label themselves. `voucherCode` is redacted from diagnostics (`voucher_code` / `voucherCode`) and omitted from the `wallet_attempts` debug trace. Best-effort per subscription: a failure leaves the sensor unknown.
+
+The single-week `POST /gw/customer-wallet/v2/delivery-benefits` (`x-requested-by: shopping-experience-web` / `rewards`, body `{delivery, planId, legacyVoucherCode, legacyVoucherShippedDiscountedBoxes, selections, systemCountry, locale}`) returns the same promises for one week and is not called. `GET /gw/customer-wallet/v1/standalone` (`{"promises": [], "useLegacyExperience": false}` in every capture) holds vouchers not tied to a delivery and is not called either.
+
+**Realized discounts.** The billing scan (`/gw/api/customers/me/orders`) now also sums each order's lines' `couponMoneyValue` per (subscription, delivery date), with the item's `couponCode`: `HelloFreshOrder.discount_amount` / `coupon_code`, `next_box_total_price`'s `billed_discount` attribute, and `get_spending`'s per-week `discount` / `coupon_code`, per-month `discount` and running `total.discount` (amounts are already net in `amount`).
+
 ### Account profile / customer attributes
 
 The integration now probes authenticated account-profile endpoints for long-lived account metrics that are not present in the subscription or upcoming-delivery payloads:
@@ -1504,6 +1541,7 @@ Sensors backed by subscription data (primary subscription):
 | `delivery_address` | `HelloFreshSubscription.delivery_address` | Single-line formatted shipping address; redacted in diagnostics |
 | `recent_payment_date` | `HelloFreshSubscription.recent_payment_date` | Date of most recent charge |
 | `next_payment_date` | `HelloFreshSubscription.next_payment_date` | Estimated date of next charge |
+| `next_box_discount` | `HelloFreshAccountData.next_box_discount` / `wallet_benefits` (+ `HelloFreshWeek.benefits`) | From `POST /gw/customer-wallet/v2/benefit-distribution`; the promise available on the next shipping week; voucher code redacted from diagnostics |
 | `payment_method_expiring` (binary) | `HelloFreshAccountData.payment_method_expiring` / `payment_method_expired` (+ `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`) | From `POST /gw/payments/v1/checktokenstatus`; on when expiring or expired; billing address never stored, last four digits redacted from diagnostics |
 | `box_size` (select) | `client.async_list_plan_options` catalog; current = subscription `product.sku` / `maintainedSku` | Writes via `async_change_plan` (recurring) |
 | `delivery_day` (select) | `client.async_get_delivery_options` catalog; current = subscription `deliveryTime` | Writes via `async_change_delivery_weekday` (recurring) |
@@ -2037,9 +2075,11 @@ Opening the account's payment-method page (capture 49, 2026-09-04) fires a clust
 - **Complaint eligibility** — `GET /gw/customer-complaints/users/me/eligibility` returns
   `{"is_eligible": true, "is_logistics_eligible": false}`. Gates a support-request flow the
   integration does not implement.
-- **Wallet / benefit distribution** — `POST /gw/customer-wallet/v2/benefit-distribution` returns
-  per-week `promiseId` + `status` entries. This is the free-box/credit promise machinery; its
-  user-visible outcome (account credit) is already `sensor.account_credit`.
+- **Wallet / benefit distribution** — `POST /gw/customer-wallet/v2/benefit-distribution` is the
+  weekly-discount voucher system, **now consumed** — see [Weekly discounts](#weekly-discounts--wallet-promises-gwcustomer-walletv2benefit-distribution).
+  (An earlier revision of this document called it free-box/credit machinery covered by
+  `sensor.account_credit`; it is not — a promise's value never reaches the credit balance, it
+  appears as a coupon line on the order.)
 - Onboarding, referrals, checkout, cancellation, experimentation, and storefront-screen endpoints
   are site-UI concerns with no HA equivalent.
 

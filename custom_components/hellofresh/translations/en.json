@@ -145,6 +145,9 @@
       "next_box_total_price": {
         "name": "Next delivery total price"
       },
+      "next_box_discount": {
+        "name": "Next box discount"
+      },
       "account_credit": {
         "name": "Account credit"
       },

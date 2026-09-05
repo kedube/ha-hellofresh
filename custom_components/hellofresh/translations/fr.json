@@ -163,6 +163,9 @@
       "next_box_total_price": {
         "name": "Prix total de la prochaine livraison"
       },
+      "next_box_discount": {
+        "name": "Remise sur la prochaine box"
+      },
       "account_credit": {
         "name": "Crédit du compte"
       },
