@@ -715,6 +715,9 @@ class HelloFreshScheduleCard extends HTMLElement {
     // Discount applied to that box (from its /gw/calculate split) — shown only when non-zero,
     // so the price line's "includes" reads as news rather than a permanent zero.
     const discount = upcoming ? this._nextBoxDiscount() : null;
+    // The wallet promise HelloFresh will apply to that box ("$10 off premium meals") — the
+    // weekly discount the cart-pricing split above never shows. Only for the box it names.
+    const voucher = upcoming ? this._nextBoxVoucher(next) : null;
     // The human-readable courier window ("Mondays: 8AM - 8PM") — the week/order slot_label,
     // the same value the "Delivery Window" (next_delivery_slot) sensor reports. NOT the raw
     // subscription next_delivery_time, which is a machine string.
@@ -754,7 +757,38 @@ class HelloFreshScheduleCard extends HTMLElement {
           <span class="sumlabel">Discount</span>
           <span class="sumval">−${this._esc(discount)} <span class="muted">· included in the price</span></span>
         </div>` : ""}
+        ${voucher ? `
+        <div class="sumrow">
+          <span class="sumlabel">Voucher</span>
+          <span class="sumval">${this._esc(voucher.label)}${voucher.note ? ` <span class="muted">· ${this._esc(voucher.note)}</span>` : ""}</span>
+        </div>` : ""}
       </div>`;
+  }
+
+  // The first available wallet promise on a week, or null. Weeks carry their promises as
+  // `benefits` (from the integration's benefit-distribution call), each with a ready label.
+  _weekBenefit(week) {
+    const list = week && Array.isArray(week.benefits) ? week.benefits : [];
+    return list.find((b) => b && b.status === "available" && b.label) || null;
+  }
+
+  // The next box's voucher as {label, note}: prefers the week's own promise, falling back to
+  // the account payload's next_box_discount when it names this week. The note says when it
+  // expires and whether it is one-time, since both change what the customer should do.
+  _nextBoxVoucher(week) {
+    let benefit = this._weekBenefit(week);
+    if (!benefit && this._account && this._account.next_box_discount) {
+      const candidate = this._account.next_box_discount;
+      if (candidate.label && (!candidate.week_id || candidate.week_id === week.week_id)) benefit = candidate;
+    }
+    if (!benefit) return null;
+    const parts = [];
+    if (benefit.expires_at) {
+      const expires = new Date(benefit.expires_at);
+      if (!Number.isNaN(expires.getTime())) parts.push(`expires ${this._fmtDate(expires)}`);
+    }
+    if (benefit.one_time) parts.push("one-time");
+    return { label: benefit.label, note: parts.join(" · ") };
   }
 
   // The next box's discount from the account payload's price breakdown, formatted, or null
@@ -875,6 +909,11 @@ class HelloFreshScheduleCard extends HTMLElement {
     const holiday = this._isHolidayShifted(week)
       ? `<span class="holiday" title="${this._esc(week.holiday_message || "Holiday delivery change")}">🎄</span>`
       : "";
+    // Weekly discount badge: the wallet promise HelloFresh will apply to this box.
+    const benefit = state === "skipped" ? null : this._weekBenefit(week);
+    const voucherBadge = benefit
+      ? `<span class="badge benefit" title="${this._esc(benefit.voucher_code ? `Voucher ${benefit.voucher_code}` : "Voucher applied by HelloFresh")}">${this._esc(benefit.label)}</span>`
+      : "";
     return `
       <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}${isSelected ? " selected" : ""}" data-action="cal-week"
         role="button" tabindex="0"
@@ -891,6 +930,7 @@ class HelloFreshScheduleCard extends HTMLElement {
           ${state === "skipped" ? "" : this._rowTracking(week)}
           ${this._rescheduleWeekId === week.week_id ? this._renderRescheduleOptions(week) : ""}
         </div>
+        ${voucherBadge}
         ${preselected}
         <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
         ${this._canReschedule(week)
@@ -1299,6 +1339,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       .badge.delivered { background: color-mix(in srgb, var(--hf-green) 18%, transparent); color: var(--hf-green); }
       .badge.needs { background: var(--warning-color, #ff9800); color: #fff; }
       .badge.skipped { background: var(--secondary-background-color); color: var(--secondary-text-color); }
+      .badge.benefit { background: color-mix(in srgb, var(--hf-green) 18%, transparent); color: var(--hf-green); }
 
       /* Identical to the meal-planner/market cards' ↻ pill (their .skipbtn) — same default
          button font (no font: inherit), so the ↻ glyph renders the same in all three cards. */

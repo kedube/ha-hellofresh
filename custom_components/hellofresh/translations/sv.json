@@ -163,6 +163,9 @@
       "next_box_total_price": {
         "name": "Totalpris för nästa leverans"
       },
+      "next_box_discount": {
+        "name": "Rabatt på nästa låda"
+      },
       "account_credit": {
         "name": "Tillgodohavande"
       },

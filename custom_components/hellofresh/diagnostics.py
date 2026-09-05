@@ -50,6 +50,9 @@ TO_REDACT = {
     # anyone who reads a shared export. Redact both the model field and any camelCase param.
     "coupon_code",
     "couponCode",
+    # Wallet promise voucher codes (weekly discounts) — same reasoning as the coupon above.
+    "voucher_code",
+    "voucherCode",
     # Payment descriptors from the subscription payload — whatever HelloFresh puts there
     # (card brand/suffix, PayPal identifier) has no diagnostic value; never export it.
     "payment_method",
