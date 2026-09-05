@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.96 — 2026-09-05
 - **Boxes land on the dashboard within minutes, not hours.** A delivery-day watch re-reads
   just the deliveries payload and the carrier lookup every 15 minutes on the day a box is due
   (and the day after, until the carrier confirms it) or while a shipment is on the road,
