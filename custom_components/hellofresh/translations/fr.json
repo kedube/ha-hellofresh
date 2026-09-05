@@ -372,7 +372,7 @@
         },
         "filters": {
           "name": "Filtres",
-          "description": "Slugs de groupes de filtres associés à un ou plusieurs slugs d'options, tels que listés dans menu_filters de la semaine (par exemple {\"cuisine\": [\"mediterranean\"]})."
+          "description": "Slugs de groupes de filtres associés à un ou plusieurs slugs d'options, tels que listés dans menu_filters de la semaine (par exemple cuisine = mediterranean)."
         }
       }
     },

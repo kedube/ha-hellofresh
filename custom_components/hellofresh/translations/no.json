@@ -372,7 +372,7 @@
         },
         "filters": {
           "name": "Filtre",
-          "description": "Filtergruppe-slugger knyttet til én eller flere valg-slugger, som oppført i ukens menu_filters (for eksempel {\"cuisine\": [\"mediterranean\"]})."
+          "description": "Filtergruppe-slugger knyttet til én eller flere valg-slugger, som oppført i ukens menu_filters (for eksempel cuisine = mediterranean)."
         }
       }
     },
