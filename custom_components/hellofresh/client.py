@@ -2888,8 +2888,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         ``/gw/payments/v1/checktokenstatus?country=US`` (header ``x-requested-by: gateway``)
         and gets ``{isTokenExpiring, isTokenExpired, primaryToken: {type, provider, method,
         details: {expiry_month, expiry_year, number}, billing_address: {...}}}``. Only the two
-        flags, the card type/provider and the expiry month are kept; the last-four digits and
-        billing address are dropped here and never reach attributes or diagnostics.
+        flags, the card type/provider/brand, the expiry month and the last four digits are
+        kept (``number`` is already just the suffix, but only its trailing four digits survive
+        regardless); the billing address is dropped here and never reaches attributes or
+        diagnostics, and the digits are redacted from diagnostics exports.
         Best-effort: a failure leaves the sensor unavailable rather than failing the poll.
         """
         if self._session is None:
@@ -2927,6 +2929,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             data.payment_card_provider = (
                 provider if isinstance(provider, str) and provider else None
             )
+            brand = token.get("method")
+            data.payment_card_brand = brand if isinstance(brand, str) and brand else None
             details = token.get("details")
             if isinstance(details, dict):
                 month = coerce_int(details.get("expiry_month"))
@@ -2935,7 +2939,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     if year < 100:
                         year += 2000
                     data.payment_card_expiry = f"{year:04d}-{month:02d}"
+                number = details.get("number")
+                if isinstance(number, (str, int)):
+                    digits = re.sub(r"\D", "", str(number))
+                    data.payment_card_last4 = digits[-4:] if len(digits) >= 4 else None
 
+        # The debug trace deliberately omits the last four digits.
         self._record_debug_attempt(
             "payment_attempts",
             {
@@ -2944,6 +2953,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 "is_token_expiring": data.payment_method_expiring,
                 "is_token_expired": data.payment_method_expired,
                 "card_type": data.payment_card_type,
+                "card_brand": data.payment_card_brand,
                 "card_expiry": data.payment_card_expiry,
             },
         )

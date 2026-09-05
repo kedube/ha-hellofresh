@@ -129,13 +129,15 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
         """
         data = self.coordinator.data
         if self.entity_description.key == "payment_method_expiring":
-            # Deliberately no card number fragment or billing address: those exist in the
-            # gateway response but are dropped at parse time.
+            # The last four digits are the only part of the number HelloFresh returns; the
+            # billing address in the same response is dropped at parse time.
             return {
                 "expiring": data.payment_method_expiring,
                 "expired": data.payment_method_expired,
                 "card_type": data.payment_card_type,
                 "card_provider": data.payment_card_provider,
+                "card_brand": data.payment_card_brand,
+                "card_last4": data.payment_card_last4,
                 "card_expiry": data.payment_card_expiry,
             }
         return {

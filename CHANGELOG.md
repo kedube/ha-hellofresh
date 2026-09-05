@@ -20,8 +20,9 @@ version heading and publishes it as the release's Highlights.
   polls. Only transitions fire — nothing replays after a restart.
 - **New `binary_sensor.payment_method_expiring`** (Problem): on when HelloFresh reports the
   card on file as expiring or already expired — the same check the website runs, and the
-  most common way a box silently fails to ship. Attributes carry the card type and expiry
-  month only; the card number fragment and billing address are never stored.
+  most common way a box silently fails to ship. Attributes carry the card type, brand, last
+  four digits and expiry month; the billing address is never stored, and the digits are
+  redacted from diagnostics exports.
 - **New `select.box_size` and `select.delivery_day` entities**: change the recurring box
   size (meals × servings) and delivery day/slot from a dashboard, backed by the same writes
   as the `change_plan` / `change_delivery_weekday` services and HelloFresh's own option
@@ -38,7 +39,8 @@ version heading and publishes it as the release's Highlights.
   `delivery_in_progress`), so a dashboard open on delivery day sees the box land within
   minutes instead of at the next multi-hour poll.
 - **Subscription card**: a payment-method banner (amber when the card on file is expiring,
-  red when expired, with the expiry month), a **Card on file** row (type and expiry only),
+  red when expired, naming the card), a **Card on file** row ("Visa ending in 4242 · exp.
+  May 2029"),
   and **Shipping** / **Discount** rows under the plan total. **Schedule card**: a
   **Discount** row in the next-box summary when one applies. The example dashboard gains a
   **Plan controls** entities card (box size, delivery day, payment check) and a **Delivery
@@ -49,7 +51,9 @@ version heading and publishes it as the release's Highlights.
   integration never surfaced.
 - Docs: the API reference now documents the payments token-status endpoint, the
   server-side menu filter service, the delivery-day watch, and corrects the loyalty
-  section (the `/gw/loyalty/*` endpoints exist but only return a finished pilot challenge).
+  section (the `/gw/loyalty/*` endpoints exist but only return a finished pilot challenge),
+  and records the payments-page calls (credit-application opt-in, benefit pass, communication
+  preferences) that fire automatically on page load and are deliberately not exposed.
 
 ## 2.95 — 2026-09-04
 - **Last delivery day now reports the day the box actually arrived** (#6). It was reporting

@@ -470,16 +470,29 @@ The customer UUID is extracted from nested `uuid` fields on the subscription's r
 
 ### Payment-method health (`/gw/payments/v1/checktokenstatus`)
 
-HAR-verified (captures 33/34/43): the account pages POST an **empty body** to `POST /gw/payments/v1/checktokenstatus?country=US` with `x-requested-by: gateway` and get back
+HAR-verified (captures 33/34/43/49): the account pages POST an **empty body** to `POST /gw/payments/v1/checktokenstatus?country=US` with `x-requested-by: gateway` and get back
 
 ```json
 {"isTokenExpiring": false, "isTokenExpired": false,
- "primaryToken": {"type": "credit_card", "provider": "…", "method": "card", "is_active": true, "is_verified": true,
-                  "details": {"expiry_month": "05", "expiry_year": "2027", "number": "4242"},
+ "primaryToken": {"type": "credit_card", "provider": "Braintree", "method": "visa", "is_active": true, "is_verified": true,
+                  "details": {"expiry_month": "05", "expiry_year": "2029", "number": "4242"},
                   "billing_address": {"city": "…", "postcode": "…", "full_address": "…"}}}
 ```
 
-`_async_enrich_payment_method_status` keeps the two flags, the card `type`/`provider` and the expiry month (`payment_card_expiry`, `YYYY-MM`) and feeds `binary_sensor.payment_method_expiring` (`Problem` device class, on when expiring **or** expired). The last-four digits and the billing address are dropped at parse time — they never reach `HelloFreshAccountData`, attributes or diagnostics. Best-effort: a gateway failure leaves the sensor unavailable. The companion `GET /gw/payments/us/subscription/{id}` and `/gw/payments/us/customers` (`x-requested-by: activations-rte`) return the same token object without the flags and are not called; `/gw/payments-status/us/subscription/{id}/payment-change-status` (`{"status": "ok"}`) and `/gw/payments/v1/getpaynoworders` (404 `Orders not found` in every capture — its shape when a payment actually fails is unobserved) are not called either.
+`details.number` is **only the last four digits** — the gateway never returns more of the PAN (capture 49: a 4-character string). `_async_enrich_payment_method_status` maps the response as follows and feeds `binary_sensor.payment_method_expiring` (`Problem` device class, on when expiring **or** expired):
+
+| Response field | `HelloFreshAccountData` | Sensor attribute / account summary | Notes |
+| --- | --- | --- | --- |
+| `isTokenExpiring` | `payment_method_expiring` | `expiring` / `payment_method_expiring` | At least one of the two flags must be a boolean or the response is ignored (sensor stays unavailable). |
+| `isTokenExpired` | `payment_method_expired` | `expired` / `payment_method_expired` | |
+| `primaryToken.type` | `payment_card_type` | `card_type` / `payment_card_type` | `credit_card` in every capture. |
+| `primaryToken.provider` | `payment_card_provider` | `card_provider` / `payment_card_provider` | The PSP (`Braintree`). |
+| `primaryToken.method` | `payment_card_brand` | `card_brand` / `payment_card_brand` | The brand a person calls the card (`visa`, `mastercard`, …); the cards prefer it over `type`. |
+| `primaryToken.details.expiry_month` + `expiry_year` | `payment_card_expiry` | `card_expiry` / `payment_card_expiry` | Normalised to `YYYY-MM`; a two-digit year is widened to 20YY; an out-of-range month leaves it unset. |
+| `primaryToken.details.number` | `payment_card_last4` | `card_last4` / `payment_card_last4` | Non-digits stripped, trailing four digits kept, unset if fewer than four. **Redacted by key name in diagnostics exports** and omitted from the `payment_attempts` debug trace. |
+| `primaryToken.billing_address`, `is_active`, `is_verified` | — | — | Dropped at parse time; never stored. |
+
+The subscription card renders the kept fields as "Visa ending in 4242 · exp. May 2029" (and names the card the same way in its expiring/expired banner). Best-effort: a gateway failure leaves the sensor unavailable. The companion `GET /gw/payments/us/subscription/{id}` and `/gw/payments/us/customers` (`x-requested-by: activations-rte`) return the same token object without the flags and are not called; `/gw/payments-status/us/subscription/{id}/payment-change-status` (`{"status": "ok"}`) and `/gw/payments/v1/getpaynoworders` (404 `Orders not found` in every capture — its shape when a payment actually fails is unobserved) are not called either.
 
 ### Account profile / customer attributes
 
@@ -1491,7 +1504,7 @@ Sensors backed by subscription data (primary subscription):
 | `delivery_address` | `HelloFreshSubscription.delivery_address` | Single-line formatted shipping address; redacted in diagnostics |
 | `recent_payment_date` | `HelloFreshSubscription.recent_payment_date` | Date of most recent charge |
 | `next_payment_date` | `HelloFreshSubscription.next_payment_date` | Estimated date of next charge |
-| `payment_method_expiring` (binary) | `HelloFreshAccountData.payment_method_expiring` / `payment_method_expired` (+ `payment_card_type`, `payment_card_provider`, `payment_card_expiry`) | From `POST /gw/payments/v1/checktokenstatus`; on when expiring or expired; card number and billing address never stored |
+| `payment_method_expiring` (binary) | `HelloFreshAccountData.payment_method_expiring` / `payment_method_expired` (+ `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`) | From `POST /gw/payments/v1/checktokenstatus`; on when expiring or expired; billing address never stored, last four digits redacted from diagnostics |
 | `box_size` (select) | `client.async_list_plan_options` catalog; current = subscription `product.sku` / `maintainedSku` | Writes via `async_change_plan` (recurring) |
 | `delivery_day` (select) | `client.async_get_delivery_options` catalog; current = subscription `deliveryTime` | Writes via `async_change_delivery_weekday` (recurring) |
 | `delivery_events` (event) | coordinator `delivery_events`, from `delivery_snapshot` / `delivery_transitions` diffs of consecutive polls (and delivery-watch refreshes) | `box_shipped`, `box_delivered`, `delivery_failed`, `week_skipped`, `week_unskipped`, `selection_locked`, `menu_published` |
@@ -2003,6 +2016,21 @@ will appear at launch.
 
 These are excluded on judgement, not capability — each has a knowable request shape. The blast
 radius of a misfiring automation is not justified by the benefit.
+
+### Payments-page plumbing — observed, not implemented
+
+Opening the account's payment-method page (capture 49, 2026-09-04) fires a cluster of calls **automatically**, with no user action beyond viewing the page. They are documented here so the next reader does not mistake them for a feature:
+
+| Call | Header | Body → response | Reading |
+| --- | --- | --- | --- |
+| `PUT /gw/payments/customers/{uuid}/credit-application/settings?country=US&locale=en-US` | `x-requested-by: upselling` | *(empty)* → `{"group": "variation", "optedInWeek": null}` | A get-or-create of the customer's **credit-application** settings. `group` was `""` in every capture from Jul–Aug and `"variation"` in Sep, so it is an experiment bucket, not a user choice; `optedInWeek` is the delivery week (if any) the customer has opted into. |
+| `PUT /gw/payments/customers/{uuid}/credit-application/delivery-week/{YYYY-Www}?country=US&locale=en-US` | `x-requested-by: rewards` | `{"enabled": true}` → *(empty 200)* | Opts one delivery week into applying account credit. Fired for `2026-W42` by the page itself on load in the one capture that carries it. Because the balance endpoint already reports credit as applying automatically to the next order, and the call arrives without a click, its user-visible effect is unverified — **no switch is built on it**. Revisit only if the site grows a visible "apply credit to this box" control. |
+| `POST /gw/payments/v1/checktokenstatus?country=US` | `x-requested-by: gateway` | *(empty)* → token flags + card | Consumed — see [Payment-method health](#payment-method-health-gwpaymentsv1checktokenstatus). |
+| `GET /gw/payments/us/customers`, `GET /gw/payments/us/subscription/{id}` | `x-requested-by: activations-rte` | → the same token object without the flags | Redundant with `checktokenstatus`; not called. |
+| `GET /gw/payments-status/us/subscription/{id}/payment-change-status` | | → `{"status": "ok"}` | Polled by the page after a payment change; nothing to expose. |
+| `GET /gw/benefit-pass/v1/status?customer_id=…&plan_id=…` | `x-requested-by: upselling` | → `{"cooling_off_eligible", "is_eligible", "subscription_status": "none", "trial_eligible"}` | The paid "benefit pass" upsell; `subscription_status` has been `none` in every capture and `/gw/benefit-pass/v1/pricing` answers 403. Nothing to expose until an account actually holds one. |
+
+**Communication preferences (`/gw/sps/subscriber/{uuid}/subscribe` and `/unsubscribe`).** The notification-settings page toggles marketing topics per channel with `POST …/subscribe` / `POST …/unsubscribe` (`x-requested-by: commstech`), body `{"preferences": {"email": ["weekly-menu-reminders"], "direct-mail": [...], "social-media": [...]}}`; the response echoes the customer's **full** preference state — every channel (`sms`, `email`, `direct-mail`, `outbound-call`, `push-notification`, `social-media`) with its subscribed topics (`recipe-previews`, `weekly-menu-reminders`, `referred-friends-freebies`, `transactional`, …). It would map cleanly to a handful of switches, but it is marketing-email plumbing with no automation value, so it is not implemented.
 
 ### Read endpoints with no Home Assistant analogue
 

@@ -624,13 +624,15 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         )
         # Same auto-refresh contract as get_weeks: the card re-pulls on the poll cadence.
         summary.update(_refresh_contract(coordinator))
-        # Plan price split and payment-method health (card type / expiry only — never the
-        # number fragment or billing address), for the subscription card's rows and banner.
+        # Plan price split and payment-method health (card brand, last four digits and
+        # expiry — never the billing address), for the subscription card's rows and banner.
         summary["selected_plan_price_breakdown"] = data.selected_plan_price_breakdown
         summary["payment_method_expiring"] = data.payment_method_expiring
         summary["payment_method_expired"] = data.payment_method_expired
         summary["payment_card_type"] = data.payment_card_type
         summary["payment_card_provider"] = data.payment_card_provider
+        summary["payment_card_brand"] = data.payment_card_brand
+        summary["payment_card_last4"] = data.payment_card_last4
         summary["payment_card_expiry"] = data.payment_card_expiry
         return summary
 
