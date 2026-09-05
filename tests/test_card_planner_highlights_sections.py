@@ -261,7 +261,13 @@ def _statics_literal(*names: str) -> str:
 def _summary(state: dict, week: dict) -> list[dict]:
     script = f"""
     const HelloFreshMealPlannerCard = {{ {
-        _statics_literal("PROTEIN_FILTERS", "DIET_FILTERS", "TIME_FILTERS", "HIGHLIGHT_FILTERS")
+        _statics_literal(
+            "PROTEIN_FILTERS",
+            "DIET_FILTERS",
+            "TIME_FILTERS",
+            "HIGHLIGHT_FILTERS",
+            "SERVER_FILTER_GROUPS",
+        )
     } }};
     const self = {{
       _proteinFilter: new Set({json.dumps(state.get("protein", []))}),
@@ -270,6 +276,10 @@ def _summary(state: dict, week: dict) -> list[dict]:
       _highlightFilter: {json.dumps(state.get("highlight", ""))},
       _menuSection: {json.dumps(state.get("section", ""))},
       _showVariants: {json.dumps(state.get("variants", True))},
+      // The server-resolved groups (cuisine / dish type / allergens) are covered in
+      // test_card_planner_server_filters.py; here they are simply empty.
+      _serverFilter: {{ cuisine: new Set(), "dish-type": new Set(), "exclude-allergens": new Set() }},
+      {_method("_serverFilterGroups")},
       {
         _method("_activeMenuSectionIds")
         .replace("_activeMenuSectionIds(", "activeMenuSectionIds(")

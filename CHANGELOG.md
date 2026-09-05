@@ -5,6 +5,52 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Boxes land on the dashboard within minutes, not hours.** A delivery-day watch re-reads
+  just the deliveries payload and the carrier lookup every 15 minutes on the day a box is due
+  (and the day after, until the carrier confirms it) or while a shipment is on the road,
+  independently of the multi-hour account poll. **Last delivery day**, **Tracked shipment
+  date** and the shipment status sensors now follow the carrier promptly; on every other day
+  the watch makes no request at all. The cadence is a new **Delivery-day watch interval**
+  option (0–60 minutes, default 15; 0 turns the watch off).
+- **New `event.delivery_events` entity** for automations: fires `box_shipped`,
+  `box_delivered`, `delivery_failed`, `week_skipped`, `week_unskipped`, `selection_locked`
+  and `menu_published` as the integration detects each transition (week id, delivery date
+  and carrier details as attributes), so you no longer have to diff sensor states between
+  polls. Only transitions fire — nothing replays after a restart.
+- **New `binary_sensor.payment_method_expiring`** (Problem): on when HelloFresh reports the
+  card on file as expiring or already expired — the same check the website runs, and the
+  most common way a box silently fails to ship. Attributes carry the card type and expiry
+  month only; the card number fragment and billing address are never stored.
+- **New `select.box_size` and `select.delivery_day` entities**: change the recurring box
+  size (meals × servings) and delivery day/slot from a dashboard, backed by the same writes
+  as the `change_plan` / `change_delivery_weekday` services and HelloFresh's own option
+  catalogs.
+- **Meal planner card: Cuisine type, Dish type and Ingredients to avoid filters**, matching
+  the HelloFresh website's filter panel. Menu recipes carry no allergen data and their tags
+  don't match the site's cuisine/dish-type slugs, so these three groups are resolved through
+  HelloFresh's own filter service via the new response-returning
+  `hellofresh.get_menu_courses` service (one request per filter combination, cached), and
+  each week now exposes the site's filter definitions as `menu_filters` in `get_weeks`.
+- **Cards follow the delivery-day watch.** The schedule and subscription cards re-fetch on
+  the watch cadence while a box is due or on the road (the `get_weeks` account payload and
+  the account summary now carry `delivery_watch_interval_minutes` and
+  `delivery_in_progress`), so a dashboard open on delivery day sees the box land within
+  minutes instead of at the next multi-hour poll.
+- **Subscription card**: a payment-method banner (amber when the card on file is expiring,
+  red when expired, with the expiry month), a **Card on file** row (type and expiry only),
+  and **Shipping** / **Discount** rows under the plan total. **Schedule card**: a
+  **Discount** row in the next-box summary when one applies. The example dashboard gains a
+  **Plan controls** entities card (box size, delivery day, payment check) and a **Delivery
+  activity** logbook of the new event entity.
+- **Price breakdowns as attributes**: `sensor.next_box_total_price` and
+  `sensor.selected_plan_total_price` now carry a `price_breakdown` (subtotal, shipping,
+  discount, tax, coupon) from `/gw/calculate` — figures the API always returned but the
+  integration never surfaced.
+- Docs: the API reference now documents the payments token-status endpoint, the
+  server-side menu filter service, the delivery-day watch, and corrects the loyalty
+  section (the `/gw/loyalty/*` endpoints exist but only return a finished pilot challenge).
+
 ## 2.95 — 2026-09-04
 - **Last delivery day now reports the day the box actually arrived** (#6). It was reporting
   the Monday of the ISO week for anyone whose box is delivered on another day: the delivery

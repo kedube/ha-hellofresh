@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 import json
 import logging
@@ -298,6 +298,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         await self._async_enrich_subscription_payment_dates(subscriptions, all_orders, data)
         await self._async_enrich_account_credit(data, subscriptions)
         await self._async_enrich_selected_plan_price(data, subscriptions)
+        await self._async_enrich_next_box_price_breakdown(data, subscriptions, all_weeks)
+        await self._async_enrich_payment_method_status(data)
 
         all_weeks = self._backfill_account_weeks_from_subscriptions(
             subscriptions=subscriptions,
@@ -362,6 +364,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         # ...and the website's menu sections (This Week's Menu, Family Menu, Bestsellers, ...),
         # which the meal-planner card offers as a section filter.
         self._apply_menu_categories(all_weeks)
+        # ...and the website's filter-panel definitions (cuisine, dish type, ingredients to
+        # avoid, ...), which the card resolves server-side via async_get_menu_courses.
+        self._apply_menu_filters(all_weeks)
         # Universal pass: a PAUSED week never shipped. Any "selected" meals on it are just the
         # system's auto-fill placeholders, so clear the selection (the catalog still shows for
         # browsing). Done last so it overrides whatever any merge path marked.
@@ -452,6 +457,93 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             data.capabilities.notes.append(
                 "The integration is currently relying on public menu data because no account weeks were available."
             )
+
+    async def async_refresh_delivery_status(self, data: HelloFreshAccountData) -> bool:
+        """Re-read only shipment state and overlay it onto ``data`` in place.
+
+        The delivery-day fast poll: one ranged deliveries GET per subscription (the payload
+        that carries each week's lifecycle ``state`` and, once delivered, the carrier's
+        ``tracking.delivery_date``) plus the carrier tracking lookup for orders with a
+        tracking id. No menus, history, pricing or profile — a few requests, not the full
+        poll. Week and order objects are updated in place so every derived view
+        (``last_delivery_week``, ``tracked_order``, the calendar) follows after
+        ``finalize()``. Returns True when anything changed; raises ``HelloFreshAuthError``
+        so the coordinator can start reauth, and lets other ``HelloFreshError``s through for
+        the caller to log.
+        """
+        if self._session is None or not data.subscriptions:
+            return False
+        # The per-poll shared-GET cache would otherwise hand back the previous poll's
+        # deliveries payload.
+        self._shared_get_tasks = {}
+        results = await asyncio.gather(
+            *(
+                self._async_get_upcoming_deliveries(subscription)
+                for subscription in data.subscriptions
+            )
+        )
+
+        fresh_weeks: dict[tuple[str, str | None], HelloFreshWeek] = {}
+        fresh_orders: dict[str, HelloFreshOrder] = {}
+        for weeks, orders in results:
+            for week in weeks:
+                fresh_weeks[(week.week_id, week.subscription_id)] = week
+            for order in orders:
+                fresh_orders[order.order_id] = order
+
+        changed = False
+        week_fields = ("status", "delivered_at", "delivery_state", "sub_status")
+        for week in data.weeks:
+            fresh = fresh_weeks.get((week.week_id, week.subscription_id))
+            if fresh is None:
+                continue
+            for name in week_fields:
+                value = getattr(fresh, name)
+                if value != getattr(week, name):
+                    setattr(week, name, value)
+                    changed = True
+            # The cards read the carrier node straight off the raw week; keep it current.
+            if isinstance(week.raw, dict) and isinstance(fresh.raw, dict):
+                tracking = fresh.raw.get("tracking")
+                if tracking is not None and week.raw.get("tracking") != tracking:
+                    week.raw["tracking"] = tracking
+                    changed = True
+
+        order_fields = ("status", "tracking_url", "tracking_number", "tracking_status", "carrier")
+        for order in data.orders:
+            fresh_order = fresh_orders.get(order.order_id)
+            if fresh_order is None:
+                continue
+            for name in order_fields:
+                value = getattr(fresh_order, name)
+                if value is not None and value != getattr(order, name):
+                    setattr(order, name, value)
+                    changed = True
+
+        def _tracking_state() -> list[tuple[Any, ...]]:
+            return [
+                (
+                    order.order_id,
+                    order.tracking_status,
+                    order.carrier,
+                    order.tracking_number,
+                    order.estimated_delivery,
+                )
+                for order in data.orders
+            ]
+
+        before = _tracking_state()
+        await self._async_enrich_order_tracking(data.subscriptions, data.orders)
+        if _tracking_state() != before:
+            changed = True
+
+        if changed:
+            data.finalize()
+        self._record_debug_attempt(
+            "delivery_attempts",
+            {"context": "delivery_watch", "changed": changed, "weeks_seen": len(fresh_weeks)},
+        )
+        return changed
 
     async def _async_get_initial_account_payloads(
         self,
@@ -1902,6 +1994,85 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             "HelloFresh week %s rescheduled to delivery option %s", week_id, delivery_option
         )
 
+    async def async_get_menu_courses(
+        self,
+        week_id: str,
+        filters: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        """Return the recipe ids on a week's menu matching HelloFresh's own menu filters.
+
+        HAR-verified (captures 2026-09): the website's filter panel calls
+        ``GET /gw/my-deliveries/courses?country=US&locale=en-US&week=<YYYY-Www>`` with the
+        active filters as query params — one param per group slug, multiple values joined
+        with commas (``dish-type=family-style,salad-and-bowls``) — and gets back only id
+        references (``courses[]`` of ``{index, parent, recipeFamily, recipeId}``) to
+        intersect with the already-loaded menu. Filtering is server-side; the response carries
+        no recipe data. The group and option slugs are the ``type`` values of the week's
+        ``menu_filters`` block (``cuisine``, ``dish-type``, ``exclude-allergens``, ``diet``,
+        ``main-protein``, ``total-cooking-time``).
+
+        ``filters`` maps a group slug to one slug, a comma-separated string, or a list of
+        slugs. Slugs are restricted to ``[a-z0-9-]`` — anything else is rejected rather than
+        forwarded — and an empty filter set is a plain unfiltered request.
+        """
+        week = (week_id or "").strip()
+        if not re.fullmatch(r"\d{4}-W\d{2}", week):
+            raise HelloFreshError(f"Invalid week_id {week_id!r}; expected YYYY-Www")
+
+        params: dict[str, Any] = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+            "week": week,
+        }
+        applied: dict[str, list[str]] = {}
+        for key, raw_values in (filters or {}).items():
+            group = str(key).strip().lower()
+            if not re.fullmatch(r"[a-z0-9-]+", group) or group in params:
+                raise HelloFreshError(f"Invalid filter group {key!r}")
+            if isinstance(raw_values, str):
+                candidates: list[Any] = raw_values.split(",")
+            elif isinstance(raw_values, (list, tuple, set)):
+                candidates = list(raw_values)
+            elif raw_values is None:
+                candidates = []
+            else:
+                raise HelloFreshError(f"Invalid values for filter {key!r}")
+            values: list[str] = []
+            for candidate in candidates:
+                slug = str(candidate).strip().lower()
+                if not slug:
+                    continue
+                if not re.fullmatch(r"[a-z0-9-]+", slug):
+                    raise HelloFreshError(f"Invalid filter value {candidate!r} for {key!r}")
+                if slug not in values:
+                    values.append(slug)
+            if values:
+                applied[group] = values
+                params[group] = ",".join(values)
+
+        response = await self._async_api_get("/gw/my-deliveries/courses", params=params)
+        payload = await self._async_response_json(response)
+        courses = payload.get("courses") if isinstance(payload, dict) else None
+        recipe_ids: list[str] = []
+        for course in courses if isinstance(courses, list) else []:
+            if not isinstance(course, dict):
+                continue
+            recipe_id = course.get("recipeId") or course.get("recipe_id") or course.get("id")
+            if isinstance(recipe_id, str) and recipe_id and recipe_id not in recipe_ids:
+                recipe_ids.append(recipe_id)
+
+        self._record_debug_attempt(
+            "menu_attempts",
+            {
+                "path": "/gw/my-deliveries/courses",
+                "week": week,
+                "filters": applied,
+                "status": self._response_status(response),
+                "course_count": len(recipe_ids),
+            },
+        )
+        return recipe_ids
+
     async def async_list_plan_options(
         self,
         subscription_id: str | None = None,
@@ -2640,6 +2811,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         data.selected_plan_total_price = round(total, 2)
         currency = self._extract_currency_code(pricing)
         data.selected_plan_total_price_currency = currency or None
+        data.selected_plan_price_breakdown = self._price_breakdown_from_calculate(pricing)
 
         self._record_debug_attempt(
             "pricing_attempts",
@@ -2649,6 +2821,130 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 "context": "selected_plan_total_price",
                 "selected_plan_total_price": data.selected_plan_total_price,
                 "currency": data.selected_plan_total_price_currency,
+            },
+        )
+
+    @staticmethod
+    def _price_breakdown_from_calculate(pricing: dict[str, Any]) -> dict[str, Any] | None:
+        """Reduce a ``/gw/calculate`` response to the figures worth exposing as attributes.
+
+        The response carries ``subTotal``, ``shippingAmount``, ``discountAmount`` and
+        ``taxAmount`` alongside ``grandTotal`` — available for years but never surfaced. Amounts
+        are already major units here (unlike the cents-denominated payments gateway).
+        """
+        breakdown = {
+            "sub_total": coerce_float(pricing.get("subTotal")),
+            "shipping_amount": coerce_float(pricing.get("shippingAmount")),
+            "discount_amount": coerce_float(pricing.get("discountAmount")),
+            "tax_amount": coerce_float(pricing.get("taxAmount")),
+            "grand_total": coerce_float(pricing.get("grandTotal")),
+            "coupon_code": pricing.get("couponCode") or None,
+        }
+        if all(value is None for key, value in breakdown.items() if key != "coupon_code"):
+            return None
+        return breakdown
+
+    async def _async_enrich_next_box_price_breakdown(
+        self,
+        data: HelloFreshAccountData,
+        subscriptions: Sequence[HelloFreshSubscription],
+        weeks: Sequence[HelloFreshWeek],
+    ) -> None:
+        """Price the next upcoming box through ``/gw/calculate`` for its discount breakdown.
+
+        ``next_box_total_price`` itself comes from the billing ledger (the authoritative charged
+        amount); this adds the subtotal / shipping / discount split the ledger does not carry,
+        as attributes on that sensor. One cached request per poll for the primary
+        subscription's next non-skipped week; best-effort.
+        """
+        if self._session is None or not subscriptions:
+            return
+        primary = subscriptions[0]
+        today = date.today()
+        candidates = [
+            week
+            for week in weeks
+            if week.delivery_date is not None
+            and week.delivery_date >= today
+            and not week.is_skipped
+            and (week.subscription_id in (None, primary.subscription_id))
+        ]
+        if not candidates:
+            return
+        next_week = min(candidates, key=lambda week: (week.delivery_date, week.week_id))
+        pricing = await self._async_get_calculate_price(primary, next_week)
+        if pricing is None:
+            return
+        breakdown = self._price_breakdown_from_calculate(pricing)
+        if breakdown is None:
+            return
+        breakdown["week_id"] = next_week.week_id
+        data.next_delivery_price_breakdown = breakdown
+
+    async def _async_enrich_payment_method_status(self, data: HelloFreshAccountData) -> None:
+        """Read whether the card on file is expiring, for the payment-method binary sensor.
+
+        HAR-verified: the site POSTs an empty body to
+        ``/gw/payments/v1/checktokenstatus?country=US`` (header ``x-requested-by: gateway``)
+        and gets ``{isTokenExpiring, isTokenExpired, primaryToken: {type, provider, method,
+        details: {expiry_month, expiry_year, number}, billing_address: {...}}}``. Only the two
+        flags, the card type/provider and the expiry month are kept; the last-four digits and
+        billing address are dropped here and never reach attributes or diagnostics.
+        Best-effort: a failure leaves the sensor unavailable rather than failing the poll.
+        """
+        if self._session is None:
+            return
+        path = "/gw/payments/v1/checktokenstatus"
+        params = {"country": api_country_code(self._country)}
+        try:
+            response = await self._async_api_request(
+                "POST",
+                path,
+                params=params,
+                extra_headers={"x-requested-by": "gateway"},
+            )
+            payload = await self._async_response_json(response)
+        except HelloFreshAuthError:
+            raise
+        except HelloFreshError as err:
+            self._record_debug_attempt("payment_attempts", {"path": path, "error": str(err)})
+            return
+        if not isinstance(payload, dict):
+            return
+
+        expiring = payload.get("isTokenExpiring")
+        expired = payload.get("isTokenExpired")
+        if not isinstance(expiring, bool) and not isinstance(expired, bool):
+            return
+        data.payment_method_expiring = bool(expiring)
+        data.payment_method_expired = bool(expired)
+
+        token = payload.get("primaryToken")
+        if isinstance(token, dict):
+            card_type = token.get("type")
+            provider = token.get("provider")
+            data.payment_card_type = card_type if isinstance(card_type, str) and card_type else None
+            data.payment_card_provider = (
+                provider if isinstance(provider, str) and provider else None
+            )
+            details = token.get("details")
+            if isinstance(details, dict):
+                month = coerce_int(details.get("expiry_month"))
+                year = coerce_int(details.get("expiry_year"))
+                if month is not None and year is not None and 1 <= month <= 12:
+                    if year < 100:
+                        year += 2000
+                    data.payment_card_expiry = f"{year:04d}-{month:02d}"
+
+        self._record_debug_attempt(
+            "payment_attempts",
+            {
+                "path": path,
+                "status": self._response_status(response),
+                "is_token_expiring": data.payment_method_expiring,
+                "is_token_expired": data.payment_method_expired,
+                "card_type": data.payment_card_type,
+                "card_expiry": data.payment_card_expiry,
             },
         )
 

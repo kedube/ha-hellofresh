@@ -79,6 +79,7 @@
         "description": "Justera hur ofta HelloFresh-data hämtas och hur långt tillbaka korten kan bläddra. Inställningarna börjar gälla direkt — dina inloggningsuppgifter påverkas inte.",
         "data": {
           "scan_interval_minutes": "Uppdateringsintervall (minuter)",
+          "delivery_watch_interval_minutes": "Leveransdagsbevakning (minuter)",
           "history_weeks": "Leveranshistorik (veckor)",
           "menu_grace_weeks": "Fullständig menyhistorik (veckor)",
           "enable_public_menu_fallback": "Använd offentlig meny som reserv",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "Hur ofta HelloFresh tillfrågas om konto- och leveransdata. Lägre = färskare data och fler förfrågningar; högre = skonsammare mot API:et. Intervall 5–1440 minuter; standard 180 (3 timmar). Inloggningstoken förnyas enligt sitt eget schema, så detta påverkar inte inloggningen.",
+          "delivery_watch_interval_minutes": "Medan en låda väntas (leveransdagen, eller dagen efter tills transportören bekräftar den) eller en försändelse är på väg, kontrolleras bara leveransstatus och spårning så här ofta, oberoende av uppdateringsintervallet, så att leveransen syns inom några minuter. Intervall 0–60; standard 15. 0 stänger av bevakningen. Övriga dagar görs inga extra anrop.",
           "history_weeks": "Hur många veckors tidigare leveranser som läses in så att du kan bläddra i dem i korten. Lägre = mindre data per uppdatering; höj för att se längre tillbaka (cirka 56 för ett helt år). Intervall 1–104 veckor; standard 26 (cirka 6 månader). En ändring läser in integrationen på nytt.",
           "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i måltidsplanerarkortet (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
           "enable_public_menu_fallback": "Om de inloggade menydata inte kan läsas in hämtas den offentliga regionala menysidan så att receptnamn ändå visas. Låt detta vara påslaget om du inte enbart vill ha autentiserade data.",
@@ -276,6 +278,9 @@
       },
       "payload_shape_changed": {
         "name": "Dataformat ändrat"
+      },
+      "payment_method_expiring": {
+        "name": "Betalningsmetod går ut"
       }
     },
     "button": {
@@ -286,6 +291,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Leveransschema"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Leveranshändelser",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Låda skickad",
+              "box_delivered": "Låda levererad",
+              "delivery_failed": "Leverans misslyckades",
+              "week_skipped": "Vecka överhoppad",
+              "week_unskipped": "Vecka återställd",
+              "selection_locked": "Val låst",
+              "menu_published": "Meny publicerad"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Lådstorlek"
+      },
+      "delivery_day": {
+        "name": "Leveransdag"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Vecko-ID",
           "description": "Valfri identifierare för en HelloFresh-leveransvecka för att endast returnera den veckan."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Hämta menyrätter",
+      "description": "Filtrerar en leveransveckas meny via HelloFreshs egen serverbaserade filtertjänst (kök, rättyp, ingredienser att undvika, kostpreferens, huvudprotein, total tillagningstid). Returnerar bara de matchande recept-id:na. Skrivskyddad; returnerar ett svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        },
+        "week_id": {
+          "name": "Vecko-ID",
+          "description": "HelloFresh-leveransveckan som ska filtreras (till exempel 2026-W37)."
+        },
+        "filters": {
+          "name": "Filter",
+          "description": "Filtergrupp-sluggar kopplade till en eller flera alternativ-sluggar, enligt veckans menu_filters (till exempel {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

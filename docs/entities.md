@@ -47,9 +47,9 @@ A few conventions used in the tables:
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Next delivery total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. |
+| Next delivery total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. Attributes carry a `price_breakdown` for that box (subtotal, shipping, discount, tax, coupon) from `/gw/calculate`. |
 | Account credit | `sensor.account_credit` | Spendable account credit that applies automatically to the next order (API `/gw/payments/customers/{uuid}/balance` → `amount`). Monetary device class; unit from `currencyCode`. |
-| Selected plan total price | `sensor.selected_plan_total_price` | Standing weekly plan price **including shipping** (the `grandTotal` from a recurring `/gw/calculate` for the primary subscription) — the price shown in plan settings, distinct from the next box's actual charge. Monetary device class; unit reflects the subscription currency. |
+| Selected plan total price | `sensor.selected_plan_total_price` | Standing weekly plan price **including shipping** (the `grandTotal` from a recurring `/gw/calculate` for the primary subscription) — the price shown in plan settings, distinct from the next box's actual charge. Monetary device class; unit reflects the subscription currency. Attributes carry the same `price_breakdown` for the standing plan. |
 | Recent payment date | `sensor.recent_payment_date` | Date of the most recent HelloFresh charge that has **already been billed** (the order's `createdAt`), from order history. Because HelloFresh bills a box a few days before it ships, this reflects your last actual charge even when that box's delivery is still upcoming. Charges dated in the future are ignored. `Date` device class. |
 | Next delivery payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
 | Next delivery order ID | `sensor.recent_order_id` | Order number for the next upcoming delivery, as shown in the HelloFresh UI (the `orderNr` field). |
@@ -103,6 +103,7 @@ A few conventions used in the tables:
 | --- | --- |
 | `binary_sensor.needs_meal_selection` | `True` when at least one upcoming week still needs your attention — HelloFresh auto-picked its meals (review them) or it has fewer than the minimum 2 meals. A week you deliberately resized to fewer meals than your plan (e.g. 2 on a 3-meal plan) counts as complete and does **not** trigger this. The primary signal for reminder automations. |
 | `binary_sensor.tracked_shipment_available` | `True` when the most-recent order has active shipment tracking data (carrier, tracking number, or tracking URL) |
+| `binary_sensor.payment_method_expiring` | Shown as **Payment method expiring**. `True` when HelloFresh reports the card on file as **expiring or already expired** (`POST /gw/payments/v1/checktokenstatus`, the same check the website runs) — the most common way a box silently fails to ship. Attributes: `expiring`, `expired`, `card_type`, `card_provider`, `card_expiry` (`YYYY-MM`). The card number fragment and billing address in that response are dropped at parse time and never stored. `Problem` device class; unavailable until the payments gateway has answered. |
 
 **Diagnostic** (shown under the device's *Diagnostic* section)
 
@@ -117,9 +118,43 @@ A few conventions used in the tables:
 | Entity | Notes |
 | --- | --- |
 | `button.refresh_data` | Triggers an immediate coordinator refresh outside the normal polling interval |
+| `event.delivery_events` | Shown as **Delivery events**. Fires once per lifecycle transition the integration detects — see [Delivery events](#delivery-events). |
+| `select.box_size` | Shown as **Box size**. The recurring plan size (`3 meals × 2 servings`, …) from the plan's product catalog; choosing another option writes it through the same call as `change_plan`. A **recurring** change affecting every future box and what you are billed. Unavailable until the catalog has loaded. |
+| `select.delivery_day` | Shown as **Delivery day**. The recurring delivery day/slot (`Mondays: 8AM - 8PM`, …) from the plan's delivery options; choosing another writes it through the same call as `change_delivery_weekday` (affects all future deliveries). |
 | `switch.skip_next_modifiable_week` | Shown as **Skip next selectable delivery week**. On = skip the next modifiable delivery week (no box ships); off = restore it. State reflects whether that week is currently skipped. |
 | `todo.prep_list` | Shown as **Prep List (current week)**. The pantry staples HelloFresh does **not** ship for your **next delivery's** meals. See [Prep lists](#prep-lists). |
 | `todo.prep_list_week_2` | Shown as **Prep List (next week)**. The same, for the delivery *after* the next one. See [Prep lists](#prep-lists). |
+
+## Delivery events
+
+`event.delivery_events` is an [event entity](https://www.home-assistant.io/integrations/event/): its state is the time of the last event and its `event_type` attribute says what happened, so an automation triggers on the entity instead of diffing sensor states between polls. Event types:
+
+| `event_type` | Fires when | Extra attributes |
+| --- | --- | --- |
+| `box_shipped` | A week's lifecycle state turns to on-the-way, or its carrier status becomes in transit / out for delivery | `tracking_status`, `carrier`, `tracking_number`, `tracking_url`, `estimated_delivery` |
+| `box_delivered` | The carrier reports the box delivered (`tracking.delivery_date` appears, or the state turns `DELIVERED`) | `delivered_at`, `carrier` |
+| `delivery_failed` | The week's state turns `FAILED` | |
+| `week_skipped` / `week_unskipped` | A week is skipped, or restored | |
+| `selection_locked` | A week you could still edit passes its cutoff | |
+| `menu_published` | An upcoming week gains its menu (or appears in the window already carrying one) | |
+
+Every event carries `week_id`, `subscription_id`, `display_name` and `delivery_date`. Only transitions fire: a box already delivered when the integration first sees it is history, and nothing fires on the first poll after a restart.
+
+```yaml
+automation:
+  - alias: HelloFresh box arrived
+    triggers:
+      - trigger: state
+        entity_id: event.hellofresh_us_delivery_events
+    conditions:
+      - "{{ trigger.to_state.attributes.event_type == 'box_delivered' }}"
+    actions:
+      - action: notify.mobile_app
+        data:
+          message: "Your HelloFresh box for {{ trigger.to_state.attributes.display_name }} was delivered."
+```
+
+**Delivery-day watch.** On the day a box is due (and the day after, if the carrier still has not confirmed it) or while a tracked shipment is on the road, the integration re-reads just the deliveries payload and the carrier lookup every 15 minutes by default (the **Delivery-day watch interval** option, 0–60 minutes; 0 turns it off), independently of the multi-hour account poll. `box_shipped` / `box_delivered`, **Last delivery day**, **Tracked shipment date** and the shipment status sensors therefore update within minutes of the carrier, instead of up to `scan_interval_minutes` later. On every other day the timer sees nothing due and makes no request.
 
 ## Prep lists
 

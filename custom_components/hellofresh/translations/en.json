@@ -79,6 +79,7 @@
         "description": "Adjust how often HelloFresh data is polled and how far back the cards can browse. These settings take effect right away — your credentials are not affected.",
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
+          "delivery_watch_interval_minutes": "Delivery-day watch interval (minutes)",
           "history_weeks": "Past delivery history (weeks)",
           "menu_grace_weeks": "Full menu history (weeks)",
           "enable_public_menu_fallback": "Use public menu fallback",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
+          "delivery_watch_interval_minutes": "While a box is due (its delivery day, or the day after until the carrier confirms it) or a shipment is on the road, re-check just the delivery status and carrier tracking this often, independently of the refresh interval, so arrivals show within minutes. Range 0–60; default 15. 0 turns the watch off. On other days no extra requests are made.",
           "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
           "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 2 (the last couple of boxes stay browsable). 0 turns the grace window off. HelloFresh stops publishing the menu for older weeks, so weeks past what it still serves just fall back to delivered-only. Changing this reloads the integration.",
           "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data.",
@@ -258,6 +260,9 @@
       },
       "payload_shape_changed": {
         "name": "Payload shape changed"
+      },
+      "payment_method_expiring": {
+        "name": "Payment method expiring"
       }
     },
     "button": {
@@ -268,6 +273,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Delivery schedule"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Delivery events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Box shipped",
+              "box_delivered": "Box delivered",
+              "delivery_failed": "Delivery failed",
+              "week_skipped": "Week skipped",
+              "week_unskipped": "Week restored",
+              "selection_locked": "Selection locked",
+              "menu_published": "Menu published"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Box size"
+      },
+      "delivery_day": {
+        "name": "Delivery day"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Week ID",
           "description": "Optional HelloFresh delivery week identifier to return just that week."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Get menu courses",
+      "description": "Resolve a delivery week's menu through HelloFresh's own server-side filter service (cuisine, dish type, ingredients to avoid, dietary preference, main protein, total cooking time). Returns only the matching recipe ids. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week to filter (for example 2026-W37)."
+        },
+        "filters": {
+          "name": "Filters",
+          "description": "Filter group slugs mapped to one or more option slugs, as listed in the week's menu_filters (for example {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

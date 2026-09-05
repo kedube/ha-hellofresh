@@ -302,6 +302,13 @@ class HelloFreshWeek:
     # only; empty for history-sourced weeks. Lets the meal-planner card offer the same
     # section browsing the site's menu page grew, without re-deriving sections from tags.
     menu_categories: list[dict[str, Any]] = field(default_factory=list)
+    # The website's filter panel definitions, from the menu payload's `filters` block: each
+    # row is {name, slug, choice, options: [{name, slug, default}]} where `slug` is the query
+    # param the server-side ``/gw/my-deliveries/courses`` filter accepts (`cuisine`,
+    # `dish-type`, `exclude-allergens`, ...) and `choice` its combination rule (MULTI-OR,
+    # MULTI-AND, SINGLE). Menu-payload weeks only. Lets the meal-planner card build the same
+    # chips the site shows, and resolve them through `hellofresh.get_menu_courses`.
+    menu_filters: list[dict[str, Any]] = field(default_factory=list)
     source: str = "account"
     menu_title: str | None = None
     slot_label: str | None = None
@@ -478,6 +485,7 @@ class HelloFreshWeek:
             "recipes": [recipe.as_dict() for recipe in self.recipes],
             "market_items": [item.as_dict() for item in self.market_items],
             "menu_categories": self.menu_categories,
+            "menu_filters": self.menu_filters,
         }
 
 
@@ -1395,6 +1403,21 @@ class HelloFreshAccountData:
     account_credit_currency: str | None = None
     selected_plan_total_price: float | None = None
     selected_plan_total_price_currency: str | None = None
+    # Price breakdowns behind the two box-price sensors, from ``/gw/calculate``: the standing
+    # plan (no week) and the next upcoming delivery week. Each is
+    # {sub_total, shipping_amount, discount_amount, tax_amount, grand_total, coupon_code} in
+    # major units, exposed as sensor attributes rather than separate entities.
+    selected_plan_price_breakdown: dict[str, Any] | None = None
+    next_delivery_price_breakdown: dict[str, Any] | None = None
+    # Payment-method health from ``POST /gw/payments/v1/checktokenstatus`` (HAR-verified):
+    # whether HelloFresh considers the card on file expiring/expired, plus the card TYPE,
+    # provider and expiry month. Only those are kept — the response also carries the last four
+    # digits and the billing address, which are never stored.
+    payment_method_expiring: bool | None = None
+    payment_method_expired: bool | None = None
+    payment_card_type: str | None = None
+    payment_card_provider: str | None = None
+    payment_card_expiry: str | None = None
     recent_order_id: str | None = None
     # Lazily-memoized serializations MUST NOT participate in equality: entities populate
     # them on the OLD data object between polls while the fresh object has them reset, so

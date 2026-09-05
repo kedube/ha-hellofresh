@@ -239,3 +239,22 @@ export function broadcastDataChanged(config, source) {
     })
   );
 }
+
+// ---- auto-refresh cadence --------------------------------------------------------------
+
+// How long a card should wait before re-pulling its service, from the account/summary
+// payload's refresh contract. Normally the integration's "Refresh interval" option (fetching
+// more often would just return the coordinator's identical cached data). While
+// `delivery_in_progress` is true the integration's delivery-day watch is updating the data
+// every `delivery_watch_interval_minutes` instead, so the card drops to that cadence — the
+// whole point of the watch is that a dashboard open on delivery day sees the box land within
+// minutes, not at the next multi-hour poll. A watch interval of 0 (option off) is ignored.
+export function refetchIntervalMs(contract) {
+  const refresh = Number(contract && contract.refresh_interval_minutes);
+  let mins = Number.isFinite(refresh) && refresh >= 1 ? refresh : 180;
+  if (contract && contract.delivery_in_progress) {
+    const watch = Number(contract.delivery_watch_interval_minutes);
+    if (Number.isFinite(watch) && watch >= 1 && watch < mins) mins = watch;
+  }
+  return mins * 60000;
+}

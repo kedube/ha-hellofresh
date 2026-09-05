@@ -23,6 +23,7 @@ from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_DELIVERY_INTERVAL,
     ATTR_DELIVERY_OPTION,
+    ATTR_FILTERS,
     ATTR_GOALS,
     ATTR_HOUSEHOLD,
     ATTR_LIMIT,
@@ -37,6 +38,7 @@ from .const import (
     ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
@@ -51,6 +53,7 @@ from .const import (
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
+    DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
@@ -67,6 +70,7 @@ from .const import (
     SERVICE_GET_DELIVERY_OPTIONS,
     SERVICE_GET_FAVORITES,
     SERVICE_GET_FOOD_PROFILE,
+    SERVICE_GET_MENU_COURSES,
     SERVICE_GET_PLAN_OPTIONS,
     SERVICE_GET_PLANS,
     SERVICE_GET_PRESETS,
@@ -352,6 +356,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     coordinator.async_start_token_refresh()
+    coordinator.async_start_delivery_watch()
 
     # HA's per-entry storage: platforms, services, diagnostics and intents all read the
     # coordinator from here. HA clears it when the entry unloads.
@@ -465,6 +470,27 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             lambda coordinator, _: coordinator.async_request_refresh(),
         )
 
+    def _refresh_contract(coordinator: HelloFreshDataUpdateCoordinator) -> dict[str, object]:
+        """The auto-refresh contract shared by the get_weeks account payload and the summary.
+
+        Cards re-fetch on ``refresh_interval_minutes`` — fetching more often would return the
+        coordinator's identical cached data. While a box is due or on the road the delivery-day
+        watch updates the data every ``delivery_watch_interval_minutes`` instead, so the cards
+        drop to that cadence for as long as ``delivery_in_progress`` is true; otherwise a
+        dashboard open on delivery day would keep the stale status for hours.
+        """
+        options = coordinator.config_entry.options
+        in_progress = getattr(coordinator, "delivery_in_progress", None)
+        return {
+            "refresh_interval_minutes": options.get(
+                CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
+            ),
+            "delivery_watch_interval_minutes": options.get(
+                CONF_DELIVERY_WATCH_INTERVAL_MINUTES, DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES
+            ),
+            "delivery_in_progress": bool(in_progress()) if callable(in_progress) else False,
+        }
+
     async def async_get_weeks(service_call: ServiceCall) -> ServiceResponse:
         """Return delivery weeks with full recipe detail for a single account.
 
@@ -505,9 +531,11 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "selected_plan_total_price": data.selected_plan_total_price,
             "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
             "menu_grace_weeks": coordinator.client.menu_grace_weeks,
-            "refresh_interval_minutes": coordinator.config_entry.options.get(
-                CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
-            ),
+            **_refresh_contract(coordinator),
+            # The next box's /gw/calculate split (subtotal, shipping, discount, tax, coupon), so
+            # the schedule card can show the discount applied to the box it summarizes.
+            "next_delivery_price_breakdown": data.next_delivery_price_breakdown,
+            "next_delivery_total_currency": data.next_delivery_total_currency,
             # Subscription-level next charge date and coupon (matching the next_payment_date
             # and next_box_coupon sensors); shown in the schedule card's next-box summary.
             "next_payment_date": (
@@ -595,9 +623,15 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             data.next_skipped_week.week_id if data.next_skipped_week else None
         )
         # Same auto-refresh contract as get_weeks: the card re-pulls on the poll cadence.
-        summary["refresh_interval_minutes"] = coordinator.config_entry.options.get(
-            CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
-        )
+        summary.update(_refresh_contract(coordinator))
+        # Plan price split and payment-method health (card type / expiry only — never the
+        # number fragment or billing address), for the subscription card's rows and banner.
+        summary["selected_plan_price_breakdown"] = data.selected_plan_price_breakdown
+        summary["payment_method_expiring"] = data.payment_method_expiring
+        summary["payment_method_expired"] = data.payment_method_expired
+        summary["payment_card_type"] = data.payment_card_type
+        summary["payment_card_provider"] = data.payment_card_provider
+        summary["payment_card_expiry"] = data.payment_card_expiry
         return summary
 
     async def async_get_food_profile(service_call: ServiceCall) -> ServiceResponse:
@@ -881,6 +915,35 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             ),
         )
 
+    async def async_get_menu_courses(service_call: ServiceCall) -> ServiceResponse:
+        """Resolve a week's menu through HelloFresh's own server-side filters.
+
+        Backs the meal-planner card's Cuisine / Dish type / Ingredients-to-avoid groups: menu
+        recipes carry no allergen data and their tag slugs don't match the site's cuisine and
+        dish-type option slugs, so only the site's filter service can answer these exactly.
+        Read-only, fetched live; returns only recipe ids to intersect with the loaded menu.
+        """
+        coordinators = _get_target_coordinators(service_call)
+        if len(coordinators) != 1:
+            raise HomeAssistantError(
+                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+            )
+        week_id = service_call.data[ATTR_WEEK_ID]
+        filters = service_call.data.get(ATTR_FILTERS) or {}
+        try:
+            recipe_ids = await coordinators[0].client.async_get_menu_courses(week_id, filters)
+        except HelloFreshError as err:
+            raise HomeAssistantError(str(err)) from err
+        return {
+            "week_id": week_id,
+            "recipe_ids": recipe_ids,
+            "count": len(recipe_ids),
+            "filters": {
+                str(group): (values if isinstance(values, list) else [values])
+                for group, values in filters.items()
+            },
+        }
+
     async def async_get_plan_options(service_call: ServiceCall) -> ServiceResponse:
         """Return the box sizes this subscription can switch to.
 
@@ -994,6 +1057,21 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
                 vol.Optional(ATTR_WEEK_ID): str,
                 vol.Optional("include_debug"): bool,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_MENU_COURSES,
+        async_get_menu_courses,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_WEEK_ID): str,
+                vol.Optional(ATTR_FILTERS): vol.Schema(
+                    {str: vol.Any(str, [str])}, extra=vol.PREVENT_EXTRA
+                ),
             }
         ),
         supports_response=SupportsResponse.ONLY,
