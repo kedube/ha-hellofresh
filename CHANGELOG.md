@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 2.98 — 2026-09-05
 - **Weekly discounts.** New monetary **`sensor.next_box_discount`**: the wallet promise
   HelloFresh will apply to the next box that ships ("$10 off premium meals"), with the voucher's
   target, expiry, one-time flag and every promise on the account as attributes — read from the
