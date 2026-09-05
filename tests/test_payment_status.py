@@ -8,15 +8,15 @@ from types import SimpleNamespace
 from custom_components.hellofresh.api import HelloFreshAccountData, HelloFreshClient
 from custom_components.hellofresh.binary_sensor import SENSORS, HelloFreshBinarySensor
 
-# Shape verbatim from the capture (values changed); the card number and billing address are
-# exactly what must NOT survive parsing.
+# Shape verbatim from the capture (values changed); only the last four digits of the card
+# survive parsing, and the billing address must NOT.
 TOKEN_RESPONSE = {
     "isTokenExpiring": True,
     "isTokenExpired": False,
     "primaryToken": {
         "type": "credit_card",
         "provider": "braintree",
-        "method": "card",
+        "method": "visa",
         "is_active": True,
         "details": {"expiry_month": "05", "expiry_year": "2027", "number": "4242"},
         "billing_address": {"city": "Boston", "postcode": "02101", "full_address": "1 Main St"},
@@ -36,7 +36,7 @@ def _client() -> HelloFreshClient:
     return HelloFreshClient(session=object(), access_token="token")  # type: ignore[arg-type]
 
 
-def test_payment_status_keeps_flags_and_card_type_but_never_the_number() -> None:
+def test_payment_status_keeps_flags_card_type_and_last_four_but_never_the_address() -> None:
     client = _client()
     calls: list[tuple] = []
 
@@ -65,11 +65,51 @@ def test_payment_status_keeps_flags_and_card_type_but_never_the_number() -> None
     assert data.payment_method_expired is False
     assert data.payment_card_type == "credit_card"
     assert data.payment_card_provider == "braintree"
+    assert data.payment_card_brand == "visa"
     assert data.payment_card_expiry == "2027-05"
+    assert data.payment_card_last4 == "4242"
     dumped = repr(data)
-    assert "4242" not in dumped
     assert "Boston" not in dumped
     assert "02101" not in dumped
+    assert "1 Main St" not in dumped
+
+
+def test_payment_status_keeps_only_the_trailing_four_digits() -> None:
+    """A masked or full number (never seen, but cheap to guard) is cut to its suffix."""
+    client = _client()
+
+    async def fake_request(*_args, **_kwargs):
+        return SimpleNamespace(status=200)
+
+    def _with_number(number):
+        payload = {**TOKEN_RESPONSE, "primaryToken": {**TOKEN_RESPONSE["primaryToken"]}}
+        payload["primaryToken"]["details"] = {
+            **TOKEN_RESPONSE["primaryToken"]["details"],
+            "number": number,
+        }
+        return payload
+
+    client._async_api_request = fake_request  # type: ignore[method-assign]
+    for number, expected in (
+        ("************1881", "1881"),
+        ("4111 1111 1111 1111", "1111"),
+        (4242, "4242"),
+        ("42", None),
+        (None, None),
+    ):
+        payload = _with_number(number)
+
+        async def fake_json(_response, _payload=payload):
+            return _payload
+
+        client._async_response_json = fake_json  # type: ignore[method-assign]
+        data = HelloFreshAccountData()
+        _run(client._async_enrich_payment_method_status(data))
+        assert data.payment_card_last4 == expected, number
+    # The debug trace never carries the digits.
+    assert all(
+        "1881" not in repr(attempt) for attempt in client._debug_trace.get("payment_attempts", [])
+    )
 
 
 def test_payment_status_failure_leaves_the_sensor_unknown() -> None:
@@ -129,6 +169,7 @@ def test_payment_binary_sensor_states_and_attributes() -> None:
             payment_method_expired=False,
             payment_card_type="credit_card",
             payment_card_expiry="2028-01",
+            payment_card_last4="0005",
         ).finalize()
     )
     assert fine.available is True
@@ -139,6 +180,8 @@ def test_payment_binary_sensor_states_and_attributes() -> None:
         "expired": False,
         "card_type": "credit_card",
         "card_provider": None,
+        "card_brand": None,
+        "card_last4": "0005",
         "card_expiry": "2028-01",
     }
 

@@ -134,6 +134,8 @@ def test_subscription_card_payment_banner_and_cells() -> None:
                 "payment_method_expiring": True,
                 "payment_method_expired": False,
                 "payment_card_type": "credit_card",
+                "payment_card_brand": "visa",
+                "payment_card_last4": "4242",
                 "payment_card_expiry": "2026-10",
                 "selected_plan_total_price_currency": "USD",
                 "selected_plan_price_breakdown": {"shipping_amount": 10.99, "discount_amount": 20},
@@ -142,6 +144,8 @@ def test_subscription_card_payment_banner_and_cells() -> None:
     )
     assert "expires soon" in expiring["banner"]
     assert 'class="banner"' in expiring["banner"]
+    assert expiring["cell"].startswith("Visa ending in 4242 · exp. ")
+    assert "Your Visa ending in 4242 on file expires soon" in expiring["banner"]
     assert expiring["cell"].endswith("· expiring")
     assert expiring["discount"] == "−USD 20.00"
 

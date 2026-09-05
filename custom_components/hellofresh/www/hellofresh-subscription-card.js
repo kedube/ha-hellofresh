@@ -347,14 +347,17 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       </div>`;
   }
 
-  // "Credit card · expires May 2027" — the card type humanized, plus the expiry month when
-  // known. Deliberately nothing else: the integration never stores the number or address.
+  // "Visa ending in 4242" — the card brand when HelloFresh reports one, else the type
+  // humanized, plus the last four digits when known. The billing address is never stored.
   _cardOnFile() {
     const s = this._summary;
-    const type = s && s.payment_card_type ? String(s.payment_card_type) : "";
-    if (!type) return "";
-    const name = type.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
-    return name.replace(/^Credit Card$/, "Credit card");
+    const raw = s && (s.payment_card_brand || s.payment_card_type);
+    const name = raw ? String(raw) : "";
+    if (!name) return "";
+    const humanized = name.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+    const brand = humanized.replace(/^Credit Card$/, "Credit card");
+    const last4 = /^\d{4}$/.test(String(s.payment_card_last4 || "")) ? s.payment_card_last4 : "";
+    return last4 ? `${brand} ending in ${last4}` : brand;
   }
 
   _fmtCardExpiry(value) {

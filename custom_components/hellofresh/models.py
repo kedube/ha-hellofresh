@@ -1411,13 +1411,17 @@ class HelloFreshAccountData:
     next_delivery_price_breakdown: dict[str, Any] | None = None
     # Payment-method health from ``POST /gw/payments/v1/checktokenstatus`` (HAR-verified):
     # whether HelloFresh considers the card on file expiring/expired, plus the card TYPE,
-    # provider and expiry month. Only those are kept — the response also carries the last four
-    # digits and the billing address, which are never stored.
+    # provider, expiry month and the last four digits (the only part of the number the
+    # gateway returns, and the only part kept — the billing address is never stored).
     payment_method_expiring: bool | None = None
     payment_method_expired: bool | None = None
     payment_card_type: str | None = None
     payment_card_provider: str | None = None
+    # The card brand (the response's ``method``: visa, mastercard, ...), which is what a
+    # person calls the card; ``type`` is just "credit_card".
+    payment_card_brand: str | None = None
     payment_card_expiry: str | None = None
+    payment_card_last4: str | None = None
     recent_order_id: str | None = None
     # Lazily-memoized serializations MUST NOT participate in equality: entities populate
     # them on the OLD data object between polls while the fresh object has them reset, so
