@@ -317,6 +317,8 @@ Two more efficiency measures cut per-poll work:
 - **Concurrent, grace-gated per-week menu fetches.** The authenticated `/gw/my-deliveries/menu` catalog is fetched **once per subscribed week**, and those fetches now run **bounded-concurrent** (`_async_gather_bounded`, cap `_MENU_FETCH_CONCURRENCY = 6`) instead of one round-trip at a time — the poll's critical path was previously ~N sequential TLS round-trips per subscription. The fetch is also **skipped for weeks older than the menu grace window**: those weeks' recipes are unconditionally replaced by the delivered-only set (see [Selection-state resolution](#selection-state-resolution)), so downloading their (often multi-MB aggregate) menu only to discard it is pure waste. Weeks with no date, or dated within the grace window, still fetch. A single week's fetch failure resolves to an empty result rather than sinking the batch, while a genuine `HelloFreshAuthError` still propagates to trigger reauth.
 - **Dropped dead menu payloads.** After the merge replaces an old week's catalog with the delivered set, its stashed `raw['_menu_payload']` (which for old weeks is the bloated aggregate) is dropped — nothing reads it back for a past week, and keeping it would pin MBs for the whole poll interval.
 
+**Delivery-day watch** (`HelloFreshDataUpdateCoordinator.async_start_delivery_watch`, `HelloFreshClient.async_refresh_delivery_status`). Arrival state used to lag by up to the poll interval (three hours by default). A separate timer (the `delivery_watch_interval_minutes` option, default 15, 0–60, 0 = off) checks whether a box is *in progress* — a non-skipped week due today or yesterday and not yet confirmed delivered, a week whose lifecycle `state` is `ON_THE_WAY`, or an order whose carrier status is `in_transit`/`out_for_delivery` — and only then re-reads the ranged deliveries payload per subscription plus the SCM carrier lookup for tracked orders. Week `status`/`delivered_at`/`delivery_state`/`sub_status`, the raw `tracking` node, and order tracking fields are overlaid **in place** on the live `HelloFreshAccountData`, which is re-finalized so `last_delivery_week`, `tracked_order` and the calendar follow; listeners are then notified and the identity-keyed `get_weeks` cache dropped. No menus, history, pricing or profile requests are made, the tick is skipped while a full poll is running or ran within the last half-interval, and on an idle day it returns before any request. The same snapshot diff that backs `event.delivery_events` runs on these light refreshes, so `box_shipped`/`box_delivered` fire within minutes of the carrier.
+
 > ETag / `If-None-Match` conditional GETs are **not** implemented: the server has not been observed sending `ETag`s on these endpoints, and a correct implementation would require the request layer to own response decoding (a `304` has no body).
 
 ## Read Endpoints — Account and Deliveries
@@ -465,6 +467,19 @@ The customer UUID is extracted from nested `uuid` fields on the subscription's r
 ```
 
 `amount` is the spendable credit that applies to the next order and backs the `account_credit` sensor; `currencyCode` becomes the sensor's unit. The lookup is best-effort — a missing UUID or a failed/non-object response leaves `account_credit` unset rather than raising.
+
+### Payment-method health (`/gw/payments/v1/checktokenstatus`)
+
+HAR-verified (captures 33/34/43): the account pages POST an **empty body** to `POST /gw/payments/v1/checktokenstatus?country=US` with `x-requested-by: gateway` and get back
+
+```json
+{"isTokenExpiring": false, "isTokenExpired": false,
+ "primaryToken": {"type": "credit_card", "provider": "…", "method": "card", "is_active": true, "is_verified": true,
+                  "details": {"expiry_month": "05", "expiry_year": "2027", "number": "4242"},
+                  "billing_address": {"city": "…", "postcode": "…", "full_address": "…"}}}
+```
+
+`_async_enrich_payment_method_status` keeps the two flags, the card `type`/`provider` and the expiry month (`payment_card_expiry`, `YYYY-MM`) and feeds `binary_sensor.payment_method_expiring` (`Problem` device class, on when expiring **or** expired). The last-four digits and the billing address are dropped at parse time — they never reach `HelloFreshAccountData`, attributes or diagnostics. Best-effort: a gateway failure leaves the sensor unavailable. The companion `GET /gw/payments/us/subscription/{id}` and `/gw/payments/us/customers` (`x-requested-by: activations-rte`) return the same token object without the flags and are not called; `/gw/payments-status/us/subscription/{id}/payment-change-status` (`{"status": "ok"}`) and `/gw/payments/v1/getpaynoworders` (404 `Orders not found` in every capture — its shape when a payment actually fails is unobserved) are not called either.
 
 ### Account profile / customer attributes
 
@@ -901,7 +916,7 @@ Confirmed response shape (the total is the top-level `grandTotal`, which `_extra
 }
 ```
 
-Responses are cached by request fingerprint like the cart-price endpoint. (Richer fields — `subTotal`, `shippingAmount`, `discountAmount` — are available here but not surfaced as separate entities.)
+Responses are cached by request fingerprint like the cart-price endpoint. (The richer fields — `subTotal`, `shippingAmount`, `discountAmount`, `taxAmount` — are surfaced as the `price_breakdown` attribute on `sensor.selected_plan_total_price` (standing plan) and `sensor.next_box_total_price` (the next upcoming non-skipped week, one extra fingerprint-cached `/gw/calculate` per poll), not as separate entities.)
 
 `/gw/calculate` is used two ways, sharing `_build_calculate_payload`:
 
@@ -1026,7 +1041,7 @@ For scale, the largest `/gw/` responses observed anywhere:
 
 **`mealsReady`.** `/gw/my-deliveries/menu` gained a top-level `mealsReady` boolean at some point. It is `true` in all 14 observed responses, so what `false` signifies (menu not yet published for that week?) cannot be determined from observed traffic, and nothing reads it. Noted here so a future reader knows it was seen and deliberately left alone rather than missed.
 
-**Menu filters: `/gw/my-deliveries/courses` (observed, not used).** The website's menu filter panel calls `GET /gw/my-deliveries/courses?country=US&locale=en-US&week=<YYYY-Www>` with the active filters as query params and gets back only id references (`courses[]` of `{index, parent, recipeFamily, recipeId}`) to intersect with the already-loaded menu — filtering is server-side, the response carries no recipe data. Observed params and values (HAR, 2026-09): `diet=` `carb-smart`, `fiber-smart`, `glp-1-friendly`, `gluten-free`, `high-protein`, `low-sodium`, `low-sugar`, `organic-protein`, `under-650-calories`, `vegetarian`; `total-cooking-time=` `cooking-time-15/-20/-30`; `main-protein=` `beef`, `fish-seafood`, `pork`, `poultry`, `vegetarian`; plus `dish-type`, `cuisine`, `exclude-allergens`, and `sort-by`. The integration does **not** call it: the meal-planner card implements the same dietary categories client-side against the tags each menu recipe already carries (every observed tag spelling is aliased — the GLP-1 category alone has appeared as `GLP-1 Support`, `GLP-1 Friendly` and `GLP-1 Balance` in one season's payloads), which needs no extra round-trip per filter click and works identically on cached weeks.
+**Menu filters: `/gw/my-deliveries/courses` (used by `hellofresh.get_menu_courses`).** The website's menu filter panel calls `GET /gw/my-deliveries/courses?country=US&locale=en-US&week=<YYYY-Www>` with the active filters as query params and gets back only id references (`courses[]` of `{index, parent, recipeFamily, recipeId}`) to intersect with the already-loaded menu — filtering is server-side, the response carries no recipe data. Observed params and values (HAR, 2026-09): `diet=` `carb-smart`, `fiber-smart`, `glp-1-friendly`, `gluten-free`, `high-protein`, `low-sodium`, `low-sugar`, `organic-protein`, `under-650-calories`, `vegetarian`; `total-cooking-time=` `cooking-time-15/-20/-30`; `main-protein=` `beef`, `fish-seafood`, `pork`, `poultry`, `vegetarian`; plus `dish-type`, `cuisine`, `exclude-allergens`, and `sort-by`. The integration calls it through `hellofresh.get_menu_courses` (`async_get_menu_courses`) for the three groups recipe tags cannot answer — **cuisine**, **dish type** and **ingredients to avoid** (menu recipes carry no allergen data, and their tag slugs such as `handhelds` differ from the option slugs such as `burgers-and-sandwiches`); the meal-planner card sends all active server-side groups in one request per distinct filter combination and intersects the returned ids with its own filtering. Group and option slugs are exposed per week as `menu_filters` (parsed from the `filters` block below). The card still implements the dietary categories client-side against the tags each menu recipe already carries (every observed tag spelling is aliased — the GLP-1 category alone has appeared as `GLP-1 Support`, `GLP-1 Friendly` and `GLP-1 Balance` in one season's payloads), which needs no extra round-trip per filter click and works identically on cached weeks.
 
 **The `filters` block (in the menu payload) is the authority on those params.** `/gw/my-deliveries/menu` ships the filter definitions the panel renders: `filters[]` of `{name, type, choice, options[]}` where each option is `{name, type, default}` — `type` is the slug the `courses` endpoint accepts and `name` is the display label (so the mapping `"Carb Conscious"` ↔ `carb-smart`, `"GLP-1 Support"` ↔ `glp-1-friendly`, `"Fiber Powered"` ↔ `fiber-smart`, `"Sodium Smart"` ↔ `low-sodium` is data, not guesswork). `choice` declares the combination semantics: `Dietary preference` and `Ingredients to avoid` are **MULTI-AND**, `Main protein`, `Cuisine type` and `Dish type` are **MULTI-OR**, `Total cooking time` (and top-level `sorting`) are **SINGLE**. The meal-planner card's filter bar mirrors these semantics (dietary chips AND, protein chips OR) but matches on recipe tags rather than reading this block.
 
@@ -1476,6 +1491,10 @@ Sensors backed by subscription data (primary subscription):
 | `delivery_address` | `HelloFreshSubscription.delivery_address` | Single-line formatted shipping address; redacted in diagnostics |
 | `recent_payment_date` | `HelloFreshSubscription.recent_payment_date` | Date of most recent charge |
 | `next_payment_date` | `HelloFreshSubscription.next_payment_date` | Estimated date of next charge |
+| `payment_method_expiring` (binary) | `HelloFreshAccountData.payment_method_expiring` / `payment_method_expired` (+ `payment_card_type`, `payment_card_provider`, `payment_card_expiry`) | From `POST /gw/payments/v1/checktokenstatus`; on when expiring or expired; card number and billing address never stored |
+| `box_size` (select) | `client.async_list_plan_options` catalog; current = subscription `product.sku` / `maintainedSku` | Writes via `async_change_plan` (recurring) |
+| `delivery_day` (select) | `client.async_get_delivery_options` catalog; current = subscription `deliveryTime` | Writes via `async_change_delivery_weekday` (recurring) |
+| `delivery_events` (event) | coordinator `delivery_events`, from `delivery_snapshot` / `delivery_transitions` diffs of consecutive polls (and delivery-watch refreshes) | `box_shipped`, `box_delivered`, `delivery_failed`, `week_skipped`, `week_unskipped`, `selection_locked`, `menu_published` |
 
 Recent delivered-history records are also included in sensor attributes through `serialized_past_delivery_weeks`, while upcoming-delivery, selection, and shipment entities continue to use the active account week/order models.
 
@@ -1964,6 +1983,15 @@ runtime from `/gw/configurations` rather than hardcoded.
 Also present in that config: `features.loyaltyChallenge` (12-week challenges,
 `loyaltyChallengeApiV2.enabled = true`) and claim-flow UI copy — the strongest hint that a real API
 will appear at launch.
+
+> **Loyalty endpoints that do exist (2026-07 → 2026-09 captures).** The achievements page also calls
+> `GET /gw/loyalty/enrollments`, `GET /gw/loyalty/onboarding` and `GET /gw/loyalty/v3/programs/opt-in`.
+> `enrollments` returns one **completed** legacy challenge (`lp_higher_loyaties_2boxes_2rewards_4weeks_rollout`,
+> `progress: 2 / total_steps: 2`, a `surcharge` voucher reward already `redeemed`), `onboarding` returns two
+> `false` intro flags and `opt-in` returns `opt_in_status: "not_eligible"` — identical in every capture across
+> two months, while the page itself says "We're preparing the next Rewards for you." These look like the
+> remains of a finished pilot rather than the coming program, so **no loyalty sensor is exposed**; revisit when
+> `loyaltyProgram.enabled` flips.
 
 ### Account-identity writes — intentionally excluded
 

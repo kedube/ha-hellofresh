@@ -79,6 +79,7 @@
         "description": "Juster hvor ofte HelloFresh-data hentes, og hvor langt tilbake kortene kan bla. Innstillingene trer i kraft med en gang — innloggingsopplysningene dine berøres ikke.",
         "data": {
           "scan_interval_minutes": "Oppdateringsintervall (minutter)",
+          "delivery_watch_interval_minutes": "Leveringsdag-overvåking (minutter)",
           "history_weeks": "Leveringshistorikk (uker)",
           "menu_grace_weeks": "Full menyhistorikk (uker)",
           "enable_public_menu_fallback": "Bruk offentlig meny som reserve",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "Hvor ofte HelloFresh spørres om konto- og leveringsdata. Lavere = ferskere data og flere forespørsler; høyere = skånsommere for API-et. Område 5–1440 minutter; standard 180 (3 timer). Innloggingstokenet fornyes etter sin egen plan, så dette påvirker ikke innloggingen.",
+          "delivery_watch_interval_minutes": "Mens en kasse er ventet (leveringsdagen eller dagen etter, til transportøren bekrefter den) eller en forsendelse er underveis, sjekkes bare leveringsstatus og pakkesporing så ofte, uavhengig av oppdateringsintervallet, slik at leveringen vises innen få minutter. Område 0–60; standard 15. 0 slår overvåkingen av. Andre dager sendes ingen ekstra forespørsler.",
           "history_weeks": "Hvor mange uker med tidligere leveringer som lastes inn, slik at du kan bla i dem i kortene. Lavere = mindre data per oppdatering; øk for å se lenger tilbake (rundt 56 for et helt år). Område 1–104 uker; standard 26 (rundt 6 måneder). Endring laster integrasjonen på nytt.",
           "menu_grace_weeks": "Hvor mange uker etter leveringsdatoen en uke beholder hele menyen sin i måltidsplanlegger-kortet (de leverte rettene dine forblir uthevet); eldre uker viser bare det som ble levert. Område 0–3 uker; standard 2 (de siste matkassene kan fortsatt bla gjennom). 0 slår det av. HelloFresh publiserer ikke lenger menyen for eldre uker, så uker utover dette viser bare de leverte rettene. Endring laster integrasjonen på nytt.",
           "enable_public_menu_fallback": "Hvis de innloggede menydataene ikke kan lastes, leses den offentlige regionale menysiden slik at oppskriftsnavn likevel vises. La den stå på med mindre du bare vil ha autentiserte data.",
@@ -276,6 +278,9 @@
       },
       "payload_shape_changed": {
         "name": "Dataformat endret"
+      },
+      "payment_method_expiring": {
+        "name": "Betalingsmetode utløper"
       }
     },
     "button": {
@@ -286,6 +291,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Leveringsplan"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Leveringshendelser",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Kasse sendt",
+              "box_delivered": "Kasse levert",
+              "delivery_failed": "Levering mislyktes",
+              "week_skipped": "Uke hoppet over",
+              "week_unskipped": "Uke gjenopptatt",
+              "selection_locked": "Valg låst",
+              "menu_published": "Meny publisert"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Kassestørrelse"
+      },
+      "delivery_day": {
+        "name": "Leveringsdag"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Uke-ID",
           "description": "Valgfri identifikator for en HelloFresh-leveringsuke for å returnere bare den uken."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Hent menyretter",
+      "description": "Filtrerer menyen for en leveringsuke via HelloFreshs egen serverbaserte filtertjeneste (kjøkken, retttype, ingredienser å unngå, kostholdspreferanse, hovedprotein, total tilberedningstid). Returnerer bare de samsvarende oppskrifts-ID-ene. Skrivebeskyttet; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        },
+        "week_id": {
+          "name": "Uke-ID",
+          "description": "HelloFresh-leveringsuken som skal filtreres (for eksempel 2026-W37)."
+        },
+        "filters": {
+          "name": "Filtre",
+          "description": "Filtergruppe-slugger knyttet til én eller flere valg-slugger, som oppført i ukens menu_filters (for eksempel {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

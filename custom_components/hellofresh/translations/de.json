@@ -79,6 +79,7 @@
         "description": "Lege fest, wie oft HelloFresh-Daten abgerufen werden und wie weit die Karten zurückblättern können. Diese Einstellungen wirken sofort — deine Anmeldedaten sind nicht betroffen.",
         "data": {
           "scan_interval_minutes": "Aktualisierungsintervall (Minuten)",
+          "delivery_watch_interval_minutes": "Liefertag-Überwachung (Minuten)",
           "history_weeks": "Lieferhistorie (Wochen)",
           "menu_grace_weeks": "Vollständige Menühistorie (Wochen)",
           "enable_public_menu_fallback": "Öffentliches Menü als Fallback nutzen",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "Wie oft HelloFresh nach Konto- und Lieferdaten abgefragt wird. Niedriger = aktuellere Daten und mehr Anfragen; höher = schonender für die API. Bereich 5–1440 Minuten; Standard 180 (3 Stunden). Das Anmelde-Token wird nach einem eigenen Zeitplan erneuert, dies beeinflusst die Anmeldung also nicht.",
+          "delivery_watch_interval_minutes": "Solange eine Box fällig ist (Liefertag oder der Folgetag, bis der Zusteller sie bestätigt) oder eine Sendung unterwegs ist, werden nur Lieferstatus und Sendungsverfolgung in diesem Abstand neu abgefragt – unabhängig vom Aktualisierungsintervall, damit Zustellungen innerhalb von Minuten erscheinen. Bereich 0–60; Standard 15. 0 schaltet die Überwachung aus. An anderen Tagen entstehen keine zusätzlichen Anfragen.",
           "history_weeks": "Wie viele Wochen vergangener Lieferungen geladen werden, damit du sie in den Karten durchsehen kannst. Niedriger = weniger Daten pro Aktualisierung; erhöhe den Wert, um weiter zurückzublicken (etwa 56 für ein ganzes Jahr). Bereich 1–104 Wochen; Standard 26 (etwa 6 Monate). Eine Änderung lädt die Integration neu.",
           "menu_grace_weeks": "Wie viele Wochen nach ihrem Lieferdatum eine Woche ihr vollständiges durchblätterbares Menü in der Menüplaner-Karte behält (deine gelieferten Gerichte bleiben hervorgehoben); ältere Wochen zeigen nur, was geliefert wurde. Bereich 0–3 Wochen; Standard 2 (die letzten paar Kochboxen bleiben durchblätterbar). 0 schaltet das Zeitfenster ab. HelloFresh veröffentlicht für ältere Wochen kein Menü mehr, daher zeigen Wochen darüber hinaus nur noch die gelieferten Gerichte. Eine Änderung lädt die Integration neu.",
           "enable_public_menu_fallback": "Wenn die angemeldeten Menüdaten nicht geladen werden können, wird die öffentliche regionale Menüseite ausgelesen, damit Rezeptnamen weiterhin erscheinen. Lass dies aktiviert, außer du möchtest ausschließlich authentifizierte Daten.",
@@ -276,6 +278,9 @@
       },
       "payload_shape_changed": {
         "name": "Datenformat geändert"
+      },
+      "payment_method_expiring": {
+        "name": "Zahlungsmethode läuft ab"
       }
     },
     "button": {
@@ -286,6 +291,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Lieferplan"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Lieferereignisse",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Box unterwegs",
+              "box_delivered": "Box geliefert",
+              "delivery_failed": "Zustellung fehlgeschlagen",
+              "week_skipped": "Woche übersprungen",
+              "week_unskipped": "Woche wiederhergestellt",
+              "selection_locked": "Auswahl gesperrt",
+              "menu_published": "Menü veröffentlicht"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Boxgröße"
+      },
+      "delivery_day": {
+        "name": "Liefertag"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Wochen-ID",
           "description": "Optionale Kennung einer HelloFresh-Lieferwoche, um nur diese Woche zurückzugeben."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Menü-Gerichte abrufen",
+      "description": "Filtert das Menü einer Lieferwoche über den serverseitigen Filterdienst von HelloFresh (Küche, Gerichtart, zu vermeidende Zutaten, Ernährungspräferenz, Hauptprotein, Gesamtkochzeit). Gibt nur die passenden Rezept-IDs zurück. Nur lesend; liefert eine Antwort.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        },
+        "week_id": {
+          "name": "Wochen-ID",
+          "description": "Die zu filternde HelloFresh-Lieferwoche (zum Beispiel 2026-W37)."
+        },
+        "filters": {
+          "name": "Filter",
+          "description": "Filtergruppen-Slugs mit einem oder mehreren Options-Slugs, wie in menu_filters der Woche aufgeführt (zum Beispiel {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

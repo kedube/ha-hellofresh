@@ -11,7 +11,7 @@ the badge is claimable — and the status below tracks them on that basis.
 
 ## Current Status
 
-- Config flow setup (email/password and token paths) and reauthentication are implemented, plus an options flow for refresh interval, history window, menu grace window, the public-menu fallback toggle, the favorite-hearts toggle, and the data-quality repair-warnings toggle. Options changes reload the entry automatically.
+- Config flow setup (email/password and token paths) and reauthentication are implemented, plus an options flow for refresh interval, delivery-day watch interval, history window, menu grace window, the public-menu fallback toggle, the favorite-hearts toggle, and the data-quality repair-warnings toggle. Options changes reload the entry automatically.
 - Reconfiguration (`async_step_reconfigure`) lets the country and credentials (or token) be corrected without deleting the entry; it refuses to repoint an entry at a different HelloFresh account.
 - Diagnostics are implemented with sensitive account, address, and token values redacted (by key name at any nesting depth, including captured request params), and include token-health timing and a `frontend` block comparing expected vs. registered card resource versions.
 - Repairs issues are raised for payload-shape changes, fallback menu behavior, and unsupported write actions.

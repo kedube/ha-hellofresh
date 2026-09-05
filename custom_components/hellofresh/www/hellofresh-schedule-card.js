@@ -46,6 +46,7 @@ const {
   fmtDate,
   titleCase,
   fmtPrice,
+  refetchIntervalMs,
   accountKey,
   syncStorageKey,
   loadSyncedWeekId,
@@ -189,8 +190,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // fetching more often would just return the coordinator's identical cached data.
 
   _refetchIntervalMs() {
-    const mins = Number(this._account && this._account.refresh_interval_minutes);
-    return (Number.isFinite(mins) && mins >= 1 ? mins : 180) * 60000;
+    return refetchIntervalMs(this._account);
   }
 
   // Re-fetch if the data is older than the integration's poll interval. True if a fetch started.
@@ -712,6 +712,9 @@ class HelloFreshScheduleCard extends HTMLElement {
     // upcoming box.
     const paymentDate = upcoming && this._account ? this._account.next_payment_date : null;
     const coupon = upcoming && this._account ? this._account.next_box_coupon : null;
+    // Discount applied to that box (from its /gw/calculate split) — shown only when non-zero,
+    // so the price line's "includes" reads as news rather than a permanent zero.
+    const discount = upcoming ? this._nextBoxDiscount() : null;
     // The human-readable courier window ("Mondays: 8AM - 8PM") — the week/order slot_label,
     // the same value the "Delivery Window" (next_delivery_slot) sensor reports. NOT the raw
     // subscription next_delivery_time, which is a machine string.
@@ -746,7 +749,21 @@ class HelloFreshScheduleCard extends HTMLElement {
           <span class="sumlabel">Status</span>
           <span class="sumval">${this._esc(this._titleCase(status))}${price ? ` <span class="muted">· ${this._esc(price)}</span>` : ""}</span>
         </div>
+        ${discount ? `
+        <div class="sumrow">
+          <span class="sumlabel">Discount</span>
+          <span class="sumval">−${this._esc(discount)} <span class="muted">· included in the price</span></span>
+        </div>` : ""}
       </div>`;
+  }
+
+  // The next box's discount from the account payload's price breakdown, formatted, or null
+  // when there is none (or the breakdown is unavailable).
+  _nextBoxDiscount() {
+    const breakdown = this._account && this._account.next_delivery_price_breakdown;
+    const amount = breakdown ? Number(breakdown.discount_amount) : NaN;
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    return this._fmtPrice(amount, this._account.next_delivery_total_currency);
   }
 
   _renderTimeline() {

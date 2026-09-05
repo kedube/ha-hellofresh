@@ -36,6 +36,14 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # On when HelloFresh reports the card on file as expiring or already expired — the most
+    # common way a box silently fails to ship. Unavailable until the payments gateway has
+    # answered; attributes carry only the card type/provider and expiry month.
+    BinarySensorEntityDescription(
+        key="payment_method_expiring",
+        translation_key="payment_method_expiring",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+    ),
 )
 
 
@@ -69,8 +77,18 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
         self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
 
     @property
+    def available(self) -> bool:
+        """Payment-method health is unavailable until the payments gateway has answered."""
+        if self.entity_description.key == "payment_method_expiring":
+            return super().available and self.coordinator.data.payment_method_expiring is not None
+        return super().available
+
+    @property
     def is_on(self) -> bool:
         """Return the state."""
+        if self.entity_description.key == "payment_method_expiring":
+            data = self.coordinator.data
+            return bool(data.payment_method_expiring or data.payment_method_expired)
         if self.entity_description.key == "write_actions_available":
             return self.coordinator.data.capabilities.supports_write_actions
         if self.entity_description.key == "tracked_shipment_available":
@@ -94,6 +112,8 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
             )
         if self.entity_description.key == "payload_shape_changed":
             return "mdi:alert-octagon" if is_on else "mdi:check-circle-outline"
+        if self.entity_description.key == "payment_method_expiring":
+            return "mdi:credit-card-clock-outline" if is_on else "mdi:credit-card-check-outline"
         return None
 
     @property
@@ -108,6 +128,16 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
         so we expose only small summary fields.
         """
         data = self.coordinator.data
+        if self.entity_description.key == "payment_method_expiring":
+            # Deliberately no card number fragment or billing address: those exist in the
+            # gateway response but are dropped at parse time.
+            return {
+                "expiring": data.payment_method_expiring,
+                "expired": data.payment_method_expired,
+                "card_type": data.payment_card_type,
+                "card_provider": data.payment_card_provider,
+                "card_expiry": data.payment_card_expiry,
+            }
         return {
             "account_data_available": data.account_data_available,
             "capabilities": data.capabilities.as_dict(),

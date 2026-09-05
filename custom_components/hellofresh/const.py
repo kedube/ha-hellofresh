@@ -79,9 +79,23 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.CALENDAR,
+    Platform.EVENT,
+    Platform.SELECT,
     Platform.SWITCH,
     Platform.TODO,
 ]
+
+# While a box is due (its scheduled day, or the day after when the carrier still hasn't
+# confirmed it) or a tracked shipment is on the road, the deliveries payload and the carrier
+# lookup are re-read on this cadence instead of waiting for the multi-hour account poll. It is
+# a light refresh — two or three GETs, no menus — so the arrival lands on the dashboard within
+# minutes rather than up to scan_interval_minutes later. Idle days cost nothing: the timer
+# ticks, sees no delivery in progress, and returns without a request. User option; 0 turns
+# the watch off entirely (delivery state then only moves on the regular poll).
+CONF_DELIVERY_WATCH_INTERVAL_MINUTES = "delivery_watch_interval_minutes"
+DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES = 15
+MIN_DELIVERY_WATCH_INTERVAL_MINUTES = 0
+MAX_DELIVERY_WATCH_INTERVAL_MINUTES = 60
 
 SERVICE_REFRESH_DATA = "refresh_data"
 SERVICE_GET_WEEKS = "get_weeks"
@@ -107,6 +121,7 @@ SERVICE_GET_RECIPE_COLLECTIONS = "get_recipe_collections"
 SERVICE_GET_CATALOG_RECIPES = "get_catalog_recipes"
 SERVICE_PREVIEW_MEAL_PRICE = "preview_meal_price"
 SERVICE_GET_RECIPE_DETAIL = "get_recipe_detail"
+SERVICE_GET_MENU_COURSES = "get_menu_courses"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
@@ -124,6 +139,7 @@ ATTR_DELIVERY_OPTION = "delivery_option"
 ATTR_DELIVERY_INTERVAL = "delivery_interval"
 ATTR_PRODUCT_HANDLE = "product_handle"
 ATTR_SUBSCRIPTION_ID = "subscription_id"
+ATTR_FILTERS = "filters"
 
 INTENT_GET_NEXT_DELIVERY = "HelloFreshGetNextDeliveryIntent"
 INTENT_GET_MEAL_SELECTION = "HelloFreshGetMealSelectionIntent"

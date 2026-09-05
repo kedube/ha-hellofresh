@@ -32,7 +32,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 |---|---|
 | [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
 | [docs/dashboard.md](docs/dashboard.md) | The dashboard's views and all seven Lovelace cards: options, features, screenshots |
-| [docs/services.md](docs/services.md) | All 24 services: parameters and responses |
+| [docs/services.md](docs/services.md) | All 25 services: parameters and responses |
 
 
 ## Installation
@@ -114,6 +114,7 @@ These settings are adjusted *after* setup, in the integration's **Configure** di
 The available options are:
 
 - **Refresh interval (minutes)** — how often account data is polled. Default is **180**; allowed range is **5–1440**. (This is the data-refresh cadence; the bearer token is refreshed on its own faster-running schedule regardless of this value.)
+- **Delivery-day watch interval (minutes)** — while a box is due (its delivery day, or the day after until the carrier confirms it) or a shipment is on the road, only the delivery status and carrier tracking are re-checked this often, independently of the refresh interval, so an arrival shows within minutes. Default **15**; range **0–60** (**0** turns the watch off). On other days it makes no extra requests.
 - **Use public menu fallback** — when authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.
 - **Past delivery history (weeks)** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
 - **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the [Recipes card](docs/dashboard.md#recipes-card) keep working.
@@ -181,11 +182,11 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 ### Services
 
-**24 services** cover everything the integration can do, grouped roughly as:
+**25 services** cover everything the integration can do, grouped roughly as:
 
 | Group | Examples |
 |---|---|
-| **Meals and Market** | `get_weeks`, `select_meals`, `select_market_items`, `preview_meal_price` |
+| **Meals and Market** | `get_weeks`, `get_menu_courses`, `select_meals`, `select_market_items`, `preview_meal_price` |
 | **Delivery schedule** | `skip_week`, `unskip_week`, `reschedule_week`, `change_delivery_weekday` |
 | **Plan and account** | `get_account_summary`, `change_plan`, `get_spending` |
 | **Food profile** | `get_food_profile`, `set_food_profile` |

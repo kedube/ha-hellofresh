@@ -79,6 +79,7 @@
         "description": "Stel in hoe vaak HelloFresh-gegevens worden opgehaald en hoe ver de kaarten kunnen terugkijken. Deze instellingen werken meteen — je inloggegevens worden niet gewijzigd.",
         "data": {
           "scan_interval_minutes": "Vernieuwingsinterval (minuten)",
+          "delivery_watch_interval_minutes": "Bezorgdag-controle (minuten)",
           "history_weeks": "Bezorggeschiedenis (weken)",
           "menu_grace_weeks": "Volledige menugeschiedenis (weken)",
           "enable_public_menu_fallback": "Openbaar menu als terugval gebruiken",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "Hoe vaak HelloFresh wordt bevraagd voor account- en bezorggegevens. Lager = actuelere gegevens en meer verzoeken; hoger = rustiger voor de API. Bereik 5–1440 minuten; standaard 180 (3 uur). Het inlogtoken wordt op een eigen schema vernieuwd, dus dit heeft geen invloed op het inloggen.",
+          "delivery_watch_interval_minutes": "Zolang een box verwacht wordt (de bezorgdag, of de dag erna totdat de bezorger dit bevestigt) of een zending onderweg is, worden alleen de bezorgstatus en de track-en-trace zo vaak opnieuw gecontroleerd, los van het vernieuwingsinterval, zodat de bezorging binnen enkele minuten zichtbaar is. Bereik 0–60; standaard 15. 0 schakelt de controle uit. Op andere dagen worden geen extra verzoeken gedaan.",
           "history_weeks": "Hoeveel weken aan eerdere bezorgingen worden geladen zodat je ze in de kaarten kunt bekijken. Lager = minder gegevens per vernieuwing; verhoog dit om verder terug te kijken (ongeveer 56 voor een heel jaar). Bereik 1–104 weken; standaard 26 (ongeveer 6 maanden). Wijzigen herlaadt de integratie.",
           "menu_grace_weeks": "Hoeveel weken na de bezorgdatum een week zijn volledige menu houdt om te bekijken in de maaltijdplannerkaart (je bezorgde maaltijden blijven gemarkeerd); oudere weken tonen alleen wat is bezorgd. Bereik 0–3 weken; standaard 2 (de laatste paar maaltijdboxen blijven te bekijken). Met 0 zet je dit uit. HelloFresh publiceert het menu voor oudere weken niet meer, dus weken daarbuiten tonen alleen nog de bezorgde maaltijden. Wijzigen herlaadt de integratie.",
           "enable_public_menu_fallback": "Als de ingelogde menugegevens niet geladen kunnen worden, wordt de openbare regionale menupagina uitgelezen zodat receptnamen toch verschijnen. Laat dit aan, tenzij je uitsluitend geverifieerde gegevens wilt.",
@@ -276,6 +278,9 @@
       },
       "payload_shape_changed": {
         "name": "Gegevensformaat gewijzigd"
+      },
+      "payment_method_expiring": {
+        "name": "Betaalmethode verloopt"
       }
     },
     "button": {
@@ -286,6 +291,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Bezorgschema"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Bezorggebeurtenissen",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Box verzonden",
+              "box_delivered": "Box bezorgd",
+              "delivery_failed": "Bezorging mislukt",
+              "week_skipped": "Week overgeslagen",
+              "week_unskipped": "Week hersteld",
+              "selection_locked": "Selectie vergrendeld",
+              "menu_published": "Menu gepubliceerd"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Boxgrootte"
+      },
+      "delivery_day": {
+        "name": "Bezorgdag"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Week-ID",
           "description": "Optionele identificatie van een HelloFresh-bezorgweek om alleen die week terug te geven."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Menugerechten ophalen",
+      "description": "Filtert het menu van een bezorgweek via de serverzijdige filterdienst van HelloFresh (keuken, gerechttype, te vermijden ingrediënten, dieetvoorkeur, hoofdeiwit, totale kooktijd). Geeft alleen de overeenkomende recept-id's terug. Alleen-lezen; geeft een antwoord.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De te filteren HelloFresh-bezorgweek (bijvoorbeeld 2026-W37)."
+        },
+        "filters": {
+          "name": "Filters",
+          "description": "Filtergroep-slugs gekoppeld aan een of meer optie-slugs, zoals vermeld in menu_filters van de week (bijvoorbeeld {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

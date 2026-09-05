@@ -79,6 +79,7 @@
         "description": "Réglez la fréquence de récupération des données HelloFresh et la profondeur d'historique consultable dans les cartes. Ces réglages prennent effet immédiatement — vos identifiants ne sont pas modifiés.",
         "data": {
           "scan_interval_minutes": "Intervalle d'actualisation (minutes)",
+          "delivery_watch_interval_minutes": "Suivi du jour de livraison (minutes)",
           "history_weeks": "Historique des livraisons (semaines)",
           "menu_grace_weeks": "Historique complet du menu (semaines)",
           "enable_public_menu_fallback": "Utiliser le menu public en secours",
@@ -87,6 +88,7 @@
         },
         "data_description": {
           "scan_interval_minutes": "Fréquence d'interrogation de HelloFresh pour les données de compte et de livraison. Plus bas = données plus fraîches et plus de requêtes ; plus haut = plus léger pour l'API. Plage 5–1440 minutes ; par défaut 180 (3 heures). Le jeton de connexion est renouvelé selon son propre calendrier : ce réglage n'affecte donc pas la connexion.",
+          "delivery_watch_interval_minutes": "Lorsqu'une box est attendue (le jour de livraison, ou le lendemain tant que le transporteur ne l'a pas confirmée) ou qu'un colis est en route, seuls le statut de livraison et le suivi transporteur sont revérifiés à cette fréquence, indépendamment de l'intervalle d'actualisation, pour que l'arrivée apparaisse en quelques minutes. Plage 0–60 ; 15 par défaut. 0 désactive le suivi. Les autres jours, aucune requête supplémentaire n'est faite.",
           "history_weeks": "Nombre de semaines de livraisons passées à charger pour pouvoir les consulter dans les cartes. Plus bas = moins de données à chaque actualisation ; augmentez pour remonter plus loin (environ 56 pour une année complète). Plage 1–104 semaines ; par défaut 26 (environ 6 mois). Toute modification recharge l'intégration.",
           "menu_grace_weeks": "Nombre de semaines après sa date de livraison pendant lesquelles une semaine conserve son menu complet consultable dans la carte du planificateur de repas (vos repas livrés restent mis en évidence) ; les semaines plus anciennes n'affichent que ce qui a été livré. Plage 0–3 semaines ; par défaut 2 (les dernières box restent consultables). 0 désactive ce délai. HelloFresh cesse de publier le menu des semaines anciennes : au-delà, seules les recettes livrées sont affichées. Toute modification recharge l'intégration.",
           "enable_public_menu_fallback": "Si les données de menu authentifiées ne peuvent pas être chargées, la page de menu publique régionale est lue pour que les noms de recettes apparaissent quand même. Laissez cette option activée, sauf si vous souhaitez uniquement des données authentifiées.",
@@ -276,6 +278,9 @@
       },
       "payload_shape_changed": {
         "name": "Format des données modifié"
+      },
+      "payment_method_expiring": {
+        "name": "Moyen de paiement expirant"
       }
     },
     "button": {
@@ -286,6 +291,32 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Calendrier des livraisons"
+      }
+    },
+    "event": {
+      "delivery_events": {
+        "name": "Événements de livraison",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "box_shipped": "Box expédiée",
+              "box_delivered": "Box livrée",
+              "delivery_failed": "Livraison échouée",
+              "week_skipped": "Semaine sautée",
+              "week_unskipped": "Semaine rétablie",
+              "selection_locked": "Sélection verrouillée",
+              "menu_published": "Menu publié"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "box_size": {
+        "name": "Taille de la box"
+      },
+      "delivery_day": {
+        "name": "Jour de livraison"
       }
     },
     "switch": {
@@ -324,6 +355,24 @@
         "week_id": {
           "name": "Identifiant de semaine",
           "description": "Identifiant facultatif d'une semaine de livraison HelloFresh pour ne renvoyer que cette semaine."
+        }
+      }
+    },
+    "get_menu_courses": {
+      "name": "Obtenir les plats du menu",
+      "description": "Filtre le menu d'une semaine de livraison via le service de filtrage côté serveur de HelloFresh (cuisine, type de plat, ingrédients à éviter, préférence alimentaire, protéine principale, temps de cuisson total). Ne renvoie que les identifiants de recettes correspondants. Lecture seule ; renvoie une réponse.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "week_id": {
+          "name": "ID de semaine",
+          "description": "La semaine de livraison HelloFresh à filtrer (par exemple 2026-W37)."
+        },
+        "filters": {
+          "name": "Filtres",
+          "description": "Slugs de groupes de filtres associés à un ou plusieurs slugs d'options, tels que listés dans menu_filters de la semaine (par exemple {\"cuisine\": [\"mediterranean\"]})."
         }
       }
     },

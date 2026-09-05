@@ -845,6 +845,8 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     client._async_get_account_menu_data = fake_get_account_menu_data  # type: ignore[method-assign]
     client._async_enrich_order_tracking = fake_enrich_tracking  # type: ignore[method-assign]
     client._async_enrich_subscription_payment_dates = fake_enrich_subscription_payments  # type: ignore[method-assign]
+    client._async_enrich_payment_method_status = fake_enrich_subscription_payments  # type: ignore[method-assign]
+    client._async_enrich_next_box_price_breakdown = fake_enrich_subscription_payments  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -913,6 +915,8 @@ def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
     client._async_enrich_order_tracking = fake_noop  # type: ignore[method-assign]
     client._async_enrich_subscription_payment_dates = fake_noop  # type: ignore[method-assign]
     client._async_enrich_account_credit = fake_noop  # type: ignore[method-assign]
+    client._async_enrich_payment_method_status = fake_noop  # type: ignore[method-assign]
+    client._async_enrich_next_box_price_breakdown = fake_noop  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

@@ -121,6 +121,13 @@ views:
             logo: true
             grid_options:
               columns: full
+          # Delivery lifecycle history (shipped, delivered, skipped, cutoff passed, menu
+          # published) from the event entity — the same transitions automations trigger on.
+          - type: logbook
+            title: Delivery activity
+            hours_to_show: 336
+            target:
+              entity_id: event.hellofresh_us_delivery_events
       - type: grid
         cards:
           - type: custom:hellofresh-subscription-card
@@ -128,6 +135,14 @@ views:
             logo: true
             grid_options:
               columns: full
+          # Recurring plan controls (box size, delivery day) and the payment-method check.
+          # Both selects are RECURRING changes — every future box, and what you are billed.
+          - type: entities
+            title: Plan controls
+            entities:
+              - entity: select.hellofresh_us_box_size
+              - entity: select.hellofresh_us_delivery_day
+              - entity: binary_sensor.hellofresh_us_payment_method_expiring
           - type: custom:hellofresh-cost-card
             title: Cost
             logo: true

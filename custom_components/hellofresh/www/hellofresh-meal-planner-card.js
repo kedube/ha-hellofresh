@@ -108,12 +108,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     //    would only ever confuse.
     //  * _menuSection: single-select website menu section slug ("" = all), matched against
     //    the week's own menu_categories id-lists from the get_weeks payload.
+    //  * _serverFilter: the website's Cuisine type / Dish type / Ingredients to avoid groups
+    //    as {group slug -> Set of option slugs}. Menu recipes carry no allergen data and
+    //    their tags don't use these option slugs, so these are resolved SERVER-SIDE through
+    //    hellofresh.get_menu_courses (see _serverFilterIds); the options themselves come
+    //    from each week's own menu_filters payload.
     this._proteinFilter = this._loadProteinFilter();
     this._showVariants = this._loadShowVariants();
     this._dietFilter = this._loadDietFilter();
     this._timeFilter = this._loadTimeFilter();
     this._highlightFilter = this._loadHighlightFilter();
     this._menuSection = this._loadMenuSection();
+    this._serverFilter = this._loadServerFilter();
+    // get_menu_courses results keyed by week + filters (_serverFilterKey), so a re-render
+    // never refetches; a `null` entry records an error fallback (no server constraint).
+    this._serverFilterCache = new Map();
+    this._serverFilterPending = null; // cache key of the request in flight, if any
+    this._serverFilterSeq = 0; // stale-response guard, as in the recipe sheet's servings switch
     // Whether the filter panel is expanded. Collapsed by default: six chip groups above the
     // grid drowned the menu, so the collapsed bar shows just "Filters · N active" plus the
     // active selections as removable chips. A view preference, persisted like the filters.
@@ -220,6 +231,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._pending = {}; // server is now the source of truth; drop any stale edits
       this._dedupeCache = null; // recipe data changed: drop cached dedupe/name-count results
       this._savedSelCache = null;
+      this._serverFilterCache = new Map(); // a menu change can change what a filter returns
       // Resolve which week to land on, in priority order:
       //  1. an explicit keep (post-save — stay where the user was),
       //  2. a week a sibling card asked us to sync to before we'd loaded,
@@ -600,6 +612,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return "hellofresh-meal-planner:menu-section";
   }
 
+  // The filter groups resolved through HelloFresh's own filter service rather than by
+  // client-side tag matching, keyed by their menu_filters slug in the order the panel shows
+  // them (Cuisine type, Dish type, Ingredients to avoid). Their options — chip labels and
+  // slugs — come from each week's own payload, not a fixed list.
+  static get SERVER_FILTER_GROUPS() {
+    return ["cuisine", "dish-type", "exclude-allergens"];
+  }
+
+  static get SERVER_FILTER_STORAGE_KEY() {
+    return "hellofresh-meal-planner:server-filter";
+  }
+
   static get FILTERS_EXPANDED_STORAGE_KEY() {
     return "hellofresh-meal-planner:filters-expanded";
   }
@@ -817,6 +841,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const row = (week.menu_categories || []).find((c) => c.slug === this._menuSection);
       if (row) out.push({ kind: "section", value: row.slug, label: row.name });
     }
+    // Server-side groups count only where they apply: an option the viewed week doesn't
+    // offer filters nothing there (same rule as the menu section above).
+    for (const group of this._serverFilterGroups(week)) {
+      const set = this._serverFilter[group.slug];
+      for (const o of group.options) {
+        if (set && set.has(o.slug)) out.push({ kind: group.slug, value: o.slug, label: o.name });
+      }
+    }
     if (!this._showVariants) out.push({ kind: "variants", value: "", label: "Variants hidden" });
     return out;
   }
@@ -829,6 +861,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     else if (kind === "highlight") this._selectHighlightFilter("");
     else if (kind === "section") this._selectMenuSection("");
     else if (kind === "variants") this._toggleShowVariants();
+    else if (HelloFreshMealPlannerCard.SERVER_FILTER_GROUPS.includes(kind))
+      this._toggleServerFilter(kind, value);
   }
 
   // Load the persisted menu-section slug (single-select; "" = all). Not validated against a
@@ -871,6 +905,136 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return new Set(row.recipe_ids.map((id) => String(id).split("-")[0]));
   }
 
+  // Load the persisted server-side selections as {group slug -> Set of option slugs}.
+  // Unknown groups are dropped; option slugs are NOT validated here — the options are
+  // whatever the viewed week's menu_filters offers, so a slug that week lacks is simply
+  // ignored by _activeServerFilters (like a stale menu section) rather than lost forever.
+  _loadServerFilter() {
+    let stored = {};
+    try {
+      const raw = window.localStorage.getItem(HelloFreshMealPlannerCard.SERVER_FILTER_STORAGE_KEY);
+      stored = raw ? JSON.parse(raw) : {};
+    } catch (_e) {
+      stored = {};
+    }
+    const out = {};
+    for (const group of HelloFreshMealPlannerCard.SERVER_FILTER_GROUPS) {
+      const slugs = stored && Array.isArray(stored[group]) ? stored[group] : [];
+      out[group] = new Set(slugs.filter((s) => typeof s === "string" && s));
+    }
+    return out;
+  }
+
+  _persistServerFilter() {
+    try {
+      const plain = {};
+      for (const [group, set] of Object.entries(this._serverFilter)) plain[group] = [...set];
+      window.localStorage.setItem(
+        HelloFreshMealPlannerCard.SERVER_FILTER_STORAGE_KEY,
+        JSON.stringify(plain)
+      );
+    } catch (_e) {
+      /* storage unavailable: keep the in-memory setting for this session */
+    }
+  }
+
+  // Toggle one option in/out of a server-side group (multi-select), persist, and re-render.
+  _toggleServerFilter(group, slug) {
+    const set = this._serverFilter[group];
+    if (!set || !slug) return;
+    if (set.has(slug)) set.delete(slug);
+    else set.add(slug);
+    this._persistServerFilter();
+    this._render();
+  }
+
+  // Clear one server-side group (its "All" chip), persist, and re-render.
+  _clearServerFilter(group) {
+    const set = this._serverFilter[group];
+    if (!set || set.size === 0) return;
+    set.clear();
+    this._persistServerFilter();
+    this._render();
+  }
+
+  // The server-resolved groups this week's menu declares, in panel order, each with its
+  // options as the API lists them. Only weeks with a live menu payload carry menu_filters;
+  // history weeks have none (or []), so no such group renders there.
+  _serverFilterGroups(week) {
+    const declared = (week && Array.isArray(week.menu_filters) && week.menu_filters) || [];
+    const out = [];
+    for (const slug of HelloFreshMealPlannerCard.SERVER_FILTER_GROUPS) {
+      const group = declared.find((g) => g && g.slug === slug);
+      const options = group && Array.isArray(group.options) ? group.options : [];
+      if (options.length) out.push({ ...group, slug, options });
+    }
+    return out;
+  }
+
+  // The active server-side selections that APPLY to this week, as {group slug -> [option
+  // slugs]} in the week's own option order — only groups the week declares and only slugs
+  // it offers (a stored slug the week lacks would filter nothing the user could see or
+  // untap). Empty object when no server-side constraint applies. The key order is fixed by
+  // SERVER_FILTER_GROUPS, so the object serializes identically for identical selections.
+  _activeServerFilters(week) {
+    const out = {};
+    for (const group of this._serverFilterGroups(week)) {
+      const set = this._serverFilter[group.slug];
+      if (!set || set.size === 0) continue;
+      const slugs = group.options.map((o) => o.slug).filter((s) => set.has(s));
+      if (slugs.length) out[group.slug] = slugs;
+    }
+    return out;
+  }
+
+  _serverFilterKey(weekId, filters) {
+    return `${weekId}|${JSON.stringify(filters)}`;
+  }
+
+  // The recipe-id Set the server-side filters allow for this week, or null when no such
+  // constraint applies: nothing active, the request is still in flight (the current grid
+  // stays up rather than blanking), or the request failed (client-side filters only).
+  // Results are cached per week + filters, so re-rendering never refetches; a cache miss
+  // starts ONE request carrying every active group, never one request per group.
+  _serverFilterIds(week) {
+    const filters = this._activeServerFilters(week);
+    if (!Object.keys(filters).length) return null;
+    const key = this._serverFilterKey(week.week_id, filters);
+    if (this._serverFilterCache.has(key)) return this._serverFilterCache.get(key);
+    if (this._serverFilterPending !== key) this._fetchMenuCourses(week.week_id, filters, key);
+    return null;
+  }
+
+  // Ask HelloFresh's own filter service (via hellofresh.get_menu_courses) which of the
+  // week's meals match. The result is cached under `key`; a per-request sequence — the same
+  // guard the recipe sheet uses for its servings switch — keeps a slow older response from
+  // clearing the in-flight state or re-rendering over a newer selection.
+  async _fetchMenuCourses(weekId, filters, key) {
+    const seq = ++this._serverFilterSeq;
+    this._serverFilterPending = key;
+    try {
+      const response = await this._callResponseService("get_menu_courses", {
+        week_id: weekId,
+        filters,
+      });
+      // Bare ids on both sides, as the section filter does (some payload paths suffix ids).
+      const ids = new Set((response.recipe_ids || []).map((id) => String(id).split("-")[0]));
+      // A superseded response is still the right answer for ITS key, so it may be cached;
+      // only the newest request drives the pending flag and the render below.
+      this._serverFilterCache.set(key, ids);
+    } catch (err) {
+      if (seq !== this._serverFilterSeq) return;
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: menu filter lookup failed; showing unfiltered results", err);
+      this._serverFilterCache.set(key, null); // fall back to client-side filters only
+    } finally {
+      if (seq === this._serverFilterSeq) {
+        this._serverFilterPending = null;
+        this._render();
+      }
+    }
+  }
+
   // Flip the "show variants" toggle, persist, and re-render.
   _toggleShowVariants() {
     this._showVariants = !this._showVariants;
@@ -901,6 +1065,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       Boolean(this._timeFilter) ||
       Boolean(this._highlightFilter) ||
       Boolean(this._menuSection) ||
+      Object.values(this._serverFilter).some((s) => s.size > 0) ||
       !this._showVariants
     );
   }
@@ -1646,6 +1811,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // selections as removable ✕ chips; expanded, each group gets its own aligned row.
   _renderFilterBar(week) {
     if (!this._filtersApply(week)) return "";
+    // Resolve (or start resolving) the server-side groups HERE, before the grid renders, so
+    // the header can say "Filtering…" on the very render that starts the request. Cached
+    // per week + selection, so this is a lookup on every later render.
+    this._serverFilterIds(week);
+    const busy = this._serverFilterPending
+      ? `<span class="fbusy" role="status">Filtering…</span>`
+      : "";
     const active = this._activeFilterSummary(week);
     const expanded = this._filtersExpanded;
     const header = `
@@ -1664,7 +1836,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             )
             .join("")}</div>`
         : "";
-      return `<div class="filterbar"><div class="fheadrow">${header}${summary}</div></div>`;
+      return `<div class="filterbar"><div class="fheadrow">${header}${busy}${summary}</div></div>`;
     }
     const allActive = this._proteinFilter.size === 0;
     const proteinChips = HelloFreshMealPlannerCard.PROTEIN_FILTERS.map((p) => {
@@ -1720,10 +1892,11 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       >${this._showVariants ? "Hide variants" : "Show variants"}</button>`;
     return `
       <div class="filterbar open">
-        <div class="fheadrow">${header}</div>
+        <div class="fheadrow">${header}${busy}</div>
         ${this._renderMenuSectionGroup(week)}
         ${this._filterRow("Main Protein", allChip("filter-protein-all", allActive) + proteinChips)}
         ${this._filterRow("Dietary Preference", allChip("filter-diet-all", dietAllActive) + dietChips)}
+        ${this._renderServerFilterGroups(week)}
         ${this._filterRow("Total Cooking Time", allChip("filter-time-all", timeAllActive) + timeChips)}
         ${this._filterRow("Highlights", allChip("filter-highlight-all", highlightAllActive) + highlightChips)}
         ${this._filterRow("Variants", variantsChip)}
@@ -1756,6 +1929,38 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return this._filterRow("Categories", allChip + chips);
   }
 
+  // The website's Cuisine type / Dish type / Ingredients to avoid groups: one multi-select
+  // chip row each, built from the week's own menu_filters (names, slugs and order exactly as
+  // the site declares them). Matching is done by HelloFresh's own filter service, not by
+  // tags — see _serverFilterIds. Nothing renders on a week whose payload declares no groups.
+  _renderServerFilterGroups(week) {
+    return this._serverFilterGroups(week)
+      .map((group) => {
+        const set = this._serverFilter[group.slug];
+        const allActive = !set || set.size === 0;
+        const chips = group.options
+          .map((o) => {
+            const on = Boolean(set && set.has(o.slug));
+            return `<button
+          class="fbtn ${on ? "on" : ""}"
+          data-action="filter-server"
+          data-group="${this._esc(group.slug)}"
+          data-slug="${this._esc(o.slug)}"
+          aria-pressed="${on ? "true" : "false"}"
+        >${this._esc(o.name)}</button>`;
+          })
+          .join("");
+        const allChip = `<button
+        class="fbtn ${allActive ? "on" : ""}"
+        data-action="filter-server-all"
+        data-group="${this._esc(group.slug)}"
+        aria-pressed="${allActive ? "true" : "false"}"
+      >All</button>`;
+        return this._filterRow(this._esc(group.name || group.slug), allChip + chips);
+      })
+      .join("");
+  }
+
   _renderGrid(week) {
     const { recipes } = this._dedupedFor(week);
     if (recipes.length === 0) {
@@ -1783,13 +1988,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
     // Protein / dietary / highlight / section / variant filters (current & future weeks
     // only). Selected meals always pass so an active filter never hides a meal you've chosen.
-    // The menu-section id-set is resolved once per render, not per recipe.
+    // The menu-section and server-side id-sets are resolved once per render, not per recipe;
+    // the server set (cuisine / dish type / ingredients to avoid, answered by HelloFresh's
+    // own filter service) is an ADDITIONAL constraint intersected with the client-side ones.
     if (this._filtersApply(week)) {
       const sectionIds = this._activeMenuSectionIds(week);
+      const serverIds = this._serverFilterIds(week);
+      const bareId = (r) => String(r.recipe_id).split("-")[0];
       const filtered = visible.filter(
         (r) =>
           this._passesFilters(r, ctx) &&
-          (!sectionIds || ctx.sel(r) || sectionIds.has(String(r.recipe_id).split("-")[0]))
+          (!sectionIds || ctx.sel(r) || sectionIds.has(bareId(r))) &&
+          (!serverIds || ctx.sel(r) || serverIds.has(bareId(r)))
       );
       if (filtered.length === 0) {
         return `<div class="state">No meals match the current filter. Adjust the filters above to see more.</div>`;
@@ -2034,6 +2244,13 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       else if (action === "filter-section")
         this._selectMenuSection(actionEl.getAttribute("data-section"));
       else if (action === "filter-section-all") this._selectMenuSection("");
+      else if (action === "filter-server")
+        this._toggleServerFilter(
+          actionEl.getAttribute("data-group"),
+          actionEl.getAttribute("data-slug")
+        );
+      else if (action === "filter-server-all")
+        this._clearServerFilter(actionEl.getAttribute("data-group"));
       else if (action === "toggle-filters") this._toggleFiltersExpanded();
       else if (action === "remove-filter")
         this._removeFilter(
@@ -2396,6 +2613,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         display: inline-flex; align-items: center; gap: 6px; padding: 8px 4px 8px 0;
       }
       .fcaret { font-size: 0.8em; color: var(--secondary-text-color); }
+      /* Quiet in-flight note while HelloFresh's filter service answers (the grid stays up). */
+      .fbusy { font-size: 0.78em; font-style: italic; color: var(--secondary-text-color); }
       .fsummary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
       .fremove .fx { margin-left: 2px; font-size: 0.85em; opacity: 0.8; }
       .fremove:hover .fx { opacity: 1; }

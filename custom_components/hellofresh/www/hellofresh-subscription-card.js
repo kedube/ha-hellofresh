@@ -34,6 +34,7 @@ const {
   parseLocalDate,
   fmtDate,
   fmtPrice,
+  refetchIntervalMs,
   accountKey,
   broadcastWeek,
   DATA_CHANGED_EVENT,
@@ -173,9 +174,9 @@ class HelloFreshSubscriptionCard extends HTMLElement {
   // ---- auto-refresh (same contract as the schedule card) --------------------
 
   _refetchIntervalMs() {
-    const mins = Number(this._summary && this._summary.refresh_interval_minutes);
-    return (Number.isFinite(mins) && mins >= 1 ? mins : 180) * 60000;
+    return refetchIntervalMs(this._summary);
   }
+
 
   _refreshIfStale() {
     if (!this._hass || !this._fetched || this._loading) return false;
@@ -280,6 +281,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       : "";
     return `<div class="${this._loading ? "reloading" : ""}">
       ${notice}
+      ${this._renderPaymentBanner()}
       ${this._renderHolidayBanner()}
       ${this._renderSections()}
       ${this._renderPresets()}
@@ -326,6 +328,46 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     return `<div class="section presets">${header}<div class="preset-list">${list}</div></div>`;
   }
 
+  // Payment-method warning: HelloFresh's own "card expiring / expired" check (the
+  // payment_method_expiring binary sensor). Shown only while the gateway flags it — a
+  // box silently failing to ship is the usual consequence, so this is the one notice worth
+  // shouting about. Red when already expired, amber when merely expiring.
+  _renderPaymentBanner() {
+    const s = this._summary;
+    if (!s || (!s.payment_method_expiring && !s.payment_method_expired)) return "";
+    const card = this._cardOnFile() || "payment card";
+    const when = this._fmtCardExpiry(s.payment_card_expiry);
+    const text = s.payment_method_expired
+      ? `Your ${card} on file has expired${when ? ` (${when})` : ""}. Update it on HelloFresh or your next box may not ship.`
+      : `Your ${card} on file expires soon${when ? ` (${when})` : ""}. Update it on HelloFresh before your next box is charged.`;
+    return `
+      <div class="banner${s.payment_method_expired ? " danger" : ""}">
+        <span class="banner-icon">💳</span>
+        <span class="banner-text">${this._esc(text)}</span>
+      </div>`;
+  }
+
+  // "Credit card · expires May 2027" — the card type humanized, plus the expiry month when
+  // known. Deliberately nothing else: the integration never stores the number or address.
+  _cardOnFile() {
+    const s = this._summary;
+    const type = s && s.payment_card_type ? String(s.payment_card_type) : "";
+    if (!type) return "";
+    const name = type.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+    return name.replace(/^Credit Card$/, "Credit card");
+  }
+
+  _fmtCardExpiry(value) {
+    const match = /^(\d{4})-(\d{2})$/.exec(String(value || ""));
+    if (!match) return "";
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+    try {
+      return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    } catch (_err) {
+      return `${match[2]}/${match[1]}`;
+    }
+  }
+
   // Holiday delivery notice: HelloFresh's message plus the shifted delivery date, shown only
   // while the API announces one (the message clears once the holiday week passes).
   _renderHolidayBanner() {
@@ -355,7 +397,12 @@ class HelloFreshSubscriptionCard extends HTMLElement {
         // ("Quick") otherwise. Distinct from the plan itself.
         ["Preference", this._preferenceName(s.plan_preference)],
         ["Plan total", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
+        // The plan total's split (from /gw/calculate): shipping always, discount only when
+        // one applies — a permanent "$0.00 discount" cell would just be noise.
+        ["Shipping", this._breakdownPrice("shipping_amount", false)],
+        ["Discount", this._breakdownPrice("discount_amount", true)],
         ["Credit", this._fmtPrice(s.account_credit, s.account_credit_currency)],
+        ["Card on file", this._cardOnFileCell()],
         ["Servings", s.number_of_people],
         ["Meals per box", s.required_meal_count],
         ["Boxes received", s.boxes_received],
@@ -436,6 +483,30 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     return fmtPrice(amount, currency);
   }
 
+  // One figure from the plan's price breakdown, formatted in the plan's currency; null when
+  // the breakdown is missing, the figure is absent, or (for discounts) it is zero.
+  _breakdownPrice(key, onlyIfPositive) {
+    const s = this._summary;
+    const breakdown = s && s.selected_plan_price_breakdown;
+    const amount = breakdown ? Number(breakdown[key]) : NaN;
+    if (!Number.isFinite(amount)) return null;
+    if (onlyIfPositive && amount <= 0) return null;
+    const text = this._fmtPrice(amount, s.selected_plan_total_price_currency);
+    return onlyIfPositive ? `−${text}` : text;
+  }
+
+  _cardOnFileCell() {
+    const card = this._cardOnFile();
+    if (!card) return null;
+    const when = this._fmtCardExpiry(this._summary.payment_card_expiry);
+    const state = this._summary.payment_method_expired
+      ? " · expired"
+      : this._summary.payment_method_expiring
+        ? " · expiring"
+        : "";
+    return `${card}${when ? ` · exp. ${when}` : ""}${state}`;
+  }
+
   _esc(value) {
     return esc(value);
   }
@@ -469,6 +540,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
         padding: 10px 14px; border-radius: 10px;
         background: var(--warning-color, #ff9800); color: #fff;
       }
+      .banner.danger { background: var(--error-color, #db4437); }
       .banner-icon { font-size: 1.2em; flex: none; }
       .banner-text { font-size: 0.92em; }
       .section { margin-top: 10px; }

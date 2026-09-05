@@ -439,10 +439,16 @@ def sensor_extra_state_attributes(
         # under the recorder's 16 KB attribute cap and is unused by any consumer. The week
         # uses its recipe-free summary form for the same reason — a single week's recipe
         # catalog alone can exceed the cap, and no consumer reads recipes from attributes.
-        return {
+        attributes: dict[str, object] = {
             "order": next_order.as_dict() if next_order else None,
             "week": next_week.as_summary_dict() if next_week else None,
         }
+        if key == "next_box_total_price":
+            # The /gw/calculate breakdown for that box (subtotal, shipping, discount, tax,
+            # coupon): always in the response, never surfaced before, not worth five entities.
+            attributes["currency"] = data.next_delivery_total_currency
+            attributes["price_breakdown"] = data.next_delivery_price_breakdown
+        return attributes
 
     if key == "public_menu_recipe_count":
         current_menu = data.current_public_menu
@@ -460,12 +466,16 @@ def sensor_extra_state_attributes(
         # Summary only. The full serialized subscriptions/orders/weeks blobs were
         # dropped here: they pushed these sensors past the recorder's 16 KB attribute
         # cap and no consumer (dashboard or intent) reads them.
-        return {
+        attributes = {
             "account_data_available": data.account_data_available,
             "capabilities": data.capabilities.as_dict(),
             "subscription_count": data.subscription_count,
             "order_count": len(data.orders),
         }
+        if key == "selected_plan_total_price":
+            attributes["currency"] = data.selected_plan_total_price_currency
+            attributes["price_breakdown"] = data.selected_plan_price_breakdown
+        return attributes
 
     if key in DELIVERY_HISTORY_KEYS:
         return {
