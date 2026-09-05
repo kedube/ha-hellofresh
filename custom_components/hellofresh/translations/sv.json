@@ -372,7 +372,7 @@
         },
         "filters": {
           "name": "Filter",
-          "description": "Filtergrupp-sluggar kopplade till en eller flera alternativ-sluggar, enligt veckans menu_filters (till exempel {\"cuisine\": [\"mediterranean\"]})."
+          "description": "Filtergrupp-sluggar kopplade till en eller flera alternativ-sluggar, enligt veckans menu_filters (till exempel cuisine = mediterranean)."
         }
       }
     },
