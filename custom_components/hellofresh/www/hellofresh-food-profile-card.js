@@ -57,24 +57,86 @@ const FIELD_LABELS = {
   dietaryPreferences: "Diet type",
 };
 
-// Pretty labels for individual option slugs where a plain title-case isn't ideal.
+// Option labels, taken from the HelloFresh web app's own food-profile strings
+// (food_profile.options.*) so the card reads exactly like hellofresh.com. Slugs not listed
+// fall back to sentence case in _label(), which is what the site does for the rest.
 const VALUE_LABELS = {
-  "classic-american": "Classic American",
-  "main-plus-sides": "Main + sides",
+  // diet types
+  "mostly-meat": "I eat everything",
+  // cooking styles
   "quick-easy": "Quick recipes",
   batch: "Batch recipes",
   "chef-style": "Chef-style recipes",
   "family-style": "Family-style recipes",
-  "glp1-support": "GLP-1 support",
+  // dish types (the site pluralizes these)
+  bake: "Bakes",
+  bowl: "Bowls",
+  burger: "Burgers",
+  "main-plus-sides": "Main + sides",
+  pizza: "Pizzas",
+  salad: "Salads",
+  sandwich: "Sandwiches",
+  "soups-stews": "Soups or Stews",
+  "stir-fry": "Stir fries",
+  wrap: "Wraps",
+  noodle: "Noodles",
+  // nutrition / goals
+  "glp1-support": "GLP-1 friendly",
+  "plant-based": "Plant based",
+  "make-cooking-easy": "Cook easier",
+  // proteins (all diet groups)
+  "plant-based-proteins": "Plant based proteins",
+  "mushroom-based-proteins": "Mushroom-based proteins",
+  "shrimp-prawns": "Shrimp/Prawns",
+  "meat-alternative": "Meat alternatives",
+  // exclusions
+  "brussel-sprouts": "Brussels sprouts",
+  "tree-nuts": "Tree nuts",
+  egg: "Eggs",
+  // proper nouns the sentence-case fallback would get wrong
+  "classic-american": "Classic American",
+  "new-zealand": "New Zealand",
+  "middle-eastern": "Middle eastern",
 };
 
-// Short blurb shown under the selected diet type (mirrors HelloFresh's descriptions).
-const DIET_DESCRIPTIONS = {
-  flexitarian: "A flexible mix of meat, fish, and plant-based meals.",
-  "mostly-meat": "Prioritizes meat as the central protein source for every meal.",
-  vegetarian: "Meat-free meals built around vegetables, dairy, and plant proteins.",
-  pescatarian: "Seafood-forward meals with no meat or poultry.",
+// Hover text for chips that the site explains with a second line (cooking styles).
+const VALUE_DESCRIPTIONS = {
+  "quick-easy": "Under 20 minutes, minimal prep",
+  batch: "Prep in advance and save time throughout the week",
+  "chef-style": "20-40 minute bakes, roasts, and more",
+  "family-style": "Kid and adult friendly recipes",
 };
+
+// Short blurb shown under the selected diet type (HelloFresh's food_profile.your_diet.* copy).
+const DIET_DESCRIPTIONS = {
+  flexitarian: "Primarily plant-based with the occasional inclusion of meat.",
+  "mostly-meat": "I mix it up. Meat, veg, and everything in between.",
+  vegetarian: "Excludes meat and fish, focusing on plants, dairy, and eggs.",
+  pescatarian: "Includes fish and seafood while excluding all other meat products.",
+  vegan: "Excludes all animal products, focusing entirely on plant-based foods.",
+};
+
+// The proteins question changes with the diet, as does the protein list itself (see
+// _proteinOptions): a pescatarian is asked about seafood, a vegetarian about meat-free
+// proteins.
+const PROTEIN_QUESTIONS = {
+  pescatarian: "Which seafood do you enjoy?",
+  vegetarian: "Which meat-free proteins do you enjoy?",
+  vegan: "Which vegan proteins do you enjoy?",
+};
+const DEFAULT_PROTEIN_QUESTION = "Which proteins do you enjoy?";
+
+// Rules the HelloFresh page enforces before it lets you save.
+const GOALS_MAX = 3;
+const GOALS_HINT = `Pick up to ${GOALS_MAX} that matter most to you.`;
+const MEAL_TYPES_REQUIRED_MESSAGE = "At least one cooking style is required";
+
+// Copy the site shows around the exclusions list and on save.
+const EXCLUDE_NOTICE =
+  "Just a heads up: some recipes in your menu may still include these ingredients. Check each recipe before you order.";
+const SAVE_SCOPE_NOTE =
+  "Changes apply to future automatic selections. Recipes you picked yourself for upcoming weeks stay as they are.";
+const TELL_US_MORE = "Tell us more";
 
 // How each taste field is edited once a sub-card is expanded.
 const TASTE_LIST_FIELDS = ["exclusions", "nutritions", "mealTypes"];
@@ -118,6 +180,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     this._draft = null; // working copy the user edits
     this._toast = null;
     this._expanded = new Set(); // sub-cards currently expanded for editing (by "section.field")
+    this._seededExpansion = false; // incomplete sub-cards are opened once, on first load
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
   }
 
@@ -213,6 +276,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       // returns null when its profile-service didn't answer, and the hero just omits the bar.
       this._completion = response.completion || null;
       this._draft = this._cloneProfile(this._saved);
+      this._seedExpansion();
     } catch (err) {
       this._error = (err && err.message) || String(err);
     } finally {
@@ -222,7 +286,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   async _save() {
-    if (!this._hass || !this._draft) return;
+    if (!this._hass || !this._draft || this._validationErrors().length) return;
     this._busy = true;
     this._render();
     try {
@@ -316,9 +380,94 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const list = Array.isArray(container[field]) ? container[field].slice() : [];
     const i = list.indexOf(value);
     if (i >= 0) list.splice(i, 1);
+    else if (this._listMax(section, field) != null && list.length >= this._listMax(section, field)) return;
     else list.push(value);
     container[field] = list;
     this._render();
+  }
+
+  // The site caps personal goals at three; everything else is unbounded.
+  _listMax(section, field) {
+    return section === "goals" && field === "goals" ? GOALS_MAX : null;
+  }
+
+  // ---- diet-dependent proteins ----------------------------------------------
+
+  // The protein list depends on the diet: the options catalog's flat taste.primaryProteins
+  // is the omnivore set, and _meta.primaryProteinsGroups swaps it for seafood (pescatarian)
+  // or meat-free proteins (vegetarian) — exactly what the site shows for that diet.
+  _proteinOptions(diet) {
+    const chosen = diet !== undefined ? diet : this._draftList("taste", "dietaryPreferences")[0];
+    const groups = (this._options && this._options.meta && this._options.meta.primaryProteinsGroups) || {};
+    const group = chosen ? groups[chosen] : null;
+    if (Array.isArray(group) && group.length) return group.slice();
+    const flat = (this._options && this._options.taste && this._options.taste.primaryProteins) || [];
+    return Array.isArray(flat) ? flat.slice() : [];
+  }
+
+  _proteinQuestion() {
+    const diet = this._draftList("taste", "dietaryPreferences")[0];
+    return PROTEIN_QUESTIONS[diet] || DEFAULT_PROTEIN_QUESTION;
+  }
+
+  // Switching diet: when the protein set changes (omnivore -> seafood), the old weights are
+  // meaningless, so start the new set fully liked — which is how the site seeds it (the
+  // captured writes carry every group member at +100). When the set is unchanged
+  // (flexitarian <-> mostly-meat share one list) the user's likes survive.
+  _applyDietChange(diet) {
+    const taste = this._draft.taste || (this._draft.taste = {});
+    const before = new Set(this._proteinOptions(taste.dietaryPreferences && taste.dietaryPreferences[0]));
+    taste.dietaryPreferences = diet ? [diet] : [];
+    const after = this._proteinOptions(diet);
+    const same = after.length === before.size && after.every((slug) => before.has(slug));
+    if (same) return;
+    const map = {};
+    for (const slug of after) map[slug] = LIKE;
+    taste.primaryProteins = map;
+  }
+
+  // ---- validation ------------------------------------------------------------
+
+  // Rules the site enforces client-side; Save stays disabled while any apply.
+  _validationErrors() {
+    if (!this._draft) return [];
+    const errors = [];
+    const mealTypeOptions = (this._options && this._options.taste && this._options.taste.mealTypes) || [];
+    if (Array.isArray(mealTypeOptions) && mealTypeOptions.length && !this._draftList("taste", "mealTypes").length) {
+      errors.push(MEAL_TYPES_REQUIRED_MESSAGE);
+    }
+    return errors;
+  }
+
+  // ---- completion prompts ----------------------------------------------------
+
+  // Fields HelloFresh's completion endpoint still wants answered ("taste.cuisines",
+  // "goals.goals", "household.totalPeople", ...).
+  _incompleteFields() {
+    const c = this._completion;
+    return c && Array.isArray(c.incomplete_fields) ? c.incomplete_fields : [];
+  }
+
+  _needsInput(path) {
+    return this._incompleteFields().includes(path);
+  }
+
+  // Open the sub-cards the profile is still missing, once, so the completion bar leads
+  // somewhere. Later refetches (after a save, or a sibling card's write) keep whatever the
+  // user has opened or closed since.
+  _seedExpansion() {
+    if (this._seededExpansion) return;
+    this._seededExpansion = true;
+    for (const panel of PANELS) {
+      for (const card of panel.cards) {
+        const key = `${card.section}.${card.field}`;
+        if (this._needsInput(key)) this._expanded.add(key);
+      }
+    }
+  }
+
+  _tellUsMore(path) {
+    return this._needsInput(path) ? `<span class="tellmore">${this._esc(TELL_US_MORE)}</span>` : "";
   }
 
   // Tri-state cycle for a weighted field: neutral -> like -> dislike -> neutral.
@@ -467,7 +616,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const desc = DIET_DESCRIPTIONS[current] || "";
     return `
       <section class="panel">
-        <h2 class="paneltitle">${this._icon("mdi:sprout-outline")}Your diet</h2>
+        <h2 class="paneltitle">${this._icon("mdi:sprout-outline")}Your diet${this._tellUsMore("taste.dietaryPreferences")}</h2>
         <div class="dietfield">
           <label class="dietlabel" for="hf-diet-select">Diet type</label>
           <select class="dietselect" id="hf-diet-select" data-single-select="taste|dietaryPreferences">${options}</select>
@@ -496,12 +645,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
           </div>
         </div>`;
     };
-    const adults = stepper("adults", "Number of adults");
-    const kids = stepper("children", "Number of kids");
+    const adults = stepper("adults", "Adults");
+    const kids = stepper("children", "Kids (under 12)");
     if (!adults && !kids) return "";
     return `
       <section class="panel">
-        <h2 class="paneltitle">${this._icon("mdi:account-group-outline")}Household</h2>
+        <h2 class="paneltitle">${this._icon("mdi:account-group-outline")}Household${this._tellUsMore("household.totalPeople")}</h2>
         ${adults}${kids}
       </section>`;
   }
@@ -522,18 +671,32 @@ class HelloFreshFoodProfileCard extends HTMLElement {
 
   // A sub-card: heading + chevron, a collapsed chip preview, and (when expanded) the editor.
   _renderSubCard(section, field) {
-    const values = ((this._options[section] || {})[field]) || [];
+    const values =
+      field === "primaryProteins" ? this._proteinOptions() : ((this._options[section] || {})[field]) || [];
     if (!Array.isArray(values) || !values.length) return "";
     const key = `${section}.${field}`;
     const open = this._expanded.has(key);
     return `
       <div class="subcard ${open ? "open" : ""}">
         <button class="subhead" data-expand="${this._esc(key)}" aria-expanded="${open ? "true" : "false"}">
-          <span class="subtitle">${this._esc(this._label(field))}</span>
+          <span class="subtitle">${this._esc(this._label(field))}${this._tellUsMore(key)}</span>
           <span class="chev">${this._icon(open ? "mdi:chevron-down" : "mdi:chevron-right")}</span>
         </button>
         ${open ? this._renderEditor(section, field, values) : this._renderPreview(section, field)}
+        ${this._renderSubCardNotice(section, field)}
       </div>`;
+  }
+
+  // Per-field copy under the editor/preview: the exclusions heads-up whenever something is
+  // excluded, and the meal-type rule the moment it is broken.
+  _renderSubCardNotice(section, field) {
+    if (section === "taste" && field === "exclusions" && this._draftList(section, field).length) {
+      return `<p class="note">${this._esc(EXCLUDE_NOTICE)}</p>`;
+    }
+    if (section === "taste" && field === "mealTypes" && !this._draftList(section, field).length) {
+      return `<p class="note error">${this._esc(MEAL_TYPES_REQUIRED_MESSAGE)}</p>`;
+    }
+    return "";
   }
 
   // Collapsed state: a single row of green pills for the current selection, truncated with +N.
@@ -561,9 +724,13 @@ class HelloFreshFoodProfileCard extends HTMLElement {
 
   // Expanded state: the editor appropriate to the field kind.
   _renderEditor(section, field, values) {
-    if (TASTE_WEIGHTED_FIELDS.includes(field)) return this._renderWeighted(field, values);
+    if (TASTE_WEIGHTED_FIELDS.includes(field)) {
+      const question = field === "primaryProteins" ? `<p class="question">${this._esc(this._proteinQuestion())}</p>` : "";
+      return question + this._renderWeighted(field, values);
+    }
     const allowNone = this._fieldAllowsNone(`${section}.${field}`);
-    return this._renderList(section, field, values, allowNone);
+    const hint = this._listMax(section, field) != null ? `<p class="question">${this._esc(GOALS_HINT)}</p>` : "";
+    return hint + this._renderList(section, field, values, allowNone);
   }
 
   // Multi-select chips backed by a list field (with an optional "None" choice).
@@ -577,10 +744,15 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   _chips(section, field, values, selected) {
+    const max = this._listMax(section, field);
+    const maxed = max != null && selected.length >= max;
     return values
       .map((v) => {
         const on = selected.includes(v);
-        return `<button class="chip ${on ? "on" : ""}" aria-pressed="${on ? "true" : "false"}"
+        const blocked = maxed && !on;
+        const tip = VALUE_DESCRIPTIONS[v] ? ` title="${this._esc(VALUE_DESCRIPTIONS[v])}"` : "";
+        return `<button class="chip ${on ? "on" : ""} ${blocked ? "blocked" : ""}" aria-pressed="${on ? "true" : "false"}"${tip}
+          ${blocked ? 'aria-disabled="true"' : ""}
           data-list="${this._esc(section)}|${this._esc(field)}|${this._esc(v)}">${this._esc(
           this._label(v)
         )}</button>`;
@@ -621,9 +793,16 @@ class HelloFreshFoodProfileCard extends HTMLElement {
 
   _renderFooter() {
     const dirty = this._isDirty();
+    const errors = this._validationErrors();
+    const note = errors.length
+      ? `<p class="footnote error">${this._esc(errors[0])}</p>`
+      : dirty
+        ? `<p class="footnote">${this._esc(SAVE_SCOPE_NOTE)}</p>`
+        : "";
     return `
+      ${note}
       <div class="footer">
-        <button class="savebtn" data-action="save" ${!dirty || this._busy ? "disabled" : ""}>
+        <button class="savebtn" data-action="save" ${!dirty || errors.length || this._busy ? "disabled" : ""}>
           ${this._busy ? "Saving…" : "Save profile"}
         </button>
         <button class="resetbtn" data-action="reset" ${!dirty || this._busy ? "disabled" : ""}>
@@ -691,8 +870,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const sel = ev.target.closest("[data-single-select]");
     if (sel) {
       const [section, field] = sel.getAttribute("data-single-select").split("|");
-      const container = this._draft[section] || (this._draft[section] = {});
-      container[field] = sel.value ? [sel.value] : [];
+      if (section === "taste" && field === "dietaryPreferences") {
+        this._applyDietChange(sel.value);
+      } else {
+        const container = this._draft[section] || (this._draft[section] = {});
+        container[field] = sel.value ? [sel.value] : [];
+      }
       this._render();
     }
   }
@@ -710,13 +893,13 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return fields.includes(path);
   }
 
+  // Field titles, then the site's option labels, then sentence case ("low-calorie" ->
+  // "Low calorie", "try-new-recipes" -> "Try new recipes") — the site's own convention.
   _label(slug) {
     if (FIELD_LABELS[slug]) return FIELD_LABELS[slug];
     if (VALUE_LABELS[slug]) return VALUE_LABELS[slug];
-    return String(slug)
-      .replace(/^QUANTITY_/, "")
-      .replace(/[_-]+/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    const words = String(slug).replace(/^QUANTITY_/, "").replace(/[_-]+/g, " ").trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
   }
 
   _flash(message, isError = false) {
@@ -852,6 +1035,15 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       .pill.muted { background: var(--secondary-background-color); color: var(--secondary-text-color); }
 
       .editor { margin-top: 12px; }
+      .question { margin: 12px 0 -4px; font-size: 0.85em; color: var(--secondary-text-color); }
+      .note { margin: 10px 0 0; font-size: 0.8em; color: var(--secondary-text-color); }
+      .note.error, .footnote.error { color: var(--error-color, #db4437); }
+      .footnote { margin: 0 4px 8px; font-size: 0.8em; color: var(--secondary-text-color); }
+      .tellmore {
+        display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+        font-size: 0.7em; font-weight: 700; vertical-align: middle;
+        background: var(--hf-pill-bg); color: var(--hf-pill-fg);
+      }
       .chips { display: flex; flex-wrap: wrap; gap: 8px; }
       .chip {
         font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer;
@@ -860,6 +1052,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       }
       .chip:hover { filter: brightness(var(--hf-hover-brightness)); }
       .chip.on { background: var(--hf-pill-bg); color: var(--hf-pill-fg); border-color: var(--hf-pill-bg); }
+      .chip.blocked { opacity: 0.45; cursor: not-allowed; }
 
       /* Weighted items: responsive grid of tiles, each with a Like/Dislike segmented control. */
       .wgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }

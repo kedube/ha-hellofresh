@@ -30,6 +30,83 @@ version heading and publishes it as the release's Highlights.
 - Delivery tracking card: now registers in the dashboard card picker (`window.customCards`)
   like the other seven cards, and its docs moved with the rest to `docs/dashboard.md`.
 
+## 2.98 — 2026-09-05
+- **Weekly discounts.** New monetary **`sensor.next_box_discount`**: the wallet promise
+  HelloFresh will apply to the next box that ships ("$10 off premium meals"), with the voucher's
+  target, expiry, one-time flag and every promise on the account as attributes — read from the
+  same `customer-wallet` benefit-distribution call the deliveries page makes, which neither
+  the cart-pricing split nor the subscription coupon ever reflected. Each week in `get_weeks`
+  now carries its `benefits`; the schedule card badges those weeks and adds a **Voucher** row
+  to the next-box summary, and the meal planner shows the label under the week title.
+- **Realized discounts from the billing ledger.** Orders keep their `coupon_code` and
+  `discount_amount` (the coupon lines HelloFresh actually took off), `sensor.next_box_total_price`
+  gains a `billed_discount` attribute, and `get_spending` reports `discount` per week and month
+  plus a running `total.discount` — the cost card shows the voucher taken off each box and a
+  "saved with vouchers" total.
+- **Docs:** the API reference's wallet note was wrong (it called benefit-distribution free-box
+  credit machinery); it now documents the voucher system and the realized coupon lines.
+- **Food profile card matches the HelloFresh page.** The protein list now follows the diet
+  (seafood for pescatarian, meat-free proteins for vegetarian, the omnivore set otherwise —
+  from the options catalog's `primaryProteinsGroups`), under the site's question for that
+  diet, and switching to a diet with a different protein set starts it fully liked as the site
+  does. The site's rules apply before Save: personal goals cap at three and at least one
+  cooking style is required, with the reason shown inline. Sections HelloFresh's completion
+  check still wants carry a **Tell us more** badge and open on first load. Every option is
+  labelled as hellofresh.com labels it ("I eat everything", "GLP-1 friendly", "Soups or
+  Stews", "Cook easier", …), cooking styles explain themselves on hover, household reads
+  "Adults" / "Kids (under 12)", and two notices were added: the exclusions heads-up and a
+  note that saved changes apply to future automatic selections only.
+
+## 2.96 — 2026-09-05
+- **Boxes land on the dashboard within minutes, not hours.** A delivery-day watch re-reads
+  just the deliveries payload and the carrier lookup every 15 minutes on the day a box is due
+  (and the day after, until the carrier confirms it) or while a shipment is on the road,
+  independently of the multi-hour account poll. **Last delivery day**, **Tracked shipment
+  date** and the shipment status sensors now follow the carrier promptly; on every other day
+  the watch makes no request at all. The cadence is a new **Delivery-day watch interval**
+  option (0–60 minutes, default 15; 0 turns the watch off).
+- **New `event.delivery_events` entity** for automations: fires `box_shipped`,
+  `box_delivered`, `delivery_failed`, `week_skipped`, `week_unskipped`, `selection_locked`
+  and `menu_published` as the integration detects each transition (week id, delivery date
+  and carrier details as attributes), so you no longer have to diff sensor states between
+  polls. Only transitions fire — nothing replays after a restart.
+- **New `binary_sensor.payment_method_expiring`** (Problem): on when HelloFresh reports the
+  card on file as expiring or already expired — the same check the website runs, and the
+  most common way a box silently fails to ship. Attributes carry the card type, brand, last
+  four digits and expiry month; the billing address is never stored, and the digits are
+  redacted from diagnostics exports.
+- **New `select.box_size` and `select.delivery_day` entities**: change the recurring box
+  size (meals × servings) and delivery day/slot from a dashboard, backed by the same writes
+  as the `change_plan` / `change_delivery_weekday` services and HelloFresh's own option
+  catalogs.
+- **Meal planner card: Cuisine type, Dish type and Ingredients to avoid filters**, matching
+  the HelloFresh website's filter panel. Menu recipes carry no allergen data and their tags
+  don't match the site's cuisine/dish-type slugs, so these three groups are resolved through
+  HelloFresh's own filter service via the new response-returning
+  `hellofresh.get_menu_courses` service (one request per filter combination, cached), and
+  each week now exposes the site's filter definitions as `menu_filters` in `get_weeks`.
+- **Cards follow the delivery-day watch.** The schedule and subscription cards re-fetch on
+  the watch cadence while a box is due or on the road (the `get_weeks` account payload and
+  the account summary now carry `delivery_watch_interval_minutes` and
+  `delivery_in_progress`), so a dashboard open on delivery day sees the box land within
+  minutes instead of at the next multi-hour poll.
+- **Subscription card**: a payment-method banner (amber when the card on file is expiring,
+  red when expired, naming the card), a **Card on file** row ("Visa ending in 4242 · exp.
+  May 2029"),
+  and **Shipping** / **Discount** rows under the plan total. **Schedule card**: a
+  **Discount** row in the next-box summary when one applies. The example dashboard gains a
+  **Plan controls** entities card (box size, delivery day, payment check) and a **Delivery
+  activity** logbook of the new event entity.
+- **Price breakdowns as attributes**: `sensor.next_box_total_price` and
+  `sensor.selected_plan_total_price` now carry a `price_breakdown` (subtotal, shipping,
+  discount, tax, coupon) from `/gw/calculate` — figures the API always returned but the
+  integration never surfaced.
+- Docs: the API reference now documents the payments token-status endpoint, the
+  server-side menu filter service, the delivery-day watch, and corrects the loyalty
+  section (the `/gw/loyalty/*` endpoints exist but only return a finished pilot challenge),
+  and records the payments-page calls (credit-application opt-in, benefit pass, communication
+  preferences) that fire automatically on page load and are deliberately not exposed.
+
 ## 2.95 — 2026-09-04
 - **Last delivery day now reports the day the box actually arrived** (#6). It was reporting
   the Monday of the ISO week for anyone whose box is delivered on another day: the delivery
