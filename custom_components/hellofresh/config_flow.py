@@ -17,6 +17,7 @@ from .api import HelloFreshAuthError, HelloFreshClient, HelloFreshError
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
@@ -34,6 +35,7 @@ from .const import (
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
+    DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
@@ -41,9 +43,11 @@ from .const import (
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DOMAIN,
+    MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
     MAX_HISTORY_WEEKS,
     MAX_MENU_GRACE_WEEKS,
     MAX_SCAN_INTERVAL_MINUTES,
+    MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
     MIN_HISTORY_WEEKS,
     MIN_MENU_GRACE_WEEKS,
     MIN_SCAN_INTERVAL_MINUTES,
@@ -513,6 +517,9 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                     # NumberSelector yields a float; store a clean int (whole weeks/days).
                     CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
                     CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
+                    CONF_DELIVERY_WATCH_INTERVAL_MINUTES: int(
+                        user_input[CONF_DELIVERY_WATCH_INTERVAL_MINUTES]
+                    ),
                 },
             )
 
@@ -532,6 +539,23 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                             min=MIN_SCAN_INTERVAL_MINUTES,
                             max=MAX_SCAN_INTERVAL_MINUTES,
                         ),
+                    ),
+                    vol.Required(
+                        CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+                        default=self.config_entry.options.get(
+                            CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+                            DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
+                        ),
+                    ): NumberSelector(
+                        # 0 turns the delivery-day watch off; otherwise the light-refresh
+                        # cadence while a box is due or on the road.
+                        NumberSelectorConfig(
+                            min=MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
+                            max=MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="minutes",
+                        )
                     ),
                     vol.Required(
                         CONF_HISTORY_WEEKS,

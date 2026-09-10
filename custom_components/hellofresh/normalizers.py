@@ -801,6 +801,66 @@ class HelloFreshPayloadNormalizer:
             if categories:
                 week.menu_categories = categories
 
+    def _build_menu_filters(self, raw_week: dict[str, Any]) -> list[dict[str, Any]]:
+        """Parse the menu payload's ``filters`` block into the website's filter groups.
+
+        Each input row is ``{name, type, choice, options[]}`` with options ``{name, type,
+        default}``; ``type`` is the slug the server-side ``/gw/my-deliveries/courses`` filter
+        accepts (``cuisine``, ``dish-type``, ``exclude-allergens``, ...) and ``choice`` the
+        combination rule (``MULTI-OR`` / ``MULTI-AND`` / ``SINGLE``). Output rows are
+        ``{name, slug, choice, options: [{name, slug, default}]}``; groups without a usable
+        slug or without any option are dropped.
+        """
+        block = raw_week.get("filters")
+        if not isinstance(block, list):
+            nested = raw_week.get("_menu_payload")
+            if isinstance(nested, dict):
+                block = nested.get("filters")
+
+        out: list[dict[str, Any]] = []
+        for row in block if isinstance(block, list) else []:
+            if not isinstance(row, dict):
+                continue
+            name = clean_optional_str(row.get("name"))
+            slug = clean_optional_str(row.get("type"))
+            if not name or not slug:
+                continue
+            options: list[dict[str, Any]] = []
+            raw_options = row.get("options")
+            for option in raw_options if isinstance(raw_options, list) else []:
+                if not isinstance(option, dict):
+                    continue
+                option_name = clean_optional_str(option.get("name"))
+                option_slug = clean_optional_str(option.get("type"))
+                if not option_name or not option_slug:
+                    continue
+                options.append(
+                    {
+                        "name": option_name,
+                        "slug": option_slug,
+                        "default": bool(option.get("default")),
+                    }
+                )
+            if options:
+                out.append(
+                    {
+                        "name": name,
+                        "slug": slug,
+                        "choice": clean_optional_str(row.get("choice")) or "MULTI-OR",
+                        "options": options,
+                    }
+                )
+        return out
+
+    def _apply_menu_filters(self, weeks: Sequence[HelloFreshWeek]) -> None:
+        """Attach each week's filter-panel definitions, parsed from its menu payload."""
+        for week in weeks:
+            if week.menu_filters or not isinstance(week.raw, dict):
+                continue
+            filters = self._build_menu_filters(week.raw)
+            if filters:
+                week.menu_filters = filters
+
     def _clear_paused_week_selection(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Clear phantom selections on paused/skipped weeks — nothing was ever delivered.
 

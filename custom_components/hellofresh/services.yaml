@@ -23,6 +23,30 @@ get_weeks:
       selector:
         text:
 
+get_menu_courses:
+  name: Get menu courses
+  description: >-
+    Resolve a delivery week's menu through HelloFresh's own server-side filter
+    service (cuisine, dish type, ingredients to avoid, dietary preference, main
+    protein, total cooking time). Returns only the matching recipe ids, to
+    intersect with the week's recipes from get_weeks. Filter group and option
+    slugs come from the week's menu_filters. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    week_id:
+      required: true
+      example: 2026-W37
+      selector:
+        text:
+    filters:
+      required: false
+      example: '{"cuisine": ["mediterranean"], "exclude-allergens": ["nuts"]}'
+      selector:
+        object:
+
 get_account_summary:
   name: Get account summary
   description: >-

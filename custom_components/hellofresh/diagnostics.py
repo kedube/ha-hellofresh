@@ -50,12 +50,19 @@ TO_REDACT = {
     # anyone who reads a shared export. Redact both the model field and any camelCase param.
     "coupon_code",
     "couponCode",
+    # Wallet promise voucher codes (weekly discounts) — same reasoning as the coupon above.
+    "voucher_code",
+    "voucherCode",
     # Payment descriptors from the subscription payload — whatever HelloFresh puts there
     # (card brand/suffix, PayPal identifier) has no diagnostic value; never export it.
     "payment_method",
     "paymentMethod",
     "payment_gateway",
     "paymentGateway",
+    # The card's last four digits (binary_sensor attribute / account summary) are fine on a
+    # private dashboard but have no place in a shared export.
+    "payment_card_last4",
+    "card_last4",
     # Defensive: street/region fields if a raw address ever rides along in a param or payload.
     "region",
     "address1",

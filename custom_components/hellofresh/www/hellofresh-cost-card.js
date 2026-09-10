@@ -252,6 +252,8 @@ class HelloFreshCostCard extends HTMLElement {
     if (!total || total.amount == null) return "";
     const boxes = Number(total.box_count) || 0;
     const avg = boxes > 0 ? total.amount / boxes : null;
+    // Vouchers realized on those boxes (the billing ledger's coupon lines), when any.
+    const saved = Number(total.discount) > 0 ? this._fmtPrice(total.discount, total.currency) : null;
     return `
       <div class="total">
         <div class="total-main">
@@ -261,7 +263,7 @@ class HelloFreshCostCard extends HTMLElement {
         <div class="total-sub">
           ${boxes} box${boxes === 1 ? "" : "es"}${
             avg != null ? ` · ${this._esc(this._fmtPrice(avg, total.currency))} avg` : ""
-          }
+          }${saved ? ` · <span class="saved">${this._esc(saved)} saved with vouchers</span>` : ""}
         </div>
       </div>`;
   }
@@ -431,6 +433,10 @@ class HelloFreshCostCard extends HTMLElement {
           <div class="wrow${w.upcoming ? " upcoming" : ""}">
             <span class="wdate">${this._esc(this._fmtDate(w.delivery_date))}${
               w.upcoming ? ` <span class="tag">upcoming</span>` : ""
+            }${
+              Number(w.discount) > 0
+                ? ` <span class="saved" title="${this._esc(w.coupon_code ? `Voucher ${w.coupon_code}` : "Voucher")}">−${this._esc(this._fmtPrice(w.discount, w.currency))}</span>`
+                : ""
             }</span>
             <span class="wval">${this._esc(this._fmtPrice(w.amount, w.currency))}</span>
           </div>`
@@ -540,6 +546,7 @@ class HelloFreshCostCard extends HTMLElement {
         color: var(--secondary-text-color);
       }
       .total-amount { font-size: 1.6em; font-weight: 700; color: var(--primary-color); }
+      .saved { color: var(--hf-green, #91c11e); font-weight: 600; font-size: 0.85em; }
       .total-sub { font-size: 0.82em; color: var(--secondary-text-color); margin-top: 2px; }
 
       .section { margin-top: 14px; }

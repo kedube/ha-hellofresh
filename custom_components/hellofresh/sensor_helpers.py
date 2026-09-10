@@ -145,6 +145,11 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "next_delivery_date": _sub_value("next_delivery"),
     "next_order_status": _next_order_value("status"),
     "next_box_total_price": lambda data: data.next_delivery_total,
+    # The weekly discount HelloFresh's wallet will apply to the next box (a fixed amount, or a
+    # percentage for that kind of voucher); unknown when no promise covers it.
+    "next_box_discount": lambda data: (
+        data.next_box_discount.get("amount") if data.next_box_discount else None
+    ),
     "account_credit": lambda data: data.account_credit,
     "selected_plan_total_price": lambda data: data.selected_plan_total_price,
     "next_delivery_subscription": _next_order_value("subscription_id"),
@@ -439,9 +444,33 @@ def sensor_extra_state_attributes(
         # under the recorder's 16 KB attribute cap and is unused by any consumer. The week
         # uses its recipe-free summary form for the same reason — a single week's recipe
         # catalog alone can exceed the cap, and no consumer reads recipes from attributes.
-        return {
+        attributes: dict[str, object] = {
             "order": next_order.as_dict() if next_order else None,
             "week": next_week.as_summary_dict() if next_week else None,
+        }
+        if key == "next_box_total_price":
+            # The /gw/calculate breakdown for that box (subtotal, shipping, discount, tax,
+            # coupon): always in the response, never surfaced before, not worth five entities.
+            attributes["currency"] = data.next_delivery_total_currency
+            attributes["price_breakdown"] = data.next_delivery_price_breakdown
+            # What the billing ledger actually took off this delivery's charges (the wallet
+            # voucher, realized) — the calculate split above never shows it.
+            attributes["billed_discount"] = data.next_delivery_discount
+        return attributes
+
+    if key == "next_box_discount":
+        discount = data.next_box_discount or {}
+        return {
+            "label": discount.get("label"),
+            "applies_to": discount.get("applies_to"),
+            "amount_type": discount.get("amount_type"),
+            "currency": discount.get("currency"),
+            "voucher_code": discount.get("voucher_code"),
+            "one_time": discount.get("one_time"),
+            "expires_at": discount.get("expires_at"),
+            "week_id": discount.get("week_id"),
+            # Every promise on the account with the upcoming weeks it is available for.
+            "benefits": data.wallet_benefits,
         }
 
     if key == "public_menu_recipe_count":
@@ -460,12 +489,16 @@ def sensor_extra_state_attributes(
         # Summary only. The full serialized subscriptions/orders/weeks blobs were
         # dropped here: they pushed these sensors past the recorder's 16 KB attribute
         # cap and no consumer (dashboard or intent) reads them.
-        return {
+        attributes = {
             "account_data_available": data.account_data_available,
             "capabilities": data.capabilities.as_dict(),
             "subscription_count": data.subscription_count,
             "order_count": len(data.orders),
         }
+        if key == "selected_plan_total_price":
+            attributes["currency"] = data.selected_plan_total_price_currency
+            attributes["price_breakdown"] = data.selected_plan_price_breakdown
+        return attributes
 
     if key in DELIVERY_HISTORY_KEYS:
         return {

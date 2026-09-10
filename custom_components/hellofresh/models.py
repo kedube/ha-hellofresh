@@ -302,6 +302,18 @@ class HelloFreshWeek:
     # only; empty for history-sourced weeks. Lets the meal-planner card offer the same
     # section browsing the site's menu page grew, without re-deriving sections from tags.
     menu_categories: list[dict[str, Any]] = field(default_factory=list)
+    # The website's filter panel definitions, from the menu payload's `filters` block: each
+    # row is {name, slug, choice, options: [{name, slug, default}]} where `slug` is the query
+    # param the server-side ``/gw/my-deliveries/courses`` filter accepts (`cuisine`,
+    # `dish-type`, `exclude-allergens`, ...) and `choice` its combination rule (MULTI-OR,
+    # MULTI-AND, SINGLE). Menu-payload weeks only. Lets the meal-planner card build the same
+    # chips the site shows, and resolve them through `hellofresh.get_menu_courses`.
+    menu_filters: list[dict[str, Any]] = field(default_factory=list)
+    # Wallet promises HelloFresh will apply to this box (``/gw/customer-wallet/v2/
+    # benefit-distribution``): the "weekly discount" — e.g. a $10-off-premium-meals voucher —
+    # as ``{promise_id, voucher_code, applies_to, amount, amount_type, currency, label,
+    # status, expires_at, one_time}``. Bounded (a handful at most), so it rides in the summary.
+    benefits: list[dict[str, Any]] = field(default_factory=list)
     source: str = "account"
     menu_title: str | None = None
     slot_label: str | None = None
@@ -468,6 +480,7 @@ class HelloFreshWeek:
             # Kept in the summary because it is bounded and useful for "move my box" flows;
             # it is nowhere near the per-recipe payload that forced the recipe-free summary.
             "available_one_off_options": self.available_one_off_options,
+            "benefits": self.benefits,
         }
 
     def as_dict(self) -> dict[str, Any]:
@@ -478,6 +491,7 @@ class HelloFreshWeek:
             "recipes": [recipe.as_dict() for recipe in self.recipes],
             "market_items": [item.as_dict() for item in self.market_items],
             "menu_categories": self.menu_categories,
+            "menu_filters": self.menu_filters,
         }
 
 
@@ -508,6 +522,11 @@ class HelloFreshOrder:
     # later cart/calculate estimate may overwrite) so the billed amount is preserved.
     billed_total_price: float | None = None
     billed_total_currency: str | None = None
+    # What the billing ledger says was taken off this delivery's charges (the order lines'
+    # ``couponMoneyValue`` summed) and the voucher that did it — the realized weekly discount,
+    # as opposed to the wallet promise that announces it beforehand.
+    discount_amount: float | None = None
+    coupon_code: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize order data for Home Assistant state attributes."""
@@ -528,6 +547,8 @@ class HelloFreshOrder:
             "currency": self.currency,
             "billed_total_price": self.billed_total_price,
             "billed_total_currency": self.billed_total_currency,
+            "discount_amount": self.discount_amount,
+            "coupon_code": self.coupon_code,
             "slot_label": self.slot_label,
         }
 
@@ -1395,6 +1416,33 @@ class HelloFreshAccountData:
     account_credit_currency: str | None = None
     selected_plan_total_price: float | None = None
     selected_plan_total_price_currency: str | None = None
+    # Price breakdowns behind the two box-price sensors, from ``/gw/calculate``: the standing
+    # plan (no week) and the next upcoming delivery week. Each is
+    # {sub_total, shipping_amount, discount_amount, tax_amount, grand_total, coupon_code} in
+    # major units, exposed as sensor attributes rather than separate entities.
+    selected_plan_price_breakdown: dict[str, Any] | None = None
+    next_delivery_price_breakdown: dict[str, Any] | None = None
+    # Weekly discounts from the customer wallet (``POST /gw/customer-wallet/v2/
+    # benefit-distribution``): every promise on the account, each with the upcoming weeks it
+    # is available for, and the one that applies to the next box (plus its ``week_id``), which
+    # backs ``sensor.next_box_discount``. The realized counterpart — what the billing ledger
+    # actually took off the next delivery's charges — is ``next_delivery_discount``.
+    wallet_benefits: list[dict[str, Any]] = field(default_factory=list)
+    next_box_discount: dict[str, Any] | None = None
+    next_delivery_discount: float | None = None
+    # Payment-method health from ``POST /gw/payments/v1/checktokenstatus`` (HAR-verified):
+    # whether HelloFresh considers the card on file expiring/expired, plus the card TYPE,
+    # provider, expiry month and the last four digits (the only part of the number the
+    # gateway returns, and the only part kept — the billing address is never stored).
+    payment_method_expiring: bool | None = None
+    payment_method_expired: bool | None = None
+    payment_card_type: str | None = None
+    payment_card_provider: str | None = None
+    # The card brand (the response's ``method``: visa, mastercard, ...), which is what a
+    # person calls the card; ``type`` is just "credit_card".
+    payment_card_brand: str | None = None
+    payment_card_expiry: str | None = None
+    payment_card_last4: str | None = None
     recent_order_id: str | None = None
     # Lazily-memoized serializations MUST NOT participate in equality: entities populate
     # them on the OLD data object between polls while the fresh object has them reset, so
