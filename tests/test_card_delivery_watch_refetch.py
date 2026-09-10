@@ -22,6 +22,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 SHARED = (WWW / "hellofresh-shared.js").read_text(encoding="utf-8")
 SCHEDULE = (WWW / "hellofresh-schedule-card.js").read_text(encoding="utf-8")
 SUBSCRIPTION = (WWW / "hellofresh-subscription-card.js").read_text(encoding="utf-8")
+DELIVERY_TRACKING = (WWW / "hellofresh-delivery-tracking-card.js").read_text(encoding="utf-8")
 
 
 def _fn(source: str, name: str) -> str:
@@ -68,6 +69,36 @@ def test_both_cards_delegate_their_cadence_to_the_shared_helper() -> None:
     for source in (SCHEDULE, SUBSCRIPTION):
         assert "refetchIntervalMs," in source  # imported
         assert re.search(r"_refetchIntervalMs\(\) \{\n    return refetchIntervalMs\(", source)
+
+
+def test_delivery_tracking_card_uses_configured_live_cadence() -> None:
+    out = _node(f"""
+    const DEFAULT_ACTIVE_REFETCH_MS = 5 * 60000;
+    const MIN_ACTIVE_REFETCH_MS = 60 * 1000;
+    const MAX_ACTIVE_REFETCH_MS = 60 * 60000;
+    const IDLE_REFETCH_MS = 15 * 60000;
+    class Card {{
+      constructor(tracking) {{ this._tracking = tracking; }}
+      _isLive() {{
+        const t = this._tracking;
+        if (!t || t.available === false || !t.active) return false;
+        return !["DELIVERED", "DELIVERED_HOME", "CANCELLED"].includes(t.phase);
+      }}
+      {_method(DELIVERY_TRACKING, "_refetchIntervalMs")}
+    }}
+    console.log(JSON.stringify({{
+      configured: new Card({{available: true, active: true, phase: "ON_THE_WAY", delivery_tracking_refresh_interval_seconds: 120}})._refetchIntervalMs(),
+      defaulted: new Card({{available: true, active: true, phase: "ON_THE_WAY"}})._refetchIntervalMs(),
+      clamped: new Card({{available: true, active: true, phase: "ON_THE_WAY", delivery_tracking_refresh_interval_seconds: 5}})._refetchIntervalMs(),
+      idle: new Card({{available: true, active: false}})._refetchIntervalMs(),
+    }}));
+    """)
+    assert out == {
+        "configured": 120000,
+        "defaulted": 300000,
+        "clamped": 60000,
+        "idle": 900000,
+    }
 
 
 def test_schedule_card_shows_a_discount_only_when_one_applies() -> None:

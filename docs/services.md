@@ -70,7 +70,7 @@ change the recurring delivery day (affects all future deliveries)
 
 ### `hellofresh.get_delivery_tracking`
 
-**Returns a response.** The live last-mile tracking snapshot from HelloFresh's own delivery-fleet tracker (`hftrack.nl`): the delivery `phase`, `driver_name`, live `driver_location` and `customer_location` (latitude/longitude), `stops_before` you, a minute-precision `eta`, the personal customer `message`, and the `tracking_url` of the official live map, plus `next_delivery_date` for idle-day context. Each call performs a live fetch of the tracking endpoint (throttled to once a minute), so it is always at least as fresh as the [tracking sensors](entities.md#live-delivery-tracking-netherlands). **Only meaningful for accounts in supported own-fleet countries — currently the Netherlands**; elsewhere the response is `{"available": false, "reason": "unsupported_country"}`. Read-only. Powers the [Delivery tracking card](dashboard.md#delivery-tracking-card).
+**Returns a response.** The live last-mile tracking snapshot from HelloFresh's own delivery-fleet tracker (`hftrack.nl`): the delivery `phase`, `driver_name`, live `driver_location` and `customer_location` (latitude/longitude), `stops_before` you, a minute-precision `eta`, the personal customer `message`, and the `tracking_url` of the official live map, plus `next_delivery_date` for idle-day context and `delivery_tracking_refresh_interval_seconds` for the configured live cadence. Each call performs a live fetch of the tracking endpoint (throttled to once a minute), so it is always at least as fresh as the [tracking sensors](entities.md#live-delivery-tracking-netherlands). **Only meaningful for accounts in supported own-fleet countries — currently the Netherlands**; elsewhere the response is `{"available": false, "reason": "unsupported_country"}`. Read-only. Powers the [Delivery tracking card](dashboard.md#delivery-tracking-card).
 
 ## Plan and account
 
@@ -170,4 +170,3 @@ by hand:
 Write actions (meal/Market selection, skip/unskip) use the website's verified endpoints first and
 stop with a clear error — raising a Repairs issue — rather than guessing. See
 [Current Scope](../README.md#current-scope).
-

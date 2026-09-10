@@ -29,7 +29,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    DOMAIN,
+    MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+)
 from .token_manager import _BROWSER_USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,12 +49,17 @@ TRACEY_SITE = "https://www.hftrack.nl"
 # delivery still exists and the endpoint keeps updating it.
 ACTIVE_PHASES = frozenset({"AT_DEPOT", "DRIVER_DEPARTED", "ON_THE_WAY", "DELAYED"})
 DELIVERED_PHASES = frozenset({"DELIVERED", "DELIVERED_HOME"})
+TERMINAL_PHASES = DELIVERED_PHASES | {"CANCELLED"}
 INVALID_PHASE = "INVALID_LINK"
 
 # Poll fast while a delivery is live (driver GPS / ETA / stop count change by the minute),
-# slow when there is nothing to watch. The idle tick still runs so a delivery that starts
-# between main-coordinator polls is picked up within half an hour.
-ACTIVE_UPDATE_INTERVAL = timedelta(minutes=5)
+# slow when there is nothing to watch. The active tick is configurable for Netherlands
+# accounts; the idle tick still runs so a delivery that starts between main-coordinator
+# polls is picked up within half an hour.
+DEFAULT_ACTIVE_UPDATE_INTERVAL = timedelta(
+    seconds=DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS
+)
+ACTIVE_UPDATE_INTERVAL = DEFAULT_ACTIVE_UPDATE_INTERVAL
 IDLE_UPDATE_INTERVAL = timedelta(minutes=30)
 
 # The response-returning service refetches live data for the tracking card; this floor
@@ -177,13 +188,23 @@ def parse_tracey_payload(
     )
 
 
+def live_polling_phase(data: TraceyData) -> bool:
+    """True when a Tracey snapshot should stay on the live polling cadence.
+
+    Be deliberately permissive: if HelloFresh adds another non-terminal live phase, the
+    sensors should keep updating quickly rather than idling for 30 minutes just because the
+    phase label is new to us.
+    """
+    return data.active and data.phase not in TERMINAL_PHASES
+
+
 class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
     """Poll the Tracey endpoint on its own (fast) cadence, separate from account polling.
 
     Reads the current tracking token from the main coordinator's data on every tick, so it
     follows the account's tracked order without duplicating any account logic. The interval
-    self-adjusts: minutes while a delivery is live, half-hourly otherwise — the idle tick
-    performs a single unauthenticated GET at most (none when no token exists at all).
+    self-adjusts: configured seconds while a delivery is live, half-hourly otherwise — the
+    idle tick performs a single unauthenticated GET at most (none when no token exists at all).
     """
 
     def __init__(
@@ -207,6 +228,23 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         self._session = session
         self._main_coordinator = main_coordinator
         self._last_fetch_monotonic: float | None = None
+
+    @property
+    def active_update_interval(self) -> timedelta:
+        """Configured live Tracey poll cadence, clamped to the supported seconds range."""
+        seconds = self.config_entry.options.get(
+            CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+            DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+        )
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            seconds = DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS
+        seconds = max(
+            MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+            min(seconds, MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS),
+        )
+        return timedelta(seconds=seconds)
 
     def _current_tracking_url(self) -> str | None:
         """Return the tracked order's tracking URL from the latest account data."""
@@ -251,7 +289,7 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         self._last_fetch_monotonic = time.monotonic()
         data = parse_tracey_payload(payload, tracking_url=tracking_url)
         self.update_interval = (
-            ACTIVE_UPDATE_INTERVAL if data.phase in ACTIVE_PHASES else IDLE_UPDATE_INTERVAL
+            self.active_update_interval if live_polling_phase(data) else IDLE_UPDATE_INTERVAL
         )
         return data
 

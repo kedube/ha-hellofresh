@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Intervalle d'actualisation (minutes)",
           "delivery_watch_interval_minutes": "Suivi du jour de livraison (minutes)",
+          "delivery_tracking_refresh_interval_seconds": "Intervalle du suivi de livraison (secondes)",
           "history_weeks": "Historique des livraisons (semaines)",
           "menu_grace_weeks": "Historique complet du menu (semaines)",
           "enable_public_menu_fallback": "Utiliser le menu public en secours",
@@ -89,6 +90,7 @@
         "data_description": {
           "scan_interval_minutes": "Fréquence d'interrogation de HelloFresh pour les données de compte et de livraison. Plus bas = données plus fraîches et plus de requêtes ; plus haut = plus léger pour l'API. Plage 5–1440 minutes ; par défaut 180 (3 heures). Le jeton de connexion est renouvelé selon son propre calendrier : ce réglage n'affecte donc pas la connexion.",
           "delivery_watch_interval_minutes": "Lorsqu'une box est attendue (le jour de livraison, ou le lendemain tant que le transporteur ne l'a pas confirmée) ou qu'un colis est en route, seuls le statut de livraison et le suivi transporteur sont revérifiés à cette fréquence, indépendamment de l'intervalle d'actualisation, pour que l'arrivée apparaisse en quelques minutes. Plage 0–60 ; 15 par défaut. 0 désactive le suivi. Les autres jours, aucune requête supplémentaire n'est faite.",
+          "delivery_tracking_refresh_interval_seconds": "Pays-Bas uniquement. Tant que le suivi live du dernier kilomètre est actif, interroge le point de terminaison Tracey non authentifié de HelloFresh à cette fréquence pour la phase, l'ETA, le nombre d'arrêts et la position du chauffeur. Plage 60–3600 secondes ; 300 par défaut.",
           "history_weeks": "Nombre de semaines de livraisons passées à charger pour pouvoir les consulter dans les cartes. Plus bas = moins de données à chaque actualisation ; augmentez pour remonter plus loin (environ 56 pour une année complète). Plage 1–104 semaines ; par défaut 26 (environ 6 mois). Toute modification recharge l'intégration.",
           "menu_grace_weeks": "Nombre de semaines après sa date de livraison pendant lesquelles une semaine conserve son menu complet consultable dans la carte du planificateur de repas (vos repas livrés restent mis en évidence) ; les semaines plus anciennes n'affichent que ce qui a été livré. Plage 0–3 semaines ; par défaut 2 (les dernières box restent consultables). 0 désactive ce délai. HelloFresh cesse de publier le menu des semaines anciennes : au-delà, seules les recettes livrées sont affichées. Toute modification recharge l'intégration.",
           "enable_public_menu_fallback": "Si les données de menu authentifiées ne peuvent pas être chargées, la page de menu publique régionale est lue pour que les noms de recettes apparaissent quand même. Laissez cette option activée, sauf si vous souhaitez uniquement des données authentifiées.",

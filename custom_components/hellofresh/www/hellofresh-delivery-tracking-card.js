@@ -9,8 +9,8 @@
  *
  * Reads everything from the response-returning `hellofresh.get_delivery_tracking` service,
  * which does a live (server-side throttled) fetch of the tracking endpoint — fresher than
- * the sensors' own poll. While a delivery is on the road the card refetches every 2 minutes;
- * idle, every 15. Read-only.
+ * the sensors' own poll. While a delivery is on the road the card refetches on the
+ * configured delivery-tracking interval; idle, every 15 minutes. Read-only.
  *
  * Regional restriction: for accounts outside the supported countries the service answers
  * `available: false` and the card explains the restriction instead of rendering a dead
@@ -43,7 +43,9 @@ const { esc, parseLocalDate, fmtDate, safeUrl } = await import(
 // Refetch cadence: live deliveries change by the minute; idle days barely change at all.
 // The integration additionally throttles the underlying endpoint fetch to once a minute,
 // so several open dashboards never multiply requests.
-const ACTIVE_REFETCH_MS = 2 * 60000;
+const DEFAULT_ACTIVE_REFETCH_MS = 5 * 60000;
+const MIN_ACTIVE_REFETCH_MS = 60 * 1000;
+const MAX_ACTIVE_REFETCH_MS = 60 * 60000;
 const IDLE_REFETCH_MS = 15 * 60000;
 
 // Phase → timeline step. DELAYED keeps the "on the way" step lit and adds a banner;
@@ -134,7 +136,12 @@ class HelloFreshDeliveryTrackingCard extends HTMLElement {
   }
 
   _refetchIntervalMs() {
-    return this._isLive() ? ACTIVE_REFETCH_MS : IDLE_REFETCH_MS;
+    if (!this._isLive()) return IDLE_REFETCH_MS;
+    const seconds = Number(
+      this._tracking && this._tracking.delivery_tracking_refresh_interval_seconds,
+    );
+    if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_ACTIVE_REFETCH_MS;
+    return Math.max(MIN_ACTIVE_REFETCH_MS, Math.min(seconds * 1000, MAX_ACTIVE_REFETCH_MS));
   }
 
   _refreshIfStale() {

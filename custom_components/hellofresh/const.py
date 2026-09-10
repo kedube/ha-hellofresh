@@ -93,9 +93,20 @@ PLATFORMS = [
 # ticks, sees no delivery in progress, and returns without a request. User option; 0 turns
 # the watch off entirely (delivery state then only moves on the regular poll).
 CONF_DELIVERY_WATCH_INTERVAL_MINUTES = "delivery_watch_interval_minutes"
+CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = (
+    "delivery_tracking_refresh_interval_seconds"
+)
 DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES = 15
 MIN_DELIVERY_WATCH_INTERVAL_MINUTES = 0
 MAX_DELIVERY_WATCH_INTERVAL_MINUTES = 60
+
+# Netherlands-only Tracey live-tracking poll interval. This controls the unauthenticated
+# c_hf_getTraceyData endpoint used by the live delivery-tracking sensors while a delivery
+# is active. The service/card path has its own one-minute floor for burst protection, so
+# exposing lower values would be misleading.
+DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 300
+MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 60
+MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 3600
 
 SERVICE_REFRESH_DATA = "refresh_data"
 SERVICE_GET_WEEKS = "get_weeks"

@@ -83,7 +83,7 @@ A few conventions used in the tables:
 
 ### Live delivery tracking (Netherlands)
 
-**Created only for accounts in countries where HelloFresh runs its own delivery fleet — currently the Netherlands.** These sensors ride the unauthenticated Tracey tracker behind `hftrack.nl` (issue #6): the same live phase, driver GPS, stop count, and minute-precision ETA the official tracking page shows. Elsewhere the underlying data simply does not exist (third-party carriers expose only the coarser shipment status above), so the sensors are not created at all. All four poll on their own fast cadence — every 5 minutes while a delivery is live, every 30 when idle — independent of the account refresh interval, and read **Unknown** outside an active delivery window. They power the [Delivery tracking card](dashboard.md#delivery-tracking-card).
+**Created only for accounts in countries where HelloFresh runs its own delivery fleet — currently the Netherlands.** These sensors ride the unauthenticated Tracey tracker behind `hftrack.nl` (issue #6): the same live phase, driver GPS, stop count, and minute-precision ETA the official tracking page shows. Elsewhere the underlying data simply does not exist (third-party carriers expose only the coarser shipment status above), so the sensors are not created at all. All four poll on their own fast cadence while a delivery is live — configurable with the Netherlands-only **Delivery tracking refresh interval** option, default 300 seconds, range 60–3600 — and every 30 minutes when idle, independent of the account refresh interval. They read **Unknown** outside an active delivery window and power the [Delivery tracking card](dashboard.md#delivery-tracking-card).
 
 | Name | Entity | Description |
 | --- | --- | --- |
