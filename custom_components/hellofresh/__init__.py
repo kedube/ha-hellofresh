@@ -38,6 +38,7 @@ from .const import (
     ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
@@ -53,6 +54,7 @@ from .const import (
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
+    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
@@ -802,7 +804,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         Netherlands): elsewhere the response is ``{"available": false}`` and the card
         explains the regional restriction instead of rendering an empty tracker. When
         available, this triggers a live fetch of the Tracey endpoint (throttled to one
-        request a minute) so the card is fresher than the sensors' own poll.
+        request a minute) on the configured live-tracking cadence.
         """
         coordinator = _single_coordinator(service_call)
         country = coordinator.config_entry.data.get(CONF_COUNTRY)
@@ -813,6 +815,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         )
         base: dict[str, object] = {
             "country": country,
+            "delivery_tracking_refresh_interval_seconds": (
+                coordinator.config_entry.options.get(
+                    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                )
+                if country in TRACEY_COUNTRIES
+                else None
+            ),
             "next_delivery_date": (
                 next_delivery.isoformat()
                 if isinstance(next_delivery, (datetime, date))

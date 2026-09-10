@@ -29,6 +29,9 @@ version heading and publishes it as the release's Highlights.
   Luxembourg likely also qualify but stay off until confirmed.
 - Delivery tracking card: now registers in the dashboard card picker (`window.customCards`)
   like the other seven cards, and its docs moved with the rest to `docs/dashboard.md`.
+- Netherlands accounts now get a **Delivery tracking refresh interval (seconds)** option for
+  the unauthenticated Tracey endpoint, defaulting to 300 seconds with a 60–3600 second range.
+  The option is hidden and ignored for all other countries.
 
 ## 2.98 — 2026-09-05
 - **Weekly discounts.** New monetary **`sensor.next_box_discount`**: the wallet promise

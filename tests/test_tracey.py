@@ -13,7 +13,10 @@ import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 
-from custom_components.hellofresh.const import TRACEY_COUNTRIES
+from custom_components.hellofresh.const import (
+    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    TRACEY_COUNTRIES,
+)
 from custom_components.hellofresh.sensor import TRACEY_SENSORS, HelloFreshTraceySensor
 from custom_components.hellofresh.tracey import (
     ACTIVE_UPDATE_INTERVAL,
@@ -173,7 +176,9 @@ def _bare_coordinator(session, tracking_url: str | None) -> HelloFreshTraceyCoor
             next_order=None,
         )
     )
-    coordinator.config_entry = SimpleNamespace(entry_id="test-entry", title="HelloFresh (NL)")
+    coordinator.config_entry = SimpleNamespace(
+        entry_id="test-entry", title="HelloFresh (NL)", options={}
+    )
     coordinator._last_fetch_monotonic = None
     coordinator._update_interval_seconds = None
     coordinator.update_interval = IDLE_UPDATE_INTERVAL
@@ -210,6 +215,25 @@ def test_coordinator_live_delivery_polls_fast() -> None:
     request = session.requests[0]
     assert request["params"]["token"] == "abc123"
     assert request["headers"]["Origin"] == "https://www.hftrack.nl"
+
+
+def test_coordinator_live_delivery_uses_configured_seconds_interval() -> None:
+    """NL users can tune how often active Tracey deliveries are refreshed."""
+    session = _FakeSession(LIVE_PAYLOAD)
+    coordinator = _bare_coordinator(session, "https://www.hftrack.nl/abc123")
+    coordinator.config_entry.options[CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS] = 120
+    _run(coordinator._async_update_data())
+    assert coordinator.update_interval.total_seconds() == 120
+
+
+def test_unknown_active_phase_stays_on_fast_polling() -> None:
+    """New live Tracey phases must not fall back to the 30-minute idle cadence."""
+    session = _FakeSession({**LIVE_PAYLOAD, "traceyPhase": "DRIVER_CLOSE_BY"})
+    coordinator = _bare_coordinator(session, "https://www.hftrack.nl/abc123")
+    data = _run(coordinator._async_update_data())
+    assert data.active is True
+    assert data.phase == "DRIVER_CLOSE_BY"
+    assert coordinator.update_interval == ACTIVE_UPDATE_INTERVAL
 
 
 def test_coordinator_delivered_slows_back_down() -> None:

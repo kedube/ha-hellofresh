@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Opdateringsinterval (minutter)",
           "delivery_watch_interval_minutes": "Leveringsdag-overvågning (minutter)",
+          "delivery_tracking_refresh_interval_seconds": "Live leveringssporing opdateres (sekunder)",
           "history_weeks": "Leveringshistorik (uger)",
           "menu_grace_weeks": "Fuld menuhistorik (uger)",
           "enable_public_menu_fallback": "Brug offentlig menu som reserve",
@@ -89,6 +90,7 @@
         "data_description": {
           "scan_interval_minutes": "Hvor ofte HelloFresh forespørges om konto- og leveringsdata. Lavere = friskere data og flere forespørgsler; højere = mere skånsomt for API'et. Interval 5–1440 minutter; standard 180 (3 timer). Login-tokenet fornys efter sin egen tidsplan, så dette påvirker ikke login.",
           "delivery_watch_interval_minutes": "Mens en kasse er ventet (leveringsdagen eller dagen efter, indtil fragtfirmaet bekræfter den) eller en forsendelse er undervejs, kontrolleres kun leveringsstatus og pakkesporing så ofte, uafhængigt af opdateringsintervallet, så leveringen vises inden for få minutter. Interval 0–60; standard 15. 0 slår overvågningen fra. Andre dage sendes ingen ekstra forespørgsler.",
+          "delivery_tracking_refresh_interval_seconds": "Kun Holland. Mens live last-mile-sporing er aktiv, forespørges HelloFreshs ikke-godkendte Tracey-endpoint så ofte for fase, ETA, antal stop og chaufførens placering. Interval 60–3600 sekunder; standard 300.",
           "history_weeks": "Hvor mange ugers tidligere leveringer der indlæses, så du kan bladre i dem på kortene. Lavere = færre data hentes ved hver opdatering; forøg for at se længere tilbage (ca. 56 for et helt år). Interval 1–104 uger; standard 26 (ca. 6 måneder). Ændring genindlæser integrationen.",
           "menu_grace_weeks": "Hvor mange uger efter leveringsdatoen en uge beholder hele sin menu i måltidsplanlægger-kortet (dine leverede retter forbliver fremhævet); ældre uger viser kun det, der blev leveret. Interval 0–3 uger; standard 2 (de seneste par måltidskasser kan stadig gennemses). 0 slår det fra. HelloFresh udgiver ikke længere menuen for ældre uger, så uger derudover viser kun de leverede retter. Ændring genindlæser integrationen.",
           "enable_public_menu_fallback": "Hvis de indloggede menudata ikke kan indlæses, aflæses den offentlige regionale menuside, så opskriftsnavne stadig vises. Lad den være slået til, medmindre du kun ønsker godkendte data.",

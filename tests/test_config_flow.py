@@ -11,14 +11,30 @@ import json
 from types import SimpleNamespace
 from urllib.parse import quote
 
-from custom_components.hellofresh.config_flow import HelloFreshConfigFlow
+from custom_components.hellofresh.config_flow import HelloFreshConfigFlow, HelloFreshOptionsFlow
 from custom_components.hellofresh.const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+    CONF_ENABLE_FAVORITES,
+    CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+    CONF_HISTORY_WEEKS,
+    CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
+    CONF_SCAN_INTERVAL_MINUTES,
+    CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN,
     CONF_USERNAME,
+    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
+    DEFAULT_ENABLE_FAVORITES,
+    DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+    DEFAULT_HISTORY_WEEKS,
+    DEFAULT_MENU_GRACE_WEEKS,
+    DEFAULT_SCAN_INTERVAL_MINUTES,
+    DEFAULT_SHOW_DATA_QUALITY_ISSUES,
 )
 
 
@@ -38,8 +54,11 @@ def _make_flow() -> HelloFreshConfigFlow:
         created.update({"title": title, "data": data})
         return {"type": "create_entry", "title": title, "data": data}
 
-    def async_show_form(*, step_id, errors=None, **_kwargs):
-        return {"type": "form", "step_id": step_id, "errors": errors or {}}
+    def async_show_form(*, step_id, errors=None, data_schema=None, **_kwargs):
+        result = {"type": "form", "step_id": step_id, "errors": errors or {}}
+        if data_schema is not None:
+            result["data_schema"] = data_schema
+        return result
 
     def async_show_menu(*, step_id, menu_options, **_kwargs):
         return {"type": "menu", "step_id": step_id, "menu_options": menu_options}
@@ -57,12 +76,102 @@ def _make_flow() -> HelloFreshConfigFlow:
     return flow
 
 
+def _make_options_flow(country: str, options: dict | None = None) -> HelloFreshOptionsFlow:
+    """Build an options flow with a stub config entry."""
+    flow = HelloFreshOptionsFlow()
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={CONF_COUNTRY: country},
+        options=options or {},
+    )
+    flow.hass = SimpleNamespace(  # type: ignore[assignment]
+        config_entries=SimpleNamespace(async_get_known_entry=lambda _id: entry)
+    )
+    flow.handler = entry.entry_id
+
+    def async_create_entry(*, title, data, **_kwargs):
+        return {"type": "create_entry", "title": title, "data": data}
+
+    def async_show_form(*, step_id, errors=None, data_schema=None, **_kwargs):
+        return {
+            "type": "form",
+            "step_id": step_id,
+            "errors": errors or {},
+            "data_schema": data_schema,
+        }
+
+    flow.async_create_entry = async_create_entry  # type: ignore[method-assign]
+    flow.async_show_form = async_show_form  # type: ignore[method-assign]
+    return flow
+
+
+def _schema_keys(schema) -> set[str]:
+    """Return the option names exposed by a voluptuous schema."""
+    return {key.schema for key in schema.schema}
+
+
+def _schema_default(schema, field: str):
+    """Return a voluptuous field's default value."""
+    for key in schema.schema:
+        if key.schema == field:
+            return key.default()
+    raise AssertionError(f"{field} not found in schema")
+
+
+def _default_options_payload() -> dict:
+    """A complete options submission for tests."""
+    return {
+        CONF_SCAN_INTERVAL_MINUTES: DEFAULT_SCAN_INTERVAL_MINUTES,
+        CONF_DELIVERY_WATCH_INTERVAL_MINUTES: DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
+        CONF_HISTORY_WEEKS: DEFAULT_HISTORY_WEEKS,
+        CONF_MENU_GRACE_WEEKS: DEFAULT_MENU_GRACE_WEEKS,
+        CONF_ENABLE_PUBLIC_MENU_FALLBACK: DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+        CONF_ENABLE_FAVORITES: DEFAULT_ENABLE_FAVORITES,
+        CONF_SHOW_DATA_QUALITY_ISSUES: DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+    }
+
+
 def test_user_step_shows_menu_of_both_paths() -> None:
     """The initial step offers the credential and token paths."""
     flow = _make_flow()
     result = _run(flow.async_step_user())
     assert result["type"] == "menu"
     assert result["menu_options"] == ["credentials", "token"]
+
+
+def test_options_hide_delivery_tracking_interval_outside_netherlands() -> None:
+    """The Tracey endpoint option is not exposed for unsupported countries."""
+    flow = _make_options_flow("us")
+    result = _run(flow.async_step_init())
+    assert CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS not in _schema_keys(
+        result["data_schema"]
+    )
+
+
+def test_options_show_delivery_tracking_interval_for_netherlands() -> None:
+    """Netherlands entries can tune the Tracey endpoint poll cadence in seconds."""
+    flow = _make_options_flow("nl")
+    result = _run(flow.async_step_init())
+    assert CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS in _schema_keys(result["data_schema"])
+    assert (
+        _schema_default(result["data_schema"], CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS)
+        == DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS
+    )
+
+
+def test_options_persist_delivery_tracking_interval_only_for_netherlands() -> None:
+    """Crafted submissions for other countries cannot store the NL-only option."""
+    nl_flow = _make_options_flow("nl")
+    payload = {
+        **_default_options_payload(),
+        CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS: 120,
+    }
+    nl_result = _run(nl_flow.async_step_init(payload))
+    assert nl_result["data"][CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS] == 120
+
+    us_flow = _make_options_flow("us")
+    us_result = _run(us_flow.async_step_init(payload))
+    assert CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS not in us_result["data"]
 
 
 def test_credentials_path_creates_entry_with_credentials_only() -> None:
