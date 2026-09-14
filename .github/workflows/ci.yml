@@ -41,7 +41,7 @@ jobs:
       - name: Run hassfest
         # Pinned by SHA (master @ 2026-08-03). This repo is untagged, so Dependabot tracks
         # the branch head.
-        uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb
+        uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93
 
   ruff:
     name: Ruff
