@@ -221,10 +221,15 @@ def test_video_failure_is_surfaced_not_silent() -> None:
     assert 'sourceEl.addEventListener("error"' in body
 
 
-def test_sold_out_ribbon_is_suppressed_on_past_weeks() -> None:
-    """A delivered week must not render a "Sold out" ribbon."""
+def test_sold_out_ribbon_is_gated_on_editability() -> None:
+    """Only an editable week renders a "Sold out" ribbon.
+
+    A locked week (deadline passed, box not yet delivered) is not past, so a past-only gate
+    still showed ribbons the user could do nothing about.
+    """
     source = MEAL_PLANNER.read_text(encoding="utf-8")
-    assert "showSoldOut: !this._isPast(week)" in source
+    assert "showSoldOut: this._isEditable(week)" in source
+    assert "showSoldOut: !this._isPast(week)" not in source
     assert "ctx.showSoldOut !== false" in source
 
 
