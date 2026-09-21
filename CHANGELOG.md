@@ -6,6 +6,11 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+- Meal planner: **"Sold out" ribbons now appear only on weeks you can still edit.** A locked
+  week (selection deadline passed, box not yet delivered) could still show sold-out meals when
+  its menu had been served by the catalog endpoint, which carries the flag natively. The
+  integration now clears availability flags on every non-editable week and the card gates
+  the ribbon on editability rather than on whether the week is in the past.
 - **Live last-mile delivery tracking for the Netherlands** (issue #6). In markets where
   HelloFresh drives its own vans, the official tracking page (`hftrack.nl`) is backed by an
   unauthenticated live API reporting the delivery phase, the driver's name and GPS position,
