@@ -13,7 +13,7 @@ multi-account case -- an ordering rule, all pinned here.
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
 from custom_components.hellofresh.api import (
@@ -200,7 +200,8 @@ def test_meal_selection_reports_all_clear_when_nothing_is_pending() -> None:
 
 
 def test_meal_selection_lists_each_pending_week_with_its_account() -> None:
-    deadline = datetime(2026, 9, 17, 6, 59, 59)
+    # Relative so the week stays editable (and therefore pending) as the calendar advances.
+    deadline = datetime.combine(date.today() + timedelta(days=2), time(6, 59, 59))
     speech = _speak(
         HelloFreshMealSelectionIntentHandler(),
         _coordinator(
