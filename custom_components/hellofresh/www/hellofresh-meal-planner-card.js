@@ -1793,9 +1793,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       editable: this._canEdit(week),
       display,
       nameCounts,
-      // Sold-out is only meaningful for a box you can still change. A delivered week already
-      // arrived, so a lingering flag on its payload must never surface as a "Sold out" ribbon.
-      showSoldOut: !this._isPast(week),
+      // Sold-out is only meaningful for a box you can still change. A locked week (deadline
+      // passed, not yet delivered) or a delivered one can still carry the flag on its payload,
+      // and there is nothing the user can do about it — so no "Sold out" ribbon unless editable.
+      showSoldOut: this._isEditable(week),
       // A tile is selected if its own key OR any collapsed-duplicate index is chosen. Uses the
       // same key as _savedSelection (course_index, or recipe_id when the meal has no index).
       sel: (r) =>

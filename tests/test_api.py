@@ -9640,6 +9640,43 @@ def test_past_weeks_never_keep_a_sold_out_flag() -> None:
     assert calls == []
 
 
+def test_locked_undelivered_week_never_keeps_a_sold_out_flag() -> None:
+    """A locked week (deadline passed, box not yet delivered) must not show "Sold out".
+
+    When the per-week menu was served by the menus-service fallback, the week's own recipes
+    already carry the catalog's native `isSoldOut`. The previous guard only cleared delivered
+    weeks, so the current week — locked but still days from delivery — kept the ribbon even
+    though nothing about its selection can change any more.
+    """
+    stale = HelloFreshRecipe(
+        recipe_id="r-1", name="Locked meal", course_index=1, is_sold_out=True, is_hidden=True
+    )
+    locked = HelloFreshWeek(
+        week_id="2026-W38",
+        display_name="W38",
+        subscription_id="sub-1",
+        delivery_date=date.today() + timedelta(days=3),
+        allowed_actions={"mealSwap": True},
+        selection_deadline=datetime.now(UTC) - timedelta(days=1),
+        recipes=[stale],
+    )
+    assert locked.is_editable is False
+    calls: list = []
+    client = _availability_client({"items": []}, recorder=calls)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[locked]
+        )
+    )
+
+    assert stale.is_sold_out is False
+    assert stale.is_hidden is False
+    assert calls == []
+
+
 def test_future_week_still_receives_sold_out_flags() -> None:
     """The past-week guard must not disable the feature for upcoming weeks."""
     recipe = HelloFreshRecipe(recipe_id="r-2", name="Gone", course_index=1)
