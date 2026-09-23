@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Vollständige Menühistorie (Wochen)",
           "enable_public_menu_fallback": "Öffentliches Menü als Fallback nutzen",
           "enable_favorites": "Favoriten-Herzen anzeigen",
+          "enable_prep_lists": "Vorratslisten erstellen",
           "show_data_quality_issues": "Warnungen zur Datenqualität anzeigen"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Wie viele Wochen nach ihrem Lieferdatum eine Woche ihr vollständiges durchblätterbares Menü in der Menüplaner-Karte behält (deine gelieferten Gerichte bleiben hervorgehoben); ältere Wochen zeigen nur, was geliefert wurde. Bereich 0–3 Wochen; Standard 2 (die letzten paar Kochboxen bleiben durchblätterbar). 0 schaltet das Zeitfenster ab. HelloFresh veröffentlicht für ältere Wochen kein Menü mehr, daher zeigen Wochen darüber hinaus nur noch die gelieferten Gerichte. Eine Änderung lädt die Integration neu.",
           "enable_public_menu_fallback": "Wenn die angemeldeten Menüdaten nicht geladen werden können, wird die öffentliche regionale Menüseite ausgelesen, damit Rezeptnamen weiterhin erscheinen. Lass dies aktiviert, außer du möchtest ausschließlich authentifizierte Daten.",
           "enable_favorites": "Bei jeder Aktualisierung nachschlagen, welche Gerichte in deinem HelloFresh-Kochbuch als Favoriten markiert sind, damit die Menüplaner-Karte ein Favoriten-Herz anzeigen kann. Kostet eine zusätzliche Anfrage pro Aktualisierung: HelloFresh bietet keinen Endpunkt \"meine Favoriten auflisten\", daher müssen die Rezepte des Menüs an einen Filter-Endpunkt gesendet werden, um die Favoriten zu ermitteln. Deaktiviere dies, um den Schritt zu überspringen — die Dienste zum Hinzufügen und Entfernen von Favoriten funktionieren in beiden Fällen weiter.",
+          "enable_prep_lists": "Für jede der nächsten beiden Lieferungen eine Aufgabenliste mit den Zutaten erstellen, die deine gewählten Gerichte benötigen und die HelloFresh nicht mitliefert — Salz, Öl, Butter, Eier — damit du sie vor Ankunft der Box besorgen kannst. Deaktiviere dies, um beide Listen zu entfernen und die dafür nötigen Rezeptabfragen zu überspringen.",
           "show_data_quality_issues": "Warnungen im Reparaturen-Bildschirm anzeigen, wenn HelloFresh-Daten eingeschränkt sind (Menü-Fallback aktiv, unbekannte Datenformate, Kontodaten nicht verfügbar, blockierte Schreibaktionen). Die Daten werden in beiden Fällen weiter geladen. Deaktiviere dies, um diese Warnungen zu unterdrücken und bereits angezeigte zu entfernen."
         }
       }

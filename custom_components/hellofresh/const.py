@@ -74,6 +74,17 @@ DEFAULT_SHOW_DATA_QUALITY_ISSUES = True
 CONF_ENABLE_FAVORITES = "enable_favorites"
 DEFAULT_ENABLE_FAVORITES = True
 
+# Whether to create the per-week pantry-prep to-do lists (the ingredients a box's meals need
+# that HelloFresh does NOT ship — salt, oil, butter). On by default. Turning it off removes
+# both list entities and skips their recipe-detail lookups, which are the only requests the
+# to-do platform makes; everything else about the integration is unaffected. Changing it
+# reloads the entry, so the lists appear/disappear immediately.
+CONF_ENABLE_PREP_LISTS = "enable_prep_lists"
+DEFAULT_ENABLE_PREP_LISTS = True
+
+# Platforms set up for every entry. The to-do platform is conditional (see
+# CONF_ENABLE_PREP_LISTS) and is appended by `_entry_platforms` at setup/unload time rather
+# than living here, so both paths derive the same list from the same option.
 PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
@@ -82,7 +93,6 @@ PLATFORMS = [
     Platform.EVENT,
     Platform.SELECT,
     Platform.SWITCH,
-    Platform.TODO,
 ]
 
 # While a box is due (its scheduled day, or the day after when the carrier still hasn't

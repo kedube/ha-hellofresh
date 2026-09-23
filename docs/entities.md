@@ -166,6 +166,10 @@ mid-recipe. Add each to a **To-do list** card; the [example dashboard](../dashbo
 puts them side by side under a
 [*Missing Ingredients* view](dashboard.md#missing-ingredients-view).
 
+> **Optional.** Both entities are created by default, and the **Create pantry prep lists**
+> option in the integration's **Configure** dialog turns them off. Disabling it removes both
+> lists and skips the per-recipe ingredient lookups they need; no other entity is affected.
+
 **Two entities, one per week.** Home Assistant's to-do card renders exactly one entity and has no
 filtering, so a single entity spanning both weeks could only ever be one flat list. Two entities
 give two cards — a real section per week — and keep each week's totals, deadline, and check-offs

@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Historique complet du menu (semaines)",
           "enable_public_menu_fallback": "Utiliser le menu public en secours",
           "enable_favorites": "Afficher les cœurs favoris",
+          "enable_prep_lists": "Créer des listes de préparation",
           "show_data_quality_issues": "Afficher les avertissements de qualité des données"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Nombre de semaines après sa date de livraison pendant lesquelles une semaine conserve son menu complet consultable dans la carte du planificateur de repas (vos repas livrés restent mis en évidence) ; les semaines plus anciennes n'affichent que ce qui a été livré. Plage 0–3 semaines ; par défaut 2 (les dernières box restent consultables). 0 désactive ce délai. HelloFresh cesse de publier le menu des semaines anciennes : au-delà, seules les recettes livrées sont affichées. Toute modification recharge l'intégration.",
           "enable_public_menu_fallback": "Si les données de menu authentifiées ne peuvent pas être chargées, la page de menu publique régionale est lue pour que les noms de recettes apparaissent quand même. Laissez cette option activée, sauf si vous souhaitez uniquement des données authentifiées.",
           "enable_favorites": "Vérifier à chaque actualisation quelles recettes sont enregistrées dans votre carnet de recettes HelloFresh, afin que la carte du planificateur puisse afficher un cœur. Coûte une requête supplémentaire par actualisation : HelloFresh ne propose pas de point d'accès \"lister mes favoris\", les recettes du menu doivent donc être envoyées à un point d'accès de filtrage pour savoir lesquelles sont favorites. Désactivez pour ignorer cette étape — les services d'ajout et de suppression de favoris continuent de fonctionner dans tous les cas.",
+          "enable_prep_lists": "Créer une liste de tâches pour chacune des deux prochaines livraisons, contenant les ingrédients dont vos repas choisis ont besoin mais que HelloFresh ne livre pas — sel, huile, beurre, œufs — afin de les acheter avant l'arrivée du colis. Désactivez pour supprimer les deux listes et ignorer les requêtes de recettes nécessaires.",
           "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés."
         }
       }

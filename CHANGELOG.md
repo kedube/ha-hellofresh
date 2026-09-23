@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Pantry prep lists are now optional.** A new **Create pantry prep lists** option in the
+  integration's **Configure** dialog controls the two `todo.prep_list*` entities. It is **on by
+  default**, so nothing changes unless you turn it off; disabling it removes both lists and
+  skips the per-recipe ingredient lookups behind them, leaving every other entity untouched.
+  Changing it reloads the integration, so the lists appear or disappear right away.
+
 ## 3.01 — 2026-09-23
 - **Faster polls.** Three changes cut several seconds off every refresh, with no behavior
   change: the Chrome-impersonating transport now keeps **one pooled connection per event

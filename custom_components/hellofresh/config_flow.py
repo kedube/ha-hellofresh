@@ -19,6 +19,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
+    CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
@@ -37,6 +38,7 @@ from .const import (
     DEFAULT_COUNTRY,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
+    DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_MENU_GRACE_WEEKS,
@@ -513,6 +515,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
                     CONF_ENABLE_FAVORITES: user_input[CONF_ENABLE_FAVORITES],
+                    CONF_ENABLE_PREP_LISTS: user_input[CONF_ENABLE_PREP_LISTS],
                     CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
                     # NumberSelector yields a float; store a clean int (whole weeks/days).
                     CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
@@ -601,6 +604,13 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                         default=self.config_entry.options.get(
                             CONF_ENABLE_FAVORITES,
                             DEFAULT_ENABLE_FAVORITES,
+                        ),
+                    ): cv.boolean,
+                    vol.Required(
+                        CONF_ENABLE_PREP_LISTS,
+                        default=self.config_entry.options.get(
+                            CONF_ENABLE_PREP_LISTS,
+                            DEFAULT_ENABLE_PREP_LISTS,
                         ),
                     ): cv.boolean,
                     vol.Required(

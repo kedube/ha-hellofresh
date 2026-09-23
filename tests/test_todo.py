@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 from homeassistant.components.todo import TodoItem, TodoItemStatus
+from homeassistant.const import Platform
 
 from custom_components.hellofresh.todo import (
     HelloFreshPrepListTodo,
@@ -643,3 +644,53 @@ def test_restore_payload_round_trips_the_ticks() -> None:
         assert isinstance(entry, list) and len(entry) == 2
         fresh.coordinator.prep_completed.add((str(entry[0]), str(entry[1])))
     assert fresh.coordinator.prep_completed == entity.coordinator.prep_completed
+
+
+# ---- the prep-list option ----------------------------------------------------------------
+#
+# The to-do lists are opt-out: on by default, and turning them off must remove BOTH list
+# entities and skip the recipe-detail lookups they need, without disturbing any other
+# platform. The gating lives in `_entry_platforms`, so that is what these pin.
+
+
+def _entry(options):
+    return SimpleNamespace(options=options)
+
+
+def test_prep_lists_are_enabled_by_default() -> None:
+    """An entry with no option set (every existing install) still gets the to-do lists."""
+    from custom_components.hellofresh import _entry_platforms
+
+    assert Platform.TODO in _entry_platforms(_entry({}))
+
+
+def test_prep_lists_option_on_keeps_the_todo_platform() -> None:
+    from custom_components.hellofresh import _entry_platforms
+    from custom_components.hellofresh.const import CONF_ENABLE_PREP_LISTS
+
+    assert Platform.TODO in _entry_platforms(_entry({CONF_ENABLE_PREP_LISTS: True}))
+
+
+def test_prep_lists_option_off_drops_only_the_todo_platform() -> None:
+    """Disabling the lists must not take any other platform down with them."""
+    from custom_components.hellofresh import _entry_platforms
+    from custom_components.hellofresh.const import CONF_ENABLE_PREP_LISTS, PLATFORMS
+
+    platforms = _entry_platforms(_entry({CONF_ENABLE_PREP_LISTS: False}))
+
+    assert Platform.TODO not in platforms
+    assert platforms == list(PLATFORMS)
+    # The sensors/calendar/etc. that have nothing to do with prep lists are all still there.
+    assert Platform.SENSOR in platforms
+    assert Platform.CALENDAR in platforms
+
+
+def test_todo_platform_is_not_in_the_base_platform_list() -> None:
+    """TODO must be appended conditionally, never set up unconditionally.
+
+    Guards the regression where TODO is "helpfully" restored to PLATFORMS: the option would
+    then silently do nothing, since the platform would load either way.
+    """
+    from custom_components.hellofresh.const import PLATFORMS
+
+    assert Platform.TODO not in PLATFORMS
