@@ -5,6 +5,21 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Faster polls.** Three changes cut several seconds off every refresh, with no behavior
+  change: the Chrome-impersonating transport now keeps **one pooled connection per event
+  loop** instead of completing a fresh TCP+TLS handshake for every request (measured ~67 ms
+  saved per call, ~2.4 s across a typical poll); the five independent account enrichments
+  (payment dates, account credit, plan price, next-box breakdown, payment method) now run
+  **concurrently** rather than one after another; and the cookbook "is this a favorite?"
+  lookups, previously the last serialized network loop in the poll, are now **batched
+  concurrently** (8 batches: ~800 ms → ~200 ms). Failure handling is unchanged — one endpoint
+  failing still degrades only its own fields, and an auth failure still triggers reauth.
+- **Internal cleanups.** The five copies of the `_menu_payload` block lookup collapse into one
+  helper, the week-field block duplicated verbatim between the upcoming- and past-deliveries
+  normalizers is now shared, and the service layer's coordinator-resolution logic moved to
+  module level — removing six inline copies of the same "which account?" guard.
+
 ## 3.00 — 2026-09-21
 - Meal planner: **"Sold out" ribbons now appear only on weeks you can still edit.** A locked
   week (selection deadline passed, box not yet delivered) could still show sold-out meals when

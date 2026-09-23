@@ -261,3 +261,119 @@ def test_data_request_falls_back_to_session_request(monkeypatch) -> None:
     assert len(session.calls) == 1
     assert session.calls[0]["method"] == "PATCH"
     assert session.calls[0]["json"] == {"a": 1}
+
+
+# ---- pooled session ---------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_pooled_sessions():
+    """Never let a pooled session leak between tests (each test builds its own loop)."""
+    tls_transport._SHARED_SESSIONS.clear()
+    yield
+    tls_transport._SHARED_SESSIONS.clear()
+
+
+class _CountingAsyncSession:
+    """Counts how many sessions get constructed and how many requests each one serves."""
+
+    instances = 0
+
+    def __init__(self) -> None:
+        type(self).instances += 1
+        self.requests = 0
+        self.closed = False
+
+    async def request(self, method, url, **kwargs):
+        self.requests += 1
+        return SimpleNamespace(status_code=200, headers={}, text='{"ok": true}')
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _use_counting_session(monkeypatch):
+    _CountingAsyncSession.instances = 0
+    monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", True)
+    monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _CountingAsyncSession)
+
+
+def test_curl_session_is_reused_across_requests(monkeypatch) -> None:
+    """Many requests on one loop share ONE session, so connections stay pooled.
+
+    This is the whole point of the pooling change: a session per request meant a fresh
+    TCP+TLS handshake on every call (~67 ms measured against the live host).
+    """
+    _use_counting_session(monkeypatch)
+    session = _FakeAiohttpSession()
+
+    async def _five_requests():
+        for index in range(5):
+            await async_request(
+                session,  # type: ignore[arg-type]
+                "GET",
+                f"https://www.hellofresh.com/gw/api/thing/{index}",
+            )
+        return tls_transport._shared_curl_session()
+
+    pooled = _run(_five_requests())
+
+    assert _CountingAsyncSession.instances == 1  # not 5
+    assert pooled.requests == 5
+    assert session.calls == []  # aiohttp never touched
+
+
+def test_close_shared_session_closes_and_drops_it(monkeypatch) -> None:
+    """Unload closes the pooled session and forgets it, so a later load builds a fresh one."""
+    _use_counting_session(monkeypatch)
+    session = _FakeAiohttpSession()
+
+    async def _request_then_close():
+        await async_request(
+            session,  # type: ignore[arg-type]
+            "GET",
+            "https://www.hellofresh.com/gw/api/thing",
+        )
+        first = tls_transport._shared_curl_session()
+        await tls_transport.async_close_shared_session()
+        return first
+
+    first = _run(_request_then_close())
+
+    assert first.closed is True
+    assert tls_transport._SHARED_SESSIONS == {}
+    assert _CountingAsyncSession.instances == 1
+
+
+def test_close_shared_session_is_a_noop_without_one(monkeypatch) -> None:
+    """Closing when nothing was ever created must not raise (unload runs unconditionally)."""
+    _use_counting_session(monkeypatch)
+
+    _run(tls_transport.async_close_shared_session())
+
+    assert _CountingAsyncSession.instances == 0
+
+
+def test_close_shared_session_survives_a_failing_close(monkeypatch) -> None:
+    """A session whose close() raises must not turn a successful unload into a failure."""
+
+    class _BadCloseSession(_CountingAsyncSession):
+        async def close(self) -> None:
+            raise RuntimeError("curl handle already gone")
+
+    _CountingAsyncSession.instances = 0
+    monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", True)
+    monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _BadCloseSession)
+    session = _FakeAiohttpSession()
+
+    async def _request_then_close():
+        await async_request(
+            session,  # type: ignore[arg-type]
+            "GET",
+            "https://www.hellofresh.com/gw/api/thing",
+        )
+        await tls_transport.async_close_shared_session()
+
+    _run(_request_then_close())  # must not raise
+
+    assert tls_transport._SHARED_SESSIONS == {}

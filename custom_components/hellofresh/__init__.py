@@ -8,7 +8,7 @@ import inspect
 import logging
 
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -98,6 +98,7 @@ from .issues import (
     async_delete_write_actions_issue,
 )
 from .sensor_helpers import sensor_native_value
+from .tls_transport import async_close_shared_session
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -376,6 +377,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)
         if token_only is not None:
             token_only.discard(entry.entry_id)
+        # The pooled curl_cffi session is shared by every entry on this loop, so it may only
+        # be closed once the LAST one goes away — closing it while a sibling entry is still
+        # polling would kill that entry's in-flight requests. `entry` is still listed here
+        # (HA removes it after unload returns), so "last" means no OTHER loaded entry.
+        # Introspecting the entry list is best-effort: it must never turn a successful
+        # unload into a failed one, so a missing/stubbed registry just skips the close
+        # (the session is idle by then and is reused if the entry reloads).
+        entries = getattr(hass.config_entries, "async_entries", None)
+        siblings = list(entries(DOMAIN)) if callable(entries) else []
+        if not any(
+            other.entry_id != entry.entry_id and other.state is ConfigEntryState.LOADED
+            for other in siblings
+        ):
+            await async_close_shared_session()
     return unload_ok
 
 
@@ -399,56 +414,73 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _loaded_coordinators(hass: HomeAssistant) -> list[HelloFreshDataUpdateCoordinator]:
+    """Every loaded entry's coordinator, read from entry.runtime_data.
+
+    ``getattr`` with a default rather than direct attribute access: entries that are
+    set up but not (yet/anymore) loaded have no runtime_data.
+    """
+    return [
+        coordinator
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if (coordinator := getattr(entry, "runtime_data", None)) is not None
+    ]
+
+
+def _resolve_target_coordinators(
+    hass: HomeAssistant,
+    service_call: ServiceCall,
+) -> list[HelloFreshDataUpdateCoordinator]:
+    """The coordinators a service call targets: the named entry, or the only loaded one."""
+    target_entry_id = service_call.data.get(ATTR_CONFIG_ENTRY_ID)
+    if target_entry_id:
+        entry = hass.config_entries.async_get_entry(target_entry_id)
+        # Guard the domain: async_get_entry resolves ANY integration's entry id, and a
+        # foreign entry's runtime_data would be some other integration's object.
+        if entry is not None and getattr(entry, "domain", DOMAIN) != DOMAIN:
+            entry = None
+        coordinator = getattr(entry, "runtime_data", None) if entry else None
+        if coordinator is None:
+            raise HomeAssistantError(f"HelloFresh config entry not found: {target_entry_id}")
+        return [coordinator]
+
+    coordinators = _loaded_coordinators(hass)
+    if len(coordinators) == 1:
+        return coordinators
+
+    if not coordinators:
+        raise HomeAssistantError(
+            "No HelloFresh account is currently loaded. Check the integration's "
+            "status on the Devices & services page."
+        )
+    raise HomeAssistantError(
+        "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+    )
+
+
+def _resolve_single_coordinator(
+    hass: HomeAssistant,
+    service_call: ServiceCall,
+) -> HelloFreshDataUpdateCoordinator:
+    """The single coordinator a service call targets, or raise if it is ambiguous."""
+    coordinators = _resolve_target_coordinators(hass, service_call)
+    if len(coordinators) != 1:
+        raise HomeAssistantError(
+            "Multiple HelloFresh accounts are configured. Specify config_entry_id."
+        )
+    return coordinators[0]
+
+
 async def _async_register_services(hass: HomeAssistant) -> None:
     """Register HelloFresh services once."""
     if hass.services.has_service(DOMAIN, SERVICE_REFRESH_DATA):
         return
 
-    def _loaded_coordinators() -> list[HelloFreshDataUpdateCoordinator]:
-        """Every loaded entry's coordinator, read from entry.runtime_data.
-
-        ``getattr`` with a default rather than direct attribute access: entries that are
-        set up but not (yet/anymore) loaded have no runtime_data.
-        """
-        return [
-            coordinator
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if (coordinator := getattr(entry, "runtime_data", None)) is not None
-        ]
-
-    def _get_target_coordinators(
-        service_call: ServiceCall,
-    ) -> list[HelloFreshDataUpdateCoordinator]:
-        target_entry_id = service_call.data.get(ATTR_CONFIG_ENTRY_ID)
-        if target_entry_id:
-            entry = hass.config_entries.async_get_entry(target_entry_id)
-            # Guard the domain: async_get_entry resolves ANY integration's entry id, and a
-            # foreign entry's runtime_data would be some other integration's object.
-            if entry is not None and getattr(entry, "domain", DOMAIN) != DOMAIN:
-                entry = None
-            coordinator = getattr(entry, "runtime_data", None) if entry else None
-            if coordinator is None:
-                raise HomeAssistantError(f"HelloFresh config entry not found: {target_entry_id}")
-            return [coordinator]
-
-        coordinators = _loaded_coordinators()
-        if len(coordinators) == 1:
-            return coordinators
-
-        if not coordinators:
-            raise HomeAssistantError(
-                "No HelloFresh account is currently loaded. Check the integration's "
-                "status on the Devices & services page."
-            )
-        raise HomeAssistantError(
-            "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-        )
-
     async def _for_each_coordinator(
         service_call: ServiceCall,
         handler: Callable[[HelloFreshDataUpdateCoordinator, ServiceCall], object],
     ) -> None:
-        for coordinator in _get_target_coordinators(service_call):
+        for coordinator in _resolve_target_coordinators(hass, service_call):
             try:
                 result = handler(coordinator, service_call)
                 if inspect.isawaitable(result):
@@ -498,12 +530,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         recorder cap), so this response service is how a dashboard reads per-week
         recipes/selection on demand. Optionally filter to one ``week_id``.
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
-        coordinator = coordinators[0]
+        coordinator = _resolve_single_coordinator(hass, service_call)
         data = coordinator.data
         week_id = service_call.data.get(ATTR_WEEK_ID)
         if week_id is not None:
@@ -579,12 +606,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         disagree. Dates are ISO strings; empty values are null (the sensors' literal
         "None" placeholder text is normalized back to null for JSON consumers).
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
-        coordinator = coordinators[0]
+        coordinator = _resolve_single_coordinator(hass, service_call)
         data = coordinator.data
 
         def _value(key: str) -> object:
@@ -647,12 +669,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         regular sensor poll), so the Food Profile card can read current picks and every
         possible option in one call.
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
-        client = coordinators[0].client
+        client = _resolve_single_coordinator(hass, service_call).client
         profile = await client.async_get_food_profile()
         options = await client.async_get_food_profile_options()
         # How much of the profile is filled in, so the card can show a progress figure.
@@ -670,11 +687,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         Accepts partial ``taste`` / ``household`` / ``goals`` sections; only what is provided
         is changed. Returns the saved profile so the card can re-render from the server's truth.
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
+        coordinator = _resolve_single_coordinator(hass, service_call)
         changes: dict[str, object] = {}
         if ATTR_TASTE in service_call.data:
             changes["taste"] = service_call.data[ATTR_TASTE]
@@ -684,17 +697,12 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             changes["goals"] = service_call.data[ATTR_GOALS]
         if not changes:
             raise HomeAssistantError("Provide at least one of: taste, household, goals.")
-        saved = await coordinators[0].client.async_update_food_profile(changes)
+        saved = await coordinator.client.async_update_food_profile(changes)
         return {"profile": saved.as_dict()}
 
     def _single_client(service_call: ServiceCall):
         """Resolve the one target coordinator's client, or raise if ambiguous."""
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
-        return coordinators[0].client
+        return _resolve_single_coordinator(hass, service_call).client
 
     async def async_get_delivery_options(service_call: ServiceCall) -> ServiceResponse:
         """Return the plan's selectable delivery days (weekday, name, price, default).
@@ -731,12 +739,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         coordinator, which silently shadowed the original and broke every read-only service
         with "'HelloFreshDataUpdateCoordinator' object has no attribute 'async_get_*'".
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
-        return coordinators[0]
+        return _resolve_single_coordinator(hass, service_call)
 
     async def async_get_favorites(service_call: ServiceCall) -> ServiceResponse:
         """Return the customer's cookbook bookmarks.
@@ -929,15 +932,11 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         dish-type option slugs, so only the site's filter service can answer these exactly.
         Read-only, fetched live; returns only recipe ids to intersect with the loaded menu.
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
+        coordinator = _resolve_single_coordinator(hass, service_call)
         week_id = service_call.data[ATTR_WEEK_ID]
         filters = service_call.data.get(ATTR_FILTERS) or {}
         try:
-            recipe_ids = await coordinators[0].client.async_get_menu_courses(week_id, filters)
+            recipe_ids = await coordinator.client.async_get_menu_courses(week_id, filters)
         except HelloFreshError as err:
             raise HomeAssistantError(str(err)) from err
         return {
@@ -956,13 +955,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         Read-only, fetched live (the plan catalog is not part of the regular poll). Pairs with
         ``change_plan``: the ``handle`` of any returned option is what that service accepts.
         """
-        coordinators = _get_target_coordinators(service_call)
-        if len(coordinators) != 1:
-            raise HomeAssistantError(
-                "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-            )
+        coordinator = _resolve_single_coordinator(hass, service_call)
         subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
-        options = await coordinators[0].client.async_list_plan_options(subscription_id)
+        options = await coordinator.client.async_list_plan_options(subscription_id)
         return {"options": options}
 
     async def async_change_plan(service_call: ServiceCall) -> None:
