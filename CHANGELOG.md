@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 3.01 — 2026-09-23
 - **Faster polls.** Three changes cut several seconds off every refresh, with no behavior
   change: the Chrome-impersonating transport now keeps **one pooled connection per event
   loop** instead of completing a fresh TCP+TLS handshake for every request (measured ~67 ms
