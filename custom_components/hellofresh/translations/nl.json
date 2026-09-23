@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Volledige menugeschiedenis (weken)",
           "enable_public_menu_fallback": "Openbaar menu als terugval gebruiken",
           "enable_favorites": "Favorietenhartjes tonen",
+          "enable_prep_lists": "Voorraadlijsten aanmaken",
           "show_data_quality_issues": "Waarschuwingen over gegevenskwaliteit tonen"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Hoeveel weken na de bezorgdatum een week zijn volledige menu houdt om te bekijken in de maaltijdplannerkaart (je bezorgde maaltijden blijven gemarkeerd); oudere weken tonen alleen wat is bezorgd. Bereik 0–3 weken; standaard 2 (de laatste paar maaltijdboxen blijven te bekijken). Met 0 zet je dit uit. HelloFresh publiceert het menu voor oudere weken niet meer, dus weken daarbuiten tonen alleen nog de bezorgde maaltijden. Wijzigen herlaadt de integratie.",
           "enable_public_menu_fallback": "Als de ingelogde menugegevens niet geladen kunnen worden, wordt de openbare regionale menupagina uitgelezen zodat receptnamen toch verschijnen. Laat dit aan, tenzij je uitsluitend geverifieerde gegevens wilt.",
           "enable_favorites": "Bij elke vernieuwing opzoeken welke maaltijden in je HelloFresh-kookboek als favoriet zijn opgeslagen, zodat de maaltijdplannerkaart een hartje kan tonen. Kost één extra verzoek per vernieuwing: HelloFresh heeft geen \"toon mijn favorieten\"-endpoint, dus de recepten van het menu moeten naar een filter-endpoint worden gestuurd om te zien welke favoriet zijn. Zet dit uit om die stap over te slaan — de services om favorieten toe te voegen of te verwijderen blijven hoe dan ook werken.",
+          "enable_prep_lists": "Voor elk van de volgende twee leveringen een takenlijst maken met de ingrediënten die je gekozen maaltijden nodig hebben maar die HelloFresh niet meelevert — zout, olie, boter, eieren — zodat je ze kunt kopen voordat de box aankomt. Zet dit uit om beide lijsten te verwijderen en de benodigde receptopvragingen over te slaan.",
           "show_data_quality_issues": "Waarschuwingen tonen in het scherm Reparaties wanneer HelloFresh-gegevens beperkt zijn (menuterugval actief, onbekende gegevensformaten, accountgegevens niet beschikbaar, geblokkeerde schrijfacties). De gegevens blijven hoe dan ook laden. Zet dit uit om deze waarschuwingen te onderdrukken en al getoonde waarschuwingen te wissen."
         }
       }

@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Fuld menuhistorik (uger)",
           "enable_public_menu_fallback": "Brug offentlig menu som reserve",
           "enable_favorites": "Vis favorithjerter",
+          "enable_prep_lists": "Opret forberedelseslister",
           "show_data_quality_issues": "Vis advarsler om datakvalitet"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Hvor mange uger efter leveringsdatoen en uge beholder hele sin menu i måltidsplanlægger-kortet (dine leverede retter forbliver fremhævet); ældre uger viser kun det, der blev leveret. Interval 0–3 uger; standard 2 (de seneste par måltidskasser kan stadig gennemses). 0 slår det fra. HelloFresh udgiver ikke længere menuen for ældre uger, så uger derudover viser kun de leverede retter. Ændring genindlæser integrationen.",
           "enable_public_menu_fallback": "Hvis de indloggede menudata ikke kan indlæses, aflæses den offentlige regionale menuside, så opskriftsnavne stadig vises. Lad den være slået til, medmindre du kun ønsker godkendte data.",
           "enable_favorites": "Slå ved hver opdatering op, hvilke retter der er gemt som favoritter i din HelloFresh-kogebog, så måltidsplanlægger-kortet kan vise et favorithjerte. Koster én ekstra forespørgsel pr. opdatering: HelloFresh har ingen \"vis mine favoritter\"-endpoint, så menuens opskrifter skal sendes til et filter-endpoint for at finde favoritterne. Slå fra for at springe det over — tjenesterne til at tilføje og fjerne favoritter virker uanset hvad.",
+          "enable_prep_lists": "Opret en opgaveliste for hver af de næste to leveringer med de ingredienser, dine valgte retter kræver, men som HelloFresh ikke sender med — salt, olie, smør, æg — så du kan købe dem, inden kassen lander. Slå fra for at fjerne begge lister og springe de nødvendige opskriftsopslag over.",
           "show_data_quality_issues": "Vis advarsler på Reparationer-skærmen, når HelloFresh-data er forringede (menureserve aktiv, ukendte dataformater, kontodata utilgængelige, blokerede skrivehandlinger). Data indlæses fortsat uanset hvad. Slå fra for at skjule disse advarsler og fjerne dem, der allerede vises."
         }
       }

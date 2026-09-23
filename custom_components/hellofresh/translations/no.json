@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Full menyhistorikk (uker)",
           "enable_public_menu_fallback": "Bruk offentlig meny som reserve",
           "enable_favorites": "Vis favoritthjerter",
+          "enable_prep_lists": "Opprett forberedelseslister",
           "show_data_quality_issues": "Vis advarsler om datakvalitet"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Hvor mange uker etter leveringsdatoen en uke beholder hele menyen sin i måltidsplanlegger-kortet (de leverte rettene dine forblir uthevet); eldre uker viser bare det som ble levert. Område 0–3 uker; standard 2 (de siste matkassene kan fortsatt bla gjennom). 0 slår det av. HelloFresh publiserer ikke lenger menyen for eldre uker, så uker utover dette viser bare de leverte rettene. Endring laster integrasjonen på nytt.",
           "enable_public_menu_fallback": "Hvis de innloggede menydataene ikke kan lastes, leses den offentlige regionale menysiden slik at oppskriftsnavn likevel vises. La den stå på med mindre du bare vil ha autentiserte data.",
           "enable_favorites": "Slå opp ved hver oppdatering hvilke retter som er lagret som favoritter i HelloFresh-kokeboken din, slik at måltidsplanlegger-kortet kan vise et favoritthjerte. Koster én ekstra forespørsel per oppdatering: HelloFresh har ingen \"vis favorittene mine\"-endepunkt, så menyens oppskrifter må sendes til et filterendepunkt for å finne favorittene. Slå av for å hoppe over det — tjenestene for å legge til og fjerne favoritter fungerer uansett.",
+          "enable_prep_lists": "Opprett en oppgaveliste for hver av de neste to leveringene med ingrediensene de valgte rettene dine trenger, men som HelloFresh ikke sender med — salt, olje, smør, egg — slik at du kan kjøpe dem før kassen kommer. Slå av for å fjerne begge listene og hoppe over de nødvendige oppskriftsoppslagene.",
           "show_data_quality_issues": "Vis advarsler i Reparasjoner-skjermen når HelloFresh-data er forringet (menyreserve aktiv, ukjente dataformater, kontodata utilgjengelige, blokkerte skrivehandlinger). Dataene lastes uansett. Slå av for å skjule disse advarslene og fjerne dem som allerede vises."
         }
       }

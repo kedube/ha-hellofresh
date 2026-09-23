@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Full menu history (weeks)",
           "enable_public_menu_fallback": "Use public menu fallback",
           "enable_favorites": "Show favorite hearts",
+          "enable_prep_lists": "Create pantry prep lists",
           "show_data_quality_issues": "Show data-quality repair warnings"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 2 (the last couple of boxes stay browsable). 0 turns the grace window off. HelloFresh stops publishing the menu for older weeks, so weeks past what it still serves just fall back to delivered-only. Changing this reloads the integration.",
           "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data.",
           "enable_favorites": "Look up which meals are bookmarked in your HelloFresh cookbook on each refresh, so the meal-planner card can show a favorite heart. Costs one extra request per refresh: HelloFresh has no \"list my favorites\" endpoint, so the menu's recipes must be sent to a filter endpoint to learn which are favorites. Turn off to skip it — the add/remove favorite services keep working either way.",
+          "enable_prep_lists": "Create a to-do list for each of the next two deliveries, holding the ingredients your chosen meals need that HelloFresh does not ship — salt, oil, butter, eggs — so you can buy them before the box arrives. Turn off to remove both lists and skip the recipe lookups they need.",
           "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing."
         }
       }

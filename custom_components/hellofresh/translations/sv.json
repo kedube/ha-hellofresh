@@ -84,6 +84,7 @@
           "menu_grace_weeks": "Fullständig menyhistorik (veckor)",
           "enable_public_menu_fallback": "Använd offentlig meny som reserv",
           "enable_favorites": "Visa favorithjärtan",
+          "enable_prep_lists": "Skapa förberedelselistor",
           "show_data_quality_issues": "Visa varningar om datakvalitet"
         },
         "data_description": {
@@ -93,6 +94,7 @@
           "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i måltidsplanerarkortet (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
           "enable_public_menu_fallback": "Om de inloggade menydata inte kan läsas in hämtas den offentliga regionala menysidan så att receptnamn ändå visas. Låt detta vara påslaget om du inte enbart vill ha autentiserade data.",
           "enable_favorites": "Slå vid varje uppdatering upp vilka rätter som sparats som favoriter i din HelloFresh-kokbok, så att måltidsplanerarkortet kan visa ett favorithjärta. Kostar en extra förfrågan per uppdatering: HelloFresh har ingen \"visa mina favoriter\"-slutpunkt, så menyns recept måste skickas till en filterslutpunkt för att ta reda på vilka som är favoriter. Stäng av för att hoppa över det — tjänsterna för att lägga till och ta bort favoriter fungerar ändå.",
+          "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan lådan kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
           "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas."
         }
       }

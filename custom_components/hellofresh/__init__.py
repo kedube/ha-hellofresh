@@ -9,6 +9,7 @@ import logging
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -40,6 +41,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
+    CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
@@ -55,6 +57,7 @@ from .const import (
     CONF_USERNAME,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
+    DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_MENU_GRACE_WEEKS,
@@ -363,14 +366,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # coordinator from here. HA clears it when the entry unloads.
     entry.runtime_data = coordinator
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, _entry_platforms(entry))
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
 
+def _entry_platforms(entry: ConfigEntry) -> list[Platform]:
+    """The platforms this entry runs, honouring the optional prep-list to-do platform."""
+    if entry.options.get(CONF_ENABLE_PREP_LISTS, DEFAULT_ENABLE_PREP_LISTS):
+        return [*PLATFORMS, Platform.TODO]
+    return list(PLATFORMS)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Always attempt the to-do platform, regardless of the current option value. Toggling the
+    # option OFF triggers a reload, and by the time unload runs the option already reads
+    # False — deriving the list from it here would leave the still-loaded to-do entities
+    # behind for good. Unloading a platform that was never set up is a no-op, so asking for
+    # all of them is both safe and the only way to unload what setup actually created.
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, [*PLATFORMS, Platform.TODO])
     if unload_ok:
         # The coordinator lives in entry.runtime_data, which HA clears on unload.
         # Drop any pending token-only flag so a removed entry's id can't linger in the set.
