@@ -277,19 +277,7 @@ class HelloFreshPayloadNormalizer:
                     or self._find_first_nested_value(raw_week, ("type", "deliveryType"))
                     or subscription.shipping_method,
                     box_size=raw_week.get("boxSize") or subscription.box_size,
-                    sub_status=raw_week.get("subStatus"),
-                    delivery_state=raw_week.get("state"),
-                    actionable=bool(raw_week.get("actionable")),
-                    prepaid=bool(raw_week.get("prepaid")),
-                    delivery_blocked=bool(
-                        raw_week.get("deliveryBlocked") or raw_week.get("isBlocked")
-                    ),
-                    holiday_delivery_date=parse_date(raw_week.get("holidayDelivery")),
-                    holiday_message=raw_week.get("holidayMessage"),
-                    holiday_shift_visible=bool(raw_week.get("isHolidayShiftVisible")),
-                    allowed_actions=extract_allowed_actions(raw_week),
-                    available_one_off_options=self._extract_available_one_off_options(raw_week),
-                    raw=raw_week,
+                    **self._common_week_fields(raw_week),
                 )
                 weeks.append(week)
                 orders.append(self._order_from_raw_week(raw_week=raw_week, week=week))
@@ -542,6 +530,50 @@ class HelloFreshPayloadNormalizer:
             out["rating_scale"] = coerce_int(feedback.get("ratingScale"))
         return out
 
+    def _common_week_fields(self, raw_week: dict[str, Any]) -> dict[str, Any]:
+        """The week fields read identically from any deliveries-shaped payload.
+
+        Both the upcoming-deliveries normalizer and the past-deliveries normalizer built this
+        same block verbatim; keeping one copy means a new lifecycle field is added in one
+        place and both paths pick it up. Fields whose source differs between the two (week id,
+        dates, box size, shipping method, ...) stay at the call sites.
+        """
+        return {
+            "sub_status": raw_week.get("subStatus"),
+            "delivery_state": raw_week.get("state"),
+            "actionable": bool(raw_week.get("actionable")),
+            "prepaid": bool(raw_week.get("prepaid")),
+            "delivery_blocked": bool(raw_week.get("deliveryBlocked") or raw_week.get("isBlocked")),
+            "holiday_delivery_date": parse_date(raw_week.get("holidayDelivery")),
+            "holiday_message": raw_week.get("holidayMessage"),
+            "holiday_shift_visible": bool(raw_week.get("isHolidayShiftVisible")),
+            "allowed_actions": extract_allowed_actions(raw_week),
+            "available_one_off_options": self._extract_available_one_off_options(raw_week),
+            "raw": raw_week,
+        }
+
+    @staticmethod
+    def _menu_block(raw_week: dict[str, Any], key: str, expected: type) -> Any | None:
+        """Return ``raw_week[key]``, falling back to the merged ``_menu_payload`` copy.
+
+        A menu block (``modularity``, ``addOns``, ``categories``, ``filters``, ...) sits on the
+        week payload directly, or — for weeks assembled by merging the authenticated menu
+        catalog into an account/deliveries week — under ``_menu_payload``. Both locations are
+        checked so the block resolves regardless of which endpoint produced the week.
+
+        Returns ``None`` when neither location holds a value of ``expected`` type, so callers
+        can bail with a single ``is None`` check instead of repeating the isinstance dance.
+        """
+        block = raw_week.get(key)
+        if isinstance(block, expected):
+            return block
+        nested = raw_week.get("_menu_payload")
+        if isinstance(nested, dict):
+            block = nested.get(key)
+            if isinstance(block, expected):
+                return block
+        return None
+
     @staticmethod
     def _build_variation_titles(raw_week: dict[str, Any]) -> dict[int, str]:
         """Map a meal `index` to its variant modifier title from the `modularity` block.
@@ -556,12 +588,8 @@ class HelloFreshPayloadNormalizer:
         produced the week.
         """
         titles: dict[int, str] = {}
-        modularity = raw_week.get("modularity")
-        if not isinstance(modularity, list):
-            nested = raw_week.get("_menu_payload")
-            if isinstance(nested, dict):
-                modularity = nested.get("modularity")
-        if not isinstance(modularity, list):
+        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
+        if modularity is None:
             return titles
         for group in modularity:
             if not isinstance(group, dict):
@@ -590,12 +618,8 @@ class HelloFreshPayloadNormalizer:
         dish's variants together in the meal-planner card.
         """
         groups: dict[int, int] = {}
-        modularity = raw_week.get("modularity")
-        if not isinstance(modularity, list):
-            nested = raw_week.get("_menu_payload")
-            if isinstance(nested, dict):
-                modularity = nested.get("modularity")
-        if not isinstance(modularity, list):
+        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
+        if modularity is None:
             return groups
         for group in modularity:
             if not isinstance(group, dict):
@@ -716,12 +740,8 @@ class HelloFreshPayloadNormalizer:
         menu catalog was merged into an account/deliveries week), mirroring the variation-title
         lookup so market items resolve regardless of which endpoint produced the week.
         """
-        addons = raw_week.get("addOns")
-        if not isinstance(addons, dict):
-            nested = raw_week.get("_menu_payload")
-            if isinstance(nested, dict):
-                addons = nested.get("addOns")
-        if not isinstance(addons, dict):
+        addons = HelloFreshPayloadNormalizer._menu_block(raw_week, "addOns", dict)
+        if addons is None:
             return []
 
         items: list[HelloFreshMarketItem] = []
@@ -759,12 +779,8 @@ class HelloFreshPayloadNormalizer:
         would otherwise come out empty. The Market pseudo-section (slug ``market``) is
         skipped — its members are add-ons, not meals, so it can never match the recipe grid.
         """
-        block = raw_week.get("categories")
-        if not isinstance(block, dict):
-            nested = raw_week.get("_menu_payload")
-            if isinstance(nested, dict):
-                block = nested.get("categories")
-        rows = block.get("categories") if isinstance(block, dict) else None
+        block = HelloFreshPayloadNormalizer._menu_block(raw_week, "categories", dict)
+        rows = block.get("categories") if block is not None else None
 
         out: list[dict[str, Any]] = []
         for row in rows if isinstance(rows, list) else []:
@@ -811,11 +827,7 @@ class HelloFreshPayloadNormalizer:
         ``{name, slug, choice, options: [{name, slug, default}]}``; groups without a usable
         slug or without any option are dropped.
         """
-        block = raw_week.get("filters")
-        if not isinstance(block, list):
-            nested = raw_week.get("_menu_payload")
-            if isinstance(nested, dict):
-                block = nested.get("filters")
+        block = HelloFreshPayloadNormalizer._menu_block(raw_week, "filters", list)
 
         out: list[dict[str, Any]] = []
         for row in block if isinstance(block, list) else []:
@@ -2100,19 +2112,7 @@ class HelloFreshPayloadNormalizer:
                         ("type", "deliveryType"),
                     ),
                     box_size=self._find_first_nested_value(raw_week, ("boxSize", "size")),
-                    sub_status=raw_week.get("subStatus"),
-                    delivery_state=raw_week.get("state"),
-                    actionable=bool(raw_week.get("actionable")),
-                    prepaid=bool(raw_week.get("prepaid")),
-                    delivery_blocked=bool(
-                        raw_week.get("deliveryBlocked") or raw_week.get("isBlocked")
-                    ),
-                    holiday_delivery_date=parse_date(raw_week.get("holidayDelivery")),
-                    holiday_message=raw_week.get("holidayMessage"),
-                    holiday_shift_visible=bool(raw_week.get("isHolidayShiftVisible")),
-                    allowed_actions=extract_allowed_actions(raw_week),
-                    available_one_off_options=self._extract_available_one_off_options(raw_week),
-                    raw=raw_week,
+                    **self._common_week_fields(raw_week),
                 )
             )
 

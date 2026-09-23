@@ -17,13 +17,15 @@ returns a small :class:`AuthResponse` adapter exposing the same slice of that in
 token manager uses (``status``, ``headers``, awaitable ``text()``/``json()``), so the existing
 WAF/bot-block handling in ``token_manager`` needs no branching.
 
-Only the auth POSTs use this path -- the high-volume authenticated data calls keep using the
-HA-managed ``aiohttp`` session, since they succeed there and ``curl_cffi`` is a heavier,
-per-request transport not worth using for every poll.
+Both the auth POSTs and the authenticated data XHRs go through this path: Cloudflare
+fingerprints the TLS/HTTP2 connection, which is identical for both, so both need the
+impersonating transport. Sessions are pooled per event loop (see ``_shared_curl_session``)
+so connections are reused across a poll instead of re-handshaking on every request.
 """
 
 from __future__ import annotations
 
+import asyncio
 from importlib import util
 import json as _json
 import logging
@@ -184,6 +186,49 @@ async def _try_curl_cffi(
         return None
 
 
+# One long-lived curl_cffi session per event loop, so requests reuse pooled TCP+TLS
+# connections instead of paying a fresh handshake each time. Creating a session per request
+# cost ~67 ms extra per call when measured against the live host (~113 ms vs ~46 ms), which
+# across a ~35-request poll is ~2.4 s of pure handshake on the critical path.
+#
+# Keyed by the running loop rather than stored in a single global: Home Assistant can tear
+# down and recreate its loop (tests certainly do), and a session bound to a dead loop raises
+# on use. Keying by loop means a stale entry is simply never looked up again, and
+# ``async_close_shared_session`` clears the current loop's entry on unload.
+_SHARED_SESSIONS: dict[Any, Any] = {}
+
+
+def _shared_curl_session() -> Any | None:
+    """Return the pooled curl_cffi session for this event loop, creating it on first use."""
+    if _ASYNC_SESSION_CLS is None:
+        return None
+    loop = asyncio.get_running_loop()
+    session = _SHARED_SESSIONS.get(loop)
+    if session is None:
+        session = _ASYNC_SESSION_CLS()
+        _SHARED_SESSIONS[loop] = session
+    return session
+
+
+async def async_close_shared_session() -> None:
+    """Close and drop this event loop's pooled curl_cffi session.
+
+    Called from the integration's unload path. Closing is best-effort: a session that already
+    failed or whose loop is going away must not turn unload into an error.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - no loop means nothing was ever created
+        return
+    session = _SHARED_SESSIONS.pop(loop, None)
+    if session is None:
+        return
+    try:
+        await session.close()
+    except Exception as err:  # noqa: BLE001 - a failed close must never block unload
+        _LOGGER.debug("Closing pooled curl_cffi session failed: %s", err)
+
+
 async def _curl_cffi_request(
     method: str,
     url: str,
@@ -195,24 +240,25 @@ async def _curl_cffi_request(
     """Perform the request through curl_cffi with Chrome impersonation.
 
     Returns ``None`` when the curl_cffi AsyncSession class is unavailable, so the caller falls
-    back to aiohttp. The class is imported once at module load (off the event loop).
+    back to aiohttp. The class is imported once at module load (off the event loop), and the
+    session itself is pooled per loop (see ``_shared_curl_session``) so connections are reused.
     """
-    if _ASYNC_SESSION_CLS is None:
+    curl_session = _shared_curl_session()
+    if curl_session is None:
         return None
 
-    async with _ASYNC_SESSION_CLS() as curl_session:
-        response = await curl_session.request(
-            method,
-            url,
-            params=params,
-            json=json_payload,
-            headers=headers,
-            impersonate=_IMPERSONATE_TARGET,
-            # Verify the server's TLS certificate. curl_cffi defaults to True, but this carries
-            # credentials/tokens (the /gw auth POSTs), so the security-critical setting is made
-            # explicit rather than relying on a library default that a future version could change.
-            verify=True,
-        )
+    response = await curl_session.request(
+        method,
+        url,
+        params=params,
+        json=json_payload,
+        headers=headers,
+        impersonate=_IMPERSONATE_TARGET,
+        # Verify the server's TLS certificate. curl_cffi defaults to True, but this carries
+        # credentials/tokens (the /gw auth POSTs), so the security-critical setting is made
+        # explicit rather than relying on a library default that a future version could change.
+        verify=True,
+    )
     return AuthResponse(
         status=response.status_code,
         headers=dict(response.headers),

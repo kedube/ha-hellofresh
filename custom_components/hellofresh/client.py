@@ -295,11 +295,24 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             account_payload_found,
         ) = await self._async_get_initial_account_payloads(subscriptions)
 
-        await self._async_enrich_subscription_payment_dates(subscriptions, all_orders, data)
-        await self._async_enrich_account_credit(data, subscriptions)
-        await self._async_enrich_selected_plan_price(data, subscriptions)
-        await self._async_enrich_next_box_price_breakdown(data, subscriptions, all_weeks)
-        await self._async_enrich_payment_method_status(data)
+        # Stage 1: five independent enrichments. Each hits a DIFFERENT endpoint and writes a
+        # disjoint set of `data` fields while reading none of them, so awaiting them one after
+        # another only stacked their latency. Run through the bounded gather (not a bare
+        # asyncio.gather) so one endpoint's failure degrades just its own fields instead of
+        # cancelling its siblings, while a HelloFreshAuthError still propagates for reauth.
+        await self._async_gather_bounded(
+            [
+                self._async_enrich_subscription_payment_dates(subscriptions, all_orders, data),
+                self._async_enrich_account_credit(data, subscriptions),
+                self._async_enrich_selected_plan_price(data, subscriptions),
+                self._async_enrich_next_box_price_breakdown(data, subscriptions, all_weeks),
+                self._async_enrich_payment_method_status(data),
+            ],
+            limit=5,
+        )
+        # Stage 2: must follow stage 1 — its currency hint falls back through
+        # next_delivery_total_currency / selected_plan_total_price_currency /
+        # account_credit_currency, all of which stage 1 writes.
         await self._async_enrich_wallet_benefits(data, subscriptions, all_weeks)
 
         all_weeks = self._backfill_account_weeks_from_subscriptions(

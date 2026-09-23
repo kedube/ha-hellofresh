@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import logging
+from typing import Any
 
 from aiohttp import ClientError
 
@@ -103,10 +104,15 @@ class FavoritesClientMixin:
         if not unique:
             return {}, True
 
-        found: dict[str, HelloFreshFavorite] = {}
-        answered = False
-        for start in range(0, len(unique), self._COOKBOOK_SEARCH_BATCH):
-            batch = unique[start : start + self._COOKBOOK_SEARCH_BATCH]
+        async def _search_batch(batch: list[str]) -> tuple[list[Any], bool]:
+            """Look up one batch. Returns ``(rows, answered)``.
+
+            ``answered`` is returned explicitly rather than inferred from ``rows``: a batch
+            that succeeds with no bookmarks and a batch that failed outright both yield an
+            empty list, and the caller's False-vs-unknown decision depends on telling them
+            apart. (It is also why this cannot lean on ``_async_gather_bounded``'s own
+            error swallowing, which collapses a failure to a bare ``[]``.)
+            """
             payload = {"bookmark_ids": [self._bookmark_id(rid) for rid in batch]}
             try:
                 response = await self._async_api_request(
@@ -129,11 +135,30 @@ class FavoritesClientMixin:
                         "error": str(err),
                     },
                 )
-                continue
+                return [], False
 
-            answered = True
             rows = body.get("recipes") if isinstance(body, dict) else None
-            for row in rows if isinstance(rows, list) else []:
+            return (rows if isinstance(rows, list) else []), True
+
+        # A few hundred distinct recipe ids at 50 per request is 6-9 round-trips; awaiting
+        # them in sequence made this the last serialized network loop in the poll. Bounded
+        # so a large cookbook doesn't burst connections at HelloFresh.
+        batches = [
+            unique[start : start + self._COOKBOOK_SEARCH_BATCH]
+            for start in range(0, len(unique), self._COOKBOOK_SEARCH_BATCH)
+        ]
+        results = await self._async_gather_bounded([_search_batch(batch) for batch in batches])
+
+        found: dict[str, HelloFreshFavorite] = {}
+        answered = False
+        for result in results:
+            # _async_gather_bounded degrades an unexpected HelloFreshError to a bare [];
+            # only a real (rows, answered) pair counts as an answer.
+            if not isinstance(result, tuple):
+                continue
+            rows, batch_answered = result
+            answered = answered or batch_answered
+            for row in rows:
                 favorite = HelloFreshFavorite.from_api(row)
                 if favorite is not None:
                     found[favorite.recipe_id] = favorite
