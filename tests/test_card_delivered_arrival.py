@@ -49,6 +49,7 @@ def _row_tracking(week: dict, tz: str = "America/New_York") -> str:
       _safeUrl(u) {{ return u && /^https?:\\/\\//.test(u) ? u : ""; }}
       {_method("_fmtArrival")}
       {_method("_rowTracking")}
+      {_method("_rowProofOfDelivery")}
     }}
     console.log(JSON.stringify(new Card()._rowTracking({json.dumps(week)})));
     """

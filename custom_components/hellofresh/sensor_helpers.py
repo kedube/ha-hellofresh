@@ -412,6 +412,12 @@ def sensor_extra_state_attributes(
             "tracked_order_available": True,
             "order": tracked_order.as_dict(),
             "tracking_url": tracked_order.tracking_url,
+            # Top-level too, so templates can read them without digging into `order`: the
+            # finer step, the scan history (newest first), and any proof of delivery.
+            "status_detail": tracked_order.tracking_status_detail,
+            "tracking_events": tracked_order.tracking_events,
+            "delivery_photo_urls": tracked_order.delivery_photo_urls,
+            "delivery_signed_by": tracked_order.delivery_signed_by,
         }
 
     if key == "weeks_needing_selection":

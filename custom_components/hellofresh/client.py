@@ -4695,6 +4695,14 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 estimated = parse_datetime(details["estimated_delivery"])
                 if estimated is not None:
                     order.estimated_delivery = estimated
+            if details["tracking_status_detail"] is not None:
+                order.tracking_status_detail = details["tracking_status_detail"]
+            if details["tracking_events"]:
+                order.tracking_events = details["tracking_events"]
+            if details["delivery_photo_urls"]:
+                order.delivery_photo_urls = details["delivery_photo_urls"]
+            if details["delivery_signed_by"] is not None:
+                order.delivery_signed_by = details["delivery_signed_by"]
             updates += 1
         return updates
 

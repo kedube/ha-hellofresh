@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Callable, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 import json
 import math
 import re
@@ -637,7 +637,70 @@ def extract_tracking_public_id(tracking_url: str | None) -> str | None:
     return match.group(1)
 
 
-def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, str | None]:
+def _proof_of_delivery_urls(value: Any) -> list[str]:
+    """Return the http(s) photo URLs in a box's ``proof_of_delivery_photo_urls``.
+
+    Never observed filled: Veho leaves it ``null`` even on a delivered box (HARs 41 and 54),
+    so the shape is unknown. Accepted defensively: a list (or single value) of URL strings, or
+    of objects carrying the URL under a usual key. Only http(s) survives — these end up in an
+    ``<img src>``, and an attacker-chosen scheme has no business there.
+    """
+    items = value if isinstance(value, list) else [value]
+    urls: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            item = next(
+                (
+                    item[key]
+                    for key in ("url", "link", "href", "photo_url", "image_url")
+                    if isinstance(item.get(key), str)
+                ),
+                None,
+            )
+        if isinstance(item, str) and re.match(r"https?://", item.strip(), re.IGNORECASE):
+            urls.append(item.strip())
+    return list(dict.fromkeys(urls))
+
+
+def _tracking_events(statuses: Any) -> list[dict[str, str | None]]:
+    """Return a box's scan history, newest first, as ``{time, status, detail}``.
+
+    ``status`` is the coarse carrier status (``in_transit``) and ``detail`` the finer step
+    (``received_at_origin_facility``); each falls back to its ``internal_`` twin. The payload's
+    ``message`` is left out: it is an untranslated key (``package.droppedOffAtVeho``) the
+    website never shows. Entries are sorted by time rather than trusted to arrive in order; an
+    entry without a readable time sorts last.
+    """
+    if not isinstance(statuses, list):
+        return []
+    events: list[tuple[datetime | None, dict[str, str | None]]] = []
+    for entry in statuses:
+        if not isinstance(entry, dict):
+            continue
+
+        def text(*keys: str, node: dict[str, Any] = entry) -> str | None:
+            for key in keys:
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return None
+
+        when = parse_datetime(entry.get("datetime"))
+        if when is not None and when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)  # offset-less scan times are UTC like the rest
+        status = text("status", "internal_status")
+        detail = text("status_detail", "internal_status_detail")
+        if when is None and status is None and detail is None:
+            continue
+        events.append(
+            (when, {"time": when.isoformat() if when else None, "status": status, "detail": detail})
+        )
+    epoch = datetime.min.replace(tzinfo=UTC)
+    events.sort(key=lambda pair: pair[0] or epoch, reverse=True)
+    return [event for _, event in events]
+
+
+def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, Any]:
     """Extract carrier-facing tracking details from an SCM tracking box."""
     last_status = box.get("last_status") if isinstance(box.get("last_status"), dict) else {}
 
@@ -670,4 +733,13 @@ def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, str | None]:
         ),
         "carrier": normalize_carrier_name(pick(box, "carrier")),
         "estimated_delivery": estimated_delivery,
+        # The finer step behind the coarse status: `in_transit` is `label_created`, then
+        # `received_at_origin_facility`, ... (the website's own step comes from internal_status).
+        "tracking_status_detail": (
+            pick(last_status, "status_detail", "internal_status_detail")
+            or pick(box, "status_detail", "internal_status_detail")
+        ),
+        "tracking_events": _tracking_events(box.get("statuses")),
+        "delivery_photo_urls": _proof_of_delivery_urls(box.get("proof_of_delivery_photo_urls")),
+        "delivery_signed_by": pick(box, "signed_by"),
     }

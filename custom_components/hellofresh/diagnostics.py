@@ -46,6 +46,12 @@ TO_REDACT = {
     "subscriptionID",
     "planID",
     "public_id",  # tracking public id — reconstructs the unauthenticated tracking page
+    # Proof of delivery: a photo of the customer's door and the name of whoever signed. The
+    # photo URLs may also be bearer-style links anyone holding them can open.
+    "delivery_photo_urls",
+    "proof_of_delivery_photo_urls",
+    "delivery_signed_by",
+    "signed_by",
     # Active voucher/credit code on the subscription — a single-use code could be burned by
     # anyone who reads a shared export. Redact both the model field and any camelCase param.
     "coupon_code",
