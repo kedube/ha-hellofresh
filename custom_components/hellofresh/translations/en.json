@@ -587,7 +587,7 @@
     },
     "get_recipe_detail": {
       "name": "Get recipe detail",
-      "description": "Return one recipe's full cooking detail: ingredients, instructions, utensils, allergens, nutrition, and the printable recipe card.",
+      "description": "Return one recipe's full cooking detail: ingredients, instructions with step photos and timers, utensils, allergens, nutrition, and the printable recipe card.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",

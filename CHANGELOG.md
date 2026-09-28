@@ -5,6 +5,23 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **The full recipe view now shows everything HelloFresh's recipe page does.** In the recipe
+  sheet (Recipes, Meal planner and Market cards):
+  - each cooking step shows its **photo** as a thumbnail with its caption, any **cooking
+    timers** as chips ("⏱ 15 min"), and HelloFresh's **bold ingredient names**;
+  - **ingredients** show their photos and the allergens each one contains ("Contains Wheat,
+    Soy");
+  - the recipe's **badges** ("Protein Smart"), **description**, full **per-serving nutrition**
+    table, and **recipe video** link (when there is one) appear alongside the printable PDF.
+
+  `get_recipe_detail` returns the new data too: steps gain `paragraphs` (the instructions as
+  plain `{text, bold}` runs; HelloFresh's HTML never reaches the card), `image_url`, `caption`
+  and `timers` (`{name, seconds}`); ingredients gain `allergens`; the recipe gains `labels`.
+- **Fixed: ingredient photos from `get_recipe_detail` were dead links.** They pointed at the
+  retired CloudFront host (HTTP 502), like the recipe photo once did; they now use the working
+  image host.
+
 ## 3.02 — 2026-09-23
 - **Pantry prep lists are now optional.** A new **Create pantry prep lists** option in the
   integration's **Configure** dialog controls the two `todo.prep_list*` entities. It is **on by
