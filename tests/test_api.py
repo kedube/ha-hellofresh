@@ -9354,17 +9354,79 @@ def test_recipe_detail_image_uses_the_working_host_not_the_payloads_own_link() -
     assert "cloudfront" not in detail.image_url
 
 
-def test_recipe_detail_falls_back_to_image_link_when_no_path() -> None:
-    """A row with only the absolute URL is still better than no image at all."""
+def test_recipe_detail_never_falls_back_to_the_dead_cloudfront_link() -> None:
+    """Without `imagePath`, a live `imageLink` still helps — but the CloudFront one never does.
+
+    The retired distribution answers 502 for every path, so rendering it only draws a broken
+    image. No photo is the better answer.
+    """
     from custom_components.hellofresh.models import HelloFreshRecipeDetail
 
     payload = _recipe_detail_payload()
     del payload["imagePath"]
-    detail = HelloFreshRecipeDetail.from_api(
-        payload, image_base=HelloFreshClient._CATALOG_IMAGE_BASE
+    base = HelloFreshClient._CATALOG_IMAGE_BASE
+    assert HelloFreshRecipeDetail.from_api(payload, image_base=base).image_url is None
+
+    payload["imageLink"] = "https://img.example/live/chicken.jpeg"
+    assert HelloFreshRecipeDetail.from_api(payload, image_base=base).image_url == (
+        "https://img.example/live/chicken.jpeg"
     )
 
-    assert detail.image_url == payload["imageLink"]
+
+def test_usable_image_url_rules() -> None:
+    """One rule for every payload image field: working URL as-is, bare path joined, dead dropped."""
+    from custom_components.hellofresh.models import _usable_image_url
+
+    base = HelloFreshClient._CATALOG_IMAGE_BASE
+    dead = "https://d3hvwccx09j84u.cloudfront.net/0,0/image/x.jpg"
+    live = "https://img.hellofresh.com/q_auto/recipes/image/x.jpg"
+    assert _usable_image_url((live, "/image/y.jpg"), base) == live
+    assert _usable_image_url((None, "", "/image/x.jpg", dead), base) == f"{base}/image/x.jpg"
+    assert _usable_image_url((dead,), base) is None
+    assert _usable_image_url((dead.replace("https", "HTTPS"),), base) is None
+    # A bare path with no host to join is unusable, so the next candidate is tried.
+    assert _usable_image_url(("/image/x.jpg", live), None) == live
+    assert _usable_image_url(("/image/x.jpg",), None) is None
+    assert _usable_image_url(("javascript:alert(1)", 5), base) is None
+
+
+def test_every_menu_source_yields_a_loadable_photo() -> None:
+    """Each weekly-menu source spells its photo differently (HAR 53, 2026-09-28).
+
+    my-deliveries/menu has a full `image` URL on the working host; the menus-service fallback
+    only a bare `imagePath` beside a dead-CloudFront `imageLink`; customer-complaints only a bare
+    snake_case `image_path`. Copying the first field verbatim left the fallback weeks with bare
+    paths the cards cannot load, and customer-complaints weeks with no photo at all.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    base = HelloFreshClient._CATALOG_IMAGE_BASE
+
+    menu = client._recipe_from_raw_meal(
+        {
+            "recipe": {
+                "id": "r1",
+                "name": "A",
+                "image": "https://img.hellofresh.com/q_auto/recipes/image/a.jpg",
+            }
+        }
+    )
+    fallback = client._recipe_from_raw_meal(
+        {
+            "recipe": {
+                "id": "r2",
+                "name": "B",
+                "imagePath": "/image/b.jpg",
+                "imageLink": "https://d3hvwccx09j84u.cloudfront.net/0,0/image/b.jpg",
+            }
+        }
+    )
+    complaints = client._recipe_from_raw_meal(
+        {"id": "r3", "name": "C", "image_path": "/image/c.jpeg"}
+    )
+
+    assert menu.image_url == "https://img.hellofresh.com/q_auto/recipes/image/a.jpg"
+    assert fallback.image_url == f"{base}/image/b.jpg"
+    assert complaints.image_url == f"{base}/image/c.jpeg"
 
 
 def test_recipe_detail_scales_ingredient_amounts_to_servings() -> None:

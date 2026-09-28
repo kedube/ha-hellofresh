@@ -16,7 +16,13 @@ from bs4 import BeautifulSoup
 
 from .client_favorites import FavoritesClientMixin
 from .client_pricing import PricingClientMixin
-from .const import COUNTRY_BASE_URLS, DEFAULT_COUNTRY, api_country_code, api_locale
+from .const import (
+    COUNTRY_BASE_URLS,
+    DEFAULT_COUNTRY,
+    RECIPE_IMAGE_BASE,
+    api_country_code,
+    api_locale,
+)
 from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
@@ -919,7 +925,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     # Note the `hellofresh_s3` segment, which is part of the path and not optional. The
     # transform is what keeps the grid affordable — untransformed, this same asset is 1.7 MB
     # versus 73 KB at w_640 — so a default width is baked in here rather than left to the card.
-    _CATALOG_IMAGE_BASE = "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
+    _CATALOG_IMAGE_BASE = RECIPE_IMAGE_BASE
     _BUILD_ID_RE = re.compile(r'"buildId"\s*:\s*"([A-Za-z0-9._-]{1,64})"')
 
     async def _async_get_build_id(self, *, force_refresh: bool = False) -> str | None:
@@ -3382,8 +3388,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 if not week.recipes:
                     continue
                 # Fill a week unless it was already filled by the authoritative endpoint. This lets
-                # /gw/my-deliveries/past-deliveries (with images) OVERWRITE a week that a narrower
-                # endpoint (e.g. customer-complaints, image-less) grabbed first, while never
+                # /gw/my-deliveries/past-deliveries OVERWRITE a week that a narrower endpoint
+                # (e.g. customer-complaints, which only knows recent weeks) grabbed first, while never
                 # letting a narrower endpoint clobber an authoritative fill.
                 if filled_by_path.get(week.week_id) == authoritative_path:
                     continue

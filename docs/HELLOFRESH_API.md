@@ -811,6 +811,17 @@ Unlike the browse catalog below, this is a plain `/gw/` API with no build id inv
 
 **Image trap:** the payload offers both a bare `imagePath` and a ready-made absolute `imageLink`, and the convenient one is dead — `imageLink` points at a CloudFront distribution (`d3hvwccx09j84u.cloudfront.net`) that now answers **502** for every path. Join `imagePath` to the verified host instead (see below).
 
+**Image fields by endpoint** (HAR 53, 2026-09-28). The same trap recurs across payloads, so every image field goes through one rule (`_usable_image_url`): a full URL is used as-is unless it is on the dead CloudFront host, a bare path is joined to `img.hellofresh.com/<transform>/hellofresh_s3`, and a dead link is dropped rather than rendered broken.
+
+| Endpoint | Recipe photo field | Dead CloudFront fields present |
+| --- | --- | --- |
+| `/gw/my-deliveries/menu` | `image` — full URL on `img.hellofresh.com` | ingredient `imageURL` / `imageUrl` (unused) |
+| `/gw/my-deliveries/past-deliveries` | `image` — full URL on `img.hellofresh.com` | — |
+| `/gw/menus-service/menus` | `imagePath` — **bare path** | `imageLink`, ingredient `imageURL`, cuisine `iconLink` |
+| `/gw/customer-complaints/users/me/deliveries` | `image_path` — **bare path** | — |
+| `/gw/recipes/recipes/{id}` | `imagePath` — **bare path** (also step `path`, ingredient `imagePath`) | `imageLink`, step `link`, allergen `iconLink` |
+| `/gw/cookbook/v1/external-recipes` | `thumbnail_url` — full URL on `media.hellofresh.com/<transform>/hellofresh_s3/…` | — |
+
 ### Public recipe catalog (Next.js data URLs)
 
 The ~10,000-recipe browse catalog is **not** served by a `/gw/` API. It comes from the website's Next.js data URLs:
@@ -1237,7 +1248,7 @@ The planning menu's per-meal flags for a past week reflect the system's *default
 - A past week's `meals_selected` / `meals_required` prefer the **delivered values** over the *current* subscription plan — otherwise a 4-meal box delivered under today's 3-meal plan would be capped at 3.
 - The stale `mealsPreselected` flag on a long-past week is cleared: once a week has delivery history, what shipped **is** your selection, so it must not badge as "Preselected" (`test_merge_past_delivery_clears_preselected_flag`).
 
-The comprehensive history source is `/gw/my-deliveries/past-deliveries` (paginated ~4 weeks/page via a `nextWeek` cursor, ~16 weeks back), whose recipes carry images. The narrower `/gw/customer-complaints/...` endpoint knows only the last ~2 weeks and returns image-less recipes; because all history endpoints normalize to `source="past_deliveries"`, a `filled_by_path` map ensures the authoritative endpoint **wins** per week over the narrower one, never the reverse (`test_past_deliveries_overwrites_customer_complaints_recipes`).
+The comprehensive history source is `/gw/my-deliveries/past-deliveries` (paginated ~4 weeks/page via a `nextWeek` cursor, ~16 weeks back), whose recipes carry images. The narrower `/gw/customer-complaints/...` endpoint knows only the last ~2 weeks; its recipes carry only a bare snake_case `image_path` (`/image/<file>`, also on each ingredient), which the integration joins to the working image host (HAR 53, 2026-09-28; earlier captures had no image at all); because all history endpoints normalize to `source="past_deliveries"`, a `filled_by_path` map ensures the authoritative endpoint **wins** per week over the narrower one, never the reverse (`test_past_deliveries_overwrites_customer_complaints_recipes`).
 
 **Paused / skipped weeks** (`status`/`state` = `PAUSED`, or `is_skipped`): a paused/skipped box never shipped, so any "selected" meals are pure auto-fill placeholders. A universal post-merge pass (`_clear_paused_week_selection`) sets `meals_selected = 0` and:
 
@@ -1290,7 +1301,7 @@ Backfill notes:
 | `preference` | `preference`, `category`; falls back to `Veggie` when the recipe is untyped but tagged `Veggie`/`Vegan` (a meatless dish carries no protein category). Drives the card's protein color dot and protein filter. |
 | `is_selected` | `selection.selected` (bool), `selection.quantity > 0`, or `selected` field. In the authenticated menu (`/gw/my-deliveries/menu`), chosen meals carry `selection.quantity > 0` and unchosen ones a bare `selection.limit` — this is how the integration learns the current selection (see [Selection-state resolution](#selection-state-resolution)). For directly-listed delivery/account recipes the default is `true` (their presence is the selection). |
 | `course_index` | `index` — the meal's course index within the week's menu. This, not `recipe_id`, is the cart's selection unit (`recipeIndexes` / `quantityPerCourse`); the same dish can recur under several ids/indexes (portion variants), so the index is the robust key for `select_meals` writes and for a dashboard card to round-trip selections. |
-| `image_url` | `imagePath`, `image`, `imageUrl` |
+| `image_url` | first usable of `image`, `imageUrl`, `imagePath`, `image_path`, `imageLink` — full URLs as-is unless on the dead CloudFront host, bare paths joined to the working image host (see **Image fields by endpoint** under [Recipe detail](#recipe-detail-gwrecipesrecipesid)) |
 | `description` | `description`, `headline` |
 | `ingredients` | `ingredients`, `ingredientLines`, `ingredientNames` |
 | `allergens` | `allergens` |

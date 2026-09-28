@@ -55,6 +55,11 @@ MAX_HISTORY_WEEKS = 104
 # falls back to delivered-only anyway.
 CONF_MENU_GRACE_WEEKS = "menu_grace_weeks"
 DEFAULT_MENU_GRACE_WEEKS = 2
+
+# HelloFresh's working recipe-image host (Cloudinary). Several payloads carry only a bare path
+# ("/image/x.jpg", "/ingredient/y.png") and are joined to this; the `hellofresh_s3` segment is
+# required. w_640 keeps the default affordable; the cards rewrite the width they display.
+RECIPE_IMAGE_BASE = "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
 MIN_MENU_GRACE_WEEKS = 0
 MAX_MENU_GRACE_WEEKS = 3
 
