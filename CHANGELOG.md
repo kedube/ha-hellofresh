@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 3.05 — 2026-09-28
 - **Richer shipment tracking.** From the carrier tracking HelloFresh already provides:
   - **Finer status** — the carrier's current step alongside the coarse status, e.g. "In Transit ·
     Received at origin facility" instead of just "In Transit", in the Schedule card's next-box
