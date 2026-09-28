@@ -12,6 +12,7 @@ verbatim, so consumers wanting "the displayed time" must read prep_time_minutes.
 
 from __future__ import annotations
 
+from custom_components.hellofresh.models import _iso_duration_to_minutes, _iso_duration_to_seconds
 from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer, _coerce_minutes
 
 
@@ -40,3 +41,16 @@ def test_hours_and_garbage() -> None:
     assert _coerce_minutes("45") == 45
     assert _coerce_minutes("soon") is None
     assert _coerce_minutes(None) is None
+
+
+def test_seconds_parse_for_step_timers_without_changing_minutes() -> None:
+    """Step timers need seconds; recipe times keep their whole-minute contract."""
+    assert _iso_duration_to_seconds("PT30S") == 30
+    assert _iso_duration_to_seconds("PT1M30S") == 90
+    assert _iso_duration_to_seconds("P1DT1H") == 90000
+    assert _iso_duration_to_seconds("PT0S") is None
+    assert _iso_duration_to_seconds("soon") is None
+    assert _iso_duration_to_seconds(15) is None
+    assert _iso_duration_to_minutes("PT1M30S") == 1
+    assert _iso_duration_to_minutes("PT30S") is None
+    assert _iso_duration_to_minutes("P1DT2H") == 1560

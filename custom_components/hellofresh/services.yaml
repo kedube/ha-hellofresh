@@ -429,7 +429,7 @@ get_recipe_detail:
   name: Get recipe detail
   description: >-
     Return one recipe's full cooking detail — ingredients (scaled to a serving
-    count), step-by-step instructions, utensils, allergens, nutrition, and a
+    count), step-by-step instructions with their photos and timers, utensils, allergens, nutrition, and a
     link to the printable recipe card. Works for any recipe id, whether it came
     from a delivery week or the browse catalog. Read-only; returns a response.
   fields:

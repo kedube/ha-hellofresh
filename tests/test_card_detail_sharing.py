@@ -235,6 +235,134 @@ def test_sheet_footer_offers_add_then_a_servings_stepper() -> None:
     assert 'data-sel="inc" disabled' in maxed
 
 
+# ---- step photos and timers -------------------------------------------------------------------
+
+
+def _sheet(detail: dict) -> str:
+    """Render the real sheet body under Node for one recipe detail payload."""
+    script = f"""
+    import {{ RecipeDetailOverlay }} from {json.dumps(DETAIL_MODULE.as_uri())};
+    const o = new RecipeDetailOverlay({{ getRoot: () => null, callService: async () => ({{}}) }});
+    o._id = "r1";
+    o._detail = {json.dumps(detail)};
+    console.log(JSON.stringify(o._body()));
+    """
+    result = subprocess.run(
+        [NODE, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_sheet_shows_step_photos_captions_timers_and_bold_text() -> None:
+    html = _sheet(
+        {
+            "name": "Hand Pies",
+            "steps": [
+                {
+                    "index": 1,
+                    "instructions": "Make the dough.",
+                    "paragraphs": [
+                        [{"text": "Make the ", "bold": False}, {"text": "<dough>", "bold": True}],
+                        [{"text": "Rest it.", "bold": False}],
+                    ],
+                    "image_url": (
+                        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640"
+                        "/hellofresh_s3/r1/step-1.jpeg"
+                    ),
+                    "caption": "Bake & Rest",
+                    "timers": [
+                        # Named after the step, as HelloFresh does: the name would repeat the
+                        # caption beside it, so only the time shows.
+                        {"name": "bake & rest", "seconds": 900},
+                        {"name": None, "seconds": 90},
+                        {"name": "Cool", "seconds": 30},
+                    ],
+                },
+                # No rich runs: the plain text renders. An unsafe URL never reaches an <img>.
+                {
+                    "index": 2,
+                    "instructions": "Serve.\nEnjoy <3",
+                    "paragraphs": [],
+                    "image_url": "javascript:alert(1)",
+                },
+            ],
+        }
+    )
+    # Thumbnails request the width they are shown at, not the hero photo's 640.
+    assert "w_360/hellofresh_s3/r1/step-1.jpeg" in html
+    assert "w_640" not in html
+    assert 'loading="lazy"' in html
+    assert "<figcaption>Bake &amp; Rest</figcaption>" in html
+    # Bold runs become <strong>, and their text is escaped like any other string.
+    assert '<p class="steppara">Make the <strong>&lt;dough&gt;</strong></p>' in html
+    assert "Serve.<br>Enjoy &lt;3" in html
+    assert "⏱ 15 min<" in html
+    assert "bake &amp; rest ·" not in html
+    assert "⏱ 1 min 30 sec" in html
+    assert "⏱ Cool · 30 sec" in html
+    assert html.count("<figure") == 1
+    assert "javascript:" not in html
+    assert html.count('class="steptimers"') == 1
+    # Text before photo: the list number aligns to the first flex item's baseline, which for
+    # a photo is its bottom edge.
+    assert html.index('class="stepbody"') < html.index("<figure")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_sheet_shows_labels_description_ingredients_nutrition_and_video() -> None:
+    html = _sheet(
+        {
+            "name": "Meatballs",
+            "labels": ["Protein Smart"],
+            "description": "Cozy <and> quick.",
+            "ingredients": [
+                {
+                    "name": "Ciabatta",
+                    "amount": 1,
+                    "unit": "unit",
+                    "image_url": (
+                        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640"
+                        "/hellofresh_s3/ingredient/ciabatta.png"
+                    ),
+                    "shipped": True,
+                    "allergens": ["Wheat", "Soy"],
+                },
+                {"name": "Salt", "amount": None, "shipped": False, "allergens": []},
+            ],
+            "nutrition": {"Calories": "1000kcal", "Protein": "52g", "Sodium": ""},
+            "video_url": "https://media.hellofresh.com/video.mp4",
+            "card_url": "https://www.hellofresh.com/recipecards/card/x.pdf",
+        }
+    )
+    assert '<span class="detaillabel">Protein Smart</span>' in html
+    assert '<p class="detaildesc">Cozy &lt;and&gt; quick.</p>' in html
+    # Ingredient cut-outs are requested at thumbnail size and are decorative (the name is
+    # right beside them); a row without a photo keeps an empty slot so names stay aligned.
+    assert "w_96/hellofresh_s3/ingredient/ciabatta.png" in html
+    assert 'alt=""' in html
+    assert '<span class="ingimg"></span>' in html
+    assert "Contains Wheat, Soy" in html
+    assert "(not in box)" in html
+    assert "<dt>Calories</dt><dd>1000kcal</dd>" in html
+    assert "<dt>Protein</dt><dd>52g</dd>" in html
+    assert "Sodium" not in html  # an empty value is not a row
+    assert "per serving" in html
+    assert "Watch the recipe video" in html
+    assert "Printable recipe card (PDF)" in html
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_sheet_omits_sections_the_recipe_does_not_have() -> None:
+    html = _sheet({"name": "Bare", "video_url": "javascript:alert(1)"})
+    for absent in ("detaillabels", "detaildesc", "Nutrition", "Watch the recipe video", "<figure"):
+        assert absent not in html
+
+
 def test_planner_feeds_the_sheet_its_selection_mutators() -> None:
     """The footer must drive the SAME pending-selection methods as the + Add pill and the
     tile steppers, so the grid underneath stays in step with the sheet."""

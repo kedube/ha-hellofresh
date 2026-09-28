@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from html.parser import HTMLParser
 import re
 from typing import Any
 
@@ -23,18 +24,17 @@ def _coerce_number(value: Any) -> float | None:
     return float(value)
 
 
-def _iso_duration_to_minutes(value: Any) -> int | None:
-    """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` to whole minutes.
+def _iso_duration_to_seconds(value: Any) -> int | None:
+    """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` / ``PT30S`` to seconds.
 
-    Cookbook, catalog, AND (as of 2026-W35) the authenticated weekly-menu payloads all
-    express times this way — normalizers coerces int-first, then falls back to this. Only
-    hours and minutes appear in practice; anything unparseable yields None rather than a
-    misleading zero.
+    Anything unparseable, or a zero duration, yields None rather than a misleading zero.
+    Recipe-step timers need the seconds; recipe-level times go through the minutes wrapper.
     """
     if not isinstance(value, str):
         return None
     match = re.fullmatch(
-        r"P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:\d+S)?)?",
+        r"P(?:(?P<days>\d+)D)?"
+        r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?",
         value.strip(),
         re.IGNORECASE,
     )
@@ -43,8 +43,113 @@ def _iso_duration_to_minutes(value: Any) -> int | None:
     days = int(match.group("days") or 0)
     hours = int(match.group("hours") or 0)
     minutes = int(match.group("minutes") or 0)
-    total = days * 1440 + hours * 60 + minutes
+    seconds = int(match.group("seconds") or 0)
+    total = ((days * 24 + hours) * 60 + minutes) * 60 + seconds
     return total or None
+
+
+def _iso_duration_to_minutes(value: Any) -> int | None:
+    """Convert an ISO-8601 duration like ``PT45M`` / ``PT1H30M`` to whole minutes.
+
+    Cookbook, catalog, AND (as of 2026-W35) the authenticated weekly-menu payloads all
+    express times this way — normalizers coerces int-first, then falls back to this. Only
+    hours and minutes appear in practice; a sub-minute remainder is dropped, and anything
+    unparseable (or under a minute) yields None rather than a misleading zero.
+    """
+    seconds = _iso_duration_to_seconds(value)
+    return (seconds // 60 or None) if seconds is not None else None
+
+
+def _recipe_image_url(path: Any, link: Any, image_base: str | None) -> str | None:
+    """Resolve a recipe-service photo from its bare ``path`` and ready-made ``link``.
+
+    The recipe-service payloads offer both, and the tempting one is wrong: the absolute
+    ``link`` points at a CloudFront distribution that now answers 502 for every path. So the
+    path is joined to the verified host, exactly as the catalog rows are, and the link is used
+    only as a last resort. The recipe hero photo and every step photo follow this one rule.
+    """
+    if isinstance(path, str) and path.strip():
+        return f"{image_base.rstrip('/')}{path}" if image_base else path
+    return link if isinstance(link, str) and link.strip() else None
+
+
+class _RichTextParser(HTMLParser):
+    """Collect HelloFresh step HTML as paragraphs of ``(text, bold)`` pieces.
+
+    `<p>` / `<li>` / `<br>` (and list containers) start a new paragraph; `<strong>` / `<b>` set
+    bold. Every other tag — the colour spans HelloFresh wraps 4-serving quantities in — is
+    dropped and its text kept, except `<script>`/`<style>`, whose content is dropped too.
+    """
+
+    _BLOCK = frozenset({"p", "li", "br", "div", "ul", "ol"})
+    _BOLD = frozenset({"strong", "b"})
+    _SKIP = frozenset({"script", "style"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.paragraphs: list[list[tuple[str, bool]]] = [[]]
+        self._bold = 0
+        self._skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag in self._BLOCK:
+            self._break()
+        elif tag in self._BOLD:
+            self._bold += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag in self._BLOCK:
+            self._break()
+        elif tag in self._BOLD and self._bold:
+            self._bold -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip:
+            self.paragraphs[-1].append((data, self._bold > 0))
+
+    def _break(self) -> None:
+        if self.paragraphs[-1]:
+            self.paragraphs.append([])
+
+
+def _rich_paragraphs(html: Any) -> list[list[dict[str, Any]]]:
+    """Reduce a step's ``instructionsHTML`` to paragraphs of ``{text, bold}`` runs.
+
+    The cards never render HelloFresh's HTML: only text and a bold flag survive, and the card
+    escapes the text like any other string. Whitespace is collapsed the way a browser would,
+    and a whitespace-only run joins its neighbour, so "<strong>sliced</strong> <strong>steak"
+    reads as one bold "sliced steak". An empty or unusable input yields [] and the caller falls
+    back to the plain instructions.
+    """
+    if not isinstance(html, str) or not html.strip():
+        return []
+    parser = _RichTextParser()
+    parser.feed(html)
+    parser.close()
+    paragraphs: list[list[dict[str, Any]]] = []
+    for pieces in parser.paragraphs:
+        runs: list[dict[str, Any]] = []
+        for text, bold in pieces:
+            text = re.sub(r"\s+", " ", text)
+            if runs and runs[-1]["text"].endswith(" "):
+                text = text.lstrip(" ")
+            if not text:
+                continue
+            if runs and (runs[-1]["bold"] == bold or not text.strip()):
+                runs[-1]["text"] += text
+            else:
+                runs.append({"text": text, "bold": bold})
+        if runs:
+            runs[0]["text"] = runs[0]["text"].lstrip()
+            runs[-1]["text"] = runs[-1]["text"].rstrip()
+        runs = [run for run in runs if run["text"]]
+        if runs:
+            paragraphs.append(runs)
+    return paragraphs
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -902,17 +1007,25 @@ class HelloFreshRecipeDetail:
     category: str | None = None
     cuisines: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # The tags HelloFresh itself badges on the recipe ("Protein Smart"); the rest of `tags` are
+    # internal groupings ("latin-american-faves") the website never shows.
+    labels: list[str] = field(default_factory=list)
     allergens: list[str] = field(default_factory=list)
     utensils: list[str] = field(default_factory=list)
+    # Per-serving values keyed by HelloFresh's label, e.g. {"Fat": "55g"}, in payload order.
     nutrition: dict[str, str] = field(default_factory=dict)
     calories_kcal: float | None = None
     # Serving counts this recipe can be scaled to (from the `yields` array), e.g. [2, 4].
     available_yields: list[int] = field(default_factory=list)
     # The serving count `ingredients` amounts were resolved for.
     servings: int | None = None
-    # Each entry: {name, amount, unit, image_url, shipped}.
+    # Each entry: {name, amount, unit, image_url, shipped, allergens: [names]}.
     ingredients: list[dict[str, Any]] = field(default_factory=list)
-    # Each entry: {index, instructions}. HTML is deliberately dropped — the cards render text.
+    # Each entry: {index, instructions, paragraphs, image_url, caption, timers: [{name,
+    # seconds}]}. `instructions` is plain text, one line per sub-step; `paragraphs` is the same
+    # text as [[{text, bold}]] runs keeping HelloFresh's bold ingredient names (never raw HTML),
+    # or [] when the payload has no HTML. image_url/caption are None when the step has no
+    # photo; timers is empty when it has none.
     steps: list[dict[str, Any]] = field(default_factory=list)
     is_favorite: bool | None = None
 
@@ -931,19 +1044,8 @@ class HelloFreshRecipeDetail:
         if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
             return None
 
-        # The payload offers BOTH a bare `imagePath` and a ready-made absolute `imageLink`,
-        # and the tempting one is wrong: `imageLink` points at a CloudFront distribution that
-        # now answers 502 for every path. So the path is joined to the verified host instead,
-        # exactly as the catalog rows are, and `imageLink` is used only as a last resort.
-        image_path = raw.get("imagePath")
-        image_url = None
-        if isinstance(image_path, str) and image_path.strip() and image_base:
-            image_url = f"{image_base.rstrip('/')}{image_path}"
-        elif isinstance(image_path, str) and image_path.strip():
-            image_url = image_path
-        else:
-            link = raw.get("imageLink")
-            image_url = link if isinstance(link, str) and link.strip() else None
+        # `imageLink` is the dead CloudFront host; see _recipe_image_url.
+        image_url = _recipe_image_url(raw.get("imagePath"), raw.get("imageLink"), image_base)
 
         yields = raw.get("yields") if isinstance(raw.get("yields"), list) else []
         available = sorted(
@@ -964,17 +1066,34 @@ class HelloFreshRecipeDetail:
                 if isinstance(line, dict) and isinstance(line.get("id"), str):
                     amounts[line["id"]] = line
 
+        # Ingredients reference allergens by id; the names live on the recipe's own list.
+        allergen_names = {
+            a["id"]: a["name"]
+            for a in raw.get("allergens") or []
+            if isinstance(a, dict)
+            and isinstance(a.get("id"), str)
+            and isinstance(a.get("name"), str)
+        }
         ingredients: list[dict[str, Any]] = []
         for item in raw.get("ingredients") or []:
             if not isinstance(item, dict):
                 continue
             amount = amounts.get(str(item.get("id")), {})
+            contains = [
+                allergen_names[ref] if isinstance(ref, str) else ref.get("name")
+                for ref in item.get("allergens") or []
+                if (isinstance(ref, str) and ref in allergen_names)
+                or (isinstance(ref, dict) and isinstance(ref.get("name"), str))
+            ]
             ingredients.append(
                 {
                     "name": item.get("name"),
                     "amount": amount.get("amount"),
                     "unit": amount.get("unit"),
-                    "image_url": item.get("imageLink"),
+                    # Same dead-CloudFront `imageLink` as the recipe photo; see _recipe_image_url.
+                    "image_url": _recipe_image_url(
+                        item.get("imagePath"), item.get("imageLink"), image_base
+                    ),
                     # False marks a pantry staple you supply yourself (salt, oil, ...) rather
                     # than something that arrives in the box. Deliberately tri-state: a
                     # *missing* key stays None ("unknown"), because coercing it to False
@@ -982,6 +1101,7 @@ class HelloFreshRecipeDetail:
                     # prep list depends on telling those apart, and it treats None as
                     # in-box; the recipe-detail card already tests `shipped === false`.
                     "shipped": (bool(item["shipped"]) if item.get("shipped") is not None else None),
+                    "allergens": list(dict.fromkeys(contains)),
                 }
             )
 
@@ -994,7 +1114,42 @@ class HelloFreshRecipeDetail:
                 continue
             # HelloFresh pads instructions with blank lines; collapse to tidy paragraphs.
             cleaned = "\n".join(line.strip() for line in text.split("\n") if line.strip())
-            steps.append({"index": step.get("index"), "instructions": cleaned})
+            # One photo per step in practice; its caption is a short label ("Prep Dough").
+            photo = next((i for i in step.get("images") or [] if isinstance(i, dict)), {})
+            caption = photo.get("caption")
+            timers: list[dict[str, Any]] = []
+            for timer in step.get("timers") or []:
+                if not isinstance(timer, dict):
+                    continue
+                # Seconds, not minutes: a "rest 30 seconds" timer would otherwise vanish.
+                seconds = _iso_duration_to_seconds(timer.get("duration"))
+                if seconds is None:
+                    continue
+                timer_name = timer.get("name")
+                timers.append(
+                    {
+                        "name": (
+                            timer_name.strip()
+                            if isinstance(timer_name, str) and timer_name.strip()
+                            else None
+                        ),
+                        "seconds": seconds,
+                    }
+                )
+            steps.append(
+                {
+                    "index": step.get("index"),
+                    "instructions": cleaned,
+                    "paragraphs": _rich_paragraphs(step.get("instructionsHTML")),
+                    "image_url": _recipe_image_url(
+                        photo.get("path"), photo.get("link"), image_base
+                    ),
+                    "caption": (
+                        caption.strip() if isinstance(caption, str) and caption.strip() else None
+                    ),
+                    "timers": timers,
+                }
+            )
 
         nutrition: dict[str, str] = {}
         calories: float | None = None
@@ -1041,6 +1196,13 @@ class HelloFreshRecipeDetail:
                 for t in raw.get("tags") or []
                 if isinstance(t, dict) and isinstance(t.get("name"), str)
             ],
+            labels=[
+                t["name"]
+                for t in raw.get("tags") or []
+                if isinstance(t, dict)
+                and t.get("displayLabel") is True
+                and isinstance(t.get("name"), str)
+            ],
             allergens=[
                 a["name"]
                 for a in raw.get("allergens") or []
@@ -1079,6 +1241,7 @@ class HelloFreshRecipeDetail:
             "category": self.category,
             "cuisines": self.cuisines,
             "tags": self.tags,
+            "labels": self.labels,
             "allergens": self.allergens,
             "utensils": self.utensils,
             "nutrition": self.nutrition,

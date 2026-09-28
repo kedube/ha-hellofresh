@@ -2,8 +2,10 @@
  * HelloFresh shared recipe-detail overlay
  * ---------------------------------------
  * A tap-through "full recipe" sheet — ingredients with amounts, a servings switcher that
- * rescales them, step-by-step instructions, utensils, allergens, nutrition and the printable
- * recipe-card PDF — used by the Recipes, Meal planner and Market cards.
+ * rescales them (each with its photo and the allergens it contains), step-by-step instructions
+ * with HelloFresh's bold ingredient names, step photos and timers, utensils, allergens, the
+ * per-serving nutrition table, the recipe video and the printable recipe-card PDF — used by the
+ * Recipes, Meal planner and Market cards.
  *
  * Extracted so the three cards share one implementation. Several non-obvious details are baked
  * in here that were each a shipped bug at some point:
@@ -70,6 +72,21 @@ export function formatMinutes(minutes) {
   return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
+// Step timers arrive in seconds so a short "rest 30 sec" timer survives; whole minutes read
+// exactly like the recipe times above.
+export function formatSeconds(seconds) {
+  const total = Math.round(Number(seconds));
+  if (!Number.isFinite(total) || total <= 0) return "";
+  if (total % 60 === 0) return formatMinutes(total / 60);
+  if (total < 60) return `${total} sec`;
+  return `${formatMinutes(Math.floor(total / 60))} ${total % 60} sec`;
+}
+
+// Step photos render as thumbnails (at most 180px wide), so request 2x that, not the hero's 640.
+const STEP_IMAGE_WIDTH = 360;
+// Ingredient cut-outs render at 32px; 96 covers a 3x display.
+const INGREDIENT_IMAGE_WIDTH = 96;
+
 export const DETAIL_STYLES = `
   /* FIXED, not absolute. \`position: absolute\` resolves against the nearest positioned
      ancestor, and the host cards do not create one — so the sheet escaped its card, and the
@@ -106,6 +123,12 @@ export const DETAIL_STYLES = `
   .detailscroll { overflow-y: auto; padding: 12px 14px 16px; }
   .detailimg { width: 100%; border-radius: 8px; display: block; margin-bottom: 10px; }
   .detailheadline { color: var(--secondary-text-color); font-size: 0.9em; }
+  .detaillabels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .detaillabel {
+    font-size: 0.75em; font-weight: 600; padding: 1px 8px; border-radius: 10px;
+    background: var(--primary-color); color: var(--text-primary-color, #fff);
+  }
+  .detaildesc { margin: 8px 0 0; font-size: 0.85em; line-height: 1.45; }
   .facts { margin-top: 6px; font-size: 0.85em; color: var(--secondary-text-color); }
   .allerg { margin-top: 4px; font-size: 0.8em; color: var(--secondary-text-color); }
   .servings { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
@@ -121,8 +144,43 @@ export const DETAIL_STYLES = `
   }
   .detailbox h4 { margin: 14px 0 6px; font-size: 0.92em; }
   .ing, .steps { margin: 0; padding-left: 20px; font-size: 0.87em; line-height: 1.5; }
+  /* Ingredients: a photo per row instead of a bullet, two columns when the sheet is wide. */
+  .ing {
+    list-style: none; padding-left: 0;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 12px;
+  }
+  .ing li { display: flex; align-items: center; gap: 8px; }
+  .ingimg { flex: 0 0 32px; width: 32px; height: 32px; object-fit: contain; }
+  .ingtext { min-width: 0; }
+  .ingallerg { display: block; font-size: 0.88em; color: var(--secondary-text-color); }
   .steps li { margin-bottom: 8px; }
+  .steppara { margin: 0 0 4px; }
+  /* A step photo is a thumbnail beside its text, not a full-width banner that would push the
+     instructions a screen apart. The text comes FIRST in the markup: the list number aligns to
+     the first item's baseline, which for a photo is its bottom edge. */
+  .step { display: flex; gap: 10px; align-items: flex-start; }
+  .stepbody { flex: 1; min-width: 0; }
+  .stepfig { flex: 0 0 34%; max-width: 180px; margin: 2px 0 0; }
+  .stepimg {
+    width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block;
+  }
+  .stepfig figcaption { margin-top: 2px; font-size: 0.85em; color: var(--secondary-text-color); }
+  .steptimers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .steptimer {
+    font-size: 0.9em; padding: 1px 8px; border-radius: 10px;
+    border: 1px solid var(--divider-color); color: var(--secondary-text-color);
+  }
   .pantry { color: var(--secondary-text-color); font-size: 0.9em; }
+  .nutri {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0 14px;
+    margin: 0; font-size: 0.85em;
+  }
+  .nutri div {
+    display: flex; justify-content: space-between; gap: 6px; padding: 2px 0;
+    border-bottom: 1px solid var(--divider-color);
+  }
+  .nutri dt { color: var(--secondary-text-color); }
+  .nutri dd { margin: 0; font-weight: 500; }
   .utensils { font-size: 0.85em; color: var(--secondary-text-color); }
   .detaillinks { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
   .detaillinks a { font-size: 0.85em; color: var(--primary-color); }
@@ -315,18 +373,86 @@ export class RecipeDetailOverlay {
         const amount = i.amount != null ? `${i.amount}${i.unit ? " " + i.unit : ""} ` : "";
         // Pantry staples you supply yourself are called out; everything else ships in the box.
         const pantry = i.shipped === false ? ` <span class="pantry">(not in box)</span>` : "";
-        return `<li>${escapeHtml(amount)}${escapeHtml(i.name || "")}${pantry}</li>`;
+        const contains = Array.isArray(i.allergens) && i.allergens.length
+          ? `<span class="ingallerg">Contains ${escapeHtml(i.allergens.join(", "))}</span>`
+          : "";
+        // The name sits right beside the photo, so the image is decorative (empty alt). A row
+        // without one keeps an empty 32px slot so the names stay aligned.
+        const thumb = resizedImage(i.image_url, INGREDIENT_IMAGE_WIDTH);
+        const pic = thumb
+          ? `<img class="ingimg" src="${escapeHtml(thumb)}" alt="" loading="lazy" decoding="async">`
+          : `<span class="ingimg"></span>`;
+        return `<li>${pic}<span class="ingtext">${escapeHtml(amount)}${escapeHtml(
+          i.name || "",
+        )}${pantry}${contains}</span></li>`;
       })
       .join("");
 
-    // Escape FIRST, then turn newlines into <br> — the reverse order escapes the breaks away.
     const steps = (r.steps || [])
-      .map((s) => `<li>${escapeHtml(s.instructions || "").replace(/\n/g, "<br>")}</li>`)
+      .map((s, i) => {
+        // Rich paragraphs are plain {text, bold} runs built server-side — never HelloFresh's
+        // HTML — so every run is escaped here like any other string. Without them, fall back
+        // to the plain text: escape FIRST, then newlines become <br>, or the breaks escape away.
+        const paragraphs = Array.isArray(s.paragraphs) ? s.paragraphs.filter(Array.isArray) : [];
+        const text = paragraphs.length
+          ? paragraphs
+              .map(
+                (runs) =>
+                  `<p class="steppara">${runs
+                    .map((run) =>
+                      run && run.bold
+                        ? `<strong>${escapeHtml(run.text)}</strong>`
+                        : escapeHtml(run && run.text),
+                    )
+                    .join("")}</p>`,
+              )
+              .join("")
+          : escapeHtml(s.instructions || "").replace(/\n/g, "<br>");
+        const photo = resizedImage(s.image_url, STEP_IMAGE_WIDTH);
+        const caption = photo && s.caption ? String(s.caption) : "";
+        const timers = (Array.isArray(s.timers) ? s.timers : [])
+          .map((t) => {
+            const time = formatSeconds(t && t.seconds);
+            if (!time) return "";
+            // HelloFresh names a timer after its step, so beside a captioned photo the name
+            // would just repeat the caption; show only the time then.
+            const name =
+              t.name && String(t.name).trim().toLowerCase() !== caption.trim().toLowerCase()
+                ? t.name
+                : "";
+            return `<span class="steptimer">⏱ ${escapeHtml(name ? `${name} · ${time}` : time)}</span>`;
+          })
+          .join("");
+        const figure = photo
+          ? `<figure class="stepfig">
+               <img class="stepimg" src="${escapeHtml(photo)}" alt="Step ${i + 1}"
+                 loading="lazy" decoding="async">
+               ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
+             </figure>`
+          : "";
+        return `<li><div class="step">
+                  <div class="stepbody">${text}${
+                    timers ? `<div class="steptimers">${timers}</div>` : ""
+                  }</div>
+                  ${figure}
+                </div></li>`;
+      })
       .join("");
+
+    // HelloFresh's values are per serving, in its own order (calories first).
+    const nutrition = Object.entries(r.nutrition || {}).filter(([k, v]) => k && v != null && v !== "");
+    const nutritionTable = nutrition.length
+      ? `<h4>Nutrition <span class="slabel">per serving</span></h4>
+         <dl class="nutri">${nutrition
+           .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
+           .join("")}</dl>`
+      : "";
+    const labels = (Array.isArray(r.labels) ? r.labels : []).filter(Boolean);
 
     const img = resizedImage(r.image_url, 640);
     const link = safeHttpUrl(r.url);
     const card = safeHttpUrl(r.card_url);
+    const video = safeHttpUrl(r.video_url);
     return `
       <div class="detailbox">
         <div class="detailhead">
@@ -336,7 +462,15 @@ export class RecipeDetailOverlay {
         <div class="detailscroll">
           ${img ? `<img class="detailimg" src="${escapeHtml(img)}" alt="${escapeHtml(r.name)}">` : ""}
           ${r.headline ? `<div class="detailheadline">${escapeHtml(r.headline)}</div>` : ""}
+          ${
+            labels.length
+              ? `<div class="detaillabels">${labels
+                  .map((l) => `<span class="detaillabel">${escapeHtml(l)}</span>`)
+                  .join("")}</div>`
+              : ""
+          }
           ${facts.length ? `<div class="facts">${escapeHtml(facts.join(" · "))}</div>` : ""}
+          ${r.description ? `<p class="detaildesc">${escapeHtml(r.description)}</p>` : ""}
           ${
             (r.allergens || []).length
               ? `<div class="allerg">Allergens: ${escapeHtml(r.allergens.join(", "))}</div>`
@@ -350,7 +484,9 @@ export class RecipeDetailOverlay {
               : ""
           }
           ${steps ? `<h4>Instructions</h4><ol class="steps">${steps}</ol>` : ""}
+          ${nutritionTable}
           <div class="detaillinks">
+            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">Watch the recipe video</a>` : ""}
             ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">Printable recipe card (PDF)</a>` : ""}
             ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">View on hellofresh.com</a>` : ""}
           </div>

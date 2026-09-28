@@ -122,7 +122,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_recipe_detail`
 
-**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps`, `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](dashboard.md#recipes-card).
+**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, its photo, the `allergens` it contains, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps` (each with plain `instructions`, the same text as `paragraphs` of `{text, bold}` runs keeping HelloFresh's bold ingredient names, the step photo's `image_url` and `caption`, and any cooking `timers` as `{name, seconds}`), `labels` (the badges HelloFresh shows, e.g. "Protein Smart"), `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](dashboard.md#recipes-card).
 
 ### `hellofresh.get_favorites`
 

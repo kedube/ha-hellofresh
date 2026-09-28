@@ -9104,8 +9104,15 @@ def _recipe_detail_payload() -> dict:
         "favoritesCount": 571,
         "category": {"name": "Poultry", "slug": "poultry"},
         "cuisines": [{"name": "North America", "slug": "american"}],
-        "tags": [{"name": "Protein Smart", "slug": "protein-smart"}],
-        "allergens": [{"name": "Milk", "slug": "milk"}, {"name": "Wheat", "slug": "wheat"}],
+        # Only `displayLabel` tags are badged on the website; the rest are internal groupings.
+        "tags": [
+            {"name": "Protein Smart", "slug": "protein-smart", "displayLabel": True},
+            {"name": "latin-american-faves", "slug": "latin-american-faves", "displayLabel": False},
+        ],
+        "allergens": [
+            {"id": "57962a07b7e8697d4b3052fa", "name": "Milk", "slug": "milk", "tracesOf": False},
+            {"id": "60368d89cdbdf450236ad8cd", "name": "Wheat", "slug": "wheat", "tracesOf": False},
+        ],
         "utensils": [{"name": "Medium Pot"}, {"name": "Peeler"}],
         "nutrition": [
             {"name": "Calories", "amount": 720, "unit": "kcal"},
@@ -9115,10 +9122,14 @@ def _recipe_detail_payload() -> dict:
             {
                 "id": "ing-sour-cream",
                 "name": "Sour Cream",
-                "imageLink": "https://cdn/ingredient/sour-cream.png",
+                # Same pair as the recipe photo: a bare path and a dead-CloudFront link.
+                "imagePath": "/ingredient/sour-cream.png",
+                "imageLink": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/sour-cream.png",
                 "shipped": True,
+                # Allergens by id, resolved against the recipe's own `allergens` list.
+                "allergens": ["57962a07b7e8697d4b3052fa"],
             },
-            {"id": "ing-salt", "name": "Salt", "shipped": False},
+            {"id": "ing-salt", "name": "Salt", "shipped": False, "allergens": []},
         ],
         "yields": [
             {
@@ -9135,7 +9146,34 @@ def _recipe_detail_payload() -> dict:
             },
         ],
         "steps": [
-            {"index": 1, "instructions": "\n\nPreheat oven to 425 degrees.\n\n\nWash produce.\n\n"},
+            {
+                "index": 1,
+                "instructions": "\n\nPreheat oven to 425 degrees.\n\n\nWash produce.\n\n",
+                "instructionsHTML": (
+                    "<ul>\n<li>\n<p>Preheat oven to <strong>425 degrees</strong>.</p>\n</li>\n"
+                    "<li>\n<p>Wash <strong>produce</strong>.</p>\n</li>\n</ul>"
+                ),
+                "images": [
+                    {
+                        "link": "https://d3hvwccx09j84u.cloudfront.net/0,0/6819dfd55efe69a088447ef3/step-1.jpg",
+                        "path": "/6819dfd55efe69a088447ef3/step-1.jpg",
+                        "caption": "Preheat ",
+                    }
+                ],
+                # Zero-padded minutes, named after the step, temperature unused (always null).
+                "timers": [
+                    {
+                        "name": "Preheat",
+                        "duration": "PT05M",
+                        "temperature": None,
+                        "temperatureUnit": None,
+                    }
+                ],
+                "ingredients": [],
+                "utensils": [],
+                "videos": [],
+            },
+            # An older/partial step: no HTML, photo or timers. Every field still has to exist.
             {"index": 2, "instructions": "Cook the chicken."},
         ],
     }
@@ -9159,6 +9197,141 @@ def test_recipe_detail_parses_steps_ingredients_and_metadata() -> None:
     # Blank-line padding in the raw instructions is collapsed, not passed through.
     assert detail.steps[0]["instructions"] == "Preheat oven to 425 degrees.\nWash produce."
     assert len(detail.steps) == 2
+    # A step with no photo or timers still carries every key, empty rather than missing.
+    assert detail.steps[1] == {
+        "index": 2,
+        "instructions": "Cook the chicken.",
+        "paragraphs": [],
+        "image_url": None,
+        "caption": None,
+        "timers": [],
+    }
+
+
+def test_recipe_detail_steps_keep_their_photo_caption_timers_and_bold_text() -> None:
+    """Each step carries HelloFresh's photo, its caption, its timers and its bold emphasis.
+
+    Shape per HAR 52 (2026-09-28). The step photo follows the recipe photo's rule — `path`
+    joined to the verified host, the dead-CloudFront `link` only as a last resort — and the
+    site itself loads these paths from the same `hellofresh_s3` bucket.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    detail = HelloFreshRecipeDetail.from_api(
+        _recipe_detail_payload(), image_base=HelloFreshClient._CATALOG_IMAGE_BASE
+    )
+
+    step = detail.steps[0]
+    assert step["image_url"] == (
+        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
+        "/6819dfd55efe69a088447ef3/step-1.jpg"
+    )
+    assert step["caption"] == "Preheat"
+    assert step["timers"] == [{"name": "Preheat", "seconds": 300}]
+    # Plain text stays for automations; the runs carry the same words plus the bold.
+    assert step["instructions"] == "Preheat oven to 425 degrees.\nWash produce."
+    assert step["paragraphs"] == [
+        [
+            {"text": "Preheat oven to ", "bold": False},
+            {"text": "425 degrees", "bold": True},
+            {"text": ".", "bold": False},
+        ],
+        [
+            {"text": "Wash ", "bold": False},
+            {"text": "produce", "bold": True},
+            {"text": ".", "bold": False},
+        ],
+    ]
+
+
+def test_recipe_detail_step_timers_keep_seconds_and_drop_what_they_cannot_read() -> None:
+    """A short rest timer must not round away; an unreadable one is dropped, not zeroed."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    payload = _recipe_detail_payload()
+    payload["steps"][0]["timers"] = [
+        {"name": "Rest", "duration": "PT30S"},
+        {"name": "Broken", "duration": "soon"},
+        {"name": "  ", "duration": "PT1M30S"},
+        "not-a-timer",
+    ]
+    # No path: the link is still better than no photo. A blank caption is None, not "".
+    payload["steps"][0]["images"] = [{"link": "https://cdn.example/step-1.jpeg", "caption": ""}]
+
+    step = HelloFreshRecipeDetail.from_api(payload).steps[0]
+
+    assert step["timers"] == [{"name": "Rest", "seconds": 30}, {"name": None, "seconds": 90}]
+    assert step["image_url"] == "https://cdn.example/step-1.jpeg"
+    assert step["caption"] is None
+
+
+def test_step_html_becomes_text_runs_never_markup() -> None:
+    """HelloFresh's step HTML is reduced to {text, bold} runs; no markup survives.
+
+    Mirrors the real markup (HAR 52): `<ul><li><p>` per sub-step, `<strong>` ingredient names
+    (sometimes split around a bare space), and a colour `<span>` around 4-serving quantities.
+    """
+    from custom_components.hellofresh.models import _rich_paragraphs
+
+    html = (
+        "<ul>\n<li>\n<p>Heat a <strong>drizzle of oil </strong>in same pan. Add "
+        "<strong>sliced</strong> <strong>steak</strong>.</p>\n</li>\n<li>\n<p>Add "
+        '<strong>1¼ cups water</strong> <span style="color: rgb(0, 86, 44)">(2¼ cups for 4 '
+        "servings)</span>&nbsp;&amp; stir<script>alert(1)</script>.</p>\n</li>\n</ul>"
+    )
+    assert _rich_paragraphs(html) == [
+        [
+            {"text": "Heat a ", "bold": False},
+            {"text": "drizzle of oil ", "bold": True},
+            {"text": "in same pan. Add ", "bold": False},
+            {"text": "sliced steak", "bold": True},
+            {"text": ".", "bold": False},
+        ],
+        [
+            {"text": "Add ", "bold": False},
+            {"text": "1¼ cups water ", "bold": True},
+            {"text": "(2¼ cups for 4 servings) & stir.", "bold": False},
+        ],
+    ]
+    assert _rich_paragraphs("") == []
+    assert _rich_paragraphs(None) == []
+
+
+def test_recipe_detail_ingredients_carry_a_working_photo_and_their_allergens() -> None:
+    """Ingredient photos use the working host, and each ingredient names its own allergens.
+
+    An ingredient's `imageLink` is the same dead CloudFront host as the recipe photo's (HTTP
+    502, checked 2026-09-28), so the path is joined to the verified host. Allergens arrive as
+    ids resolved against the recipe's allergen list; an id that list lacks is dropped.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    payload = _recipe_detail_payload()
+    payload["ingredients"][1]["allergens"] = ["not-on-the-recipe", {"name": "Sesame"}]
+
+    sour, salt = HelloFreshRecipeDetail.from_api(
+        payload, image_base=HelloFreshClient._CATALOG_IMAGE_BASE
+    ).ingredients
+
+    assert sour["image_url"] == (
+        "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
+        "/ingredient/sour-cream.png"
+    )
+    assert "cloudfront" not in sour["image_url"]
+    assert sour["allergens"] == ["Milk"]
+    assert salt["allergens"] == ["Sesame"]
+    assert salt["image_url"] is None
+
+
+def test_recipe_detail_labels_are_only_the_tags_hellofresh_badges() -> None:
+    """`labels` is what the website badges; `tags` keeps every grouping for automations."""
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    detail = HelloFreshRecipeDetail.from_api(_recipe_detail_payload())
+
+    assert detail.labels == ["Protein Smart"]
+    assert detail.tags == ["Protein Smart", "latin-american-faves"]
+    assert detail.as_dict()["labels"] == ["Protein Smart"]
 
 
 def test_recipe_detail_image_uses_the_working_host_not_the_payloads_own_link() -> None:
@@ -9198,8 +9371,9 @@ def test_recipe_detail_scales_ingredient_amounts_to_servings() -> None:
     """Ingredient amounts come from the matching `yields` entry, so servings must scale them."""
     from custom_components.hellofresh.models import HelloFreshRecipeDetail
 
-    two = HelloFreshRecipeDetail.from_api(_recipe_detail_payload())
-    four = HelloFreshRecipeDetail.from_api(_recipe_detail_payload(), servings=4)
+    base = HelloFreshClient._CATALOG_IMAGE_BASE
+    two = HelloFreshRecipeDetail.from_api(_recipe_detail_payload(), image_base=base)
+    four = HelloFreshRecipeDetail.from_api(_recipe_detail_payload(), servings=4, image_base=base)
 
     assert two.available_yields == [2, 4]
     # Defaults to the smallest yield (the standard 2-person box), matching the website.
@@ -9208,8 +9382,9 @@ def test_recipe_detail_scales_ingredient_amounts_to_servings() -> None:
         "name": "Sour Cream",
         "amount": 1.5,
         "unit": "tablespoon",
-        "image_url": "https://cdn/ingredient/sour-cream.png",
+        "image_url": f"{base}/ingredient/sour-cream.png",
         "shipped": True,
+        "allergens": ["Milk"],
     }
     assert four.servings == 4
     assert four.ingredients[0]["amount"] == 3
