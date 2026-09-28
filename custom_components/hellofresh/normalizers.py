@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from .const import DEFAULT_MENU_GRACE_WEEKS
+from .const import DEFAULT_MENU_GRACE_WEEKS, RECIPE_IMAGE_BASE
 from .models import (
     HelloFreshMarketItem,
     HelloFreshOrder,
@@ -20,6 +20,7 @@ from .models import (
     HelloFreshSubscription,
     HelloFreshWeek,
     _iso_duration_to_minutes,
+    _usable_image_url,
 )
 from .parsers import (
     MAX_SEARCH_DEPTH,
@@ -449,9 +450,19 @@ class HelloFreshPayloadNormalizer:
             is_selected=is_selected,
             selected_quantity=selected_quantity,
             course_index=course_index,
-            image_url=recipe_data.get("imagePath")
-            or recipe_data.get("image")
-            or recipe_data.get("imageUrl"),
+            # Full-URL fields first: the menu's `image` is on the working host. The menus-service
+            # fallback has only a bare `imagePath` (+ a dead `imageLink`), customer-complaints a
+            # bare `image_path`; those get the host joined on. See _usable_image_url.
+            image_url=_usable_image_url(
+                (
+                    recipe_data.get("image"),
+                    recipe_data.get("imageUrl"),
+                    recipe_data.get("imagePath"),
+                    recipe_data.get("image_path"),
+                    recipe_data.get("imageLink"),
+                ),
+                RECIPE_IMAGE_BASE,
+            ),
             # `videoLink` is the only spelling HelloFresh uses for the promo clip, and it is
             # simply absent on most meals, so a missing value is normal rather than an error.
             # It appears on the RECIPE node in my-deliveries/menu and menus-service, but on the
@@ -715,9 +726,15 @@ class HelloFreshPayloadNormalizer:
             index=index,
             sku=raw_item.get("sku"),
             group_type=group_type,
-            image_url=recipe_data.get("image")
-            or recipe_data.get("imagePath")
-            or recipe_data.get("imageUrl"),
+            image_url=_usable_image_url(
+                (
+                    recipe_data.get("image"),
+                    recipe_data.get("imageUrl"),
+                    recipe_data.get("imagePath"),
+                    recipe_data.get("image_path"),
+                ),
+                RECIPE_IMAGE_BASE,
+            ),
             description=recipe_data.get("headline") or recipe_data.get("description"),
             category=recipe_data.get("category"),
             tags=extract_name_list(recipe_data.get("tags")),
@@ -2207,7 +2224,14 @@ class HelloFreshPayloadNormalizer:
                     item_id=item_id,
                     name=str(name),
                     recipe_id=str(recipe_id) if recipe_id else None,
-                    image_url=raw_item.get("image") or raw_item.get("imageUrl"),
+                    image_url=_usable_image_url(
+                        (
+                            raw_item.get("image"),
+                            raw_item.get("imageUrl"),
+                            raw_item.get("imagePath"),
+                        ),
+                        RECIPE_IMAGE_BASE,
+                    ),
                     description=raw_item.get("headline") or raw_item.get("description"),
                     category=raw_item.get("category"),
                     tags=[

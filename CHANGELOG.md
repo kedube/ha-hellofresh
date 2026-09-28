@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed: meal photos missing on some weeks.** When the integration falls back to HelloFresh's
+  regional menu catalog, that source gives each meal's photo only as a path with no host, so
+  those weeks showed no pictures; the host is now added. Recent delivered weeks read from the
+  complaints endpoint now get photos too (it recently started including them). Every image
+  field now follows one rule: never render a link to the retired CloudFront host.
+
 ## 3.03 — 2026-09-28
 - **The full recipe view now shows everything HelloFresh's recipe page does.** In the recipe
   sheet (Recipes, Meal planner and Market cards):

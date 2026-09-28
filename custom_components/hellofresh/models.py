@@ -5,11 +5,13 @@ No HTTP, no aiohttp, no BeautifulSoup — just dataclasses and exceptions.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 # Smallest valid box HelloFresh sells: a week with fewer distinct meals than this has no valid
 # box, so it genuinely still needs a selection. Mirrors the client's MIN_MEALS_PER_WEEK; kept as
@@ -60,17 +62,32 @@ def _iso_duration_to_minutes(value: Any) -> int | None:
     return (seconds // 60 or None) if seconds is not None else None
 
 
-def _recipe_image_url(path: Any, link: Any, image_base: str | None) -> str | None:
-    """Resolve a recipe-service photo from its bare ``path`` and ready-made ``link``.
+# The retired CloudFront distribution HelloFresh payloads still link to (`imageLink`, step
+# `link`, ingredient `imageURL`, `iconLink`). It answers HTTP 502 for every path (re-checked
+# 2026-09-28), so a URL on it is never worth rendering: no photo beats a broken one.
+_DEAD_IMAGE_HOST = "d3hvwccx09j84u.cloudfront.net"
 
-    The recipe-service payloads offer both, and the tempting one is wrong: the absolute
-    ``link`` points at a CloudFront distribution that now answers 502 for every path. So the
-    path is joined to the verified host, exactly as the catalog rows are, and the link is used
-    only as a last resort. The recipe hero photo and every step photo follow this one rule.
+
+def _usable_image_url(candidates: Sequence[Any], image_base: str | None) -> str | None:
+    """Return the first photo URL a card can load, trying a payload's image fields in order.
+
+    Payloads disagree on which field holds a working photo. The menu's `image` is a full URL
+    on the working host; the recipe service and menus-service offer a bare `imagePath` beside
+    a dead-CloudFront `imageLink`; customer-complaints has only a bare `image_path`. So: an
+    absolute http(s) URL is used as-is unless it is on the retired CloudFront host, and a bare
+    path ("/image/x.jpg") is joined to ``image_base`` (skipped without one — no card can render
+    it). None when nothing usable remains.
     """
-    if isinstance(path, str) and path.strip():
-        return f"{image_base.rstrip('/')}{path}" if image_base else path
-    return link if isinstance(link, str) and link.strip() else None
+    for value in candidates:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        value = value.strip()
+        if re.match(r"https?://", value, re.IGNORECASE):
+            if urlsplit(value).hostname != _DEAD_IMAGE_HOST:
+                return value
+        elif value.startswith("/") and image_base:
+            return f"{image_base.rstrip('/')}{value}"
+    return None
 
 
 class _RichTextParser(HTMLParser):
@@ -1044,8 +1061,8 @@ class HelloFreshRecipeDetail:
         if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
             return None
 
-        # `imageLink` is the dead CloudFront host; see _recipe_image_url.
-        image_url = _recipe_image_url(raw.get("imagePath"), raw.get("imageLink"), image_base)
+        # `imageLink` is the dead CloudFront host; see _usable_image_url.
+        image_url = _usable_image_url((raw.get("imagePath"), raw.get("imageLink")), image_base)
 
         yields = raw.get("yields") if isinstance(raw.get("yields"), list) else []
         available = sorted(
@@ -1090,9 +1107,9 @@ class HelloFreshRecipeDetail:
                     "name": item.get("name"),
                     "amount": amount.get("amount"),
                     "unit": amount.get("unit"),
-                    # Same dead-CloudFront `imageLink` as the recipe photo; see _recipe_image_url.
-                    "image_url": _recipe_image_url(
-                        item.get("imagePath"), item.get("imageLink"), image_base
+                    # Same dead-CloudFront `imageLink` as the recipe photo; see _usable_image_url.
+                    "image_url": _usable_image_url(
+                        (item.get("imagePath"), item.get("imageLink")), image_base
                     ),
                     # False marks a pantry staple you supply yourself (salt, oil, ...) rather
                     # than something that arrives in the box. Deliberately tri-state: a
@@ -1141,8 +1158,8 @@ class HelloFreshRecipeDetail:
                     "index": step.get("index"),
                     "instructions": cleaned,
                     "paragraphs": _rich_paragraphs(step.get("instructionsHTML")),
-                    "image_url": _recipe_image_url(
-                        photo.get("path"), photo.get("link"), image_base
+                    "image_url": _usable_image_url(
+                        (photo.get("path"), photo.get("link")), image_base
                     ),
                     "caption": (
                         caption.strip() if isinstance(caption, str) and caption.strip() else None
