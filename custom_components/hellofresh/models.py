@@ -635,6 +635,15 @@ class HelloFreshOrder:
     # noon anchor: the carrier reports midnight-of-the-estimated-day, so this is a date-precision
     # estimate despite being carried as a timestamp.
     estimated_delivery: datetime | None = None
+    # The finer step behind ``tracking_status`` from the same lookup, e.g. ``label_created`` or
+    # ``received_at_origin_facility`` while the status is still ``in_transit``.
+    tracking_status_detail: str | None = None
+    # The carrier's scan history, newest first: ``{time (ISO), status, detail}``.
+    tracking_events: list[dict[str, str | None]] = field(default_factory=list)
+    # Proof-of-delivery photos (http(s) only) and who signed. Empty for Veho even after
+    # delivery; other carriers may fill them.
+    delivery_photo_urls: list[str] = field(default_factory=list)
+    delivery_signed_by: str | None = None
     total_price: float | None = None
     currency: str | None = None
     slot_label: str | None = None
@@ -665,6 +674,10 @@ class HelloFreshOrder:
             "estimated_delivery": (
                 self.estimated_delivery.isoformat() if self.estimated_delivery else None
             ),
+            "tracking_status_detail": self.tracking_status_detail,
+            "tracking_events": self.tracking_events,
+            "delivery_photo_urls": self.delivery_photo_urls,
+            "delivery_signed_by": self.delivery_signed_by,
             "total_price": self.total_price,
             "currency": self.currency,
             "billed_total_price": self.billed_total_price,

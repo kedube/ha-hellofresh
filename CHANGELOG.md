@@ -5,6 +5,23 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Richer shipment tracking.** From the carrier tracking HelloFresh already provides:
+  - **Finer status** — the carrier's current step alongside the coarse status, e.g. "In Transit ·
+    Received at origin facility" instead of just "In Transit", in the Schedule card's next-box
+    summary and timeline rows.
+  - **Scan history** — a **History (N)** link on a shipped box's tracking line in the Schedule
+    card opens every carrier scan, newest first ("Sep 28, 3:56 AM · Received at origin
+    facility").
+  - **Proof of delivery** — when the carrier provides a delivery photo or signer, the delivered
+    box shows the photo (tap to open) and "Signed by …". Veho, HelloFresh's main US carrier,
+    leaves both empty, so most boxes won't show one.
+
+  `sensor.shipment_tracking_status` gains `status_detail`, `tracking_events`,
+  `delivery_photo_urls` and `delivery_signed_by` attributes (also on each order in
+  `get_weeks`). The sensor's state is unchanged, so existing automations keep working. The
+  delivery photo and signer are redacted from diagnostics.
+
 ## 3.04 — 2026-09-28
 - **Fixed: meal photos missing on some weeks.** When the integration falls back to HelloFresh's
   regional menu catalog, that source gives each meal's photo only as a path with no host, so

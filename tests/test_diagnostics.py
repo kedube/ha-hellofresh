@@ -191,3 +191,29 @@ def test_payment_descriptors_redacted() -> None:
     assert redacted["payment_gateway"] == "**REDACTED**"
     assert redacted["paymentMethod"] == "**REDACTED**"
     assert redacted["paymentGateway"] == "**REDACTED**"
+
+
+def test_proof_of_delivery_redacted() -> None:
+    """A photo of the customer's door and the signer's name never reach a shared export."""
+    diagnostics = {
+        "orders": [
+            {
+                "delivery_photo_urls": ["https://pod.example/door.jpg"],
+                "delivery_signed_by": "Pat Smith",
+                "tracking_events": [{"time": "2026-09-28T07:56:00+00:00", "detail": "delivered"}],
+            }
+        ],
+        "debug_trace": {
+            "tracking_attempts": [{"proof_of_delivery_photo_urls": ["x"], "signed_by": "Pat"}]
+        },
+    }
+
+    redacted = _redact(diagnostics)
+    order = redacted["orders"][0]
+    assert order["delivery_photo_urls"] == "**REDACTED**"
+    assert order["delivery_signed_by"] == "**REDACTED**"
+    # The scan history carries no PII and stays useful for debugging.
+    assert order["tracking_events"][0]["detail"] == "delivered"
+    attempt = redacted["debug_trace"]["tracking_attempts"][0]
+    assert attempt["proof_of_delivery_photo_urls"] == "**REDACTED**"
+    assert attempt["signed_by"] == "**REDACTED**"

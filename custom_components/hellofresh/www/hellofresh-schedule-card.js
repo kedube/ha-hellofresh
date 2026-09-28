@@ -83,6 +83,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._busy = false; // a skip/unskip/reschedule write is in flight
     this._actionError = null; // last failed skip/unskip/reschedule, shown as an inline notice
     this._rescheduleWeekId = null; // week whose "Change day" options panel is open
+    this._historyWeekId = null; // week whose carrier scan history is open
     // handle -> {name, price, day} from get_delivery_options; lazily fetched the first time a
     // "Change day" panel opens, so it enriches the per-week option labels with weekday names
     // and prices. null = not fetched yet; {} = fetched but empty/unavailable.
@@ -550,6 +551,12 @@ class HelloFreshScheduleCard extends HTMLElement {
         this._render();
         // Enrich the picker with weekday names/prices; re-renders when it lands.
         if (opening) this._ensureDeliveryOptions();
+      } else if (action === "tracking-history") {
+        // Open state lives on the card (like the reschedule panel), so a data refresh that
+        // re-renders the rows keeps the history open instead of snapping it shut.
+        const weekId = actionEl.getAttribute("data-week-id");
+        this._historyWeekId = this._historyWeekId === weekId ? null : weekId;
+        this._render();
       } else if (action === "reschedule") {
         this._reschedule(
           actionEl.getAttribute("data-week-id"),
@@ -750,7 +757,7 @@ class HelloFreshScheduleCard extends HTMLElement {
         </div>` : ""}
         <div class="sumrow">
           <span class="sumlabel">Status</span>
-          <span class="sumval">${this._esc(this._titleCase(status))}${price ? ` <span class="muted">· ${this._esc(price)}</span>` : ""}</span>
+          <span class="sumval">${this._esc(this._statusWithDetail(status, order.tracking_status_detail))}${price ? ` <span class="muted">· ${this._esc(price)}</span>` : ""}</span>
         </div>
         ${discount ? `
         <div class="sumrow">
@@ -928,6 +935,7 @@ class HelloFreshScheduleCard extends HTMLElement {
           </div>
           ${detail ? `<div class="rowsub">${detail}</div>` : ""}
           ${state === "skipped" ? "" : this._rowTracking(week)}
+          ${state !== "skipped" && this._historyWeekId === week.week_id ? this._renderTrackingHistory(week) : ""}
           ${this._rescheduleWeekId === week.week_id ? this._renderRescheduleOptions(week) : ""}
         </div>
         ${voucherBadge}
@@ -982,8 +990,20 @@ class HelloFreshScheduleCard extends HTMLElement {
   _rowStatus(week, badgeLabel) {
     const order = week.order || {};
     const status = this._titleCase(order.tracking_status || order.status || week.status || "");
-    if (!status || status.toLowerCase() === badgeLabel.toLowerCase()) return "";
-    return status;
+    const shown = status && status.toLowerCase() !== badgeLabel.toLowerCase() ? status : "";
+    // The carrier's finer step ("Received at origin facility") while the status still reads
+    // "In transit" — dropped when it only repeats the status or the badge.
+    const detail = this._sentenceCase(order.tracking_status_detail);
+    const repeats = [status, badgeLabel].some((s) => s && s.toLowerCase() === detail.toLowerCase());
+    return [shown, detail && !repeats ? detail : ""].filter(Boolean).join(" · ");
+  }
+
+  // "In Transit · Received at origin facility" for the summary; the status alone when the
+  // detail adds nothing.
+  _statusWithDetail(status, detail) {
+    const head = this._titleCase(status);
+    const tail = this._sentenceCase(detail);
+    return tail && tail.toLowerCase() !== head.toLowerCase() ? `${head} · ${tail}` : head;
   }
 
   // Distinct market add-ons selected for a week (mirrors the market card's selection test).
@@ -1041,8 +1061,52 @@ class HelloFreshScheduleCard extends HTMLElement {
       );
     }
     if (order.order_id) parts.push(`Order ${this._esc(order.order_id)}`);
-    if (!parts.length) return "";
-    return `<div class="rowtrack">${parts.join(" · ")}</div>`;
+    const events = Array.isArray(order.tracking_events) ? order.tracking_events : [];
+    if (events.length) {
+      const open = this._historyWeekId === week.week_id;
+      parts.push(
+        `<button class="linkbtn" data-action="tracking-history" data-week-id="${this._esc(week.week_id)}"
+          aria-expanded="${open}" title="Carrier scan history">${open ? "Hide history" : `History (${events.length})`}</button>`
+      );
+    }
+    const line = parts.length ? `<div class="rowtrack">${parts.join(" · ")}</div>` : "";
+    return line + this._rowProofOfDelivery(order);
+  }
+
+  // Proof of delivery, when the carrier provides it: photo thumbnails (each opens the full
+  // photo) and who signed. Veho leaves both empty, so most boxes render nothing here. Only
+  // http(s) URLs reach the <img>; the server filters too, this is defense in depth.
+  _rowProofOfDelivery(order) {
+    const photos = (Array.isArray(order.delivery_photo_urls) ? order.delivery_photo_urls : [])
+      .map((url) => this._safeUrl(url))
+      .filter(Boolean)
+      .slice(0, 3);
+    const signed = order.delivery_signed_by;
+    if (!photos.length && !signed) return "";
+    const thumbs = photos
+      .map(
+        (url, i) =>
+          `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Open delivery photo">` +
+          `<img class="podimg" src="${url}" alt="Delivery photo${photos.length > 1 ? ` ${i + 1}` : ""}" loading="lazy"></a>`
+      )
+      .join("");
+    const signer = signed ? `<span>Signed by ${this._esc(signed)}</span>` : "";
+    return `<div class="rowpod">${thumbs}${signer}</div>`;
+  }
+
+  // The carrier's scans for a week's box, newest first ("Sep 28, 3:56 AM · Received at
+  // origin facility"), opened from the tracking line's History button.
+  _renderTrackingHistory(week) {
+    const events = Array.isArray((week.order || {}).tracking_events) ? week.order.tracking_events : [];
+    if (!events.length) return "";
+    const items = events
+      .map((event) => {
+        const when = this._fmtArrival(event && event.time) || "—";
+        const what = this._sentenceCase((event && (event.detail || event.status)) || "");
+        return `<li><span class="histwhen">${this._esc(when)}</span>${this._esc(what)}</li>`;
+      })
+      .join("");
+    return `<ul class="trackhist" aria-label="Tracking history">${items}</ul>`;
   }
 
   _rowDetail(week, state) {
@@ -1184,6 +1248,13 @@ class HelloFreshScheduleCard extends HTMLElement {
     return titleCase(value);
   }
 
+  // "received_at_origin_facility" -> "Received at origin facility": carrier steps read as a
+  // phrase, not Title Case headings.
+  _sentenceCase(value) {
+    const text = String(value || "").replace(/[_-]+/g, " ").trim().toLowerCase();
+    return text ? text[0].toUpperCase() + text.slice(1) : "";
+  }
+
   _esc(value) {
     return esc(value);
   }
@@ -1318,6 +1389,27 @@ class HelloFreshScheduleCard extends HTMLElement {
       .rowtrack { font-size: 0.78em; color: var(--secondary-text-color); margin-top: 2px; }
       .rowtrack a { color: inherit; }
       .rowtrack .arrived { color: var(--primary-text-color); font-weight: 500; }
+      /* The History toggle reads as part of the tracking line, not as a pill button. */
+      .linkbtn {
+        font: inherit; color: var(--hf-green); background: none; border: none; padding: 0;
+        cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+      }
+      .trackhist {
+        list-style: none; margin: 4px 0 0; padding: 0 0 0 10px;
+        border-left: 2px solid var(--divider-color);
+        font-size: 0.78em; color: var(--secondary-text-color);
+      }
+      .trackhist li { padding: 1px 0; }
+      .trackhist li:first-child { color: var(--primary-text-color); }
+      .histwhen { display: inline-block; min-width: 9em; margin-right: 6px; }
+      .rowpod {
+        display: flex; align-items: center; gap: 6px; margin-top: 4px;
+        font-size: 0.78em; color: var(--secondary-text-color);
+      }
+      .podimg {
+        width: 56px; height: 56px; object-fit: cover; border-radius: 6px; display: block;
+        border: 1px solid var(--divider-color);
+      }
       .holiday { flex: none; font-size: 0.9em; cursor: help; }
       .dayopts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
       .dayopt {
