@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 3.04 — 2026-09-28
 - **Fixed: meal photos missing on some weeks.** When the integration falls back to HelloFresh's
   regional menu catalog, that source gives each meal's photo only as a path with no host, so
   those weeks showed no pictures; the host is now added. Recent delivered weeks read from the
