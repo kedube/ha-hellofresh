@@ -282,6 +282,10 @@ automation:
             HelloFresh chose meals for an upcoming week. Review them before
             {{ as_timestamp(states('sensor.hellofresh_us_next_selectable_delivery_selection_deadline'))
                | timestamp_custom('%A %-I:%M %p') }}.
+          data:
+            # Tapping it opens the HelloFresh menu in the companion app (iOS: url, Android: clickAction).
+            url: /hellofresh-app/menu
+            clickAction: /hellofresh-app/menu
 ```
 
 **Tell me when the box is out for delivery.** The tracked-shipment status follows the carrier feed:
@@ -464,7 +468,8 @@ This repository is structured as a HACS-compatible custom integration repository
 It also includes:
 
 - a pytest suite for API normalization, serialization behavior, the email/password auth and token-refresh lifecycle, the token-only setup/transport paths, and richer capability helpers
-- GitHub Actions workflows for HACS validation, `hassfest`, and `python -m pytest -q`
+- browser tests for the HelloFresh card ([`tests/browser`](tests/browser/README.md)): its real flows in headless Chrome against a fake Home Assistant with made-up data (`npm test`), which also regenerate the screenshots in this README (`npm run screenshots`)
+- GitHub Actions workflows for HACS validation, `hassfest`, `python -m pytest -q`, and the browser tests
 - issue templates for bug reports and feature requests
 - a [contributing guide](CONTRIBUTING.md)
 - a ready-to-use [example dashboard](dashboard/hellofresh.yaml) (see [The HelloFresh card](#the-hellofresh-card))

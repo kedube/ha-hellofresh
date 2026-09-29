@@ -1194,6 +1194,25 @@ export function marketGroups(week, selection, { selectedOnly = false, sections =
 
 // ---- calendar ---------------------------------------------------------------------------------
 
+const WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+// The calendar's first column (0 = Sunday), from Home Assistant's own "First day of the week"
+// setting; left on "language", the language decides (Sunday for US English, Monday for Dutch).
+export function firstWeekday(hass) {
+  const locale = (hass && hass.locale) || {};
+  const setting = String(locale.first_weekday || "language").toLowerCase();
+  if (WEEKDAY_NAMES.includes(setting)) return WEEKDAY_NAMES.indexOf(setting);
+  const language = locale.language || (hass && hass.language) || "en-US";
+  try {
+    const intl = new Intl.Locale(language);
+    const info = typeof intl.getWeekInfo === "function" ? intl.getWeekInfo() : intl.weekInfo;
+    if (info && Number.isFinite(info.firstDay)) return info.firstDay % 7;
+  } catch (_e) {
+    /* an unknown tag: fall through */
+  }
+  return /^en(-us)?$/i.test(language) ? 0 : 1;
+}
+
 // The day a week sits on: when it actually arrived, else when it is scheduled.
 export function weekDay(week) {
   return (week && (week.delivered_at || week.delivery_date)) || null;

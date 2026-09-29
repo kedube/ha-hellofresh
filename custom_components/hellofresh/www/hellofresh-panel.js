@@ -9,7 +9,14 @@
  * carries the card's config (`config_entry_id` when there is more than one account). The panel
  * hosts one hellofresh-card and passes them on. The card fills the page and, where Home
  * Assistant hides its sidebar (phones), shows the button that opens it.
+ *
+ * The address names the section: /hellofresh-app/menu opens the Menu, /hellofresh-app/menu/2026-W42
+ * that week of it (a notification can link straight there), and switching sections updates the
+ * address in place, so a reload or bookmark comes back to the same one.
  */
+
+const SECTIONS = ["overview", "menu", "market", "recipes", "account"];
+const WEEK_ID = /^\d{4}-W\d{2}$/;
 
 const PANEL_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
@@ -79,6 +86,7 @@ class HelloFreshPanel extends HTMLElement {
 
   set route(route) {
     this._route = route;
+    this._applyRoute();
   }
 
   get route() {
@@ -98,8 +106,39 @@ class HelloFreshPanel extends HTMLElement {
     card.setConfig(this._cardConfig());
     card.narrow = this._narrow;
     if (this._hass) card.hass = this._hass;
+    card.addEventListener("hellofresh-navigated", (ev) => this._reflect(ev.detail && ev.detail.view));
     this._page.append(card);
     this._card = card;
+    this._applyRoute();
+  }
+
+  _prefix() {
+    return (this._route && this._route.prefix) || `/${(this._panel && this._panel.url_path) || "hellofresh-app"}`;
+  }
+
+  // An address naming a section (and maybe a week) opens it. Each address is applied once, so
+  // Home Assistant handing the same route back doesn't undo a section chosen since.
+  _applyRoute() {
+    if (!this._card || !this._route) return;
+    const path = String(this._route.path || "");
+    if (path === this._appliedPath) return;
+    this._appliedPath = path;
+    const [section, week] = path.split("/").filter(Boolean);
+    if (!SECTIONS.includes(section)) return;
+    this._card.navigate(section, { weekId: WEEK_ID.test(week || "") ? week : null });
+  }
+
+  // Keep the address on the section showing, in place (no history entry per tab), while this
+  // panel is the page on screen.
+  _reflect(section) {
+    if (!SECTIONS.includes(section)) return;
+    const prefix = this._prefix();
+    const url = `${prefix}/${section}`;
+    const here = window.location.pathname;
+    // Off this page, or already there (a link to a week of this section keeps its week).
+    if (!here.startsWith(prefix) || here === url || here.startsWith(`${url}/`)) return;
+    this._appliedPath = `/${section}`;
+    window.history.replaceState(window.history.state, "", url);
   }
 
   _fail(err) {
