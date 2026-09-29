@@ -83,7 +83,7 @@ title: Recipes
 > **YAML-mode dashboards only.** Storage-mode dashboards (the default) get the card registered
 > automatically. In **YAML mode**, add it once under **Settings → Dashboards → Resources** as a
 > *JavaScript module*: `/hellofresh/hellofresh-card.js?v=<integration version>` (for example
-> `?v=3.08`). The `?v=` must match your installed version, and must be updated after each upgrade
+> `?v=4.00`). The `?v=` must match your installed version, and must be updated after each upgrade
 > or browsers keep serving the cached card; the startup log prints the exact URL. The card's own
 > `hellofresh-card-*.js` modules, `hellofresh-shared.js` and `hellofresh-recipe-detail.js` are
 > imported by the card itself — they are not resources to register. The sidebar entry needs none
