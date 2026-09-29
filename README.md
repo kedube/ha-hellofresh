@@ -346,7 +346,9 @@ just this card. Every option and every tab is in [docs/dashboard.md](docs/dashbo
 The seven single-purpose cards the HelloFresh card grew out of — Meal planner, Market, Recipes,
 Food Profile, Schedule, Subscription and Cost — still ship and still work, but they're
 **deprecated and will be removed in a future release**. Each now says so in its title and in the
-card picker. The HelloFresh card does everything they do:
+card picker, and while a dashboard still uses one, the **Repairs** screen lists them. They also load
+only where they're used, so nobody else downloads them with every dashboard. The HelloFresh card
+does everything they do:
 [Moving from the classic cards](docs/dashboard.md#moving-from-the-classic-cards) shows where each
 feature went. The multi-view [`dashboard/hellofresh-classic.yaml`](dashboard/hellofresh-classic.yaml)
 built from them goes away with them.
@@ -406,6 +408,11 @@ For weeks that already shipped, the selection is taken from your **delivery hist
 
 **A "payload shape changed" Repairs issue appears.**
 HelloFresh returned account data the integration couldn't fully parse — usually a sign the website changed. Attaching a [diagnostics export](#diagnostics) to a GitHub issue is the most helpful thing you can do here.
+
+**A classic card shows "Custom element doesn't exist" after I added it.**
+The deprecated classic cards load only while a dashboard uses them, and the integration notices a
+new one when the dashboard is saved. Save the dashboard, then refresh the browser. Better still,
+use the HelloFresh card, which does everything they do.
 
 **A card looks outdated or is missing features after an update.**
 Every card is versioned with the integration's release version: the card's resource URL carries a `?v=<version>` cache-bust that is stamped from `manifest.json`, and the registered URL is updated automatically on the first Home Assistant restart after an upgrade. If a card still looks stale, restart Home Assistant, then hard-refresh the browser (Ctrl/Cmd+Shift+R) or clear the app cache in the mobile companion app. To confirm which card build the browser actually loaded, open the browser console (F12) — each card logs a startup banner such as `HELLOFRESH-CARD v3.08`, and that version should match the integration version shown under **Settings → Devices & services → HelloFresh**. You can also compare the `frontend` block in a [diagnostics export](#diagnostics), which lists the resource URLs this release expects next to the URLs actually registered.

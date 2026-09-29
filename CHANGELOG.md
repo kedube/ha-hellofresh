@@ -50,7 +50,9 @@ version heading and publishes it as the release's Highlights.
   filters and the selected week with the new card, but now say so: "(deprecated)" in the card
   picker, a **Deprecated** badge in the card's title linking to
   [Moving from the classic cards](https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md#moving-from-the-classic-cards), and one
-  console warning.
+  console warning. They now load only while a dashboard uses them (checked at startup and whenever
+  a dashboard is saved), so everyone else stops downloading them with every dashboard, and a
+  **Repairs** notice names the cards and dashboards still using them.
 - **The README and `docs/dashboard.md` are rewritten around the HelloFresh card**, with new
   screenshots up front.
 - **New: live delivery tracking in the Netherlands** (issue #6). Where HelloFresh drives its own

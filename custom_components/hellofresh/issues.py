@@ -14,6 +14,12 @@ ISSUE_ACCOUNT_DATA_UNAVAILABLE = "account_data_unavailable"
 ISSUE_ACCOUNT_MENU_FALLBACK = "account_menu_fallback"
 ISSUE_PAYLOAD_SHAPE_CHANGED = "payload_shape_changed"
 ISSUE_WRITE_ACTIONS_UNAVAILABLE = "write_actions_unavailable"
+# Not per entry: dashboards belong to the whole Home Assistant, not to one account.
+ISSUE_DEPRECATED_CLASSIC_CARDS = "deprecated_classic_cards"
+CLASSIC_CARDS_MIGRATION_URL = (
+    "https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md"
+    "#moving-from-the-classic-cards"
+)
 
 _ALL_ISSUE_KEYS = (
     ISSUE_ACCOUNT_DATA_UNAVAILABLE,
@@ -143,3 +149,30 @@ def async_create_write_actions_issue(hass, entry_id: str, entry_title: str) -> N
 def async_delete_write_actions_issue(hass, entry_id: str) -> None:
     """Delete the write-actions issue."""
     ir.async_delete_issue(hass, DOMAIN, _issue_id(ISSUE_WRITE_ACTIONS_UNAVAILABLE, entry_id))
+
+
+def async_update_classic_cards_issue(hass, in_use: dict[str, list[str]]) -> None:
+    """Raise, refresh or clear the notice that dashboards still use the classic cards.
+
+    ``in_use`` maps each deprecated card type still on a dashboard to the dashboards using it
+    (frontend.async_classic_cards_in_use). The notice names both and links to the migration
+    notes; it goes away by itself once no dashboard uses a classic card.
+    """
+    if not in_use:
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_DEPRECATED_CLASSIC_CARDS)
+        return
+    dashboards = sorted({name for names in in_use.values() for name in names})
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        ISSUE_DEPRECATED_CLASSIC_CARDS,
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        learn_more_url=CLASSIC_CARDS_MIGRATION_URL,
+        translation_key=ISSUE_DEPRECATED_CLASSIC_CARDS,
+        translation_placeholders={
+            "cards": ", ".join(f"`{card_type}`" for card_type in sorted(in_use)),
+            "dashboards": ", ".join(dashboards),
+        },
+    )
