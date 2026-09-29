@@ -15,6 +15,12 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 bump_manifest_version = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(bump_manifest_version)
+_NOTES_SPEC = importlib.util.spec_from_file_location(
+    "generate_release_notes",
+    REPO_ROOT / ".github" / "scripts" / "generate_release_notes.py",
+)
+generate_release_notes = importlib.util.module_from_spec(_NOTES_SPEC)
+_NOTES_SPEC.loader.exec_module(generate_release_notes)
 
 
 def test_bump_minor() -> None:
@@ -34,6 +40,7 @@ def test_bump_minor_releases_a_beta_as_its_final_version() -> None:
     assert bump_manifest_version._bump_minor("3.8b1") == "3.08"
     assert bump_manifest_version._bump_minor("3.8rc2") == "3.08"
     assert bump_manifest_version._bump_minor("3.10b1") == "3.10"
+    assert bump_manifest_version._bump_minor("4.0b2") == "4.00"
 
 
 def test_manifest_version_is_one_home_assistant_loads() -> None:
@@ -78,3 +85,18 @@ def test_main_major_bump(tmp_path: Path, capsys, monkeypatch) -> None:
     assert bump_manifest_version.main() == 0
     assert capsys.readouterr().out.strip() == "3.00"
     assert json.loads(manifest.read_text())["version"] == "3.00"
+
+
+def test_release_notes_link_to_the_docs_as_the_release_shipped_them() -> None:
+    """CHANGELOG links are repository-relative; on a release page they would resolve under
+    /releases/tag/, so the notes pin them to the release's own tag."""
+    text = (
+        "See [Moving](docs/dashboard.md#moving-from-the-classic-cards), [options](./README.md#options), "
+        "[the site](https://www.hellofresh.com) and [below](#highlights)."
+    )
+    assert generate_release_notes._absolute_links(text, "kedube/ha-hellofresh", "4.00") == (
+        "See [Moving](https://github.com/kedube/ha-hellofresh/blob/4.00/docs/dashboard.md"
+        "#moving-from-the-classic-cards), "
+        "[options](https://github.com/kedube/ha-hellofresh/blob/4.00/README.md#options), "
+        "[the site](https://www.hellofresh.com) and [below](#highlights)."
+    )

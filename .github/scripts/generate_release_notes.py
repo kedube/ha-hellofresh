@@ -20,6 +20,9 @@ import subprocess
 import sys
 
 RELEASE_TAG_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
+# A Markdown link to a repository path (docs/dashboard.md#…, README.md#options). Relative links
+# resolve on GitHub's file views, but on a release page they would point under /releases/tag/.
+RELATIVE_LINK_RE = re.compile(r"\]\((?!https?://|mailto:|#)([^)\s]+)\)")
 
 
 def _git(*args: str) -> str:
@@ -48,6 +51,17 @@ def _changelog_section(version: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _absolute_links(markdown: str, repo: str, ref: str) -> str:
+    """Point repository-relative links at the release's own tag, so each release's notes link
+    to the docs as that version shipped them."""
+
+    def _pin(match: re.Match[str]) -> str:
+        path = re.sub(r"^\./", "", match.group(1))
+        return f"](https://github.com/{repo}/blob/{ref}/{path})"
+
+    return RELATIVE_LINK_RE.sub(_pin, markdown)
+
+
 def _commit_lines(previous_tag: str | None) -> list[str]:
     log_range = f"{previous_tag}..HEAD" if previous_tag else "HEAD"
     subjects = _git("log", "--no-merges", "--format=%s (%h)", log_range).splitlines()
@@ -68,7 +82,7 @@ def main() -> int:
     previous_tag = _previous_tag(version)
     sections: list[str] = []
 
-    highlights = _changelog_section(version)
+    highlights = _absolute_links(_changelog_section(version), repo, version)
     if highlights:
         sections.append(f"## Highlights\n\n{highlights}")
 
