@@ -120,6 +120,10 @@
     "write_actions_unavailable": {
       "title": "HelloFresh-skrivehandlinger er ikke bekræftet for {entry_title}",
       "description": "Du forsøgte at bruge en HelloFresh-handling, der ændrer kontodata for **{entry_title}**, såsom at vælge retter eller springe en uge over. Integrationen prøvede de kendte skrive-endpoints for din konto, men ingen accepterede forespørgslen, så handlingen blev blokeret i stedet for at gætte videre."
+    },
+    "deprecated_classic_cards": {
+      "title": "HelloFreshs klassiske kort forsvinder",
+      "description": "Dine dashboards {dashboards} bruger stadig {cards}. Disse kort er forældede og fjernes i en kommende version. HelloFresh-kortet kan alt det, de kan: åbn **HelloFresh** i sidebjælken, eller tilføj `custom:hellofresh-card` til et dashboard, og fjern derefter de klassiske kort. **Læs mere** viser, hvor hver funktion findes nu."
     }
   },
   "entity": {

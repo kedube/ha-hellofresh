@@ -321,6 +321,11 @@ Your filters, "In my box" and the week you were on carry over: the HelloFresh ca
 the same keys. Nothing changes on the integration side — entities, services and automations are
 untouched.
 
+While any dashboard still uses a classic card, Home Assistant's **Repairs** screen says which cards
+and which dashboards. The classic cards also load only while a dashboard uses them: the
+integration checks at startup and whenever a dashboard is saved, so once you've switched, they stop
+downloading with every dashboard and the notice clears itself.
+
 | Classic | In the HelloFresh card |
 |---|---|
 | [Meal planner card](#meal-planner-card) | Menu (plus search, a Favorites highlight, editing in "In my box", and one tile per dish with a customization drawer in place of separate variant tiles and **Hide variants**) |

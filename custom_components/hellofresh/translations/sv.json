@@ -120,6 +120,10 @@
     "write_actions_unavailable": {
       "title": "HelloFresh-skrivåtgärder är inte bekräftade för {entry_title}",
       "description": "Du försökte använda en HelloFresh-åtgärd som ändrar kontodata för **{entry_title}**, till exempel att välja rätter eller hoppa över en vecka. Integrationen prövade de kända skrivslutpunkterna för ditt konto, men ingen accepterade förfrågan, så åtgärden blockerades i stället för att gissa vidare."
+    },
+    "deprecated_classic_cards": {
+      "title": "HelloFreshs klassiska kort försvinner",
+      "description": "Dina instrumentpaneler {dashboards} använder fortfarande {cards}. Dessa kort är föråldrade och tas bort i en kommande version. HelloFresh-kortet gör allt de gör: öppna **HelloFresh** i sidofältet, eller lägg till `custom:hellofresh-card` på en instrumentpanel, och ta sedan bort de klassiska korten. **Läs mer** visar var varje funktion finns nu."
     }
   },
   "entity": {

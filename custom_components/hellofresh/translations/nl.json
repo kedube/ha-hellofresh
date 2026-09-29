@@ -120,6 +120,10 @@
     "write_actions_unavailable": {
       "title": "HelloFresh-schrijfacties zijn niet bevestigd voor {entry_title}",
       "description": "Je probeerde een HelloFresh-actie te gebruiken die accountgegevens wijzigt voor **{entry_title}**, zoals maaltijden kiezen of een week overslaan. De integratie heeft de bekende schrijf-endpoints voor je account geprobeerd, maar geen enkele accepteerde het verzoek. De actie is daarom geblokkeerd in plaats van verder te gokken."
+    },
+    "deprecated_classic_cards": {
+      "title": "De klassieke HelloFresh-kaarten verdwijnen",
+      "description": "Je dashboards {dashboards} gebruiken nog {cards}. Deze kaarten zijn verouderd en worden in een toekomstige versie verwijderd. De HelloFresh-kaart doet alles wat zij doen: open **HelloFresh** in de zijbalk, of zet `custom:hellofresh-card` op een dashboard, en verwijder daarna de klassieke kaarten. Onder **Meer informatie** staat waar elke functie nu te vinden is."
     }
   },
   "entity": {

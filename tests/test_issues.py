@@ -86,3 +86,32 @@ def test_write_actions_issue_delete_targets_same_id() -> None:
     with patch.object(issues.ir, "async_delete_issue") as delete:
         issues.async_delete_write_actions_issue(hass, "entry-1")
     assert delete.call_args.args[2] == created_id
+
+
+def test_classic_cards_notice_names_the_cards_and_dashboards(monkeypatch) -> None:
+    """Dashboards still using the deprecated classic cards get one Repairs notice naming them;
+    it clears itself once none does."""
+    from custom_components.hellofresh import issues
+
+    created: list = []
+    deleted: list = []
+    monkeypatch.setattr(issues.ir, "async_create_issue", lambda *a, **kw: created.append((a, kw)))
+    monkeypatch.setattr(issues.ir, "async_delete_issue", lambda *a: deleted.append(a))
+
+    issues.async_update_classic_cards_issue(
+        object(),
+        {
+            "custom:hellofresh-schedule-card": ["Kitchen", "Overview"],
+            "custom:hellofresh-cost-card": ["Kitchen"],
+        },
+    )
+    ((args, kwargs),) = created
+    assert args[1:] == ("hellofresh", "deprecated_classic_cards")
+    assert kwargs["translation_placeholders"] == {
+        "cards": "`custom:hellofresh-cost-card`, `custom:hellofresh-schedule-card`",
+        "dashboards": "Kitchen, Overview",
+    }
+    assert kwargs["learn_more_url"].endswith("#moving-from-the-classic-cards")
+
+    issues.async_update_classic_cards_issue(object(), {})
+    assert deleted and deleted[-1][1:] == ("hellofresh", "deprecated_classic_cards")
