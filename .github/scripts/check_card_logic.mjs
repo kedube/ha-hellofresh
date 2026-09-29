@@ -24,6 +24,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CARD_DIR = "custom_components/hellofresh/www";
 
@@ -57,6 +58,13 @@ const helpers = {
 
 const marketBrowsable = extractMethod("hellofresh-market-card.js", "_browsableWeeks");
 const plannerBrowsable = extractMethod("hellofresh-meal-planner-card.js", "_browsableWeeks");
+
+// The unified card keeps its week logic in a real ES module, so it is imported rather than
+// lifted with a regex. Its one week list serves the menu, the Market AND the schedule.
+const unified = await import(
+  `${pathToFileURL(path.resolve(CARD_DIR, "hellofresh-card-logic.js")).href}?v=ci`
+);
+const unifiedBrowsable = (weeks) => unified.browsableWeeks(weeks);
 
 /** Build a week `weeksFromToday` in the past (negative) or future (positive). */
 function week(id, weeksFromToday, { market = 0, recipes = 0 } = {}) {
@@ -141,7 +149,32 @@ test("empty and missing input never throws", () => {
   for (const value of [[], null, undefined]) {
     assert.deepEqual(marketBrowsable(value), []);
     assert.deepEqual(plannerBrowsable(value), []);
+    assert.deepEqual(unifiedBrowsable(value), []);
   }
+});
+
+test("the unified card exposes the same past weeks as the classic cards", () => {
+  const weeks = [];
+  for (let i = 12; i >= 1; i--) {
+    weeks.push(week(`W-${i}`, -i, { market: [1, 2, 9].includes(i) ? 2 : 0, recipes: i % 4 ? 3 : 0 }));
+  }
+  const ids = (list) => list.map((w) => w.week_id);
+  assert.deepEqual(ids(unifiedBrowsable(weeks)), ids(plannerBrowsable(weeks)));
+  assert.deepEqual(ids(unifiedBrowsable(weeks)), ids(marketBrowsable(weeks)));
+});
+
+test("the unified card keeps skipped future weeks, and still stops at the first gap", () => {
+  // One list now drives the schedule too, and a skipped week has no menu by design — hiding
+  // it would leave nothing to tap Unskip on (the classic Schedule card's rule).
+  const skipped = { ...week("f2", 2), is_skipped: true };
+  const weeks = [
+    week("f1", 1, { market: 2, recipes: 2 }),
+    skipped,
+    week("f3", 3, { market: 3, recipes: 0 }), // Market published, menu not yet: still a week
+    week("f4", 4), // gap
+    week("f5", 5, { market: 2, recipes: 2 }), // behind the gap
+  ];
+  assert.deepEqual(unifiedBrowsable(weeks).map((w) => w.week_id), ["f1", "f2", "f3"]);
 });
 
 let failed = 0;

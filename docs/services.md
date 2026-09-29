@@ -34,7 +34,7 @@ Change what is in a box.
 
 ### `hellofresh.select_meals`
 
-set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's own cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals). Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
+set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's own cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals). An optional `market_quantities` map (Market item id/sku/index → quantity, exactly as in `select_market_items`; `0` or omitted removes an item) sets the week's add-ons **in the same cart write** — use it to change meals and extras together, because two separate writes each rebuild the cart from the last poll and the second can undo the first. Leave it out and the current add-ons are kept; pass `{}` to clear them. Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
 
 ### `hellofresh.select_market_items`
 

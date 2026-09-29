@@ -29,7 +29,9 @@
  * `{ qty, maxQty, add, inc, dec }` pins a selection footer to the sheet ("+ Add" when
  * qty is 0, a ± servings stepper otherwise), completing the "read it, then decide" flow
  * on the meal planner's editable weeks. The callbacks mutate the HOST's pending selection
- * (the host re-renders its own grid); the sheet only re-renders its footer.
+ * (the host re-renders its own grid); the sheet only re-renders its footer. An optional
+ * `unit` ("item") relabels the stepper for things counted rather than served, like Market
+ * add-ons; without it the footer reads in servings, as it always has.
  */
 
 // ---- helpers (self-contained: this module must not depend on a host card's internals) ------
@@ -507,15 +509,17 @@ export class RecipeDetailOverlay {
                 <button class="sadd" data-sel="add">+ Add</button>
               </div>`;
     }
+    const unit = sel.unit === "item" ? "item" : "serving";
+    const removeTitle = unit === "item" ? "Remove" : "Remove meal";
     return `<div class="selfooter">
               <span class="selstate">In this week's box</span>
               <span class="selstep">
                 <button class="sqbtn" data-sel="dec"
-                  title="${sel.qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
+                  title="${sel.qty === 1 ? removeTitle : `Fewer ${unit}s`}">−</button>
                 <span class="sqval">${Number(sel.qty)}</span>
                 <button class="sqbtn" data-sel="inc" ${sel.qty >= sel.maxQty ? "disabled" : ""}
-                  title="More servings">+</button>
-                <span class="slabel">serving${sel.qty === 1 ? "" : "s"}</span>
+                  title="More ${unit}s">+</button>
+                <span class="slabel">${unit}${sel.qty === 1 ? "" : "s"}</span>
               </span>
             </div>`;
   }

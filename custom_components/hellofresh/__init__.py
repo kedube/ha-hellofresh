@@ -28,6 +28,7 @@ from .const import (
     ATTR_GOALS,
     ATTR_HOUSEHOLD,
     ATTR_LIMIT,
+    ATTR_MARKET_QUANTITIES,
     ATTR_PRODUCT_HANDLE,
     ATTR_QUANTITIES,
     ATTR_RECIPE_ID,
@@ -874,12 +875,21 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         week_id = service_call.data[ATTR_WEEK_ID]
         recipe_ids = list(service_call.data[ATTR_RECIPE_IDS])
         quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
+        # Present (even empty) = set the Market add-ons in this same cart write; absent = keep
+        # them. An empty map therefore clears them, exactly like select_market_items.
+        market_quantities = (
+            dict(service_call.data[ATTR_MARKET_QUANTITIES])
+            if ATTR_MARKET_QUANTITIES in service_call.data
+            else None
+        )
         downgraded = _DowngradeFlag()
         await _for_each_coordinator(
             service_call,
             lambda coordinator, _: _async_select_mutation(
                 coordinator,
-                coordinator.client.async_select_meals(week_id, recipe_ids, quantities),
+                coordinator.client.async_select_meals(
+                    week_id, recipe_ids, quantities, market_quantities
+                ),
                 week_id,
                 downgraded,
             ),
@@ -1278,6 +1288,11 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 # Optional per-recipe serving counts: {recipe_id: positive int}. Recipes absent
                 # from the map default to one serving.
                 vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
+                # Optional Market add-ons written in the SAME cart update, with
+                # select_market_items' shape ({item id/sku/index: quantity}, 0 removes).
+                vol.Optional(ATTR_MARKET_QUANTITIES): {
+                    str: vol.All(vol.Coerce(int), vol.Range(min=0))
+                },
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

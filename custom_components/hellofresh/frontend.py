@@ -1,8 +1,9 @@
-"""Frontend resource registration for the HelloFresh meal-planner Lovelace card.
+"""Frontend resource registration for the HelloFresh Lovelace cards.
 
-The integration ships a hand-written Lovelace card (``www/hellofresh-meal-planner-card.js``)
-that reads per-week recipes on demand from the response-returning ``hellofresh.get_weeks``
-service. To make it usable without the user manually adding a resource, the integration:
+The integration ships hand-written Lovelace cards — the unified ``www/hellofresh-card.js`` and
+the classic per-feature cards (meal planner, Market, …) — that read their data on demand from
+the integration's response-returning services such as ``hellofresh.get_weeks``. To make them
+usable without the user manually adding a resource, the integration:
 
   1. serves the file from a stable URL via a static path, and
   2. registers that URL as a Lovelace module resource (storage mode) / appends it to the
@@ -34,6 +35,9 @@ INTEGRATION_VERSION: str = json.loads(
 )["version"]
 
 CARD_FILENAME = "hellofresh-meal-planner-card.js"
+# The unified card (Overview / Menu / Market / Recipes / Account in one). Its view and logic
+# modules (hellofresh-card-*.js) are imports of this file, not resources of their own.
+UNIFIED_CARD_FILENAME = "hellofresh-card.js"
 MARKET_CARD_FILENAME = "hellofresh-market-card.js"
 FOOD_PROFILE_CARD_FILENAME = "hellofresh-food-profile-card.js"
 SCHEDULE_CARD_FILENAME = "hellofresh-schedule-card.js"
@@ -54,6 +58,7 @@ _CARDS = tuple(
         f"{WWW_URL_BASE}/{filename}?v={INTEGRATION_VERSION}",
     )
     for filename in (
+        UNIFIED_CARD_FILENAME,
         CARD_FILENAME,
         MARKET_CARD_FILENAME,
         FOOD_PROFILE_CARD_FILENAME,

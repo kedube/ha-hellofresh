@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Antal",
           "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal). Opskrifter, der udelades, får som standard én portion; minimumsantallet af retter kontrolleres mod det samlede antal portioner."
+        },
+        "market_quantities": {
+          "name": "Market-antal",
+          "description": "Valgfri sammenkobling af Market-varens id, SKU eller indeks og antal, gemt i samme kurvopdatering som retterne (0 eller udeladt fjerner en vare). Udelad den for at beholde ugens nuværende tilvalg."
         }
       }
     },

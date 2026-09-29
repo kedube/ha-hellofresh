@@ -1,183 +1,56 @@
 ################################################################################
-# HelloFresh — example Lovelace dashboard
+# HelloFresh — example dashboard
 #
-# A ready-to-use dashboard built entirely from entities and cards this integration
-# provides. No HACS frontend add-ons required.
+# The whole HelloFresh experience in ONE full-width card: Overview (next box, tracking,
+# pantry list, what's coming up, past deliveries), Menu and Market (one box, one Save),
+# Recipes, and Account (plan & billing, food preferences, spending). No HACS frontend
+# add-ons required.
 #
-# Seven views:
-#   • My Menu      — browse & edit each week's meal selection (meal-planner card)
-#   • Market       — browse & order HelloFresh Market add-ons (market card)
-#   • All Recipes  — browse the ~10,000-recipe public catalog (recipes card)
-#   • Food Profile — view & edit meal-preselection preferences (food-profile card)
-#   • Missing Ingredients — pantry staples the next box does NOT include, as a checklist
-#                    (built-in to-do card over `todo.<prefix>_prep_list`)
-#   • Schedule     — delivery calendar + timeline, account overview, and running cost
-#                    (schedule + subscription + cost cards, sections grid layout)
-#   • Diagnostics  — token expiry & integration health as tile cards, manual refresh
+# Two views:
+#   • HelloFresh — the card itself, full width (`type: panel`)
+#   • Activity   — the delivery lifecycle history (shipped, delivered, skipped, cutoff
+#                  passed, menu published) from the event entity, as a logbook
 #
 # ── Setup ─────────────────────────────────────────────────────────────────────
-# 1. Settings → Dashboards → ⋮ → "Edit in YAML" (or add a new YAML-mode dashboard),
-#    then paste the contents of this file.
+# 1. Settings → Dashboards → Add dashboard → New dashboard from scratch, open it, then
+#    ⋮ → Edit dashboard → ⋮ → Raw configuration editor, and paste this file.
 #
-# 2. Fix the entity-ID prefix — THIS IS REQUIRED. With `has_entity_name`, entity IDs
-#    derive from your config-entry title: a "HelloFresh (US)" account produces
-#    `sensor.hellofresh_us_next_delivery_date`, etc. This file uses `hellofresh_us_`
-#    throughout, so find/replace it with your account's prefix. (Check the real IDs at
-#    Settings → Devices & Services → HelloFresh → entities.) Leaving the wrong prefix
-#    makes the built-in cards show "Entity not available".
+# 2. The card needs no entity IDs — it finds this integration's pantry lists, plan
+#    controls and status sensors by itself. Only the Activity view names an entity: replace
+#    `hellofresh_us_` with your account's prefix (Settings → Devices & Services →
+#    HelloFresh → entities).
 #
 # ── Notes ─────────────────────────────────────────────────────────────────────
-# • The custom cards — `custom:hellofresh-meal-planner-card`, `custom:hellofresh-market-card`,
-#   `custom:hellofresh-recipes-card`, `custom:hellofresh-food-profile-card`,
-#   `custom:hellofresh-schedule-card`, `custom:hellofresh-subscription-card`, and
-#   `custom:hellofresh-cost-card` — are served and
-#   registered automatically when the
-#   integration loads (no manual resource step in storage-mode dashboards). For YAML-mode
-#   dashboards, add `/hellofresh/<card>.js?v=<integration version>` once under Settings →
-#   Dashboards → Resources as a JavaScript module (the `?v=` must match your installed
-#   version and be updated after upgrades — see docs/dashboard.md). Every other view is
-#   100% built-in Lovelace.
-# • The holiday-delivery notice is built into the subscription card and appears only while
-#   HelloFresh announces one; shipment tracking (carrier + linked tracking number) is shown
-#   per week inside the schedule card.
+# • With more than one HelloFresh account, add `config_entry_id:` to the card.
+# • `custom:hellofresh-card` is registered automatically in storage-mode dashboards. In a
+#   YAML-mode dashboard, add `/hellofresh/hellofresh-card.js?v=<integration version>` once
+#   under Settings → Dashboards → Resources as a JavaScript module (see docs/dashboard.md).
+# • The previous multi-view layout, one single-purpose card per view, is kept as
+#   dashboard/hellofresh-classic.yaml.
 ################################################################################
 
 title: HelloFresh
 views:
-  - title: My Menu
-    path: meal-planner
-    icon: mdi:silverware-variant
-    panel: true
-    cards:
-      - type: custom:hellofresh-meal-planner-card
-        title: My Menu
-        logo: true
+  - title: HelloFresh
+    path: hellofresh
+    icon: mdi:silverware-fork-knife
     type: panel
-  - title: Market
-    path: market
-    icon: mdi:storefront
-    panel: true
     cards:
-      - type: custom:hellofresh-market-card
-        title: Market
-        logo: true
-    type: panel
-  - title: All Recipes
-    path: recipes
-    icon: mdi:book-open-page-variant
-    panel: true
-    cards:
-      # Browse content shared by every HelloFresh customer (~10,000 recipes) — unrelated to
-      # your subscription or delivery weeks. Favoriting here shows up as a ♥ in My Menu.
-      - type: custom:hellofresh-recipes-card
-        title: All Recipes
-        logo: true
-    type: panel
-  - title: Food Profile
-    path: food-profile
-    icon: mdi:food-apple
-    panel: true
-    cards:
-      - type: custom:hellofresh-food-profile-card
-        title: Food Profile
-        logo: true
-    type: panel
-  - title: Missing Ingredients
-    path: missing-ingredients
-    icon: mdi:cart-outline
+      - type: custom:hellofresh-card
+        # views: [overview, menu, market, recipes, account]
+        # default_view: overview
+        # accent: brand     # or `theme` for your HA theme's primary colour
+  - title: Activity
+    path: activity
+    icon: mdi:history
     type: sections
     max_columns: 2
     sections:
-      # One section per delivery week — deliberately NOT one combined list. Each week has its
-      # own box, its own deadline, and its own shopping trip, so each gets its own to-do
-      # entity and card. As a box arrives the weeks shift up: `prep_list` always means the
-      # next delivery, and `prep_list_week_2` the one after it.
       - type: grid
         cards:
-          # Pantry staples the NEXT box does not include, from its selected meals.
           - type: heading
-            heading: Ingredients needed for this week
-          - type: todo-list
-            entity: todo.hellofresh_us_prep_list
-      - type: grid
-        cards:
-          # The delivery after that. Empty until a second box is scheduled and has meals
-          # selected — a skipped week ships nothing and is passed over.
-          - type: heading
-            heading: Ingredients needed for next week
-          - type: todo-list
-            entity: todo.hellofresh_us_prep_list_week_2
-  - title: Schedule
-    path: planning
-    icon: mdi:calendar-month
-    type: sections
-    max_columns: 3
-    sections:
-      - type: grid
-        column_span: 2
-        cards:
-          - type: custom:hellofresh-schedule-card
-            title: Schedule
-            logo: true
-            grid_options:
-              columns: full
-          # Delivery lifecycle history (shipped, delivered, skipped, cutoff passed, menu
-          # published) from the event entity — the same transitions automations trigger on.
+            heading: Delivery activity
           - type: logbook
-            title: Delivery activity
             hours_to_show: 336
             target:
               entity_id: event.hellofresh_us_delivery_events
-      - type: grid
-        cards:
-          - type: custom:hellofresh-subscription-card
-            title: Subscription
-            logo: true
-            grid_options:
-              columns: full
-          # Recurring plan controls (box size, delivery day) and the payment-method check.
-          # Both selects are RECURRING changes — every future box, and what you are billed.
-          - type: entities
-            title: Plan controls
-            entities:
-              - entity: select.hellofresh_us_box_size
-              - entity: select.hellofresh_us_delivery_day
-              - entity: binary_sensor.hellofresh_us_payment_method_expiring
-          - type: custom:hellofresh-cost-card
-            title: Cost
-            logo: true
-            grid_options:
-              columns: full
-  - title: Diagnostics
-    path: diagnostics
-    icon: mdi:stethoscope
-    type: sections
-    max_columns: 2
-    sections:
-      - type: grid
-        cards:
-          - type: heading
-            heading: Token health
-          - type: tile
-            entity: sensor.hellofresh_us_access_token_minutes_remaining
-            name: Access token
-          - type: tile
-            entity: sensor.hellofresh_us_refresh_token_days_remaining
-            name: Refresh token
-      - type: grid
-        cards:
-          - type: heading
-            heading: Integration health
-          - type: tile
-            entity: binary_sensor.hellofresh_us_payload_shape_changed
-            name: Payload shape changed
-          - type: tile
-            entity: binary_sensor.hellofresh_us_write_actions_available
-            name: Write actions
-          - type: entities
-            show_header_toggle: false
-            entities:
-              - entity: sensor.hellofresh_us_next_delivery_subscription
-                name: Delivery subscription ID
-              - entity: sensor.hellofresh_us_api_base_url
-                name: API base URL

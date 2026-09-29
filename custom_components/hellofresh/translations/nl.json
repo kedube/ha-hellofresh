@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Aantallen",
           "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal). Recepten die ontbreken krijgen standaard één portie; het minimum aantal maaltijden wordt getoetst aan het totaal aantal porties."
+        },
+        "market_quantities": {
+          "name": "Market-aantallen",
+          "description": "Optionele koppeling van Market-artikel-ID, SKU of index aan aantal, opgeslagen in dezelfde winkelwagenupdate als de maaltijden (0 of weggelaten verwijdert een artikel). Laat dit weg om de huidige extra's van de week te behouden."
         }
       }
     },

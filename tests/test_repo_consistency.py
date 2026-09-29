@@ -159,7 +159,10 @@ def test_shared_modules_are_not_registered_as_cards() -> None:
     """
     frontend_src = (COMPONENT / "frontend.py").read_text(encoding="utf-8")
     referenced = set(re.findall(r'"(hellofresh-[a-z0-9-]+\.js)"', frontend_src))
-    for module in ("hellofresh-shared.js", "hellofresh-recipe-detail.js"):
+    # The unified card's own modules (hellofresh-card-*.js) are imports of hellofresh-card.js.
+    unified_modules = sorted(p.name for p in (COMPONENT / "www").glob("hellofresh-card-*.js"))
+    assert unified_modules, "the unified card's modules are missing from www/"
+    for module in ("hellofresh-shared.js", "hellofresh-recipe-detail.js", *unified_modules):
         assert (COMPONENT / "www" / module).exists(), f"{module} is missing from www/"
         assert module not in referenced, f"{module} is a shared import, not a Lovelace resource"
 

@@ -28,6 +28,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 # (module filename, custom element it must define)
 CARDS = (
+    ("hellofresh-card.js", "hellofresh-card"),
     ("hellofresh-meal-planner-card.js", "hellofresh-meal-planner-card"),
     ("hellofresh-market-card.js", "hellofresh-market-card"),
     ("hellofresh-schedule-card.js", "hellofresh-schedule-card"),

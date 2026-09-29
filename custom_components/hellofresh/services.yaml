@@ -128,6 +128,15 @@ select_meals:
       example: '{ "69a9b548e566b4ce79049c5b": 2 }'
       selector:
         object:
+    market_quantities:
+      required: false
+      description: >-
+        Optional map of Market item id/sku/index to quantity, saved in the same
+        cart write as the meals (0 or omitted removes an item). Leave it out to
+        keep the week's current add-ons.
+      example: '{ "m1": 2 }'
+      selector:
+        object:
 
 select_market_items:
   name: Select market items
