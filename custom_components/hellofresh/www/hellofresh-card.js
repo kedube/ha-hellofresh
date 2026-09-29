@@ -657,7 +657,14 @@ class HelloFreshCard extends HTMLElement {
   // ---- week actions (shared by Overview and the week views) ------------------------------
 
   selectWeek(weekId, { render = true, broadcast = true } = {}) {
-    if (!weekId || !this.weekById(weekId)) return;
+    if (!weekId) return;
+    if (!this._weeks) {
+      // Asked for before the weeks load (a link to a week): hold it; _ensureWeek keeps it once
+      // they arrive, if the week is there.
+      this._weekId = weekId;
+      return;
+    }
+    if (!this.weekById(weekId)) return;
     if (weekId !== this._weekId) {
       this._weekId = weekId;
       this.box.clearDowngrade();
@@ -677,6 +684,8 @@ class HelloFreshCard extends HTMLElement {
     this._view = view;
     L.storageSet(L.viewStorageKey(this._config), view);
     this._render();
+    // The sidebar panel mirrors the section in its address (/hellofresh-app/menu).
+    this.dispatchEvent(new CustomEvent("hellofresh-navigated", { detail: { view }, bubbles: true, composed: true }));
     if (changed && this._shell) {
       // Jumping from a hero button deep in a long page: bring the card's top back into view.
       const rect = this._shell.app.getBoundingClientRect();

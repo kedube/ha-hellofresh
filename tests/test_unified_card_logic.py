@@ -676,3 +676,21 @@ def test_live_tracking_reads_the_netherlands_tracker_sensors() -> None:
         "",
         "2 min ago",
     )
+
+
+def test_the_calendar_starts_on_home_assistants_first_weekday() -> None:
+    """Home Assistant's profile setting wins; left on "language", the language decides — Monday
+    for Dutch or British English, Sunday for US English."""
+    body = """
+      const first = (locale, language) => L.firstWeekday({ locale, language });
+      return [
+        first({ first_weekday: "monday", language: "en" }),
+        first({ first_weekday: "saturday", language: "nl" }),
+        first({ first_weekday: "language", language: "nl" }),
+        first({ first_weekday: "language", language: "en-GB" }),
+        first({ first_weekday: "language", language: "en" }),
+        first(undefined, "de"),
+        L.firstWeekday(null),
+      ];
+    """
+    assert _run(body) == [1, 6, 1, 1, 0, 1, 0]

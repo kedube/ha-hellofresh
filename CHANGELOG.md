@@ -55,6 +55,14 @@ version heading and publishes it as the release's Highlights.
   **Repairs** notice names the cards and dashboards still using them.
 - **The README and `docs/dashboard.md` are rewritten around the HelloFresh card**, with new
   screenshots up front.
+- **Links to a section of the sidebar panel.** The address follows the section you're on
+  (`/hellofresh-app/menu`), so a reload or bookmark comes back to it, and a link — say, in a
+  "pick your meals" notification — can open a section or even a week directly
+  (`/hellofresh-app/menu/2026-W42`).
+- The delivery calendar starts its weeks on your Home Assistant profile's first day of the week
+  (Monday across most of Europe) instead of always on Sunday.
+- Development: the card's browser tests (`tests/browser`) now live in the repository and run in
+  CI; they also regenerate the README's screenshots (`npm run screenshots`).
 - **New: live delivery tracking in the Netherlands** (issue #6). Where HelloFresh drives its own
   vans, its tracking page (`hftrack.nl`) is backed by a live service reporting the delivery
   phase, the driver's name and position, the stops left before yours and a minute-precision

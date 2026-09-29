@@ -38,6 +38,10 @@ for every user of your Home Assistant, like any dashboard.
   on any dashboard.
 - It is the same card and the same code as on a dashboard, and it shares its remembered tab, week
   and filters with a HelloFresh card on a dashboard (with one account).
+- **Links to a section.** The address follows the section you're on — `/hellofresh-app/menu`,
+  `/hellofresh-app/recipes` — so a bookmark or reload comes back to it, and a link can open one
+  directly, even a particular week: `/hellofresh-app/menu/2026-W42`. That's handy in a
+  notification (see the reminder under [Automation ideas](../README.md#automation-ideas)).
 
 ## Adding the card to a dashboard
 
@@ -278,6 +282,9 @@ holiday delivery change, and report a failed refresh with **Retry**.
 ## Phones, tablets and themes
 
 <img src="../images/card-phone.png" alt="The HelloFresh card on a phone: the tab bar as icons over labels, the next box, and its meals" width="300" align="right">
+
+The calendar starts its weeks on the first day of the week set in your Home Assistant profile
+(left on "language", the language decides — Monday in most of Europe, Sunday in the US).
 
 The card adapts to its own width, not the screen's: a phone or a narrow sections column gets a
 compact icon tab bar, two-column grids, a slimmer box bar and icon-only calendar days; a wide screen

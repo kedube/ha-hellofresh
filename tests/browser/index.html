@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HelloFresh card harness</title>
+<script>
+  // Optional clock override (?now=2026-10-05T09:00) so scenarios render deterministically.
+  (() => {
+    const p = new URLSearchParams(location.search);
+    const fixed = p.get("now");
+    if (!fixed) return;
+    const offset = new Date(fixed).getTime() - Date.now();
+    const Real = Date;
+    class FakeDate extends Real {
+      constructor(...args) {
+        if (args.length === 0) super(Real.now() + offset);
+        else super(...args);
+      }
+      static now() { return Real.now() + offset; }
+    }
+    window.Date = FakeDate;
+  })();
+</script>
+<style>
+  :root {
+    --primary-color: #03a9f4; --text-primary-color: #fff; --accent-color: #ff9800;
+    --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
+    --card-background-color: #ffffff; --primary-text-color: #212121; --secondary-text-color: #727272;
+    --divider-color: rgba(0, 0, 0, 0.12); --warning-color: #ffa600; --error-color: #db4437;
+    --success-color: #43a047; --ha-card-border-radius: 12px;
+  }
+  :root.dark {
+    --primary-background-color: #111111; --secondary-background-color: #282828;
+    --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --divider-color: rgba(225, 225, 225, 0.12);
+  }
+  html, body { margin: 0; background: var(--primary-background-color); color: var(--primary-text-color);
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 14px; }
+  .wrap { padding: 16px; }
+  /* ?panel=1: the panel fills a Home Assistant-like main area, beside an optional sidebar. */
+  .ha-frame { display: flex; height: 100vh; }
+  .ha-main { flex: 1; min-width: 0; height: 100vh; }
+  .ha-sidebar {
+    width: 256px; flex: none; display: flex; flex-direction: column; box-sizing: border-box;
+    background: var(--card-background-color); border-right: 1px solid var(--divider-color); padding: 0 8px 8px;
+  }
+  .ha-brand { display: flex; align-items: center; gap: 22px; height: 56px; padding: 0 8px; font-size: 20px; color: var(--primary-text-color); }
+  .ha-brand ha-icon { color: var(--secondary-text-color); }
+  .ha-sidebar nav { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+  .ha-item {
+    display: flex; align-items: center; gap: 22px; height: 40px; padding: 0 12px; border-radius: 12px;
+    font-size: 14px; font-weight: 500; color: var(--primary-text-color);
+  }
+  .ha-item ha-icon { color: var(--secondary-text-color); }
+  .ha-item.on { background: color-mix(in srgb, var(--primary-color) 13%, transparent); color: var(--primary-color); }
+  .ha-item.on ha-icon { color: var(--primary-color); }
+  .ha-spacer { flex: 1; }
+  .ha-bottom { border-top: 1px solid var(--divider-color); padding-top: 8px; }
+  .ha-avatar {
+    width: 26px; height: 26px; margin-left: -1px; border-radius: 50%; display: inline-flex; align-items: center;
+    justify-content: center; background: #7b61ff; color: #fff; font-size: 13px; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"></div>
+<script type="module" src="/harness.js"></script>
+</body>
+</html>

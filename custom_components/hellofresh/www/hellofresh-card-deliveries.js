@@ -358,7 +358,8 @@ export class OverviewView {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   }
 
-  // A month of rounded day tiles, whole weeks from Sunday (the neighbouring months' days faded).
+  // A month of rounded day tiles, in whole weeks starting on Home Assistant's first day of the
+  // week (the neighbouring months' days faded).
   // A delivery day wears its state's colour, icon and short label, and opens what its row
   // beside the calendar opens: the delivery details once a box ships, the week's menu before.
   _calendar() {
@@ -371,16 +372,18 @@ export class OverviewView {
     const today = new Date();
     const todayKey = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
     const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+    const first = L.firstWeekday(card.hass);
     const dows = [...Array(7)]
       .map((_, i) => {
-        const day = new Date(2023, 0, 1 + i); // a Sunday-first week
-        const cls = `${i === 0 || i === 6 ? " weekend" : ""}${isCurrentMonth && i === today.getDay() ? " today" : ""}`;
+        const dow = (first + i) % 7;
+        const day = new Date(2023, 0, 1 + dow); // 1 Jan 2023 was a Sunday
+        const cls = `${dow === 0 || dow === 6 ? " weekend" : ""}${isCurrentMonth && dow === today.getDay() ? " today" : ""}`;
         return `<span class="hf-caldow${cls}" title="${esc(day.toLocaleDateString(undefined, { weekday: "long" }))}">
             <span class="hf-dowshort">${esc(day.toLocaleDateString(undefined, { weekday: "short" }))}</span>
             <span class="hf-dowletter">${esc(day.toLocaleDateString(undefined, { weekday: "narrow" }))}</span></span>`;
       })
       .join("");
-    const lead = new Date(year, month, 1).getDay();
+    const lead = (new Date(year, month, 1).getDay() - first + 7) % 7;
     const span = Math.ceil((lead + new Date(year, month + 1, 0).getDate()) / 7) * 7;
     const states = new Set();
     const cells = [];

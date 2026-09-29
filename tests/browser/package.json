@@ -1,0 +1,17 @@
+{
+  "name": "hellofresh-card-browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser flows and screenshots for the HelloFresh card, against a fake Home Assistant with made-up data.",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node flows.mjs",
+    "screenshots": "node screenshots.mjs",
+    "serve": "node server.mjs"
+  },
+  "dependencies": {
+    "@mdi/js": "^7.4.47",
+    "puppeteer-core": "^23.11.1"
+  }
+}

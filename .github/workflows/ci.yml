@@ -98,6 +98,36 @@ jobs:
       - name: Test card week-selection logic
         run: node .github/scripts/check_card_logic.mjs
 
+  browser:
+    name: Browser flows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+
+      - name: Install test dependencies
+        working-directory: tests/browser
+        run: npm ci
+
+      # The HelloFresh card in headless Chrome (the runner's own) against a fake Home Assistant
+      # with made-up data, through its real flows: building and saving a box, customizing a
+      # dish, filters, the calendar, delivery details, live tracking and the sidebar panel.
+      # The fixtures' dates are local, so the zone is pinned to the one they were written in.
+      - name: Run browser flows
+        working-directory: tests/browser
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          TZ: America/New_York
+        run: npm test
+
   pytest:
     name: Pytest
     runs-on: ubuntu-latest

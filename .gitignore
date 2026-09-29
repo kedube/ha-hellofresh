@@ -17,3 +17,7 @@ dist/
 build/
 *.egg-info/
 uv.lock
+
+# Browser tests (tests/browser): dependencies and scratch screenshots
+tests/browser/node_modules/
+tests/browser/shots/
