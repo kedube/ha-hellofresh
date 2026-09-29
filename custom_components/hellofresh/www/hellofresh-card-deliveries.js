@@ -97,7 +97,10 @@ export class OverviewView {
         You have unsaved changes to this box.</div>
         <button class="hf-btn sm primary" data-action="goto" data-view="menu" data-week-id="${esc(week.week_id)}">Finish</button></div>`);
     }
-    const tracking = UI.trackingBlock(week, { historyOpen: this.historyOpen === week.week_id });
+    // The live tracker (Netherlands) is the finer view of the same journey, so it stands in for
+    // the carrier's tracker rather than stacking a second progress bar under it.
+    const live = this._live(week, { hero: true });
+    const tracking = live || UI.trackingBlock(week, { historyOpen: this.historyOpen === week.week_id });
     if (tracking) blocks.push(tracking);
 
     const money = [];
@@ -161,6 +164,43 @@ export class OverviewView {
         </div>
         ${this._heroMeals(week, meals, editable, skipped)}
       </section>`;
+  }
+
+  // The live delivery in the Netherlands (HelloFresh's own vans): phase, ETA, stops left before
+  // yours, the driver, HelloFresh's message and a link to its live map. It belongs to the week
+  // whose order carries the tracked link; the next box also shows it when no week does (the link
+  // can reach the tracker before the order data catches up).
+  _live(week, { hero = false } = {}) {
+    const card = this.card;
+    const live = card.liveTracking();
+    if (!live) return "";
+    const owner = (card.weeks || []).find((w) => L.liveTrackingFor(live, w));
+    if (owner ? owner !== week : !hero) return "";
+    const steps = L.LIVE_STEPS.map((label, i) => {
+      const cls = live.step < 0 ? "" : i < live.step ? " done" : i === live.step ? " now" : "";
+      return `<li class="hf-livestep${cls}"><span class="hf-livebar"></span>${esc(label)}</li>`;
+    }).join("");
+    const facts = [];
+    if (live.eta && live.step < 2) {
+      const until = L.untilText(live.eta);
+      facts.push(`<span>${icon("mdi:clock-outline")}Arrives <strong>${esc(L.fmtTime(live.eta))}</strong>${until ? ` · ${esc(until)}` : ""}</span>`);
+    }
+    if (live.stops != null && live.step === 1) {
+      facts.push(`<span>${icon("mdi:map-marker-path")}${live.stops === 0 ? "<strong>You're next</strong>" : `<strong>${esc(L.plural(live.stops, "stop"))}</strong> before yours`}</span>`);
+    }
+    if (live.driver) facts.push(`<span>${icon("mdi:account-outline")}Driver <strong>${esc(live.driver)}</strong></span>`);
+    if (live.window) facts.push(`<span>${icon("mdi:calendar-clock-outline")}Window ${esc(live.window)}</span>`);
+    return `<div class="hf-live${live.tone ? ` tone-${live.tone}` : ""}" aria-live="polite">
+        <div class="hf-livehead">
+          <span class="hf-livebadge"><span class="hf-livedot"></span>Live</span>
+          <span class="hf-livephase">${esc(live.label)}</span>
+          ${live.mapUrl ? `<a class="hf-livemap" href="${live.mapUrl}" target="_blank" rel="noopener noreferrer">${icon("mdi:map-marker-radius-outline")}Live map</a>` : ""}
+        </div>
+        ${live.step >= 0 ? `<ol class="hf-livesteps" aria-label="Delivery progress">${steps}</ol>` : ""}
+        ${facts.length ? `<div class="hf-livefacts">${facts.join("")}</div>` : ""}
+        ${live.message ? `<div class="hf-livemsg">${icon("mdi:message-text-outline")}<span>${esc(live.message)}</span></div>` : ""}
+        ${live.updated ? `<div class="hf-livefoot">Updated ${esc(L.agoText(live.updated))}</div>` : ""}
+      </div>`;
   }
 
   _heroMeals(week, meals, editable, skipped) {
@@ -527,6 +567,8 @@ export class OverviewView {
     const title = delivered ? `Delivered ${arrived || L.fmtLongDate(when)}` : `Box for ${L.fmtLongDate(when)}`;
     const sub = [week.display_name || week.week_id, order.order_id ? `Order ${order.order_id}` : ""].filter(Boolean);
     const sections = [];
+    const live = this._live(week);
+    if (live) sections.push(live);
 
     // Proof of delivery. HelloFresh passes on the carrier's photo and signer only when the
     // carrier provides them; Veho, the main US carrier, doesn't — so say so rather than leave

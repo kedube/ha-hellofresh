@@ -615,3 +615,64 @@ def test_month_rollup_counts_boxes_skips_and_own_prices_only() -> None:
       return L.monthRollup(rows);
     """
     assert _run(body) == {"boxes": 3, "skipped": 1, "total": 170, "currency": "USD", "priced": 2}
+
+
+def test_live_tracking_reads_the_netherlands_tracker_sensors() -> None:
+    """Where HelloFresh drives its own vans (the Netherlands), the integration's tracking sensors
+    carry its live tracker: the phase sensor the whole snapshot as attributes, the ETA sensor the
+    arrival. The card turns them into one live view, tied to the week whose order carries the
+    tracked link, and shows nothing while no delivery is live."""
+    body = """
+      const url = "https://www.hftrack.nl/track/abc";
+      const phase = (attrs, state = "On the way") => ({
+        state, attributes: { active: true, phase: "ON_THE_WAY", tracking_url: url, ...attrs },
+      });
+      const eta = { state: "2026-10-05T18:18:00+02:00" };
+      const live = L.liveTracking(phase({
+        amount_of_stops_before: 0, driver_name: "Sanne", delivery_time: "18:00 – 22:00",
+        personal_customer_message: "Hoi!", last_fetched: "2026-10-05T17:38:00+02:00",
+      }), eta);
+      const week = (link) => ({ week_id: "2026-W41", order: { tracking_url: link } });
+      const now = new Date("2026-10-05T17:40:00+02:00");
+      return {
+        live: { ...live, eta: live.eta.toISOString(), updated: live.updated.toISOString() },
+        idle: L.liveTracking({ state: "unknown", attributes: { active: false, phase: "INVALID_LINK" } }, eta),
+        missing: L.liveTracking(null, null),
+        unknownEta: L.liveTracking(phase({}), { state: "unknown" }).eta,
+        newPhase: L.liveTracking(phase({ phase: "SORTING" }, "Sorting"), null).label,
+        delayed: L.liveTracking(phase({ phase: "DELAYED" }), null).tone,
+        cancelled: L.liveTracking(phase({ phase: "CANCELLED" }), null).step,
+        mine: L.liveTrackingFor(live, week(url)),
+        other: L.liveTrackingFor(live, week("https://track.shipveho.com/x")),
+        until: L.untilText(live.eta, now),
+        soon: L.untilText(new Date(now.getTime() + 30000), now),
+        late: L.untilText(new Date(now.getTime() - 60000), now),
+        ago: L.agoText(live.updated, now),
+      };
+    """
+    out = _run(body)
+    assert out["live"] == {
+        "phase": "ON_THE_WAY",
+        "label": "On the way to you",
+        "step": 1,
+        "tone": "",
+        "eta": "2026-10-05T16:18:00.000Z",
+        "window": "18:00 – 22:00",
+        "stops": 0,
+        "driver": "Sanne",
+        "message": "Hoi!",
+        "trackingUrl": "https://www.hftrack.nl/track/abc",
+        "mapUrl": "https://www.hftrack.nl/track/abc",
+        "updated": "2026-10-05T15:38:00.000Z",
+    }
+    assert out["idle"] is None and out["missing"] is None
+    assert out["unknownEta"] is None
+    assert out["newPhase"] == "Sorting"  # a phase HelloFresh adds later still reads sensibly
+    assert out["delayed"] == "warn" and out["cancelled"] == -1
+    assert out["mine"] is True and out["other"] is False
+    assert (out["until"], out["soon"], out["late"], out["ago"]) == (
+        "in 38 min",
+        "any minute now",
+        "",
+        "2 min ago",
+    )

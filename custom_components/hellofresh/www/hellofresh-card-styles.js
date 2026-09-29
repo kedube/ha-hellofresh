@@ -521,6 +521,42 @@ export const CARD_STYLES = `
   .hf-pantryitem.done .hf-pantrytext { text-decoration: line-through; color: var(--hf-muted); }
   .hf-pantryitem .hf-pantryamt { font-size: 0.86em; color: var(--hf-muted); white-space: nowrap; }
 
+  /* ---- live tracking (the Netherlands) -------------------------------------------------- */
+  .hf-live {
+    display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: var(--hf-radius);
+    border: 1px solid color-mix(in srgb, var(--hf-accent) 35%, var(--hf-border));
+    background: color-mix(in srgb, var(--hf-accent) 7%, var(--hf-surface));
+  }
+  .hf-live.tone-warn { border-color: color-mix(in srgb, var(--hf-warn-fg) 40%, var(--hf-border)); background: var(--hf-warn-bg); }
+  .hf-live.tone-danger { border-color: color-mix(in srgb, var(--hf-danger-fg) 40%, var(--hf-border)); background: var(--hf-danger-bg); }
+  .hf-livehead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hf-livebadge {
+    display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px;
+    background: var(--hf-accent); color: var(--hf-accent-ink);
+    font-size: 0.68em; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .hf-livedot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: hf-pulse 1.6s ease-in-out infinite; }
+  .hf-livephase { flex: 1; min-width: 0; font-weight: 800; font-size: 1.02em; }
+  .hf-live.tone-warn .hf-livephase { color: var(--hf-warn-fg); }
+  .hf-live.tone-danger .hf-livephase { color: var(--hf-danger-fg); }
+  .hf-livemap { display: inline-flex; align-items: center; gap: 4px; font-size: 0.86em; font-weight: 600; }
+  .hf-livemap ha-icon { --mdc-icon-size: 16px; }
+  .hf-livesteps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .hf-livestep { display: flex; flex-direction: column; gap: 5px; font-size: 0.74em; font-weight: 600; color: var(--hf-muted); }
+  .hf-livebar { height: 6px; border-radius: 3px; background: var(--hf-surface-3); }
+  .hf-livestep.done, .hf-livestep.now { color: var(--hf-text); }
+  .hf-livestep.done .hf-livebar { background: var(--hf-accent); }
+  .hf-livestep.now .hf-livebar {
+    background: linear-gradient(90deg, var(--hf-accent) 0 55%, var(--hf-surface-3) 55% 100%);
+  }
+  .hf-livefacts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.88em; }
+  .hf-livefacts > span { display: inline-flex; align-items: center; gap: 6px; }
+  .hf-livefacts ha-icon { --mdc-icon-size: 17px; color: var(--hf-muted); }
+  .hf-livemsg { display: flex; align-items: flex-start; gap: 8px; font-size: 0.86em; color: var(--hf-muted); }
+  .hf-livemsg ha-icon { --mdc-icon-size: 17px; flex: none; }
+  .hf-livefoot { font-size: 0.74em; color: var(--hf-muted); }
+  @keyframes hf-pulse { 50% { opacity: 0.3; } }
+
   /* ---- calendar ------------------------------------------------------------------------- */
   /* A month of rounded day tiles. The calendar is its own container: its rows are sized from
      its width, and beside the month's list it stretches to the list's height, its rows sharing

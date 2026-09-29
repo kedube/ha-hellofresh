@@ -177,7 +177,7 @@ class HelloFreshCard extends HTMLElement {
     // trigger work, only when their state actually moved, and only for the view showing them.
     const sig = this._entitySignature();
     const changed = Object.keys(sig).filter((group) => sig[group] !== this._entitySig[group]);
-    const first = !this._entitySig.pantry && !this._entitySig.plan && !this._entitySig.health;
+    const first = !this._entitySig.pantry && !this._entitySig.plan && !this._entitySig.health && !this._entitySig.tracking;
     this._entitySig = sig;
     if (changed.length && !first) this._onEntitiesChanged(new Set(changed));
   }
@@ -533,6 +533,9 @@ class HelloFreshCard extends HTMLElement {
       refreshToken: find("refresh_token_days_remaining", "sensor"),
       writeActions: find("write_actions_available", "binary_sensor"),
       payloadShape: find("payload_shape_changed", "binary_sensor"),
+      // Live tracking, only for accounts where HelloFresh drives its own vans (the Netherlands).
+      trackingPhase: find("delivery_tracking_phase", "sensor"),
+      trackingEta: find("delivery_tracking_eta", "sensor"),
     };
     this._entityIdsFor = hass.entities;
     return this._entityIds;
@@ -557,6 +560,7 @@ class HelloFreshCard extends HTMLElement {
       pantry: sign(ids.prep || []),
       plan: sign([ids.boxSize, ids.deliveryDay]),
       health: sign([ids.accessToken, ids.refreshToken, ids.writeActions, ids.payloadShape]),
+      tracking: sign([ids.trackingPhase, ids.trackingEta]),
     };
   }
 
@@ -571,6 +575,16 @@ class HelloFreshCard extends HTMLElement {
       if (this._view === "overview" || this._view === "menu") this.renderView();
     }
     if (this._view === "account" && (groups.has("plan") || groups.has("health"))) this.renderView();
+    if (groups.has("tracking")) {
+      if (this._view === "overview") this.renderView();
+      if (this.sheetKind === "delivery") this.renderSheet();
+    }
+  }
+
+  // The live delivery (Netherlands), from the tracking sensors; null when nothing is on the road.
+  liveTracking() {
+    const ids = this.entities();
+    return L.liveTracking(this.entityState(ids.trackingPhase), this.entityState(ids.trackingEta));
   }
 
   // The prep-list entity covering a week, when the integration has one for it.
