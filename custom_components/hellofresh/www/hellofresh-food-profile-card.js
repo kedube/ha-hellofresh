@@ -46,15 +46,15 @@ const {
 // Sub-card titles, matching the labels HelloFresh's web food-profile page uses (which differ
 // from the raw API slugs, e.g. exclusions -> "Exclude", goals -> "Personal").
 const FIELD_LABELS = {
-  exclusions: "Exclude",
-  primaryProteins: "Proteins",
-  flavors: "Flavors",
-  goals: "Personal",
-  nutritions: "Nutrition",
-  cuisines: "Cuisines",
-  dishTypes: "Dish types",
-  mealTypes: "Cooking styles",
-  dietaryPreferences: "Diet type",
+  exclusions: "Unngå",
+  primaryProteins: "Proteiner",
+  flavors: "Smaker",
+  goals: "Personlige mål",
+  nutritions: "Ernæring",
+  cuisines: "Kjøkken",
+  dishTypes: "Rettstyper",
+  mealTypes: "Tilberedningsstiler",
+  dietaryPreferences: "Kostholdstype",
 };
 
 // Option labels, taken from the HelloFresh web app's own food-profile strings
@@ -62,81 +62,81 @@ const FIELD_LABELS = {
 // fall back to sentence case in _label(), which is what the site does for the rest.
 const VALUE_LABELS = {
   // diet types
-  "mostly-meat": "I eat everything",
+  "mostly-meat": "Jeg spiser alt",
   // cooking styles
-  "quick-easy": "Quick recipes",
-  batch: "Batch recipes",
-  "chef-style": "Chef-style recipes",
-  "family-style": "Family-style recipes",
+  "quick-easy": "Raske oppskrifter",
+  batch: "Oppskrifter for flere dager",
+  "chef-style": "Oppskrifter i kokkestil",
+  "family-style": "Familieoppskrifter",
   // dish types (the site pluralizes these)
-  bake: "Bakes",
-  bowl: "Bowls",
-  burger: "Burgers",
+  bake: "Ovnsretter",
+  bowl: "Boller",
+  burger: "Burgere",
   "main-plus-sides": "Main + sides",
-  pizza: "Pizzas",
-  salad: "Salads",
-  sandwich: "Sandwiches",
-  "soups-stews": "Soups or Stews",
-  "stir-fry": "Stir fries",
+  pizza: "Pizzaer",
+  salad: "Salater",
+  sandwich: "Smørbrød",
+  "soups-stews": "Supper eller gryteretter",
+  "stir-fry": "Wokretter",
   wrap: "Wraps",
-  noodle: "Noodles",
+  noodle: "Nudler",
   // nutrition / goals
-  "glp1-support": "GLP-1 friendly",
-  "plant-based": "Plant based",
-  "make-cooking-easy": "Cook easier",
+  "glp1-support": "GLP-1-vennlig",
+  "plant-based": "Plantebasert",
+  "make-cooking-easy": "Gjør matlagingen enklere",
   // proteins (all diet groups)
-  "plant-based-proteins": "Plant based proteins",
-  "mushroom-based-proteins": "Mushroom-based proteins",
-  "shrimp-prawns": "Shrimp/Prawns",
-  "meat-alternative": "Meat alternatives",
+  "plant-based-proteins": "Plantebaserte proteiner",
+  "mushroom-based-proteins": "Soppbaserte proteiner",
+  "shrimp-prawns": "Reker",
+  "meat-alternative": "Kjøtterstatninger",
   // exclusions
-  "brussel-sprouts": "Brussels sprouts",
-  "tree-nuts": "Tree nuts",
-  egg: "Eggs",
+  "brussel-sprouts": "Rosenkål",
+  "tree-nuts": "Nøtter",
+  egg: "Egg",
   // proper nouns the sentence-case fallback would get wrong
-  "classic-american": "Classic American",
+  "classic-american": "Klassisk amerikansk",
   "new-zealand": "New Zealand",
-  "middle-eastern": "Middle eastern",
+  "middle-eastern": "Midtøsten",
 };
 
 // Hover text for chips that the site explains with a second line (cooking styles).
 const VALUE_DESCRIPTIONS = {
-  "quick-easy": "Under 20 minutes, minimal prep",
-  batch: "Prep in advance and save time throughout the week",
-  "chef-style": "20-40 minute bakes, roasts, and more",
-  "family-style": "Kid and adult friendly recipes",
+  "quick-easy": "Under 20 minutter, minimalt med forberedelser",
+  batch: "Forbered på forhånd og spar tid gjennom uken",
+  "chef-style": "Ovnsretter, steker og mer på 20–40 minutter",
+  "family-style": "Oppskrifter som passer både barn og voksne",
 };
 
 // Short blurb shown under the selected diet type (HelloFresh's food_profile.your_diet.* copy).
 const DIET_DESCRIPTIONS = {
-  flexitarian: "Primarily plant-based with the occasional inclusion of meat.",
-  "mostly-meat": "I mix it up. Meat, veg, and everything in between.",
-  vegetarian: "Excludes meat and fish, focusing on plants, dairy, and eggs.",
-  pescatarian: "Includes fish and seafood while excluding all other meat products.",
-  vegan: "Excludes all animal products, focusing entirely on plant-based foods.",
+  flexitarian: "Hovedsakelig plantebasert, med litt kjøtt innimellom.",
+  "mostly-meat": "Jeg varierer mellom kjøtt, grønnsaker og alt imellom.",
+  vegetarian: "Uten kjøtt og fisk, med vekt på planter, meieriprodukter og egg.",
+  pescatarian: "Inneholder fisk og sjømat, men ikke annet kjøtt.",
+  vegan: "Uten animalske produkter, og helt plantebasert.",
 };
 
 // The proteins question changes with the diet, as does the protein list itself (see
 // _proteinOptions): a pescatarian is asked about seafood, a vegetarian about meat-free
 // proteins.
 const PROTEIN_QUESTIONS = {
-  pescatarian: "Which seafood do you enjoy?",
-  vegetarian: "Which meat-free proteins do you enjoy?",
-  vegan: "Which vegan proteins do you enjoy?",
+  pescatarian: "Hvilken sjømat liker du?",
+  vegetarian: "Hvilke kjøttfrie proteiner liker du?",
+  vegan: "Hvilke veganske proteiner liker du?",
 };
-const DEFAULT_PROTEIN_QUESTION = "Which proteins do you enjoy?";
+const DEFAULT_PROTEIN_QUESTION = "Hvilke proteiner liker du?";
 
 // Rules the HelloFresh page enforces before it lets you save.
 const GOALS_MAX = 3;
-const GOALS_HINT = `Pick up to ${GOALS_MAX} that matter most to you.`;
-const MEAL_TYPES_REQUIRED_MESSAGE = "At least one cooking style is required";
+const GOALS_HINT = `Velg opptil ${GOALS_MAX} som betyr mest for deg.`;
+const MEAL_TYPES_REQUIRED_MESSAGE = "Du må velge minst én tilberedningsstil";
 
 // Copy the site shows around the exclusions list and on save.
 const EXCLUDE_NOTICE =
-  "Just a heads up: some recipes in your menu may still include these ingredients. Check each recipe before you order.";
+  "Vær oppmerksom på at noen oppskrifter i menyen fortsatt kan inneholde disse ingrediensene. Sjekk hver oppskrift før du bestiller.";
 const SAVE_SCOPE_NOTE =
-  "Changes apply to future automatic selections. Recipes you picked yourself for upcoming weeks stay as they are.";
-const TELL_US_MORE = "Tell us more";
+  "Endringene gjelder fremtidige automatiske valg. Oppskrifter du selv har valgt for kommende uker, blir stående som de er.";
+const TELL_US_MORE = "Les mer";
 
 // How each taste field is edited once a sub-card is expanded.
 const TASTE_LIST_FIELDS = ["exclusions", "nutritions", "mealTypes"];
@@ -146,16 +146,16 @@ const TASTE_SINGLE_FIELDS = ["dietaryPreferences"];
 // The page's outer panels and the sub-cards inside each, matching the web layout. Each sub-card
 // names the section it edits ("taste" / "goals") and the field key within it.
 const PANELS = [
-  { title: "Dietary habits", icon: "mdi:room-service-outline", cards: [
+  { title: "Kosthold", icon: "mdi:room-service-outline", cards: [
     { section: "taste", field: "exclusions" },
     { section: "taste", field: "primaryProteins" },
     { section: "taste", field: "flavors" },
   ] },
-  { title: "Goals", icon: "mdi:target", cards: [
+  { title: "Mål", icon: "mdi:target", cards: [
     { section: "goals", field: "goals" },
     { section: "taste", field: "nutritions" },
   ] },
-  { title: "Cooking preferences", icon: "mdi:silverware-fork-knife", cards: [
+  { title: "Matlagingspreferanser", icon: "mdi:silverware-fork-knife", cards: [
     { section: "taste", field: "cuisines" },
     { section: "taste", field: "dishTypes" },
     { section: "taste", field: "mealTypes" },
@@ -185,7 +185,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { title: "Food Profile", ...config };
+    this._config = { title: "Matprofil", ...config };
     this._render();
   }
 
@@ -309,9 +309,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
         this._saved = this._cloneProfile(this._draft);
       }
       this._broadcastDataChanged();
-      this._flash("Food profile saved.");
+      this._flash("Matprofilen er lagret.");
     } catch (err) {
-      this._flash(`Save failed: ${(err && err.message) || err}`, true);
+      this._flash(`Lagring mislyktes: ${(err && err.message) || err}`, true);
     } finally {
       this._busy = false;
       this._render();
@@ -504,7 +504,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const focus = this._captureFocus();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Food Profile")}</span>`;
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Matprofil")}</span>`;
     this._shell.body.innerHTML = this._renderBody();
     this._shell.toast.innerHTML = this._toast
       ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
@@ -573,25 +573,25 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     return `
       <div class="completion">
         <div class="cbar"><div class="cfill" style="width:${pct}%"></div></div>
-        <span class="ctext">Profile ${c.completed} of ${c.total} complete</span>
+        <span class="ctext">Profil ${c.completed} av ${c.total} ferdig</span>
       </div>`;
   }
 
   _renderBody() {
-    if (this._loading) return `<div class="state">Loading food profile…</div>`;
+    if (this._loading) return `<div class="state">Laster matprofil …</div>`;
     if (this._error) {
-      return `<div class="state error">Could not load food profile: ${this._esc(this._error)}</div>
-        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+      return `<div class="state error">Kunne ikke laste matprofilen: ${this._esc(this._error)}</div>
+        <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
     }
     if (!this._options || !this._draft) {
-      return `<div class="state">No food profile available.</div>
-        <div class="actions"><button data-action="refresh">Refresh</button></div>`;
+      return `<div class="state">Ingen matprofil tilgjengelig.</div>
+        <div class="actions"><button data-action="refresh">Oppdater</button></div>`;
     }
     return `
       <div class="hero">
-        <h2 class="herotitle">Meals matched to your taste</h2>
-        <p class="herosub">Your food profile helps HelloFresh set your meal picks and sort the menu by
-          what's most relevant to you. You'll always have access to the full menu.</p>
+        <h2 class="herotitle">Middager tilpasset smaken din</h2>
+        <p class="herosub">Matprofilen hjelper HelloFresh med å velge middager og sortere menyen etter
+          det som passer best for deg. Du har alltid tilgang til hele menyen.</p>
         ${this._renderCompletion()}
       </div>
       <div class="panelgrid top">
@@ -616,9 +616,9 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const desc = DIET_DESCRIPTIONS[current] || "";
     return `
       <section class="panel">
-        <h2 class="paneltitle">${this._icon("mdi:sprout-outline")}Your diet${this._tellUsMore("taste.dietaryPreferences")}</h2>
+        <h2 class="paneltitle">${this._icon("mdi:sprout-outline")}Ditt kosthold${this._tellUsMore("taste.dietaryPreferences")}</h2>
         <div class="dietfield">
-          <label class="dietlabel" for="hf-diet-select">Diet type</label>
+          <label class="dietlabel" for="hf-diet-select">Kostholdstype</label>
           <select class="dietselect" id="hf-diet-select" data-single-select="taste|dietaryPreferences">${options}</select>
         </div>
         ${desc ? `<p class="dietdesc">${this._esc(desc)}</p>` : ""}
@@ -645,12 +645,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
           </div>
         </div>`;
     };
-    const adults = stepper("adults", "Adults");
-    const kids = stepper("children", "Kids (under 12)");
+    const adults = stepper("adults", "Voksne");
+    const kids = stepper("children", "Barn (under 12 år)");
     if (!adults && !kids) return "";
     return `
       <section class="panel">
-        <h2 class="paneltitle">${this._icon("mdi:account-group-outline")}Household${this._tellUsMore("household.totalPeople")}</h2>
+        <h2 class="paneltitle">${this._icon("mdi:account-group-outline")}Husstand${this._tellUsMore("household.totalPeople")}</h2>
         ${adults}${kids}
       </section>`;
   }
@@ -703,7 +703,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   _renderPreview(section, field) {
     const selected = this._previewSelection(section, field);
     if (!selected.length) {
-      return `<div class="preview"><span class="pill muted">None</span></div>`;
+      return `<div class="preview"><span class="pill muted">Ingen</span></div>`;
     }
     const MAX = 4;
     const shown = selected.slice(0, MAX);
@@ -738,7 +738,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const selected = this._draftList(section, field);
     const noneChip = allowNone
       ? `<button class="chip ${selected.length === 0 ? "on" : ""}" aria-pressed="${selected.length === 0 ? "true" : "false"}"
-           data-none="${this._esc(section)}|${this._esc(field)}">None</button>`
+           data-none="${this._esc(section)}|${this._esc(field)}">Ingen</button>`
       : "";
     return `<div class="editor"><div class="chips">${noneChip}${this._chips(section, field, values, selected)}</div></div>`;
   }
@@ -777,12 +777,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
               <button class="segbtn like ${liked ? "on" : ""}"
                 data-weight="${this._esc(field)}|${this._esc(slug)}|like"
                 aria-pressed="${liked ? "true" : "false"}">
-                ${this._icon("mdi:heart")}<span class="seglabel">Like</span>
+                ${this._icon("mdi:heart")}<span class="seglabel">Liker</span>
               </button>
               <button class="segbtn dislike ${disliked ? "on" : ""}"
                 data-weight="${this._esc(field)}|${this._esc(slug)}|dislike"
                 aria-pressed="${disliked ? "true" : "false"}">
-                ${this._icon("mdi:close")}<span class="seglabel">Dislike</span>
+                ${this._icon("mdi:close")}<span class="seglabel">Liker ikke</span>
               </button>
             </div>
           </div>`;
@@ -803,12 +803,12 @@ class HelloFreshFoodProfileCard extends HTMLElement {
       ${note}
       <div class="footer">
         <button class="savebtn" data-action="save" ${!dirty || errors.length || this._busy ? "disabled" : ""}>
-          ${this._busy ? "Saving…" : "Save profile"}
+          ${this._busy ? "Lagrer …" : "Lagre profil"}
         </button>
         <button class="resetbtn" data-action="reset" ${!dirty || this._busy ? "disabled" : ""}>
-          Reset
+          Tilbakestill
         </button>
-        <button class="resetbtn iconbtn" data-action="refresh" aria-label="Refresh" title="Refresh" ${this._busy ? "disabled" : ""}>${this._icon("mdi:refresh")}</button>
+        <button class="resetbtn iconbtn" data-action="refresh" aria-label="Oppdater" title="Oppdater" ${this._busy ? "disabled" : ""}>${this._icon("mdi:refresh")}</button>
       </div>`;
   }
 
@@ -861,7 +861,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     else if (action === "reset") this._resetDraft();
     else if (action === "refresh") {
       // Refetching rebuilds the draft from the server; don't silently throw away edits.
-      if (this._isDirty() && !window.confirm("Discard unsaved changes and reload the profile?")) return;
+      if (this._isDirty() && !window.confirm("Forkaste ulagrede endringer og laste inn matprofilen på nytt?")) return;
       this._fetch();
     }
   }
@@ -1122,9 +1122,9 @@ const EDITOR_SCHEMA = [
   { name: "config_entry_id", selector: { text: {} } },
 ];
 const EDITOR_LABELS = {
-  title: "Title",
-  logo: "Show HelloFresh logo",
-  config_entry_id: "Config entry ID",
+  title: "Tittel",
+  logo: "Vis HelloFresh-logo",
+  config_entry_id: "Konfigurasjons-ID",
 };
 const EDITOR_HELPERS = {
   config_entry_id: "Only needed when multiple HelloFresh accounts are configured.",
@@ -1152,7 +1152,7 @@ class HelloFreshFoodProfileCardEditor extends HTMLElement {
     }
     if (this._hass) this._form.hass = this._hass;
     this._form.data = {
-      title: this._config.title != null ? this._config.title : "Food Profile",
+      title: this._config.title != null ? this._config.title : "Matprofil",
       logo: Boolean(this._config.logo),
       config_entry_id: this._config.config_entry_id || "",
     };
@@ -1161,7 +1161,7 @@ class HelloFreshFoodProfileCardEditor extends HTMLElement {
   _onFormChanged(ev) {
     ev.stopPropagation();
     const value = (ev.detail && ev.detail.value) || {};
-    const config = { ...this._config, title: value.title || "Food Profile" };
+    const config = { ...this._config, title: value.title || "Matprofil" };
     if (value.logo) config.logo = typeof this._config.logo === "string" ? this._config.logo : true;
     else delete config.logo;
     if (value.config_entry_id) config.config_entry_id = value.config_entry_id;
@@ -1178,8 +1178,8 @@ customElements.define("hellofresh-food-profile-card-editor", HelloFreshFoodProfi
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-food-profile-card",
-  name: "HelloFresh Food Profile Card",
-  description: "View and edit the preferences HelloFresh uses to auto-preselect meals.",
+  name: "HelloFresh matprofilkort",
+  description: "Vis og rediger preferansene HelloFresh bruker til å forhåndsvelge middager.",
 });
 
 console.info(

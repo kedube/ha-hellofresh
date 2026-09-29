@@ -101,7 +101,7 @@ class HelloFreshRecipesCard extends HTMLElement {
 
   setConfig(config) {
     this._config = {
-      title: "HelloFresh Recipes",
+      title: "HelloFresh-oppskrifter",
       limit: DEFAULT_LIMIT,
       ...(config || {}),
     };
@@ -246,7 +246,7 @@ class HelloFreshRecipesCard extends HTMLElement {
     } catch (err) {
       if (seq !== this._searchSeq) return;
       this._searchResults = null;
-      this._flash(`Search failed: ${(err && err.message) || err}`, true);
+      this._flash(`Søk mislyktes: ${(err && err.message) || err}`, true);
     } finally {
       if (seq === this._searchSeq) {
         this._searchLoading = false;
@@ -284,7 +284,7 @@ class HelloFreshRecipesCard extends HTMLElement {
       if (!makeFavorite && this._collection === COOKBOOK_SLUG) {
         this._recipes = this._recipes.filter((r) => r.recipe_id !== recipe.recipe_id);
       }
-      this._flash(makeFavorite ? "Added to your cookbook." : "Removed from your cookbook.");
+      this._flash(makeFavorite ? "Lagt til i kokeboken." : "Fjernet fra kokeboken.");
       // Let the meal-planner card re-read its hearts without a full page refresh.
       //
       // The detail MUST carry accountKey: every listener drops an event whose
@@ -298,7 +298,7 @@ class HelloFreshRecipesCard extends HTMLElement {
       );
     } catch (err) {
       this._flash(
-        `${makeFavorite ? "Add" : "Remove"} failed: ${(err && err.message) || err}`,
+        `${makeFavorite ? "Legge til" : "Fjerne"} mislyktes: ${(err && err.message) || err}`,
         true
       );
     } finally {
@@ -344,10 +344,10 @@ class HelloFreshRecipesCard extends HTMLElement {
     card.innerHTML = `
       <div class="js-header"></div>
       <div class="searchrow">
-        <input class="searchinput" type="search" placeholder="Search recipes…"
-               aria-label="Search recipes" spellcheck="false">
-        <button class="searchclear" data-action="clear-search" title="Clear search"
-                aria-label="Clear search" hidden>✕</button>
+        <input class="searchinput" type="search" placeholder="Søk etter oppskrifter …"
+               aria-label="Søk etter oppskrifter" spellcheck="false">
+        <button class="searchclear" data-action="clear-search" title="Tøm søk"
+                aria-label="Tøm søk" hidden>✕</button>
       </div>
       <div class="js-content"></div>
       <div class="js-toast"></div>`;
@@ -378,8 +378,8 @@ class HelloFreshRecipesCard extends HTMLElement {
     return `
       <div class="head">
         ${logo ? `<img class="logo" src="${this._esc(logo)}" alt="HelloFresh">` : ""}
-        <span class="title">${this._esc(this._config.title || "HelloFresh Recipes")}</span>
-        <button class="iconbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>⟳</button>
+        <span class="title">${this._esc(this._config.title || "HelloFresh-oppskrifter")}</span>
+        <button class="iconbtn" data-action="refresh" title="Oppdater" ${this._loading ? "disabled" : ""}>⟳</button>
       </div>`;
   }
 
@@ -394,30 +394,30 @@ class HelloFreshRecipesCard extends HTMLElement {
     if (this._query.trim() && this._collection !== COOKBOOK_SLUG) {
       if (this._searchResults === null) {
         return `${chips}<div class="msg">${
-          this._searchLoading ? "Searching all recipes…" : "No recipes found."
+          this._searchLoading ? "Søker i alle oppskrifter …" : "Ingen oppskrifter funnet."
         }</div>`;
       }
       if (!this._searchResults.length) {
-        return `${chips}<div class="msg">No recipes in the catalog match
+        return `${chips}<div class="msg">Ingen oppskrifter i katalogen passer med
           “${this._esc(this._query.trim())}”.</div>`;
       }
       return `${chips}<div class="grid">${this._searchResults.map((r) => this._renderRecipe(r)).join("")}</div>`;
     }
     if (this._loading && !this._recipes.length) {
-      return `${chips}<div class="msg">Loading recipes…</div>`;
+      return `${chips}<div class="msg">Laster oppskrifter …</div>`;
     }
     if (!this._recipes.length) {
       // An empty cookbook is a normal state, not a failed search — say so plainly.
       const empty = this._collection === COOKBOOK_SLUG
-        ? "Your cookbook is empty. Tap the ♥ on any recipe to save it here."
-        : "No recipes found.";
+        ? "Kokeboken er tom. Trykk på ♥ på en oppskrift for å lagre den her."
+        : "Ingen oppskrifter funnet.";
       return `${chips}<div class="msg">${empty}</div>`;
     }
     const visible = this._filteredRecipes();
     if (!visible.length) {
       // Only the cookbook filters locally (a query on a catalog view took the branch above),
       // so an empty result means none of the SAVED recipes match.
-      return `${chips}<div class="msg">No saved recipes match
+      return `${chips}<div class="msg">Ingen lagrede oppskrifter passer med
         “${this._esc(this._query.trim())}”.</div>`;
     }
     return `${chips}<div class="grid">${visible.map((r) => this._renderRecipe(r)).join("")}</div>`;
@@ -451,7 +451,7 @@ class HelloFreshRecipesCard extends HTMLElement {
     // saved list, from a different service — so it gets a sentinel slug rather than being
     // mixed into the catalog collections. A leading "@" cannot collide with a real slug.
     const cookbook = `<button class="chip ${this._collection === COOKBOOK_SLUG ? "active" : ""}"
-         data-collection="${COOKBOOK_SLUG}">♥ Cookbook</button>`;
+         data-collection="${COOKBOOK_SLUG}">♥ Kokebok</button>`;
     // Second row: the selected category's own children (Noodle -> Ramen / Udon / Rice / …).
     // These are absent from the top-level list, so without this row they are unreachable.
     // Rendered only when the current category has any, so the bar stays one row elsewhere.
@@ -459,13 +459,13 @@ class HelloFreshRecipesCard extends HTMLElement {
     // its bare slug — /recipes/ramen-noodles 301-redirects away and yields no recipes.
     const subs = this._subcollections.length
       ? `<div class="chips subchips">
-           <span class="sublabel">Refine</span>
+           <span class="sublabel">Filtrer</span>
            ${this._subcollections.map((c) => chip(c.path || c.slug, c.name)).join("")}
          </div>`
       : "";
     return `
       <div class="chips">
-        ${chip("", "Top rated")}
+        ${chip("", "Best vurdert")}
         ${cookbook}
         ${this._collections.map((c) => chip(c.path || c.slug, c.name)).join("")}
       </div>
@@ -488,15 +488,15 @@ class HelloFreshRecipesCard extends HTMLElement {
     if (time) stats.push(time);
     return `
       <div class="recipe" data-detail="${this._esc(recipe.recipe_id)}"
-           role="button" tabindex="0" aria-label="Open recipe: ${this._esc(recipe.name)}">
+           role="button" tabindex="0" aria-label="Åpne oppskrift: ${this._esc(recipe.name)}">
         <div class="imgwrap">
           ${img
             ? `<img loading="lazy" src="${this._esc(img)}" alt="${this._esc(recipe.name)}">`
             : `<div class="noimg"></div>`}
           <button class="fav ${isFav ? "on" : ""}" data-fav="${this._esc(recipe.recipe_id)}"
                   ${busy ? "disabled" : ""}
-                  title="${isFav ? "Remove from cookbook" : "Add to cookbook"}"
-                  aria-label="${isFav ? "Remove" : "Add"} ${this._esc(recipe.name)}">
+                  title="${isFav ? "Fjern fra kokebok" : "Legg til i kokebok"}"
+                  aria-label="${isFav ? "Fjern" : "Legg til"} ${this._esc(recipe.name)}">
             ${busy ? "…" : isFav ? "♥" : "♡"}
           </button>
         </div>
@@ -709,17 +709,17 @@ const EDITOR_SCHEMA = [
 ];
 
 const EDITOR_LABELS = {
-  title: "Title",
-  collection: "Starting category",
-  limit: "Recipes per category",
-  logo: "Show HelloFresh logo",
-  config_entry_id: "Config entry ID",
+  title: "Tittel",
+  collection: "Startkategori",
+  limit: "Oppskrifter per kategori",
+  logo: "Vis HelloFresh-logo",
+  config_entry_id: "Konfigurasjons-ID",
 };
 
 const EDITOR_HELPERS = {
-  collection: "Category slug, e.g. chicken-recipes. Leave empty to start on Top rated.",
-  limit: "How many recipes to load per category (1-200).",
-  config_entry_id: "Only needed when multiple HelloFresh accounts are configured.",
+  collection: "Kategorinøkkel, for eksempel chicken-recipes. La stå tom for å starte med best vurderte.",
+  limit: "Hvor mange oppskrifter som skal lastes per kategori (1–200).",
+  config_entry_id: "Trengs bare når flere HelloFresh-kontoer er konfigurert.",
 };
 
 class HelloFreshRecipesCardEditor extends HTMLElement {
@@ -744,7 +744,7 @@ class HelloFreshRecipesCardEditor extends HTMLElement {
     }
     if (this._hass) this._form.hass = this._hass;
     this._form.data = {
-      title: this._config.title != null ? this._config.title : "HelloFresh Recipes",
+      title: this._config.title != null ? this._config.title : "HelloFresh-oppskrifter",
       collection: this._config.collection || "",
       limit: this._config.limit != null ? this._config.limit : DEFAULT_LIMIT,
       logo: Boolean(this._config.logo),
@@ -755,7 +755,7 @@ class HelloFreshRecipesCardEditor extends HTMLElement {
   _onFormChanged(ev) {
     ev.stopPropagation();
     const value = (ev.detail && ev.detail.value) || {};
-    const config = { ...this._config, title: value.title || "HelloFresh Recipes" };
+    const config = { ...this._config, title: value.title || "HelloFresh-oppskrifter" };
     if (value.collection) config.collection = value.collection;
     else delete config.collection;
     if (value.limit) config.limit = Number(value.limit);
@@ -776,8 +776,8 @@ customElements.define("hellofresh-recipes-card-editor", HelloFreshRecipesCardEdi
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-recipes-card",
-  name: "HelloFresh Recipes Card",
-  description: "Browse HelloFresh's recipe catalog and manage your cookbook favorites.",
+  name: "HelloFresh oppskriftskort",
+  description: "Bla i HelloFresh-katalogen og administrer favorittene i kokeboken.",
 });
 
 console.info(

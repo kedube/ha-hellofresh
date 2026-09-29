@@ -118,7 +118,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { title: "Schedule", max_weeks: 8, past_weeks: 4, calendar: true, ...config };
+    this._config = { title: "Leveringsplan", max_weeks: 8, past_weeks: 4, calendar: true, ...config };
     this._selectedWeekId = this._loadSyncedWeekId();
     this._render();
   }
@@ -329,7 +329,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       if (this._config.config_entry_id) data.config_entry_id = this._config.config_entry_id;
       await this._hass.callService("hellofresh", service, data);
     } catch (err) {
-      failed = `${service} failed: ${(err && err.message) || err}`;
+      failed = `${service === "skip_week" ? "Hopping over uke" : "Gjenoppretting av uke"} mislyktes: ${(err && err.message) || err}`;
     } finally {
       this._busy = false;
       await this._fetch(); // resync from the source of truth either way
@@ -365,7 +365,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       await this._hass.callService("hellofresh", "reschedule_week", data);
       this._rescheduleWeekId = null; // done — close the options panel
     } catch (err) {
-      failed = `reschedule_week failed: ${(err && err.message) || err}`;
+      failed = `Endring av leveringsdag mislyktes: ${(err && err.message) || err}`;
     } finally {
       this._busy = false;
       await this._fetch();
@@ -503,8 +503,8 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Schedule")}</span>
-      <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Leveringsplan")}</span>
+      <button class="refreshbtn" data-action="refresh" title="Oppdater" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
 
@@ -611,19 +611,19 @@ class HelloFreshScheduleCard extends HTMLElement {
   _renderBody() {
     // Nothing on screen yet: full-body loading/error/empty states.
     if (!this._weeks || this._weeks.length === 0) {
-      if (this._loading || !this._fetched) return `<div class="state">Loading schedule…</div>`;
+      if (this._loading || !this._fetched) return `<div class="state">Laster leveringsplan …</div>`;
       if (this._error) {
-        return `<div class="state error">Could not load schedule: ${this._esc(this._error)}</div>
-          <div class="actions"><button data-action="refresh">Retry</button></div>`;
+        return `<div class="state error">Kunne ikke laste leveringsplan: ${this._esc(this._error)}</div>
+          <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
       }
-      return `<div class="state">No delivery weeks found.</div>
-        <div class="actions"><button data-action="refresh">Refresh</button></div>`;
+      return `<div class="state">Fant ingen leveringsuker.</div>
+        <div class="actions"><button data-action="refresh">Oppdater</button></div>`;
     }
     // With data on screen, a refresh must never blank the card: keep the last good view
     // (dimmed while reloading) and surface a failed refresh as an inline notice on top of it.
     const notice = this._error
-      ? `<div class="notice">Refresh failed: ${this._esc(this._error)}
-           <button class="refreshbtn" data-action="refresh">Retry</button></div>`
+      ? `<div class="notice">Oppdatering mislyktes: ${this._esc(this._error)}
+           <button class="refreshbtn" data-action="refresh">Prøv igjen</button></div>`
       : this._actionError
         ? `<div class="notice">${this._esc(this._actionError)}</div>`
         : "";
@@ -686,14 +686,14 @@ class HelloFreshScheduleCard extends HTMLElement {
     return `
       <div class="calendar">
         <div class="cal-head">
-          <button class="cal-nav" data-action="cal-prev" title="Previous month"
+          <button class="cal-nav" data-action="cal-prev" title="Forrige måned"
             ${shownKey <= min ? "disabled" : ""}>‹</button>
           <span class="cal-title">${this._esc(monthLabel)}${
             // Inside the title span (not after ›) so the ‹ › buttons never move when the
             // Today shortcut appears/disappears while navigating months.
-            isCurrentMonth ? "" : `<button class="cal-nav cal-today-btn" data-action="cal-today">Today</button>`
+            isCurrentMonth ? "" : `<button class="cal-nav cal-today-btn" data-action="cal-today">I dag</button>`
           }</span>
-          <button class="cal-nav" data-action="cal-next" title="Next month"
+          <button class="cal-nav" data-action="cal-next" title="Neste måned"
             ${shownKey >= max ? "disabled" : ""}>›</button>
         </div>
         <div class="cal-grid">${dows}${cells.join("")}</div>
@@ -732,27 +732,27 @@ class HelloFreshScheduleCard extends HTMLElement {
     return `
       <div class="summary">
         <div class="sumrow">
-          <span class="sumlabel">${upcoming ? "Next box" : "Last box"}</span>
+          <span class="sumlabel">${upcoming ? "Neste kasse" : "Forrige kasse"}</span>
           <span class="sumval">${this._esc(this._fmtDate(next.delivery_date))}${rel ? ` <span class="muted">· ${this._esc(rel)}</span>` : ""}</span>
         </div>
         ${window ? `
         <div class="sumrow">
-          <span class="sumlabel">Delivery window</span>
+          <span class="sumlabel">Leveringstid</span>
           <span class="sumval">${this._esc(window)}</span>
         </div>` : ""}
         ${deadline ? `
         <div class="sumrow">
-          <span class="sumlabel">Selection deadline</span>
+          <span class="sumlabel">Valgfrist</span>
           <span class="sumval">${this._esc(this._fmtDateTime(deadline))} <span class="${this._deadlineClass(deadline)}">· ${this._esc(this._countdown(deadline))}</span></span>
         </div>` : ""}
         ${paymentDate ? `
         <div class="sumrow">
-          <span class="sumlabel">Payment date</span>
+          <span class="sumlabel">Betalingsdato</span>
           <span class="sumval">${this._esc(this._fmtDate(paymentDate))}</span>
         </div>` : ""}
         ${coupon ? `
         <div class="sumrow">
-          <span class="sumlabel">Coupon</span>
+          <span class="sumlabel">Rabattkode</span>
           <span class="sumval">${this._esc(coupon)}</span>
         </div>` : ""}
         <div class="sumrow">
@@ -761,12 +761,12 @@ class HelloFreshScheduleCard extends HTMLElement {
         </div>
         ${discount ? `
         <div class="sumrow">
-          <span class="sumlabel">Discount</span>
-          <span class="sumval">−${this._esc(discount)} <span class="muted">· included in the price</span></span>
+          <span class="sumlabel">Rabatt</span>
+          <span class="sumval">−${this._esc(discount)} <span class="muted">· inkludert i prisen</span></span>
         </div>` : ""}
         ${voucher ? `
         <div class="sumrow">
-          <span class="sumlabel">Voucher</span>
+          <span class="sumlabel">Kupong</span>
           <span class="sumval">${this._esc(voucher.label)}${voucher.note ? ` <span class="muted">· ${this._esc(voucher.note)}</span>` : ""}</span>
         </div>` : ""}
       </div>`;
@@ -792,9 +792,9 @@ class HelloFreshScheduleCard extends HTMLElement {
     const parts = [];
     if (benefit.expires_at) {
       const expires = new Date(benefit.expires_at);
-      if (!Number.isNaN(expires.getTime())) parts.push(`expires ${this._fmtDate(expires)}`);
+      if (!Number.isNaN(expires.getTime())) parts.push(`utløper ${this._fmtDate(expires)}`);
     }
-    if (benefit.one_time) parts.push("one-time");
+    if (benefit.one_time) parts.push("engangsbruk");
     return { label: benefit.label, note: parts.join(" · ") };
   }
 
@@ -822,7 +822,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       });
       return this._config.calendar === false
         ? ""
-        : `<div class="timeline"><div class="state">No deliveries in ${this._esc(monthLabel)}.</div></div>`;
+        : `<div class="timeline"><div class="state">Ingen leveringer i ${this._esc(monthLabel)}.</div></div>`;
     }
     return `
       <div class="timeline">
@@ -893,7 +893,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   // amber "Preselected" badge is redundant — collapse them into a single "Preselected" badge.
   // A genuinely under-filled week (too few meals, not auto-picked) keeps "Needs picking".
   _stateLabel(week, state) {
-    if (state === "needs" && this._isPreselected(week)) return "Preselected";
+    if (state === "needs" && this._isPreselected(week)) return "Forhåndsvalgt";
     return HelloFreshScheduleCard.STATE_META[state].label;
   }
 
@@ -905,27 +905,27 @@ class HelloFreshScheduleCard extends HTMLElement {
     // Standalone Preselected badge only when the state badge doesn't already say it
     // (e.g. a locked preselected week whose deadline passed).
     const preselected =
-      this._isPreselected(week) && label !== "Preselected"
-        ? `<span class="badge preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
+      this._isPreselected(week) && label !== "Forhåndsvalgt"
+        ? `<span class="badge preselected" title="HelloFresh valgte disse rettene automatisk — kontroller og juster før fristen.">Forhåndsvalgt</span>`
         : "";
     const badgeTitle =
-      label === "Preselected"
-        ? "HelloFresh auto-picked these meals — review and adjust before the deadline."
+      label === "Forhåndsvalgt"
+        ? "HelloFresh valgte disse rettene automatisk — kontroller og juster før fristen."
         : label;
     const isSelected = week.week_id === this._selectedWeekId;
     const holiday = this._isHolidayShifted(week)
-      ? `<span class="holiday" title="${this._esc(week.holiday_message || "Holiday delivery change")}">🎄</span>`
+      ? `<span class="holiday" title="${this._esc(week.holiday_message || "Endret levering på grunn av helligdag")}">🎄</span>`
       : "";
     // Weekly discount badge: the wallet promise HelloFresh will apply to this box.
     const benefit = state === "skipped" ? null : this._weekBenefit(week);
     const voucherBadge = benefit
-      ? `<span class="badge benefit" title="${this._esc(benefit.voucher_code ? `Voucher ${benefit.voucher_code}` : "Voucher applied by HelloFresh")}">${this._esc(benefit.label)}</span>`
+      ? `<span class="badge benefit" title="${this._esc(benefit.voucher_code ? `Kupong ${benefit.voucher_code}` : "Kupong lagt til av HelloFresh")}">${this._esc(benefit.label)}</span>`
       : "";
     return `
       <div class="row ${isCurrent ? "current" : ""}${isPast ? " past" : ""}${isSelected ? " selected" : ""}" data-action="cal-week"
         role="button" tabindex="0"
         data-week-id="${this._esc(week.week_id)}"
-        title="Show ${this._esc(week.display_name || week.week_id)} in the meal planner and market cards">
+        title="Vis ${this._esc(week.display_name || week.week_id)} i måltidsplanleggeren og Market-kortet">
         <span class="dot ${state}" title="${this._esc(label)}">${meta.icon}</span>
         <div class="rowmain">
           <div class="rowtop">
@@ -943,11 +943,11 @@ class HelloFreshScheduleCard extends HTMLElement {
         <span class="badge ${state}" title="${this._esc(badgeTitle)}">${this._esc(label)}</span>
         ${this._canReschedule(week)
           ? `<button class="skipbtn" data-action="reschedule-open" data-week-id="${this._esc(week.week_id)}"
-               title="Change this week's delivery day" ${this._busy ? "disabled" : ""}>Change day</button>`
+               title="Endre leveringsdag for denne uken" ${this._busy ? "disabled" : ""}>Endre dag</button>`
           : ""}
         ${this._canSkip(week)
           ? `<button class="skipbtn" data-action="skip-week" data-week-id="${this._esc(week.week_id)}"
-               ${this._busy ? "disabled" : ""}>${this._isSkipped(week) ? "Unskip" : "Skip"}</button>`
+               ${this._busy ? "disabled" : ""}>${this._isSkipped(week) ? "Gjenopprett" : "Hopp over"}</button>`
           : ""}
       </div>`;
   }
@@ -1049,7 +1049,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     // weeks carry it, so upcoming weeks are unaffected. Leads the line because it is the
     // fact you look for on a past box; carrier/number stay for the shipment itself.
     const arrived = this._fmtArrival(week.delivered_at);
-    if (arrived) parts.push(`<span class="arrived" title="When the box was delivered">Delivered ${this._esc(arrived)}</span>`);
+    if (arrived) parts.push(`<span class="arrived" title="Når kassen ble levert">Levert ${this._esc(arrived)}</span>`);
     if (order.carrier) parts.push(this._esc(order.carrier));
     if (order.tracking_number) {
       const num = this._esc(order.tracking_number);
@@ -1066,7 +1066,7 @@ class HelloFreshScheduleCard extends HTMLElement {
       const open = this._historyWeekId === week.week_id;
       parts.push(
         `<button class="linkbtn" data-action="tracking-history" data-week-id="${this._esc(week.week_id)}"
-          aria-expanded="${open}" title="Carrier scan history">${open ? "Hide history" : `History (${events.length})`}</button>`
+          aria-expanded="${open}" title="Transportørens skanningshistorikk">${open ? "Skjul historikk" : `Historikk (${events.length})`}</button>`
       );
     }
     const line = parts.length ? `<div class="rowtrack">${parts.join(" · ")}</div>` : "";
@@ -1086,8 +1086,8 @@ class HelloFreshScheduleCard extends HTMLElement {
     const thumbs = photos
       .map(
         (url, i) =>
-          `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Open delivery photo">` +
-          `<img class="podimg" src="${url}" alt="Delivery photo${photos.length > 1 ? ` ${i + 1}` : ""}" loading="lazy"></a>`
+          `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Åpne leveringsbilde">` +
+          `<img class="podimg" src="${url}" alt="Leveringsbilde${photos.length > 1 ? ` ${i + 1}` : ""}" loading="lazy"></a>`
       )
       .join("");
     const signer = signed ? `<span>Signed by ${this._esc(signed)}</span>` : "";
@@ -1110,7 +1110,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   _rowDetail(week, state) {
-    if (state === "skipped") return `<span class="muted">No box this week</span>`;
+    if (state === "skipped") return `<span class="muted">Ingen kasse denne uken</span>`;
     // Coerced to numbers before any HTML interpolation: integers under the server
     // contract, but the card must not trust that (defense in depth for innerHTML).
     const required = Number(week.meals_required) || 0;
@@ -1123,9 +1123,9 @@ class HelloFreshScheduleCard extends HTMLElement {
       // A preselected week is already full — the action is reviewing HelloFresh's picks,
       // not picking from scratch.
       if (this._isPreselected(week)) {
-        return `Review meals${deadlineSuffix}`;
+        return `Kontroller retter${deadlineSuffix}`;
       }
-      return `Pick ${required || "your"} meals${deadlineSuffix}`;
+      return `Velg ${required || "dine"} retter${deadlineSuffix}`;
     }
     const parts = [];
     // Show the ACTUAL selected count, not selected/required: a week can be resized to more
@@ -1135,12 +1135,12 @@ class HelloFreshScheduleCard extends HTMLElement {
     if (selected) {
       const plan =
         required && required !== selected ? ` <span class="muted">(plan: ${required})</span>` : "";
-      parts.push(`${selected} meal${selected === 1 ? "" : "s"}${plan}`);
+      parts.push(`${selected} ${selected === 1 ? "rett" : "retter"}${plan}`);
     } else if (required) {
-      parts.push(`<span class="muted">No meals selected</span>`);
+      parts.push(`<span class="muted">Ingen retter valgt</span>`);
     }
     const market = this._marketCount(week);
-    if (market) parts.push(`${market} market item${market === 1 ? "" : "s"}`);
+    if (market) parts.push(`${market} Market-vare${market === 1 ? "" : "r"}`);
     const price = this._weekPrice(week);
     if (price) parts.push(`<span class="muted">${this._esc(price)}</span>`);
     const status = this._rowStatus(week, HelloFreshScheduleCard.STATE_META[state].label);
@@ -1169,13 +1169,13 @@ class HelloFreshScheduleCard extends HTMLElement {
   // Compact countdown to a deadline/date, e.g. "2d 4h", "5h", "passed".
   _countdown(when) {
     const ms = when.getTime() - Date.now();
-    if (ms <= 0) return "passed";
+    if (ms <= 0) return "utløpt";
     const mins = Math.floor(ms / 60000);
     const days = Math.floor(mins / 1440);
     const hours = Math.floor((mins % 1440) / 60);
-    if (days > 0) return hours > 0 ? `${days}d ${hours}h left` : `${days}d left`;
-    if (hours > 0) return `${hours}h left`;
-    return `${mins}m left`;
+    if (days > 0) return hours > 0 ? `${days} d ${hours} t igjen` : `${days} d igjen`;
+    if (hours > 0) return `${hours} t igjen`;
+    return `${mins} min igjen`;
   }
 
   _deadlineClass(deadline) {
@@ -1268,11 +1268,11 @@ class HelloFreshScheduleCard extends HTMLElement {
 
   static get STATE_META() {
     return {
-      ready: { icon: "●", label: "Editable", cls: "ready" },
-      needs: { icon: "!", label: "Needs picking", cls: "needs" },
-      delivered: { icon: "✓", label: "Delivered", cls: "delivered" },
-      skipped: { icon: "⊘", label: "Skipped", cls: "skipped" },
-      locked: { icon: "●", label: "Locked", cls: "locked" },
+      ready: { icon: "●", label: "Kan endres", cls: "ready" },
+      needs: { icon: "!", label: "Valg kreves", cls: "needs" },
+      delivered: { icon: "✓", label: "Levert", cls: "delivered" },
+      skipped: { icon: "⊘", label: "Hoppet over", cls: "skipped" },
+      locked: { icon: "●", label: "Låst", cls: "locked" },
     };
   }
 
@@ -1460,9 +1460,9 @@ customElements.define("hellofresh-schedule-card", HelloFreshScheduleCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-schedule-card",
-  name: "HelloFresh Schedule Card",
+  name: "HelloFresh leveringsplan",
   description:
-    "HelloFresh delivery schedule: next-box summary, a month calendar of delivery days, and a timeline of past and upcoming weeks with status.",
+    "HelloFresh-levering: oversikt over neste kasse, leveringskalender og tidligere og kommende uker.",
 });
 
 console.info(

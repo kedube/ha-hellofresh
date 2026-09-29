@@ -513,6 +513,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return ["Beef", "Poultry", "Pork", "Seafood", "Lamb", "Veggie"];
   }
 
+  static get PROTEIN_LABELS() {
+    return {
+      Beef: "Storfe",
+      Poultry: "Fjærkre",
+      Pork: "Svin",
+      Seafood: "Sjømat",
+      Lamb: "Lam",
+      Veggie: "Vegetar",
+    };
+  }
+
   static get PROTEIN_STORAGE_KEY() {
     return "hellofresh-meal-planner:protein-filter";
   }
@@ -537,37 +548,37 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // "Total cooking time" as its own single-choice group — see TIME_FILTERS.
   static get DIET_FILTERS() {
     return [
-      { key: "vegetarian", label: "Vegetarian", tags: ["vegetarian", "veggie", "vegan"] },
+        { key: "vegetarian", label: "Vegetar", tags: ["vegetarian", "veggie", "vegan"] },
       {
         key: "under-650-cal",
-        label: "Under 650 Calories",
+        label: "Under 650 kalorier",
         tags: ["under 650 calories", "calorie smart", "calorie-smart"],
         maxCalories: 650,
       },
-      { key: "high-protein", label: "High Protein", tags: ["high protein"] },
+      { key: "high-protein", label: "Proteinrik", tags: ["high protein"] },
       {
         key: "carb-conscious",
-        label: "Carb Conscious",
+        label: "Karbohydratbevisst",
         tags: ["carb conscious", "carb smart", "low carb", "max-20-percent-carbs"],
       },
       // The site's filter panel says "Fiber Powered" (slug fiber-smart) while its Health
       // Conscious menu section says "High Fiber" — the tags carry both spellings.
       {
         key: "high-fiber",
-        label: "Fiber Powered",
+        label: "Fiberrik",
         tags: ["high fiber", "fiber filled", "fiber smart", "fiber powered"],
       },
       {
         key: "gluten-free",
-        label: "Gluten-Free Friendly",
+        label: "Glutenfri",
         tags: ["gluten-free friendly", "gluten free friendly", "gluten-free", "gluten free"],
       },
-      { key: "sodium-smart", label: "Sodium Smart", tags: ["sodium smart", "low sodium"] },
-      { key: "low-sugar", label: "Low Added Sugar", tags: ["low added sugar", "low sugar"] },
-      { key: "organic-protein", label: "Organic Protein", tags: ["organic protein"] },
+      { key: "sodium-smart", label: "Lite salt", tags: ["sodium smart", "low sodium"] },
+      { key: "low-sugar", label: "Lite tilsatt sukker", tags: ["low added sugar", "low sugar"] },
+      { key: "organic-protein", label: "Økologisk protein", tags: ["organic protein"] },
       {
         key: "glp1",
-        label: "GLP-1 Support",
+        label: "GLP-1-støtte",
         tags: ["glp-1 support", "glp-1 friendly", "glp-1 balance"],
       },
     ];
@@ -583,9 +594,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // DIET_FILTERS: alias tags, with total/prep minutes as the numeric fallback.
   static get TIME_FILTERS() {
     return [
-      { key: "under-15-min", label: "Under 15 Minutes", tags: ["under 15 minutes"], maxMinutes: 15 },
-      { key: "under-20-min", label: "Under 20 Minutes", tags: ["under 20 minutes"], maxMinutes: 20 },
-      { key: "under-30-min", label: "Under 30 Minutes", tags: ["under 30 minutes"], maxMinutes: 30 },
+      { key: "under-15-min", label: "Under 15 minutter", tags: ["under 15 minutes"], maxMinutes: 15 },
+      { key: "under-20-min", label: "Under 20 minutter", tags: ["under 20 minutes"], maxMinutes: 20 },
+      { key: "under-30-min", label: "Under 30 minutter", tags: ["under 30 minutes"], maxMinutes: 30 },
     ];
   }
 
@@ -598,9 +609,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   // "Cooked Before" is HelloFresh's own delivered_count — the site's "Order It Again" row.
   static get HIGHLIGHT_FILTERS() {
     return [
-      { key: "new", label: "New" },
-      { key: "bestseller", label: "Bestsellers" },
-      { key: "cooked-before", label: "Cooked Before" },
+      { key: "new", label: "Nyhet" },
+      { key: "bestseller", label: "Bestselgere" },
+      { key: "cooked-before", label: "Laget tidligere" },
     ];
   }
 
@@ -826,7 +837,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const card = HelloFreshMealPlannerCard;
     const out = [];
     for (const p of card.PROTEIN_FILTERS) {
-      if (this._proteinFilter.has(p)) out.push({ kind: "protein", value: p, label: p });
+      if (this._proteinFilter.has(p)) {
+        out.push({ kind: "protein", value: p, label: HelloFreshMealPlannerCard.PROTEIN_LABELS[p] || p });
+      }
     }
     for (const f of card.DIET_FILTERS) {
       if (this._dietFilter.has(f.key)) out.push({ kind: "diet", value: f.key, label: f.label });
@@ -1328,7 +1341,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const meals = this._mealsCount(pending);
     const min = HelloFreshMealPlannerCard.MIN_MEALS;
     if (meals < min) {
-      this._flash(`Choose at least ${min} meals before saving (${meals} selected).`);
+      this._flash(`Velg minst ${min} retter før du lagrer (${meals} valgt).`);
       return;
     }
     // Translate chosen course_index values back into recipe ids + per-recipe quantities.
@@ -1343,7 +1356,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
 
     this._busy = true;
-    this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
+    this._saving = "Vent mens valgene lagres …"; // persistent banner until reload completes
     this._render();
     // Yield a paint frame so the banner is actually drawn before the (possibly fast-resolving)
     // service call and reload run — otherwise the microtask after `await` can pre-empt the paint
@@ -1364,7 +1377,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       if (downgraded) this._noteDowngrade(week.week_id);
-      else this._flash("Meal selection updated.");
+      else this._flash("Middagsvalget er oppdatert.");
     } catch (err) {
       this._busy = false;
       // Preserve the user's unsaved picks across the resync: _fetchWeeks drops _pending
@@ -1374,7 +1387,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       const unsaved = this._pending[week.week_id];
       await this._fetchWeeks(week.week_id); // resync from the source of truth
       if (unsaved) this._pending[week.week_id] = unsaved;
-      this._flash(`Selection failed: ${(err && err.message) || err}`, true);
+      this._flash(`Lagring av valg mislyktes: ${(err && err.message) || err}`, true);
     } finally {
       this._saving = null;
       this._render();
@@ -1392,7 +1405,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       await this._hass.callService("hellofresh", service, data);
       this._broadcastDataChanged();
     } catch (err) {
-      this._flash(`${service} failed: ${(err && err.message) || err}`, true);
+      this._flash(`${service === "skip_week" ? "Hopping over uke" : "Gjenoppretting av uke"} mislyktes: ${(err && err.message) || err}`, true);
     } finally {
       this._busy = false;
       // Stay on the week that was just skipped/unskipped — like save does — instead of
@@ -1534,14 +1547,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   _renderBody(week) {
-    if (this._loading) return `<div class="state">Loading weeks…</div>`;
+    if (this._loading) return `<div class="state">Laster uker …</div>`;
     if (this._error) {
-      return `<div class="state error">Could not load weeks: ${this._esc(this._error)}</div>
-        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+      return `<div class="state error">Kunne ikke laste uker: ${this._esc(this._error)}</div>
+        <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
     }
     if (!this._weeks || this._weeks.length === 0) {
-      return `<div class="state">No delivery weeks found.</div>
-        <div class="actions"><button data-action="refresh">Refresh</button></div>`;
+      return `<div class="state">Fant ingen leveringsuker.</div>
+        <div class="actions"><button data-action="refresh">Oppdater</button></div>`;
     }
     return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderOrder(week)}${this._renderFilterBar(week)}${this._renderGrid(week)}`;
   }
@@ -1555,9 +1568,9 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return `
       <div class="downgrade-notice" role="alert">
         <span class="downgrade-icon" aria-hidden="true">⚠</span>
-        <span class="downgrade-text">HelloFresh <strong>downsized this box</strong> to fit your
-          plan — fewer meals were saved than you selected. Review the saved selection below.</span>
-        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Dismiss">✕</button>
+          <span class="downgrade-text">HelloFresh <strong>reduserte denne kassen</strong> for å passe
+          abonnementet — færre retter enn du valgte ble lagret. Kontroller valget nedenfor.</span>
+        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Lukk">✕</button>
       </div>`;
   }
 
@@ -1573,14 +1586,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     if (order) {
       const status = order.tracking_status || order.status;
       if (status) items.push(this._orderItem("Status", this._titleCase(status)));
-      if (order.carrier) items.push(this._orderItem("Carrier", order.carrier));
+      if (order.carrier) items.push(this._orderItem("Transportør", order.carrier));
       if (order.tracking_number) {
         const num = this._esc(order.tracking_number);
         const href = this._safeUrl(order.tracking_url);
         const value = href
           ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>`
           : num;
-        items.push(this._orderItem("Tracking", value, true));
+        items.push(this._orderItem("Sporing", value, true));
       }
       // For a box that has arrived, show WHEN: the order's delivery date (falling back to the
       // week's). Only on delivered boxes — for upcoming weeks the header already shows the
@@ -1593,7 +1606,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // rendered in the viewer's timezone.
       const deliveredDate = week.delivered_at || week.delivery_date;
       if (isDelivered && deliveredDate) {
-        items.push(this._orderItem("Delivered", this._fmtDate(deliveredDate)));
+        items.push(this._orderItem("Levert", this._fmtDate(deliveredDate)));
       }
     }
 
@@ -1604,7 +1617,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     //     fallback, matching the selected_plan_total_price sensor.
     let total = null;
     let totalCurrency = null;
-    let totalLabel = "Total";
+    let totalLabel = "Totalt";
     if (order && order.billed_total_price != null) {
       total = order.billed_total_price;
       totalCurrency = order.billed_total_currency || order.currency;
@@ -1614,12 +1627,12 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     } else if (this._account && this._account.selected_plan_total_price != null) {
       total = this._account.selected_plan_total_price;
       totalCurrency = this._account.selected_plan_total_price_currency;
-      totalLabel = "Plan total"; // distinguish the estimate from a real billed box total
+      totalLabel = "Abonnement totalt"; // distinguish the estimate from a real billed box total
     }
     if (total != null) {
       items.push(this._orderItem(totalLabel, this._fmtPrice(total, totalCurrency)));
     }
-    if (order && order.order_id) items.push(this._orderItem("Order ID", order.order_id));
+    if (order && order.order_id) items.push(this._orderItem("Ordre-ID", order.order_id));
     if (items.length === 0) return "";
     return `<div class="orderbar">${items.join("")}</div>`;
   }
@@ -1637,18 +1650,18 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const rel = this._relativeWeek(week);
     return `
       <div class="header">
-        <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
+        <button class="nav" data-action="prev" aria-label="Forrige uke">‹</button>
         <div class="weekinfo">
           <div class="weektitle">${this._esc(week.display_name || week.week_id)}</div>
           <div class="weeksub">
             ${week.delivery_date ? `${this._esc(this._fmtDate(week.delivery_date))}` : ""}
             ${rel ? ` · ${this._esc(rel)}` : ""}
-            ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
+            ${week.is_skipped ? ` · <span class="skipped">Hoppet over</span>` : ""}
             ${this._weekBenefitLabel(week) ? ` · <span class="benefit">${this._esc(this._weekBenefitLabel(week))}</span>` : ""}
           </div>
           ${this._renderCurrentWeek()}
         </div>
-        <button class="nav" data-action="next" aria-label="Next week">›</button>
+        <button class="nav" data-action="next" aria-label="Neste uke">›</button>
       </div>
       ${this._renderStatusRow(week)}
     `;
@@ -1673,7 +1686,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     }
     return `
       <div class="currentweekslot">
-        <button class="currentweekbtn" data-action="goto-current">Current Week</button>
+        <button class="currentweekbtn" data-action="goto-current">Denne uken</button>
       </div>`;
   }
 
@@ -1698,34 +1711,34 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const inactive = week.is_skipped || this._isPaused(week);
     // The box resizes when the meal count differs from the base plan (repriced by HelloFresh).
     const resized = !inactive && required && meals !== required;
-    const mealLabel = `${meals} meal${meals === 1 ? "" : "s"}`;
-    const servingsLabel = servings !== meals ? ` · ${servings} servings` : "";
+    const mealLabel = `${meals} ${meals === 1 ? "rett" : "retter"}`;
+    const servingsLabel = servings !== meals ? ` · ${servings} porsjoner` : "";
     return `
       <div class="statusrow">
-        <span class="chip ${inactive ? "" : meals >= min ? "ok" : "warn"}" title="${resized ? `Resizes your ${required}-meal plan to a ${meals}-meal box for this week` : ""}">
-          ${mealLabel}${resized ? ` (plan: ${required})` : ""}${servingsLabel}${dirty ? " · unsaved" : ""}
+        <span class="chip ${inactive ? "" : meals >= min ? "ok" : "warn"}" title="${resized ? `Endrer planen på ${required} retter til en kasse med ${meals} retter denne uken` : ""}">
+          ${mealLabel}${resized ? ` (plan: ${required})` : ""}${servingsLabel}${dirty ? " · ikke lagret" : ""}
         </span>
         ${week.meals_preselected && !this._isPaused(week)
-          ? `<span class="chip preselected" title="HelloFresh auto-picked these meals — review and adjust before the deadline.">Preselected</span>`
+          ? `<span class="chip preselected" title="HelloFresh valgte disse rettene automatisk — kontroller og juster før fristen.">Forhåndsvalgt</span>`
           : ""}
         <button
           class="chip filterchip"
           data-action="toggle-filter"
-          title="${this._showSelectedOnly ? "Show all meals" : "Show only selected meals"}"
-        >${this._showSelectedOnly ? "Show all meals" : "Show selected only"}</button>
-        ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
-        <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
+          title="${this._showSelectedOnly ? "Vis alle retter" : "Vis bare valgte retter"}"
+        >${this._showSelectedOnly ? "Vis alle retter" : "Vis bare valgte"}</button>
+        ${deadline ? `<span class="chip">Frist ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
+        <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Kan endres" : "Låst"}</span>
         ${editable && this._showSelectedOnly
-          ? `<span class="hint">Switch to “Show all meals” to change your selection.</span>`
+          ? `<span class="hint">Bytt til «Vis alle retter» for å endre valget.</span>`
           : editable
-            ? `<span class="hint">Choose with + Add, then Save · tap a meal for its recipe.</span>`
+            ? `<span class="hint">Velg med + Legg til, og trykk Lagre · trykk på en rett for oppskriften.</span>`
             : ""}
         ${dirty
-          ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Save selection</button>
-             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
+          ? `<button class="savebtn" data-action="save" ${canSave ? "" : "disabled"}>Lagre valg</button>
+             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Avbryt</button>`
           : ""}
         ${this._canSkip(week)
-          ? `<button class="skipbtn" data-action="skip" ${this._busy ? "disabled" : ""}>${week.is_skipped || this._isPaused(week) ? "Unskip week" : "Skip week"}</button>`
+          ? `<button class="skipbtn" data-action="skip" ${this._busy ? "disabled" : ""}>${week.is_skipped || this._isPaused(week) ? "Gjenopprett uke" : "Hopp over uke"}</button>`
           : ""}
         <button class="skipbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
       </div>
@@ -1826,14 +1839,14 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // per week + selection, so this is a lookup on every later render.
     this._serverFilterIds(week);
     const busy = this._serverFilterPending
-      ? `<span class="fbusy" role="status">Filtering…</span>`
+      ? `<span class="fbusy" role="status">Filtrerer …</span>`
       : "";
     const active = this._activeFilterSummary(week);
     const expanded = this._filtersExpanded;
     const header = `
       <button class="fheader" data-action="toggle-filters" aria-expanded="${expanded ? "true" : "false"}">
         <span class="fcaret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
-        Filters${active.length ? ` · ${active.length} active` : ""}
+        Filtre${active.length ? ` · ${active.length} aktive` : ""}
       </button>`;
     if (!expanded) {
       const summary = active.length
@@ -1841,7 +1854,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
             .map(
               (a) => `<button class="fbtn on fremove" data-action="remove-filter"
                   data-kind="${this._esc(a.kind)}" data-value="${this._esc(a.value)}"
-                  title="Remove: ${this._esc(a.label)}"
+                  title="Fjern: ${this._esc(a.label)}"
                 >${this._esc(a.label)}<span class="fx" aria-hidden="true">✕</span></button>`
             )
             .join("")}</div>`
@@ -1857,7 +1870,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           data-action="filter-protein"
           data-protein="${p}"
           aria-pressed="${on ? "true" : "false"}"
-        ><span class="fdot" style="background:${color}"></span>${p}</button>`;
+        ><span class="fdot" style="background:${color}"></span>${HelloFreshMealPlannerCard.PROTEIN_LABELS[p] || p}</button>`;
     }).join("");
     const dietAllActive = this._dietFilter.size === 0;
     const dietChips = HelloFreshMealPlannerCard.DIET_FILTERS.map((f) => {
@@ -1893,23 +1906,23 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         class="fbtn ${isOn ? "on" : ""}"
         data-action="${action}"
         aria-pressed="${isOn ? "true" : "false"}"
-      >All</button>`;
+      >Alle</button>`;
     const variantsChip = `<button
         class="fbtn ${this._showVariants ? "on" : ""}"
         data-action="toggle-variants"
         aria-pressed="${this._showVariants ? "true" : "false"}"
-        title="Variants are the 2× protein, protein-swap and veggie-swap versions of a meal"
-      >${this._showVariants ? "Hide variants" : "Show variants"}</button>`;
+        title="Varianter er versjoner med 2× protein, annet protein eller vegetarisk alternativ"
+      >${this._showVariants ? "Skjul varianter" : "Vis varianter"}</button>`;
     return `
       <div class="filterbar open">
         <div class="fheadrow">${header}${busy}</div>
         ${this._renderMenuSectionGroup(week)}
-        ${this._filterRow("Main Protein", allChip("filter-protein-all", allActive) + proteinChips)}
-        ${this._filterRow("Dietary Preference", allChip("filter-diet-all", dietAllActive) + dietChips)}
+        ${this._filterRow("Hovedprotein", allChip("filter-protein-all", allActive) + proteinChips)}
+        ${this._filterRow("Kostholdspreferanse", allChip("filter-diet-all", dietAllActive) + dietChips)}
         ${this._renderServerFilterGroups(week)}
-        ${this._filterRow("Total Cooking Time", allChip("filter-time-all", timeAllActive) + timeChips)}
-        ${this._filterRow("Highlights", allChip("filter-highlight-all", highlightAllActive) + highlightChips)}
-        ${this._filterRow("Variants", variantsChip)}
+        ${this._filterRow("Total tilberedningstid", allChip("filter-time-all", timeAllActive) + timeChips)}
+        ${this._filterRow("Høydepunkter", allChip("filter-highlight-all", highlightAllActive) + highlightChips)}
+        ${this._filterRow("Varianter", variantsChip)}
       </div>
     `;
   }
@@ -1935,8 +1948,8 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         class="fbtn ${allActive ? "on" : ""}"
         data-action="filter-section-all"
         aria-pressed="${allActive ? "true" : "false"}"
-      >All</button>`;
-    return this._filterRow("Categories", allChip + chips);
+      >Alle</button>`;
+    return this._filterRow("Kategorier", allChip + chips);
   }
 
   // The website's Cuisine type / Dish type / Ingredients to avoid groups: one multi-select
@@ -1965,7 +1978,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
         data-action="filter-server-all"
         data-group="${this._esc(group.slug)}"
         aria-pressed="${allActive ? "true" : "false"}"
-      >All</button>`;
+      >Alle</button>`;
         return this._filterRow(this._esc(group.name || group.slug), allChip + chips);
       })
       .join("");
@@ -1978,10 +1991,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       // "no menu yet" only makes sense for an upcoming week whose menu hasn't published.
       const emptyMessage =
         week.is_skipped || this._isPaused(week)
-          ? "This week was skipped — no meals selected."
+          ? "Denne uken ble hoppet over – ingen retter er valgt."
           : this._isPast(week)
-            ? "No meals selected for this week."
-            : "No menu available for this week yet.";
+            ? "Ingen retter er valgt for denne uken."
+            : "Menyen for denne uken er ikke tilgjengelig ennå.";
       return `<div class="state">${emptyMessage}</div>`;
     }
     // Cache the deduped tiles (which carry `_aliasIndexes`) so click handling resolves the same
@@ -1994,7 +2007,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // full render only if still deselected). Variant aliases are respected via sel().
     let visible = this._showSelectedOnly ? recipes.filter((r) => ctx.sel(r)) : recipes;
     if (this._showSelectedOnly && visible.length === 0) {
-      return `<div class="state">No meals selected for this week yet.</div>`;
+      return `<div class="state">Ingen retter er valgt for denne uken ennå.</div>`;
     }
     // Protein / dietary / highlight / section / variant filters (current & future weeks
     // only). Selected meals always pass so an active filter never hides a meal you've chosen.
@@ -2012,7 +2025,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           (!serverIds || ctx.sel(r) || serverIds.has(bareId(r)))
       );
       if (filtered.length === 0) {
-        return `<div class="state">No meals match the current filter. Adjust the filters above to see more.</div>`;
+        return `<div class="state">Ingen retter passer med filteret. Juster filtrene ovenfor for å se flere.</div>`;
       }
       visible = filtered;
     }
@@ -2074,7 +2087,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     const variantTitle = r.variation_title || null;
     // Numbers line: protein + calories together makes double-protein variants obvious.
     const stats = [];
-    if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)}g protein`);
+    if (r.protein_g != null) stats.push(`${Math.round(r.protein_g)} g protein`);
     if (r.calories_kcal != null) stats.push(`${Math.round(r.calories_kcal)} kcal`);
     // The headline total cooking time HelloFresh shows on its own tiles. The payload's
     // naming is swapped — prep_time_minutes carries that headline number, total_time_minutes
@@ -2084,10 +2097,10 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     // HelloFresh's own "you've had this before" count, and your star rating when you gave one.
     // Both are optional and only ever present on a minority of meals.
     if (r.delivered_count) {
-      const when = r.last_delivered_week ? `, last ${r.last_delivered_week}` : "";
-      stats.push(`Ordered ${r.delivered_count}×${when}`);
+      const when = r.last_delivered_week ? `, sist ${r.last_delivered_week}` : "";
+      stats.push(`Laget ${r.delivered_count} gang${r.delivered_count === 1 ? "" : "er"}${when}`);
     }
-    if (r.rating) stats.push(`You rated ${r.rating}/${r.rating_scale || 5}`);
+    if (r.rating) stats.push(`Din vurdering ${r.rating}/${r.rating_scale || 5}`);
     // A meatless dish carries no protein category, so surface an explicit "Veggie" chip driven
     // by preference (reliably set to "Veggie" for Veggie/Vegan meals) — the protein dot alone is
     // an unlabeled color. Meat meals identify their protein via that dot instead.
@@ -2121,16 +2134,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return `
       <div class="recipe ${isSelected ? "selected" : ""} ${ctx.editable ? "editable" : ""} ${isVariant ? "variant" : ""} ${soldOut ? "soldout" : ""}"
            data-index="${idxAttr}" role="button" tabindex="0"
-           aria-label="Open recipe: ${this._esc(r.name)}">
+           aria-label="Åpne oppskrift: ${this._esc(r.name)}">
         <div class="imgwrap">
           ${r.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(r.image_url, this._config.image_width))}" alt="${this._esc(r.name)}">`
             : `<div class="noimg"></div>`}
-          ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
+          ${soldOut ? `<div class="soldoutflag">Utsolgt</div>` : ""}
           ${videoUrl
-            ? `<button class="playbtn" data-video="${idxAttr}" title="Play recipe video" aria-label="Play video for ${this._esc(r.name)}">▶</button>`
+            ? `<button class="playbtn" data-video="${idxAttr}" title="Spill av oppskriftsvideo" aria-label="Spill av video for ${this._esc(r.name)}">▶</button>`
             : ""}
-          ${r.is_favorite === true ? `<div class="fav" title="In your HelloFresh cookbook">♥</div>` : ""}
+          ${r.is_favorite === true ? `<div class="fav" title="I HelloFresh-kokeboken din">♥</div>` : ""}
           ${isSelected ? `<div class="check">✓</div>` : ""}
           ${qty > 1 ? `<div class="qtybadge">${qty}×</div>` : ""}
           ${r.surcharge_label ? `<div class="surcharge">${this._esc(this._fmtSurcharge(r.surcharge_label, currency))}</div>` : ""}
@@ -2141,26 +2154,26 @@ class HelloFreshMealPlannerCard extends HTMLElement {
           ${variantTitle ? `<div class="variation">${this._esc(variantTitle)}</div>` : ""}
           ${r.description ? `<div class="desc">${this._esc(r.description)}</div>` : ""}
           ${r.price != null
-            ? `<div class="price">${this._esc(this._fmtPerServingPrice(r.price, r.currency || currency))}<span class="perserving"> / serving</span></div>`
+            ? `<div class="price">${this._esc(this._fmtPerServingPrice(r.price, r.currency || currency))}<span class="perserving"> / porsjon</span></div>`
             : ""}
           ${r.badge || isVeggie || tags.length
             ? `<div class="chips">
                  ${r.badge ? `<span class="rchip badge"${this._badgeStyle(r)}>${this._esc(r.badge)}</span>` : ""}
-                 ${isVeggie ? `<span class="rchip veggie">🌱 Veggie</span>` : ""}
+                 ${isVeggie ? `<span class="rchip veggie">🌱 Vegetar</span>` : ""}
                  ${tags.map((t) => `<span class="rchip">${this._esc(t)}</span>`).join("")}
                </div>`
             : ""}
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${ctx.editable && isSelected
             ? `<div class="metafoot"><div class="stepper" data-stepper="${idxAttr}">
-                 <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="${qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
+                 <button class="qbtn" data-qty="dec" data-index="${idxAttr}" title="${qty === 1 ? "Fjern rett" : "Færre porsjoner"}">−</button>
                  <span class="qval">${qty}</span>
-                 <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="More servings">+</button>
-                 <span class="qlabel">serving${qty === 1 ? "" : "s"}</span>
+                 <button class="qbtn" data-qty="inc" data-index="${idxAttr}" ${qty >= maxQty ? "disabled" : ""} title="Flere porsjoner">+</button>
+                 <span class="qlabel">${qty === 1 ? "porsjon" : "porsjoner"}</span>
                </div></div>`
             : ""}
           ${ctx.editable && !isSelected
-            ? `<div class="metafoot"><button class="addbtn" data-add="${idxAttr}" aria-label="Add ${this._esc(r.name)} to your box">+ Add</button></div>`
+            ? `<div class="metafoot"><button class="addbtn" data-add="${idxAttr}" aria-label="Legg ${this._esc(r.name)} til i kassen">+ Legg til</button></div>`
             : ""}
         </div>
       </div>`;
@@ -2367,16 +2380,16 @@ class HelloFreshMealPlannerCard extends HTMLElement {
       <div class="videobox">
         <div class="videohead">
           <span class="videotitle">${this._esc(recipe.name)}</span>
-          <button class="videoclose" title="Close" aria-label="Close video">✕</button>
+          <button class="videoclose" title="Lukk" aria-label="Lukk video">✕</button>
         </div>
         <video class="videoel" controls autoplay playsinline>
           <source src="${this._esc(url)}" type="video/mp4">
         </video>
         <div class="videoerr" hidden>
-          This clip could not be played here.
+          Dette klippet kunne ikke spilles av her.
         </div>
         <a class="videofallback" href="${this._esc(url)}" target="_blank" rel="noopener noreferrer">
-          Video not playing? Open it directly
+          Spilles ikke videoen av? Åpne den direkte
         </a>
       </div>`;
     // Surface a real failure instead of a silent black box: <source> errors do not bubble to
@@ -2509,7 +2522,17 @@ class HelloFreshMealPlannerCard extends HTMLElement {
 
   // Normalize an API status like "ON_THE_WAY" / "on_the_way" to "On The Way".
   _titleCase(value) {
-    return titleCase(value);
+    const labels = {
+      DELIVERED: "Levert",
+      OUT_FOR_DELIVERY: "På vei til levering",
+      ON_THE_WAY: "På vei",
+      RUNNING: "Aktiv",
+      PAUSED: "Pauset",
+      SKIPPED: "Hoppet over",
+      FAILED: "Mislyktes",
+    };
+    const key = String(value || "").toUpperCase().replace(/\s+/g, "_");
+    return labels[key] || titleCase(value);
   }
 
   _esc(value) {
@@ -2874,14 +2897,14 @@ const EDITOR_SCHEMA = [
   { name: "config_entry_id", selector: { text: {} } },
 ];
 const EDITOR_LABELS = {
-  title: "Title",
-  logo: "Show HelloFresh logo",
-  image_width: "Recipe image width (px)",
-  config_entry_id: "Config entry ID",
+  title: "Tittel",
+  logo: "Vis HelloFresh-logo",
+  image_width: "Bildebredde for oppskrift (piksler)",
+  config_entry_id: "Konfigurasjons-ID",
 };
 const EDITOR_HELPERS = {
-  image_width: "Cloudinary resize width for recipe images.",
-  config_entry_id: "Only needed when multiple HelloFresh accounts are configured.",
+  image_width: "Bredde som brukes ved skalering av oppskriftsbilder.",
+  config_entry_id: "Trengs bare når flere HelloFresh-kontoer er satt opp.",
 };
 
 class HelloFreshMealPlannerCardEditor extends HTMLElement {
@@ -2906,7 +2929,7 @@ class HelloFreshMealPlannerCardEditor extends HTMLElement {
     }
     if (this._hass) this._form.hass = this._hass;
     this._form.data = {
-      title: this._config.title != null ? this._config.title : "HelloFresh Meal Planner",
+      title: this._config.title != null ? this._config.title : "HelloFresh måltidsplanlegger",
       logo: Boolean(this._config.logo),
       image_width: Number(this._config.image_width) || 400,
       config_entry_id: this._config.config_entry_id || "",
@@ -2916,7 +2939,7 @@ class HelloFreshMealPlannerCardEditor extends HTMLElement {
   _onFormChanged(ev) {
     ev.stopPropagation();
     const value = (ev.detail && ev.detail.value) || {};
-    const config = { ...this._config, title: value.title || "HelloFresh Meal Planner" };
+    const config = { ...this._config, title: value.title || "HelloFresh måltidsplanlegger" };
     if (value.logo) config.logo = typeof this._config.logo === "string" ? this._config.logo : true;
     else delete config.logo;
     if (Number(value.image_width) > 0) config.image_width = Number(value.image_width);
@@ -2936,8 +2959,8 @@ customElements.define("hellofresh-meal-planner-card-editor", HelloFreshMealPlann
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-meal-planner-card",
-  name: "HelloFresh Meal Planner",
-  description: "Browse HelloFresh weeks and select meals with images.",
+  name: "HelloFresh måltidsplanlegger",
+  description: "Bla gjennom HelloFresh-uker og velg retter med bilder.",
   preview: false,
   documentationURL: "https://github.com/kedube/ha-hellofresh",
 });

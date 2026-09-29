@@ -64,19 +64,19 @@ const {
 
 // Pretty labels for HelloFresh's internal group slugs.
 const GROUP_LABELS = {
-  appetizer: "Appetizers",
-  breakfast: "Breakfast",
-  dessert: "Desserts",
-  lunch: "Lunch",
-  protein: "Proteins",
-  sides: "Sides",
+  appetizer: "Forretter",
+  breakfast: "Frokost",
+  dessert: "Desserter",
+  lunch: "Lunsj",
+  protein: "Proteiner",
+  sides: "Tilbehør",
   goodchop: "GoodChop",
   petstable: "The Pets Table",
-  donation: "Donations",
-  lowprices: "Low Prices",
+  donation: "Donasjoner",
+  lowprices: "Lave priser",
   // Internal slug for the add-on pool the meal-modularity flows draw from (dips, sides,
   // dessert cups). Real purchasable items, but "Modularity" is meaningless to a person.
-  modularity: "Extras",
+  modularity: "Ekstra",
 };
 
 class HelloFreshMarketCard extends HTMLElement {
@@ -605,7 +605,7 @@ class HelloFreshMarketCard extends HTMLElement {
     for (const [id, qty] of pending) if (qty > 0) quantities[id] = qty;
 
     this._busy = true;
-    this._saving = "Please wait while saving selections…"; // persistent banner until reload completes
+    this._saving = "Vent litt mens utvalget lagres …"; // persistent banner until reload completes
     this._render();
     // Yield a paint frame so the banner is actually drawn before the (possibly fast-resolving)
     // service call and reload run — otherwise the microtask after `await` can pre-empt the paint
@@ -625,7 +625,7 @@ class HelloFreshMarketCard extends HTMLElement {
       this._broadcastDataChanged();
       await this._fetchWeeks(week.week_id); // resync, staying on the week we just saved
       if (downgraded) this._noteDowngrade(week.week_id);
-      else this._flash("Market selection updated.");
+      else this._flash("Market-utvalget er oppdatert.");
     } catch (err) {
       this._busy = false;
       // Keep the unsaved quantities across the resync (which wipes _pending) so a failed
@@ -633,7 +633,7 @@ class HelloFreshMarketCard extends HTMLElement {
       const unsaved = this._pending[week.week_id];
       await this._fetchWeeks(week.week_id); // resync from the source of truth
       if (unsaved) this._pending[week.week_id] = unsaved;
-      this._flash(`Selection failed: ${(err && err.message) || err}`, true);
+      this._flash(`Lagring av utvalg mislyktes: ${(err && err.message) || err}`, true);
     } finally {
       this._saving = null;
       this._render();
@@ -711,14 +711,14 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   _renderBody(week) {
-    if (this._loading) return `<div class="state">Loading market…</div>`;
+    if (this._loading) return `<div class="state">Laster Market …</div>`;
     if (this._error) {
-      return `<div class="state error">Could not load market: ${this._esc(this._error)}</div>
-        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+      return `<div class="state error">Kunne ikke laste Market: ${this._esc(this._error)}</div>
+        <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
     }
     if (!this._weeks || this._weeks.length === 0) {
-      return `<div class="state">No market items available for any week yet.</div>
-        <div class="actions"><button data-action="refresh">Refresh</button></div>`;
+      return `<div class="state">Ingen Market-varer er tilgjengelige ennå.</div>
+        <div class="actions"><button data-action="refresh">Oppdater</button></div>`;
     }
     return `${this._renderHeader(week)}${this._renderDowngradeNotice(week)}${this._renderSectionBar(week)}${this._renderGroups(week)}`;
   }
@@ -746,12 +746,12 @@ class HelloFreshMarketCard extends HTMLElement {
     return `
       <div class="filterbar">
         <div class="fgroup">
-          <span class="flabel">Categories</span>
+          <span class="flabel">Kategorier</span>
           <button
             class="fbtn ${allActive ? "on" : ""}"
             data-action="filter-section-all"
             aria-pressed="${allActive ? "true" : "false"}"
-          >All</button>
+          >Alle</button>
           ${chips}
         </div>
       </div>
@@ -767,9 +767,9 @@ class HelloFreshMarketCard extends HTMLElement {
     return `
       <div class="downgrade-notice" role="alert">
         <span class="downgrade-icon" aria-hidden="true">⚠</span>
-        <span class="downgrade-text">HelloFresh <strong>downsized this box</strong> to fit your
-          plan — fewer items were saved than you selected. Review the saved selection below.</span>
-        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Dismiss">✕</button>
+        <span class="downgrade-text">HelloFresh <strong>reduserte denne kassen</strong> for å passe til
+          planen din – færre varer enn du valgte, ble lagret. Kontroller utvalget nedenfor.</span>
+        <button class="downgrade-dismiss" data-action="dismiss-downgrade" aria-label="Lukk">✕</button>
       </div>`;
   }
 
@@ -777,17 +777,17 @@ class HelloFreshMarketCard extends HTMLElement {
     const rel = this._relativeWeek(week);
     return `
       <div class="header">
-        <button class="nav" data-action="prev" aria-label="Previous week">‹</button>
+        <button class="nav" data-action="prev" aria-label="Forrige uke">‹</button>
         <div class="weekinfo">
           <div class="weektitle">${this._esc(week.display_name || week.week_id)}</div>
           <div class="weeksub">
             ${week.delivery_date ? this._esc(this._fmtDate(week.delivery_date)) : ""}
             ${rel ? ` · ${this._esc(rel)}` : ""}
-            ${week.is_skipped ? ` · <span class="skipped">Skipped</span>` : ""}
+            ${week.is_skipped ? ` · <span class="skipped">Hoppet over</span>` : ""}
           </div>
           ${this._renderCurrentWeek()}
         </div>
-        <button class="nav" data-action="next" aria-label="Next week">›</button>
+        <button class="nav" data-action="next" aria-label="Neste uke">›</button>
       </div>
       ${this._renderStatusRow(week)}
     `;
@@ -804,7 +804,7 @@ class HelloFreshMarketCard extends HTMLElement {
     }
     return `
       <div class="currentweekslot">
-        <button class="currentweekbtn" data-action="goto-current">Current Week</button>
+        <button class="currentweekbtn" data-action="goto-current">Denne uken</button>
       </div>`;
   }
 
@@ -819,23 +819,23 @@ class HelloFreshMarketCard extends HTMLElement {
     return `
       <div class="statusrow">
         <span class="chip ${totalCents > 0 ? "ok" : ""}">
-          Market total ${this._esc(this._fmtPrice(totalCents / 100, currency))}${dirty ? " · unsaved" : ""}
+          Market totalt ${this._esc(this._fmtPrice(totalCents / 100, currency))}${dirty ? " · ikke lagret" : ""}
         </span>
         ${this._isPast(week)
           ? "" // Past weeks always show only what was ordered, so the toggle is meaningless.
           : `<button
           class="chip filterchip"
           data-action="toggle-filter"
-          title="${this._showSelectedOnly ? "Show all market items" : "Show only selected market items"}"
-        >${this._showSelectedOnly ? "Show all items" : "Show selected only"}</button>`}
-        ${deadline ? `<span class="chip">Deadline ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
-        <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Editable" : "Locked"}</span>
+          title="${this._showSelectedOnly ? "Vis alle Market-varer" : "Vis bare valgte Market-varer"}"
+        >${this._showSelectedOnly ? "Vis alle varer" : "Vis bare valgte"}</button>`}
+        ${deadline ? `<span class="chip">Frist ${this._esc(this._fmtDateTime(deadline))}</span>` : ""}
+        <span class="chip ${editable ? "editable" : "locked"}">${editable ? "Kan endres" : "Låst"}</span>
         ${editable && this._showSelectedOnly
-          ? `<span class="hint">Switch to “Show all items” to change your cart.</span>`
+          ? `<span class="hint">Bytt til «Vis alle varer» for å endre handlekurven.</span>`
           : ""}
         ${dirty
-          ? `<button class="savebtn" data-action="save" ${this._busy ? "disabled" : ""}>Save selection</button>
-             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Cancel</button>`
+          ? `<button class="savebtn" data-action="save" ${this._busy ? "disabled" : ""}>Lagre utvalg</button>
+             <button class="skipbtn" data-action="cancel" ${this._busy ? "disabled" : ""}>Avbryt</button>`
           : ""}
         <button class="skipbtn" data-action="refresh" ${this._busy ? "disabled" : ""}>↻</button>
       </div>
@@ -859,9 +859,9 @@ class HelloFreshMarketCard extends HTMLElement {
       // The "…yet" phrasing implies you can still add items, so it only fits an editable week.
       // A locked/past week is final — say so plainly instead.
       const noneSelected = this._isEditable(week)
-        ? "No market items selected for this week yet."
-        : "No market items selected.";
-      return `<div class="state">${selectedOnly ? noneSelected : "No market items for this week."}</div>`;
+        ? "Ingen Market-varer er valgt for denne uken ennå."
+        : "Ingen Market-varer er valgt.";
+      return `<div class="state">${selectedOnly ? noneSelected : "Ingen Market-varer for denne uken."}</div>`;
     }
 
     // Section filter (current & future weeks only). Selected items always pass so an active
@@ -870,7 +870,7 @@ class HelloFreshMarketCard extends HTMLElement {
     if (activeSections.size > 0) {
       const filtered = items.filter((i) => qtyOf(i) > 0 || activeSections.has(i.group_type));
       if (filtered.length === 0) {
-        return `<div class="state">No market items match the current filter. Adjust the filters above to see more.</div>`;
+        return `<div class="state">Ingen Market-varer passer med filteret. Juster filtrene ovenfor for å se flere.</div>`;
       }
       items = filtered;
     }
@@ -930,13 +930,13 @@ class HelloFreshMarketCard extends HTMLElement {
     const soldOut = item.is_sold_out === true;
     return `
       <div class="item ${qty > 0 ? "selected" : ""} ${soldOut ? "soldout" : ""}" data-id="${idAttr}"
-           role="button" tabindex="0" aria-label="Open recipe: ${this._esc(item.name)}">
+           role="button" tabindex="0" aria-label="Åpne oppskrift: ${this._esc(item.name)}">
         <div class="imgwrap">
           ${item.image_url
             ? `<img loading="lazy" src="${this._esc(resizedImage(item.image_url, this._config.image_width))}" alt="${this._esc(item.name)}">`
             : `<div class="noimg"></div>`}
           ${qty > 0 ? `<div class="qtybadge">${qty}×</div>` : ""}
-          ${soldOut ? `<div class="soldoutflag">Sold out</div>` : ""}
+          ${soldOut ? `<div class="soldoutflag">Utsolgt</div>` : ""}
           ${item.price != null ? `<div class="price">${this._esc(this._fmtPrice(item.price, item.currency || fallbackCurrency))}</div>` : ""}
         </div>
         <div class="meta">
@@ -945,11 +945,11 @@ class HelloFreshMarketCard extends HTMLElement {
           ${stats.length ? `<div class="cals">${this._esc(stats.join(" · "))}</div>` : ""}
           ${editable
             ? `<div class="metafoot"><div class="stepper">
-                 <button class="qbtn" data-qty="dec" data-id="${idAttr}" ${qty <= 0 ? "disabled" : ""} title="Fewer">−</button>
+                 <button class="qbtn" data-qty="dec" data-id="${idAttr}" ${qty <= 0 ? "disabled" : ""} title="Færre">−</button>
                  <span class="qval">${qty}</span>
-                 <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap || soldOut ? "disabled" : ""} title="More">+</button>
+                 <button class="qbtn" data-qty="inc" data-id="${idAttr}" ${qty >= cap || soldOut ? "disabled" : ""} title="Flere">+</button>
                </div></div>`
-            : qty > 0 ? `<div class="metafoot"><div class="cals">${qty} selected</div></div>` : ""}
+            : qty > 0 ? `<div class="metafoot"><div class="cals">${qty} valgt</div></div>` : ""}
         </div>
       </div>`;
   }

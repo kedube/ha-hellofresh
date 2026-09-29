@@ -81,7 +81,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { title: "Subscription", ...config };
+    this._config = { title: "Abonnement", ...config };
     this._render();
   }
 
@@ -241,8 +241,8 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Subscription")}</span>
-      <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Abonnement")}</span>
+      <button class="refreshbtn" data-action="refresh" title="Oppdater" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
 
@@ -271,13 +271,13 @@ class HelloFreshSubscriptionCard extends HTMLElement {
 
   _renderBody() {
     if (!this._summary) {
-      if (this._loading || !this._fetched) return `<div class="state">Loading subscription…</div>`;
-      return `<div class="state error">Could not load subscription: ${this._esc(this._error || "no data")}</div>
-        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+      if (this._loading || !this._fetched) return `<div class="state">Laster abonnement …</div>`;
+      return `<div class="state error">Kunne ikke laste abonnementet: ${this._esc(this._error || "ingen data")}</div>
+        <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
     }
     const notice = this._error
-      ? `<div class="notice">Refresh failed: ${this._esc(this._error)}
-           <button class="refreshbtn" data-action="refresh">Retry</button></div>`
+      ? `<div class="notice">Oppdatering mislyktes: ${this._esc(this._error)}
+           <button class="refreshbtn" data-action="refresh">Prøv igjen</button></div>`
       : "";
     return `<div class="${this._loading ? "reloading" : ""}">
       ${notice}
@@ -299,15 +299,15 @@ class HelloFreshSubscriptionCard extends HTMLElement {
       <button class="preset-toggle" data-action="toggle-presets"
               aria-expanded="${this._presetsExpanded ? "true" : "false"}">
         <span class="preset-caret">${this._presetsExpanded ? "▾" : "▸"}</span>
-        <span>Meal presets</span>
+        <span>Måltidsprofiler</span>
       </button>`;
     if (!this._presetsExpanded) return `<div class="section presets">${header}</div>`;
 
     let list;
     if (this._presetsLoading && this._presets === null) {
-      list = `<div class="preset-empty">Loading presets…</div>`;
+      list = `<div class="preset-empty">Laster måltidsprofiler …</div>`;
     } else if (!this._presets || this._presets.length === 0) {
-      list = `<div class="preset-empty">No presets available.</div>`;
+      list = `<div class="preset-empty">Ingen måltidsprofiler tilgjengelig.</div>`;
     } else {
       list = this._presets
         .map((p) => {
@@ -318,7 +318,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
           return `
             <div class="preset-item${isActive ? " active" : ""}">
               <span class="preset-name">${this._esc(name)}${
-                isActive ? ` <span class="preset-badge">Yours</span>` : ""
+                isActive ? ` <span class="preset-badge">Din</span>` : ""
               }</span>
               ${desc ? `<span class="preset-desc">${this._esc(desc)}</span>` : ""}
             </div>`;
@@ -338,8 +338,8 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     const card = this._cardOnFile() || "payment card";
     const when = this._fmtCardExpiry(s.payment_card_expiry);
     const text = s.payment_method_expired
-      ? `Your ${card} on file has expired${when ? ` (${when})` : ""}. Update it on HelloFresh or your next box may not ship.`
-      : `Your ${card} on file expires soon${when ? ` (${when})` : ""}. Update it on HelloFresh before your next box is charged.`;
+      ? `Kortet ${card} som er registrert, er utløpt${when ? ` (${when})` : ""}. Oppdater det hos HelloFresh, ellers kan neste kasse bli stoppet.`
+      : `Kortet ${card} som er registrert, utløper snart${when ? ` (${when})` : ""}. Oppdater det hos HelloFresh før neste kasse belastes.`;
     return `
       <div class="banner${s.payment_method_expired ? " danger" : ""}">
         <span class="banner-icon">💳</span>
@@ -355,9 +355,9 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     const name = raw ? String(raw) : "";
     if (!name) return "";
     const humanized = name.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
-    const brand = humanized.replace(/^Credit Card$/, "Credit card");
+    const brand = humanized.replace(/^Credit Card$/, "Betalingskort");
     const last4 = /^\d{4}$/.test(String(s.payment_card_last4 || "")) ? s.payment_card_last4 : "";
-    return last4 ? `${brand} ending in ${last4}` : brand;
+    return last4 ? `${brand} som slutter på ${last4}` : brand;
   }
 
   _fmtCardExpiry(value) {
@@ -377,7 +377,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     const s = this._summary;
     if (!s.next_holiday_message) return "";
     const date = s.next_holiday_delivery_date
-      ? ` New date: <b>${this._esc(this._fmtDate(s.next_holiday_delivery_date))}</b>.`
+      ? ` Ny dato: <b>${this._esc(this._fmtDate(s.next_holiday_delivery_date))}</b>.`
       : "";
     return `
       <div class="banner">
@@ -391,34 +391,34 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     // No "Next box" section: payment date, coupon, and the preselected flag are already on
     // the schedule card (summary rows / week badge), so repeating them here is noise.
     const sections = [
-      ["Account", [
-        ["Account ID", s.account_id],
+      ["Konto", [
+        ["Konto-ID", s.account_id],
         ["Status", s.subscription_status],
         ["Plan", s.selected_plan],
         // The active meal-preference preset HelloFresh uses to auto-preselect meals. Shown as its
         // full catalog name ("Quick & Easy") once the preset catalog is loaded, humanized slug
         // ("Quick") otherwise. Distinct from the plan itself.
-        ["Preference", this._preferenceName(s.plan_preference)],
-        ["Plan total", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
+        ["Preferanse", this._preferenceName(s.plan_preference)],
+        ["Plan totalt", this._fmtPrice(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
         // The plan total's split (from /gw/calculate): shipping always, discount only when
         // one applies — a permanent "$0.00 discount" cell would just be noise.
-        ["Shipping", this._breakdownPrice("shipping_amount", false)],
-        ["Discount", this._breakdownPrice("discount_amount", true)],
-        ["Credit", this._fmtPrice(s.account_credit, s.account_credit_currency)],
-        ["Card on file", this._cardOnFileCell()],
-        ["Servings", s.number_of_people],
-        ["Meals per box", s.required_meal_count],
-        ["Boxes received", s.boxes_received],
-        ["Address", s.delivery_address, true],
+        ["Frakt", this._breakdownPrice("shipping_amount", false)],
+        ["Rabatt", this._breakdownPrice("discount_amount", true)],
+        ["Tilgodebeløp", this._fmtPrice(s.account_credit, s.account_credit_currency)],
+        ["Registrert kort", this._cardOnFileCell()],
+        ["Porsjoner", s.number_of_people],
+        ["Middager per kasse", s.required_meal_count],
+        ["Mottatte kasser", s.boxes_received],
+        ["Adresse", s.delivery_address, true],
       ]],
-      ["Upcoming", [
-        ["Deliveries", s.upcoming_delivery_count],
+      ["Kommende", [
+        ["Leveringer", s.upcoming_delivery_count],
         // Counters with a week behind them are clickable: the click jumps the schedule /
         // meal-planner cards to that week over the cross-card sync channel.
-        ["Need selecting", s.weeks_needing_selection,
+        ["Må velges", s.weeks_needing_selection,
           false, (s.weeks_needing_selection_ids || [])[0]],
-        ["Skipped", s.skipped_week_count],
-        ["Next skipped", s.next_skipped_week, false, s.next_skipped_week_id],
+        ["Hoppet over", s.skipped_week_count],
+        ["Neste hoppede over", s.next_skipped_week, false, s.next_skipped_week_id],
       ]],
     ];
     return sections
@@ -429,7 +429,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
           .map(([label, value, wide, weekId]) => {
             const click = weekId
               ? ` data-action="goto-week" data-week-id="${this._esc(weekId)}"
-                  title="Show this week in the schedule and meal-planner cards"`
+                  title="Vis denne uken i leveringsplanen og måltidsplanleggeren"`
               : "";
             return `
               <div class="item${wide ? " wide" : ""}${weekId ? " click" : ""}"${click}>
@@ -608,8 +608,8 @@ customElements.define("hellofresh-subscription-card", HelloFreshSubscriptionCard
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-subscription-card",
-  name: "HelloFresh Subscription Card",
-  description: "Condensed HelloFresh account overview: plan, status, credit, and notices.",
+  name: "HelloFresh abonnementskort",
+  description: "Kompakt oversikt over HelloFresh-konto, plan, tilgodebeløp og varsler.",
 });
 
 console.info(

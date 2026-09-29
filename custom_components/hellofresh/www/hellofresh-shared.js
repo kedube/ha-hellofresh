@@ -100,7 +100,7 @@ export function parseLocalDate(value) {
   return new Date(value);
 }
 
-// "today" / "yesterday" / "in 3 days" / "next week" — how far off a week's delivery is.
+// Norsk relativ tekst for hvor langt unna ukens levering er.
 export function relativeWeek(week) {
   if (!week || !week.delivery_date) return "";
   const today = new Date();
@@ -108,11 +108,11 @@ export function relativeWeek(week) {
   const d = parseLocalDate(week.delivery_date);
   d.setHours(0, 0, 0, 0);
   const days = Math.round((d - today) / 86400000);
-  if (days === 0) return "today";
-  if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
-  if (days < 7) return `in ${days} days`;
+  if (days === 0) return "i dag";
+  if (days < 0) return days === -1 ? "i går" : `${-days} dager siden`;
+  if (days < 7) return `om ${days} dager`;
   const weeks = Math.round(days / 7);
-  return weeks === 1 ? "next week" : `in ${weeks} weeks`;
+  return weeks === 1 ? "neste uke" : `om ${weeks} uker`;
 }
 
 // Format an ISO date for display. Guards Invalid Date explicitly: toLocaleDateString on one
@@ -138,6 +138,18 @@ export function fmtDate(iso, options) {
 // The `.toLowerCase()` is load-bearing: HelloFresh sends SCREAMING_SNAKE, and without it this
 // returns "ON THE WAY". The `|| ""` keeps a null status from rendering as the literal "Null".
 export function titleCase(value) {
+  const key = String(value || "").toUpperCase().replace(/\s+/g, "_");
+  const labels = {
+    DELIVERED: "Levert",
+    OUT_FOR_DELIVERY: "På vei til levering",
+    ON_THE_WAY: "På vei",
+    RUNNING: "Aktiv",
+    PAUSED: "Pauset",
+    SKIPPED: "Hoppet over",
+    FAILED: "Mislyktes",
+    SHIPPED: "Sendt",
+  };
+  if (labels[key]) return labels[key];
   return String(value || "")
     .replace(/[_-]+/g, " ")
     .toLowerCase()

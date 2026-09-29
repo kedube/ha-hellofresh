@@ -80,7 +80,7 @@ class HelloFreshCostCard extends HTMLElement {
 
   setConfig(config) {
     this._config = {
-      title: "Cost",
+      title: "Kostnad",
       chart: true,
       chart_months: 12,
       months: 6,
@@ -197,7 +197,7 @@ class HelloFreshCostCard extends HTMLElement {
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
       <span class="title-text">${this._esc(this._config ? this._config.title : "Cost")}</span>
-      <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
+      <button class="refreshbtn" data-action="refresh" title="Oppdater" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
 
@@ -223,19 +223,19 @@ class HelloFreshCostCard extends HTMLElement {
 
   _renderBody() {
     if (!this._spending) {
-      if (this._loading || !this._fetched) return `<div class="state">Loading spending…</div>`;
-      return `<div class="state error">Could not load spending: ${this._esc(this._error || "no data")}</div>
-        <div class="actions"><button data-action="refresh">Retry</button></div>`;
+      if (this._loading || !this._fetched) return `<div class="state">Laster kostnadsoversikt …</div>`;
+      return `<div class="state error">Kunne ikke laste kostnadsoversikten: ${this._esc(this._error || "ingen data")}</div>
+        <div class="actions"><button data-action="refresh">Prøv igjen</button></div>`;
     }
     const s = this._spending;
     const weeks = Array.isArray(s.weeks) ? s.weeks : [];
     const months = Array.isArray(s.months) ? s.months : [];
     if (!weeks.length && !months.length && !s.total) {
-      return `<div class="state">No spending history yet.</div>`;
+      return `<div class="state">Ingen kostnadshistorikk ennå.</div>`;
     }
     const notice = this._error
-      ? `<div class="notice">Refresh failed: ${this._esc(this._error)}
-           <button class="refreshbtn" data-action="refresh">Retry</button></div>`
+      ? `<div class="notice">Oppdatering mislyktes: ${this._esc(this._error)}
+           <button class="refreshbtn" data-action="refresh">Prøv igjen</button></div>`
       : "";
     return `<div class="${this._loading ? "reloading" : ""}">
       ${notice}
@@ -257,13 +257,13 @@ class HelloFreshCostCard extends HTMLElement {
     return `
       <div class="total">
         <div class="total-main">
-          <span class="total-label">Total spent</span>
+          <span class="total-label">Totalt brukt</span>
           <span class="total-amount">${this._esc(this._fmtPrice(total.amount, total.currency))}</span>
         </div>
         <div class="total-sub">
-          ${boxes} box${boxes === 1 ? "" : "es"}${
-            avg != null ? ` · ${this._esc(this._fmtPrice(avg, total.currency))} avg` : ""
-          }${saved ? ` · <span class="saved">${this._esc(saved)} saved with vouchers</span>` : ""}
+          ${boxes} ${boxes === 1 ? "kasse" : "kasser"}${
+            avg != null ? ` · ${this._esc(this._fmtPrice(avg, total.currency))} i snitt` : ""
+          }${saved ? ` · <span class="saved">${this._esc(saved)} spart med kuponger</span>` : ""}
         </div>
       </div>`;
   }
@@ -351,9 +351,9 @@ class HelloFreshCostCard extends HTMLElement {
 
     const maxLabel = max > 0 ? this._fmtPrice(max, currency) : "";
     return `<div class="section">
-      <div class="stitle">Monthly box cost${maxLabel ? ` · peak ${this._esc(maxLabel)}` : ""}</div>
+      <div class="stitle">Kostnad per måned${maxLabel ? ` · høyest ${this._esc(maxLabel)}` : ""}</div>
       <svg class="chart" viewBox="0 0 ${W} ${H}"
-           role="img" aria-label="Monthly HelloFresh box cost over the last year">
+           role="img" aria-label="Månedlig HelloFresh-kostnad det siste året">
         <line class="cbaseline" x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" />
         ${bars}
         ${trend}
@@ -411,12 +411,12 @@ class HelloFreshCostCard extends HTMLElement {
             <span class="mlabel">${this._esc(this._fmtMonth(m.month))}</span>
             <span class="mbar"><span class="mfill" style="width:${pct}%"></span></span>
             <span class="mval">${this._esc(this._fmtPrice(amount, m.currency))}
-              <span class="mcount">${boxes} box${boxes === 1 ? "" : "es"}</span></span>
+              <span class="mcount">${boxes} ${boxes === 1 ? "kasse" : "kasser"}</span></span>
           </div>`;
       })
       .join("");
     return `<div class="section">
-      <div class="stitle">By month</div>
+      <div class="stitle">Per måned</div>
       <div class="months">${rows}</div>
     </div>`;
   }
@@ -432,10 +432,10 @@ class HelloFreshCostCard extends HTMLElement {
         (w) => `
           <div class="wrow${w.upcoming ? " upcoming" : ""}">
             <span class="wdate">${this._esc(this._fmtDate(w.delivery_date))}${
-              w.upcoming ? ` <span class="tag">upcoming</span>` : ""
+              w.upcoming ? ` <span class="tag">kommende</span>` : ""
             }${
               Number(w.discount) > 0
-                ? ` <span class="saved" title="${this._esc(w.coupon_code ? `Voucher ${w.coupon_code}` : "Voucher")}">−${this._esc(this._fmtPrice(w.discount, w.currency))}</span>`
+                ? ` <span class="saved" title="${this._esc(w.coupon_code ? `Kupong ${w.coupon_code}` : "Kupong")}">−${this._esc(this._fmtPrice(w.discount, w.currency))}</span>`
                 : ""
             }</span>
             <span class="wval">${this._esc(this._fmtPrice(w.amount, w.currency))}</span>
@@ -443,7 +443,7 @@ class HelloFreshCostCard extends HTMLElement {
       )
       .join("");
     return `<div class="section">
-      <div class="stitle">Recent boxes</div>
+      <div class="stitle">Siste kasser</div>
       <div class="weeks">${rows}</div>
     </div>`;
   }
@@ -609,7 +609,7 @@ customElements.define("hellofresh-cost-card", HelloFreshCostCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-cost-card",
-  name: "HelloFresh Cost Card",
+  name: "HelloFresh kostnadskort",
   description: "Running HelloFresh cost: lifetime total, monthly roll-up, and recent boxes.",
 });
 

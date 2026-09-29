@@ -332,10 +332,10 @@ export class RecipeDetailOverlay {
   }
 
   _body() {
-    const close = `<button class="detailclose" title="Close" aria-label="Close recipe">✕</button>`;
+    const close = `<button class="detailclose" title="Lukk" aria-label="Lukk oppskrift">✕</button>`;
     if (this._loading && !this._detail) {
       return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg">Loading recipe…</div></div>`;
+                <div class="msg">Laster oppskrift …</div></div>`;
     }
     if (this._error) {
       return `<div class="detailbox"><div class="detailhead">${close}</div>
@@ -349,7 +349,7 @@ export class RecipeDetailOverlay {
       facts.push(formatMinutes(r.prep_time_minutes || r.total_time_minutes));
     }
     if (r.calories_kcal) facts.push(`${Math.round(r.calories_kcal)} kcal`);
-    if (r.difficulty) facts.push(`Difficulty ${r.difficulty}`);
+    if (r.difficulty) facts.push(`Vanskelighetsgrad ${r.difficulty}`);
     if (r.rating) facts.push(`★ ${Number(r.rating).toFixed(1)}`);
 
     // Serving switcher: amounts are resolved server-side per yield, so changing this refetches.
@@ -357,7 +357,7 @@ export class RecipeDetailOverlay {
     const servingsBar =
       yields.length > 1
         ? `<div class="servings">
-             <span class="slabel">Servings</span>
+             <span class="slabel">Porsjoner</span>
              ${yields
                .map(
                  (y) =>
@@ -372,9 +372,9 @@ export class RecipeDetailOverlay {
       .map((i) => {
         const amount = i.amount != null ? `${i.amount}${i.unit ? " " + i.unit : ""} ` : "";
         // Pantry staples you supply yourself are called out; everything else ships in the box.
-        const pantry = i.shipped === false ? ` <span class="pantry">(not in box)</span>` : "";
+        const pantry = i.shipped === false ? ` <span class="pantry">(ikke i kassen)</span>` : "";
         const contains = Array.isArray(i.allergens) && i.allergens.length
-          ? `<span class="ingallerg">Contains ${escapeHtml(i.allergens.join(", "))}</span>`
+          ? `<span class="ingallerg">Inneholder ${escapeHtml(i.allergens.join(", "))}</span>`
           : "";
         // The name sits right beside the photo, so the image is decorative (empty alt). A row
         // without one keeps an empty 32px slot so the names stay aligned.
@@ -425,7 +425,7 @@ export class RecipeDetailOverlay {
           .join("");
         const figure = photo
           ? `<figure class="stepfig">
-               <img class="stepimg" src="${escapeHtml(photo)}" alt="Step ${i + 1}"
+               <img class="stepimg" src="${escapeHtml(photo)}" alt="Trinn ${i + 1}"
                  loading="lazy" decoding="async">
                ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
              </figure>`
@@ -442,7 +442,7 @@ export class RecipeDetailOverlay {
     // HelloFresh's values are per serving, in its own order (calories first).
     const nutrition = Object.entries(r.nutrition || {}).filter(([k, v]) => k && v != null && v !== "");
     const nutritionTable = nutrition.length
-      ? `<h4>Nutrition <span class="slabel">per serving</span></h4>
+      ? `<h4>Næringsinnhold <span class="slabel">per porsjon</span></h4>
          <dl class="nutri">${nutrition
            .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
            .join("")}</dl>`
@@ -473,22 +473,22 @@ export class RecipeDetailOverlay {
           ${r.description ? `<p class="detaildesc">${escapeHtml(r.description)}</p>` : ""}
           ${
             (r.allergens || []).length
-              ? `<div class="allerg">Allergens: ${escapeHtml(r.allergens.join(", "))}</div>`
+              ? `<div class="allerg">Allergener: ${escapeHtml(r.allergens.join(", "))}</div>`
               : ""
           }
           ${servingsBar}
-          ${ingredients ? `<h4>Ingredients</h4><ul class="ing">${ingredients}</ul>` : ""}
+          ${ingredients ? `<h4>Ingredienser</h4><ul class="ing">${ingredients}</ul>` : ""}
           ${
             (r.utensils || []).length
-              ? `<h4>You'll need</h4><div class="utensils">${escapeHtml(r.utensils.join(" · "))}</div>`
+              ? `<h4>Du trenger</h4><div class="utensils">${escapeHtml(r.utensils.join(" · "))}</div>`
               : ""
           }
-          ${steps ? `<h4>Instructions</h4><ol class="steps">${steps}</ol>` : ""}
+          ${steps ? `<h4>Fremgangsmåte</h4><ol class="steps">${steps}</ol>` : ""}
           ${nutritionTable}
           <div class="detaillinks">
-            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">Watch the recipe video</a>` : ""}
-            ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">Printable recipe card (PDF)</a>` : ""}
-            ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">View on hellofresh.com</a>` : ""}
+            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">Se oppskriftsvideo</a>` : ""}
+            ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">Utskriftsvennlig oppskriftskort (PDF)</a>` : ""}
+            ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Vis på hellofresh.com</a>` : ""}
           </div>
         </div>
         ${this._selectionBar()}
@@ -503,19 +503,19 @@ export class RecipeDetailOverlay {
     if (!sel) return "";
     if (!sel.qty) {
       return `<div class="selfooter">
-                <span class="selstate">Not in this week's box</span>
-                <button class="sadd" data-sel="add">+ Add</button>
+                <span class="selstate">Ikke i denne ukens kasse</span>
+                <button class="sadd" data-sel="add">+ Legg til</button>
               </div>`;
     }
     return `<div class="selfooter">
-              <span class="selstate">In this week's box</span>
+              <span class="selstate">I denne ukens kasse</span>
               <span class="selstep">
                 <button class="sqbtn" data-sel="dec"
-                  title="${sel.qty === 1 ? "Remove meal" : "Fewer servings"}">−</button>
+                  title="${sel.qty === 1 ? "Fjern rett" : "Færre porsjoner"}">−</button>
                 <span class="sqval">${Number(sel.qty)}</span>
                 <button class="sqbtn" data-sel="inc" ${sel.qty >= sel.maxQty ? "disabled" : ""}
-                  title="More servings">+</button>
-                <span class="slabel">serving${sel.qty === 1 ? "" : "s"}</span>
+                  title="Flere porsjoner">+</button>
+                <span class="slabel">${sel.qty === 1 ? "porsjon" : "porsjoner"}</span>
               </span>
             </div>`;
   }
