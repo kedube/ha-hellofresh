@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed: the Norwegian translation never loaded** (#9). Home Assistant's code for Norwegian
+  Bokmål is `nb`, but the translation shipped as `no.json`, so Home Assistant never read it and
+  Norwegian users saw English. With your Home Assistant language set to Norsk Bokmål, the setup
+  screens, entity names and services now appear in Norwegian. Entity IDs don't change, so
+  automations keep working. The Norway country setting (`no`) is unchanged.
+
 ## 3.05 — 2026-09-28
 - **Richer shipment tracking.** From the carrier tracking HelloFresh already provides:
   - **Finer status** — the carrier's current step alongside the coarse status, e.g. "In Transit ·
