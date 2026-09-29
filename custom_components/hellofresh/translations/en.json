@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Refresh interval (minutes)",
           "delivery_watch_interval_minutes": "Delivery-day watch interval (minutes)",
+          "delivery_tracking_refresh_interval_seconds": "Delivery tracking refresh interval (seconds)",
           "history_weeks": "Past delivery history (weeks)",
           "menu_grace_weeks": "Full menu history (weeks)",
           "show_sidebar_panel": "Show HelloFresh in the sidebar",
@@ -91,6 +92,7 @@
         "data_description": {
           "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
           "delivery_watch_interval_minutes": "While a box is due (its delivery day, or the day after until the carrier confirms it) or a shipment is on the road, re-check just the delivery status and carrier tracking this often, independently of the refresh interval, so arrivals show within minutes. Range 0–60; default 15. 0 turns the watch off. On other days no extra requests are made.",
+          "delivery_tracking_refresh_interval_seconds": "Netherlands only. While live last-mile tracking is active, query HelloFresh's unauthenticated Tracey endpoint this often for phase, ETA, stop count, and driver location. Range 60–3600 seconds; default 300.",
           "history_weeks": "How many weeks of past deliveries to load so you can browse them in the cards. Lower = less data fetched each refresh; raise it to look further back (use about 56 for a full year). Range 1–104 weeks; default 26 (about 6 months). Changing this reloads the integration.",
           "menu_grace_weeks": "How many weeks after its delivery date a week keeps its full browsable menu in the meal-planner card (your delivered meals stay highlighted); older weeks show only what shipped. Range 0–3 weeks; default 2 (the last couple of boxes stay browsable). 0 turns the grace window off. HelloFresh stops publishing the menu for older weeks, so weeks past what it still serves just fall back to delivered-only. Changing this reloads the integration.",
           "show_sidebar_panel": "Add a HelloFresh entry to the Home Assistant sidebar that opens the HelloFresh card full screen, so there's no dashboard to build. With more than one account, each gets its own entry. Turn off to remove it; you can still add the card to any dashboard.",
@@ -253,6 +255,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Refresh token time remaining"
+      },
+      "delivery_tracking_phase": {
+        "name": "Delivery tracking phase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Delivery ETA"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Delivery stops before you"
+      },
+      "delivery_tracking_driver": {
+        "name": "Delivery driver"
       }
     },
     "binary_sensor": {
@@ -654,6 +668,16 @@
     "get_delivery_options": {
       "name": "Get delivery options",
       "description": "Return the plan's selectable delivery days (weekday, name, price, and which is the current default) — the full delivery-day picker the website uses. Read-only; returns a response.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Get delivery tracking",
+      "description": "Return the live last-mile tracking snapshot (phase, driver name and GPS position, stops before you, minute-precision ETA) from HelloFresh's own delivery-fleet tracker. Only available in countries where HelloFresh runs its own fleet (currently the Netherlands); elsewhere the response reports it as unavailable. Read-only; returns a response.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",

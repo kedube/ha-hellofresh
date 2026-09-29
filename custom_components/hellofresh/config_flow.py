@@ -17,6 +17,7 @@ from .api import HelloFreshAuthError, HelloFreshClient, HelloFreshError
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
+    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PREP_LISTS,
@@ -37,6 +38,7 @@ from .const import (
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
+    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PREP_LISTS,
@@ -47,14 +49,17 @@ from .const import (
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DEFAULT_SHOW_SIDEBAR_PANEL,
     DOMAIN,
+    MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
     MAX_HISTORY_WEEKS,
     MAX_MENU_GRACE_WEEKS,
     MAX_SCAN_INTERVAL_MINUTES,
+    MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
     MIN_HISTORY_WEEKS,
     MIN_MENU_GRACE_WEEKS,
     MIN_SCAN_INTERVAL_MINUTES,
+    TRACEY_COUNTRIES,
 )
 from .parsers import token_payload_to_entry_data
 
@@ -508,128 +513,137 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
 
         Options store ONLY user preferences (refresh interval, past-history window, public
         menu fallback toggle). Credentials and the live token cache live in entry.data and
-        are owned by the runtime login/refresh flow.
+        are owned by the runtime login/refresh flow. The live delivery-tracking interval is
+        offered only where that tracking exists (TRACEY_COUNTRIES).
         """
-        if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
-                    CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
-                    CONF_ENABLE_FAVORITES: user_input[CONF_ENABLE_FAVORITES],
-                    CONF_ENABLE_PREP_LISTS: user_input[CONF_ENABLE_PREP_LISTS],
-                    CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
-                    CONF_SHOW_SIDEBAR_PANEL: user_input[CONF_SHOW_SIDEBAR_PANEL],
-                    # NumberSelector yields a float; store a clean int (whole weeks/days).
-                    CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
-                    CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
-                    CONF_DELIVERY_WATCH_INTERVAL_MINUTES: int(
-                        user_input[CONF_DELIVERY_WATCH_INTERVAL_MINUTES]
-                    ),
-                },
-            )
+        tracey_supported = self.config_entry.data.get(CONF_COUNTRY) in TRACEY_COUNTRIES
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_SCAN_INTERVAL_MINUTES,
-                        default=self.config_entry.options.get(
-                            CONF_SCAN_INTERVAL_MINUTES,
-                            DEFAULT_SCAN_INTERVAL_MINUTES,
-                        ),
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(
-                            min=MIN_SCAN_INTERVAL_MINUTES,
-                            max=MAX_SCAN_INTERVAL_MINUTES,
-                        ),
-                    ),
-                    vol.Required(
-                        CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
-                        default=self.config_entry.options.get(
-                            CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
-                            DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
-                        ),
-                    ): NumberSelector(
-                        # 0 turns the delivery-day watch off; otherwise the light-refresh
-                        # cadence while a box is due or on the road.
-                        NumberSelectorConfig(
-                            min=MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
-                            max=MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
-                            step=1,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="minutes",
-                        )
-                    ),
-                    vol.Required(
-                        CONF_HISTORY_WEEKS,
-                        default=self.config_entry.options.get(
-                            CONF_HISTORY_WEEKS,
-                            DEFAULT_HISTORY_WEEKS,
-                        ),
-                    ): NumberSelector(
-                        # mode=BOX renders an editable number field (like Refresh interval),
-                        # not a slider. step=1 keeps it to whole weeks; min/max still validate.
-                        NumberSelectorConfig(
-                            min=MIN_HISTORY_WEEKS,
-                            max=MAX_HISTORY_WEEKS,
-                            step=1,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="weeks",
-                        )
-                    ),
-                    vol.Required(
-                        CONF_MENU_GRACE_WEEKS,
-                        default=self.config_entry.options.get(
-                            CONF_MENU_GRACE_WEEKS,
-                            DEFAULT_MENU_GRACE_WEEKS,
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=MIN_MENU_GRACE_WEEKS,
-                            max=MAX_MENU_GRACE_WEEKS,
-                            step=1,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="weeks",
-                        )
-                    ),
-                    vol.Required(
-                        CONF_SHOW_SIDEBAR_PANEL,
-                        default=self.config_entry.options.get(
-                            CONF_SHOW_SIDEBAR_PANEL,
-                            DEFAULT_SHOW_SIDEBAR_PANEL,
-                        ),
-                    ): cv.boolean,
-                    vol.Required(
-                        CONF_ENABLE_PUBLIC_MENU_FALLBACK,
-                        default=self.config_entry.options.get(
-                            CONF_ENABLE_PUBLIC_MENU_FALLBACK,
-                            DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
-                        ),
-                    ): cv.boolean,
-                    vol.Required(
-                        CONF_ENABLE_FAVORITES,
-                        default=self.config_entry.options.get(
-                            CONF_ENABLE_FAVORITES,
-                            DEFAULT_ENABLE_FAVORITES,
-                        ),
-                    ): cv.boolean,
-                    vol.Required(
-                        CONF_ENABLE_PREP_LISTS,
-                        default=self.config_entry.options.get(
-                            CONF_ENABLE_PREP_LISTS,
-                            DEFAULT_ENABLE_PREP_LISTS,
-                        ),
-                    ): cv.boolean,
-                    vol.Required(
-                        CONF_SHOW_DATA_QUALITY_ISSUES,
-                        default=self.config_entry.options.get(
-                            CONF_SHOW_DATA_QUALITY_ISSUES,
-                            DEFAULT_SHOW_DATA_QUALITY_ISSUES,
-                        ),
-                    ): cv.boolean,
-                }
+        if user_input is not None:
+            data = {
+                CONF_SCAN_INTERVAL_MINUTES: user_input[CONF_SCAN_INTERVAL_MINUTES],
+                CONF_ENABLE_PUBLIC_MENU_FALLBACK: user_input[CONF_ENABLE_PUBLIC_MENU_FALLBACK],
+                CONF_ENABLE_FAVORITES: user_input[CONF_ENABLE_FAVORITES],
+                CONF_ENABLE_PREP_LISTS: user_input[CONF_ENABLE_PREP_LISTS],
+                CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
+                CONF_SHOW_SIDEBAR_PANEL: user_input[CONF_SHOW_SIDEBAR_PANEL],
+                # NumberSelector yields a float; store a clean int (whole weeks/days).
+                CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
+                CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
+                CONF_DELIVERY_WATCH_INTERVAL_MINUTES: int(
+                    user_input[CONF_DELIVERY_WATCH_INTERVAL_MINUTES]
+                ),
+            }
+            if tracey_supported:
+                data[CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS] = int(
+                    user_input.get(
+                        CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                        DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    )
+                )
+            return self.async_create_entry(title="", data=data)
+
+        options = self.config_entry.options
+        schema: dict[vol.Marker, object] = {
+            vol.Required(
+                CONF_SCAN_INTERVAL_MINUTES,
+                default=options.get(CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES),
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(
+                    min=MIN_SCAN_INTERVAL_MINUTES,
+                    max=MAX_SCAN_INTERVAL_MINUTES,
+                ),
             ),
+            vol.Required(
+                CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+                default=options.get(
+                    CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+                    DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
+                ),
+            ): NumberSelector(
+                # 0 turns the delivery-day watch off; otherwise the light-refresh
+                # cadence while a box is due or on the road.
+                NumberSelectorConfig(
+                    min=MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
+                    max=MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="minutes",
+                )
+            ),
+        }
+        if tracey_supported:
+            schema[
+                vol.Required(
+                    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    default=options.get(
+                        CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                        DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    ),
+                )
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    max=MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+                    step=30,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="seconds",
+                )
+            )
+        schema.update(
+            {
+                vol.Required(
+                    CONF_HISTORY_WEEKS,
+                    default=options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
+                ): NumberSelector(
+                    # mode=BOX renders an editable number field (like Refresh interval),
+                    # not a slider. step=1 keeps it to whole weeks; min/max still validate.
+                    NumberSelectorConfig(
+                        min=MIN_HISTORY_WEEKS,
+                        max=MAX_HISTORY_WEEKS,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="weeks",
+                    )
+                ),
+                vol.Required(
+                    CONF_MENU_GRACE_WEEKS,
+                    default=options.get(CONF_MENU_GRACE_WEEKS, DEFAULT_MENU_GRACE_WEEKS),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=MIN_MENU_GRACE_WEEKS,
+                        max=MAX_MENU_GRACE_WEEKS,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="weeks",
+                    )
+                ),
+                vol.Required(
+                    CONF_SHOW_SIDEBAR_PANEL,
+                    default=options.get(CONF_SHOW_SIDEBAR_PANEL, DEFAULT_SHOW_SIDEBAR_PANEL),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+                    default=options.get(
+                        CONF_ENABLE_PUBLIC_MENU_FALLBACK,
+                        DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+                    ),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_ENABLE_FAVORITES,
+                    default=options.get(CONF_ENABLE_FAVORITES, DEFAULT_ENABLE_FAVORITES),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_ENABLE_PREP_LISTS,
+                    default=options.get(CONF_ENABLE_PREP_LISTS, DEFAULT_ENABLE_PREP_LISTS),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_SHOW_DATA_QUALITY_ISSUES,
+                    default=options.get(
+                        CONF_SHOW_DATA_QUALITY_ISSUES,
+                        DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+                    ),
+                ): cv.boolean,
+            }
         )
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

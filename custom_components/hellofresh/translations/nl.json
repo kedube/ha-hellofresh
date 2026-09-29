@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Vernieuwingsinterval (minuten)",
           "delivery_watch_interval_minutes": "Bezorgdag-controle (minuten)",
+          "delivery_tracking_refresh_interval_seconds": "Live bezorgtracking verversen (seconden)",
           "history_weeks": "Bezorggeschiedenis (weken)",
           "menu_grace_weeks": "Volledige menugeschiedenis (weken)",
           "show_sidebar_panel": "HelloFresh in de zijbalk tonen",
@@ -91,6 +92,7 @@
         "data_description": {
           "scan_interval_minutes": "Hoe vaak HelloFresh wordt bevraagd voor account- en bezorggegevens. Lager = actuelere gegevens en meer verzoeken; hoger = rustiger voor de API. Bereik 5–1440 minuten; standaard 180 (3 uur). Het inlogtoken wordt op een eigen schema vernieuwd, dus dit heeft geen invloed op het inloggen.",
           "delivery_watch_interval_minutes": "Zolang een box verwacht wordt (de bezorgdag, of de dag erna totdat de bezorger dit bevestigt) of een zending onderweg is, worden alleen de bezorgstatus en de track-en-trace zo vaak opnieuw gecontroleerd, los van het vernieuwingsinterval, zodat de bezorging binnen enkele minuten zichtbaar is. Bereik 0–60; standaard 15. 0 schakelt de controle uit. Op andere dagen worden geen extra verzoeken gedaan.",
+          "delivery_tracking_refresh_interval_seconds": "Alleen Nederland. Zolang live bezorgtracking actief is, wordt HelloFresh's niet-geauthenticeerde Tracey-endpoint zo vaak bevraagd voor fase, ETA, aantal stops en chauffeurslocatie. Bereik 60–3600 seconden; standaard 300.",
           "history_weeks": "Hoeveel weken aan eerdere bezorgingen worden geladen zodat je ze in de kaarten kunt bekijken. Lager = minder gegevens per vernieuwing; verhoog dit om verder terug te kijken (ongeveer 56 voor een heel jaar). Bereik 1–104 weken; standaard 26 (ongeveer 6 maanden). Wijzigen herlaadt de integratie.",
           "menu_grace_weeks": "Hoeveel weken na de bezorgdatum een week zijn volledige menu houdt om te bekijken in de maaltijdplannerkaart (je bezorgde maaltijden blijven gemarkeerd); oudere weken tonen alleen wat is bezorgd. Bereik 0–3 weken; standaard 2 (de laatste paar maaltijdboxen blijven te bekijken). Met 0 zet je dit uit. HelloFresh publiceert het menu voor oudere weken niet meer, dus weken daarbuiten tonen alleen nog de bezorgde maaltijden. Wijzigen herlaadt de integratie.",
           "show_sidebar_panel": "Voegt aan de zijbalk van Home Assistant een HelloFresh-item toe dat de HelloFresh-kaart op volledig scherm opent, zodat je geen dashboard hoeft te bouwen. Met meerdere accounts krijgt elk een eigen item. Zet uit om het te verwijderen; je kunt de kaart nog steeds aan elk dashboard toevoegen.",
@@ -271,6 +273,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Resterende tijd refresh token"
+      },
+      "delivery_tracking_phase": {
+        "name": "Bezorgfase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Verwachte bezorgtijd"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Bezorgstops vóór jou"
+      },
+      "delivery_tracking_driver": {
+        "name": "Bezorger"
       }
     },
     "binary_sensor": {
@@ -654,6 +668,16 @@
     "get_delivery_options": {
       "name": "Bezorgopties ophalen",
       "description": "Geeft de te kiezen bezorgdagen van het abonnement terug (weekdag, naam, prijs en welke nu standaard is) — de volledige bezorgdagkiezer die de website gebruikt. Alleen lezen; geeft een antwoord terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Bezorgtracking ophalen",
+      "description": "Geef de live trackingmomentopname van de laatste kilometers terug (fase, naam en gps-positie van de bezorger, stops vóór jou, verwachte aankomsttijd op de minuut) uit HelloFresh' eigen bezorgvloot-tracker. Alleen beschikbaar in landen waar HelloFresh met een eigen vloot bezorgt (momenteel Nederland); elders meldt het antwoord dat dit niet beschikbaar is. Alleen-lezen; geeft een antwoord terug.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",

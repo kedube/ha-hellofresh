@@ -53,6 +53,19 @@ version heading and publishes it as the release's Highlights.
   console warning.
 - **The README and `docs/dashboard.md` are rewritten around the HelloFresh card**, with new
   screenshots up front.
+- **New: live delivery tracking in the Netherlands** (issue #6). Where HelloFresh drives its own
+  vans, its tracking page (`hftrack.nl`) is backed by a live service reporting the delivery
+  phase, the driver's name and position, the stops left before yours and a minute-precision
+  ETA — none of which the regular HelloFresh API has. For **Netherlands accounts only**, the
+  integration now polls it on its own cadence (every 5 minutes while a delivery is live,
+  adjustable with the new **Delivery tracking refresh interval** option; every 30 when idle) and
+  adds four sensors — `delivery_tracking_phase` (the whole snapshot as attributes),
+  `delivery_tracking_eta`, `delivery_tracking_stops_before` and `delivery_tracking_driver` (with
+  the driver's `latitude`/`longitude`, so it plots on a map card) — plus the
+  `hellofresh.get_delivery_tracking` service. The HelloFresh card's Overview shows it live with
+  the next box. Belgium and Luxembourg likely qualify too but stay off until someone there
+  confirms. (The standalone tracking card from the beta branch is folded into the HelloFresh
+  card.)
 - **`hellofresh.select_meals` accepts `market_quantities`** to set the week's Market add-ons in
   the same cart write as the meals. Saving meals and extras as two back-to-back writes could let
   the second one restore the first one's old selection (each rebuilds the cart from the last

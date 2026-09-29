@@ -11,7 +11,7 @@ Plan your HelloFresh boxes without leaving Home Assistant. Choose each week's me
 on the website) and Market extras and save them together, follow the next box to your door, tick
 off the pantry staples it doesn't include, browse ~10,000 recipes, and manage your plan. It all
 lives in one card that the integration adds to your **sidebar**, so there's no dashboard to build.
-Behind it are **50+ entities**, a delivery calendar, pantry to-do lists and **25 services** for
+Behind it are **50+ entities**, a delivery calendar, pantry to-do lists and **26 services** for
 your own automations.
 
 > ⚠️ This is an **unofficial** integration, reverse-engineered from the HelloFresh website. It is not affiliated with or endorsed by HelloFresh, and the underlying API may change at any time.
@@ -87,7 +87,7 @@ your own automations.
 |---|---|
 | [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
 | [docs/dashboard.md](docs/dashboard.md) | The HelloFresh card, tab by tab: the sidebar entry, options, screenshots, and moving from the deprecated classic cards |
-| [docs/services.md](docs/services.md) | All 25 services: parameters and responses |
+| [docs/services.md](docs/services.md) | All 26 services: parameters and responses |
 
 
 ## Installation
@@ -174,6 +174,7 @@ The available options are:
 - **Show HelloFresh in the sidebar** — a **HelloFresh** entry in Home Assistant's sidebar that opens [the HelloFresh card](#the-hellofresh-card) full screen, so there's no dashboard to build. Default **on**. With more than one account, each gets its own entry, named after its integration entry. Turn it off to remove the entry; the card still works on any dashboard.
 - **Refresh interval (minutes)** — how often account data is polled. Default is **180**; allowed range is **5–1440**. (This is the data-refresh cadence; the bearer token is refreshed on its own faster-running schedule regardless of this value.)
 - **Delivery-day watch interval (minutes)** — while a box is due (its delivery day, or the day after until the carrier confirms it) or a shipment is on the road, only the delivery status and carrier tracking are re-checked this often, independently of the refresh interval, so an arrival shows within minutes. Default **15**; range **0–60** (**0** turns the watch off). On other days it makes no extra requests.
+- **Delivery tracking refresh interval (seconds)** — **Netherlands accounts only.** While live last-mile tracking is active, the unauthenticated Tracey endpoint (`c_hf_getTraceyData`) is queried this often for the phase, ETA, stops-before-you, and driver location. Default **300** seconds; range **60–3600**. This option is hidden for every other country.
 - **Use public menu fallback** — when authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.
 - **Past delivery history (weeks)** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
 - **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the [Recipes card](docs/dashboard.md#recipes-card) keep working.
@@ -242,7 +243,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 ### Services
 
-**25 services** cover everything the integration can do, grouped roughly as:
+**26 services** cover everything the integration can do, grouped roughly as:
 
 | Group | Examples |
 |---|---|
