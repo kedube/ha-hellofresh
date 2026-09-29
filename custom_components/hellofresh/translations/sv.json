@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Uppdateringsintervall (minuter)",
           "delivery_watch_interval_minutes": "Leveransdagsbevakning (minuter)",
+          "delivery_tracking_refresh_interval_seconds": "Live leveransspårning uppdateras (sekunder)",
           "history_weeks": "Leveranshistorik (veckor)",
           "menu_grace_weeks": "Fullständig menyhistorik (veckor)",
           "show_sidebar_panel": "Visa HelloFresh i sidofältet",
@@ -91,6 +92,7 @@
         "data_description": {
           "scan_interval_minutes": "Hur ofta HelloFresh tillfrågas om konto- och leveransdata. Lägre = färskare data och fler förfrågningar; högre = skonsammare mot API:et. Intervall 5–1440 minuter; standard 180 (3 timmar). Inloggningstoken förnyas enligt sitt eget schema, så detta påverkar inte inloggningen.",
           "delivery_watch_interval_minutes": "Medan en låda väntas (leveransdagen, eller dagen efter tills transportören bekräftar den) eller en försändelse är på väg, kontrolleras bara leveransstatus och spårning så här ofta, oberoende av uppdateringsintervallet, så att leveransen syns inom några minuter. Intervall 0–60; standard 15. 0 stänger av bevakningen. Övriga dagar görs inga extra anrop.",
+          "delivery_tracking_refresh_interval_seconds": "Endast Nederländerna. Medan live-spårning för sista delen av leveransen är aktiv frågas HelloFreshs oautentiserade Tracey-endpoint så här ofta efter fas, ETA, antal stopp och förarens position. Intervall 60–3600 sekunder; standard 300.",
           "history_weeks": "Hur många veckors tidigare leveranser som läses in så att du kan bläddra i dem i korten. Lägre = mindre data per uppdatering; höj för att se längre tillbaka (cirka 56 för ett helt år). Intervall 1–104 veckor; standard 26 (cirka 6 månader). En ändring läser in integrationen på nytt.",
           "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i måltidsplanerarkortet (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
           "show_sidebar_panel": "Lägger till en HelloFresh-post i Home Assistants sidofält som öppnar HelloFresh-kortet i helskärm, så att du inte behöver bygga någon instrumentpanel. Med flera konton får vart och ett en egen post. Stäng av för att ta bort den; du kan fortfarande lägga till kortet på valfri instrumentpanel.",
@@ -271,6 +273,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Återstående tid för förnyelsetoken"
+      },
+      "delivery_tracking_phase": {
+        "name": "Leveransfas"
+      },
+      "delivery_tracking_eta": {
+        "name": "Beräknad ankomsttid"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Leveransstopp före dig"
+      },
+      "delivery_tracking_driver": {
+        "name": "Leveransförare"
       }
     },
     "binary_sensor": {
@@ -654,6 +668,16 @@
     "get_delivery_options": {
       "name": "Hämta leveransalternativ",
       "description": "Returnerar abonnemangets valbara leveransdagar (veckodag, namn, pris och vilken som är standard nu) — hela den leveransdagsväljare som webbplatsen använder. Endast läsning; returnerar ett svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Hämta leveransspårning",
+      "description": "Returnerar ögonblicksbilden av liveleveransspårningen (fas, förarens namn och GPS-position, stopp före dig, ankomsttid på minuten) från HelloFreshs egen leveransflottespårare. Endast tillgänglig i länder där HelloFresh levererar med egen flotta (för närvarande Nederländerna); på andra platser anger svaret att den inte är tillgänglig. Skrivskyddad; returnerar ett svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",

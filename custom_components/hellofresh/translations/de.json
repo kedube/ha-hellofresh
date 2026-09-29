@@ -80,6 +80,7 @@
         "data": {
           "scan_interval_minutes": "Aktualisierungsintervall (Minuten)",
           "delivery_watch_interval_minutes": "Liefertag-Überwachung (Minuten)",
+          "delivery_tracking_refresh_interval_seconds": "Live-Lieferverfolgung aktualisieren (Sekunden)",
           "history_weeks": "Lieferhistorie (Wochen)",
           "menu_grace_weeks": "Vollständige Menühistorie (Wochen)",
           "show_sidebar_panel": "HelloFresh in der Seitenleiste anzeigen",
@@ -91,6 +92,7 @@
         "data_description": {
           "scan_interval_minutes": "Wie oft HelloFresh nach Konto- und Lieferdaten abgefragt wird. Niedriger = aktuellere Daten und mehr Anfragen; höher = schonender für die API. Bereich 5–1440 Minuten; Standard 180 (3 Stunden). Das Anmelde-Token wird nach einem eigenen Zeitplan erneuert, dies beeinflusst die Anmeldung also nicht.",
           "delivery_watch_interval_minutes": "Solange eine Box fällig ist (Liefertag oder der Folgetag, bis der Zusteller sie bestätigt) oder eine Sendung unterwegs ist, werden nur Lieferstatus und Sendungsverfolgung in diesem Abstand neu abgefragt – unabhängig vom Aktualisierungsintervall, damit Zustellungen innerhalb von Minuten erscheinen. Bereich 0–60; Standard 15. 0 schaltet die Überwachung aus. An anderen Tagen entstehen keine zusätzlichen Anfragen.",
+          "delivery_tracking_refresh_interval_seconds": "Nur Niederlande. Solange Live-Last-Mile-Tracking aktiv ist, wird HelloFreshs nicht authentifizierter Tracey-Endpunkt in diesem Abstand nach Phase, ETA, Stoppzahl und Fahrerposition abgefragt. Bereich 60–3600 Sekunden; Standard 300.",
           "history_weeks": "Wie viele Wochen vergangener Lieferungen geladen werden, damit du sie in den Karten durchsehen kannst. Niedriger = weniger Daten pro Aktualisierung; erhöhe den Wert, um weiter zurückzublicken (etwa 56 für ein ganzes Jahr). Bereich 1–104 Wochen; Standard 26 (etwa 6 Monate). Eine Änderung lädt die Integration neu.",
           "menu_grace_weeks": "Wie viele Wochen nach ihrem Lieferdatum eine Woche ihr vollständiges durchblätterbares Menü in der Menüplaner-Karte behält (deine gelieferten Gerichte bleiben hervorgehoben); ältere Wochen zeigen nur, was geliefert wurde. Bereich 0–3 Wochen; Standard 2 (die letzten paar Kochboxen bleiben durchblätterbar). 0 schaltet das Zeitfenster ab. HelloFresh veröffentlicht für ältere Wochen kein Menü mehr, daher zeigen Wochen darüber hinaus nur noch die gelieferten Gerichte. Eine Änderung lädt die Integration neu.",
           "show_sidebar_panel": "Fügt der Seitenleiste von Home Assistant einen HelloFresh-Eintrag hinzu, der die HelloFresh-Karte im Vollbild öffnet – ganz ohne eigenes Dashboard. Bei mehreren Konten erhält jedes einen eigenen Eintrag. Ausschalten, um ihn zu entfernen; die Karte lässt sich weiterhin jedem Dashboard hinzufügen.",
@@ -271,6 +273,18 @@
       },
       "refresh_token_days_remaining": {
         "name": "Verbleibende Zeit des Refresh-Tokens"
+      },
+      "delivery_tracking_phase": {
+        "name": "Lieferphase"
+      },
+      "delivery_tracking_eta": {
+        "name": "Voraussichtliche Ankunftszeit"
+      },
+      "delivery_tracking_stops_before": {
+        "name": "Lieferstopps vor Ihnen"
+      },
+      "delivery_tracking_driver": {
+        "name": "Lieferfahrer"
       }
     },
     "binary_sensor": {
@@ -654,6 +668,16 @@
     "get_delivery_options": {
       "name": "Lieferoptionen abrufen",
       "description": "Gibt die wählbaren Liefertage des Plans zurück (Wochentag, Name, Preis und welcher aktuell voreingestellt ist) — die vollständige Liefertagsauswahl der Website. Nur lesend; liefert eine Antwort.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        }
+      }
+    },
+    "get_delivery_tracking": {
+      "name": "Lieferverfolgung abrufen",
+      "description": "Gibt die Live-Momentaufnahme der Zustellung zurück (Phase, Name und GPS-Position des Fahrers, Stopps vor Ihnen, minutengenaue Ankunftszeit) aus HelloFreshs eigenem Lieferflotten-Tracker. Nur in Ländern verfügbar, in denen HelloFresh mit eigener Flotte liefert (derzeit die Niederlande); andernorts meldet die Antwort die Funktion als nicht verfügbar. Nur lesend; gibt eine Antwort zurück.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",

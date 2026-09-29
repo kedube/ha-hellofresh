@@ -115,9 +115,18 @@ PLATFORMS = [
 # ticks, sees no delivery in progress, and returns without a request. User option; 0 turns
 # the watch off entirely (delivery state then only moves on the regular poll).
 CONF_DELIVERY_WATCH_INTERVAL_MINUTES = "delivery_watch_interval_minutes"
+CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = "delivery_tracking_refresh_interval_seconds"
 DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES = 15
 MIN_DELIVERY_WATCH_INTERVAL_MINUTES = 0
 MAX_DELIVERY_WATCH_INTERVAL_MINUTES = 60
+
+# Netherlands-only Tracey live-tracking poll interval. This controls the unauthenticated
+# c_hf_getTraceyData endpoint used by the live delivery-tracking sensors while a delivery
+# is active. The service/card path has its own one-minute floor for burst protection, so
+# exposing lower values would be misleading.
+DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 300
+MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 60
+MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS = 3600
 
 SERVICE_REFRESH_DATA = "refresh_data"
 SERVICE_GET_WEEKS = "get_weeks"
@@ -143,6 +152,7 @@ SERVICE_GET_RECIPE_COLLECTIONS = "get_recipe_collections"
 SERVICE_GET_CATALOG_RECIPES = "get_catalog_recipes"
 SERVICE_PREVIEW_MEAL_PRICE = "preview_meal_price"
 SERVICE_GET_RECIPE_DETAIL = "get_recipe_detail"
+SERVICE_GET_DELIVERY_TRACKING = "get_delivery_tracking"
 SERVICE_GET_MENU_COURSES = "get_menu_courses"
 
 ATTR_WEEK_ID = "week_id"
@@ -190,6 +200,15 @@ COUNTRY_BASE_URLS: dict[str, str] = {
     "no": "https://www.hellofresh.no",
     "se": "https://www.hellofresh.se",
 }
+
+# Countries where HelloFresh runs its own last-mile delivery fleet AND the Tracey live
+# tracking stack (hftrack.nl + its cloud function) is confirmed to exist. The live-tracking
+# sensors, the get_delivery_tracking service payload, and the HelloFresh card's live tracking
+# exist only for these markets — elsewhere the underlying data simply does not exist (third
+# party carriers expose only coarse shipment status). Currently the Netherlands only, per
+# the community capture in issue #6; Belgium/Luxembourg likely also qualify but are
+# unverified, so they stay off until a user there confirms.
+TRACEY_COUNTRIES = frozenset({"nl"})
 
 # The config-flow key is not always the ISO 3166 country code HelloFresh's API expects.
 # Notably the UK site selects `uk` but the API uses `GB` (confirmed from a HAR:
