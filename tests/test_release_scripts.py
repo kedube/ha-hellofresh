@@ -6,6 +6,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from awesomeversion import AwesomeVersion, AwesomeVersionStrategy
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
     "bump_manifest_version",
@@ -25,6 +27,31 @@ def test_bump_minor_zero_pads() -> None:
 
 def test_bump_minor_rolls_over_to_major() -> None:
     assert bump_manifest_version._bump_minor("2.99") == "3.00"
+
+
+def test_bump_minor_releases_a_beta_as_its_final_version() -> None:
+    """A beta already carries the version it previews; releasing it just drops the suffix."""
+    assert bump_manifest_version._bump_minor("3.8b1") == "3.08"
+    assert bump_manifest_version._bump_minor("3.8rc2") == "3.08"
+    assert bump_manifest_version._bump_minor("3.10b1") == "3.10"
+
+
+def test_manifest_version_is_one_home_assistant_loads() -> None:
+    """HA blocks a custom integration whose version matches none of these formats.
+
+    The trap is a hand-cut beta: `3.08b1` is rejected, so betas are numbered `3.8b1`.
+    """
+    manifest = REPO_ROOT / "custom_components" / "hellofresh" / "manifest.json"
+    AwesomeVersion(
+        json.loads(manifest.read_text())["version"],
+        ensure_strategy=[  # the list homeassistant/loader.py checks custom integrations against
+            AwesomeVersionStrategy.CALVER,
+            AwesomeVersionStrategy.SEMVER,
+            AwesomeVersionStrategy.SIMPLEVER,
+            AwesomeVersionStrategy.BUILDVER,
+            AwesomeVersionStrategy.PEP440,
+        ],
+    )
 
 
 def test_bump_major() -> None:
