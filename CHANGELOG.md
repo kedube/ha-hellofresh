@@ -33,6 +33,11 @@ version heading and publishes it as the release's Highlights.
   the same cart write as the meals. Saving meals and extras as two back-to-back writes could let
   the second one restore the first one's old selection (each rebuilds the cart from the last
   poll); one write can't. Omitting it keeps the current add-ons, as before.
+- **Fixed: the Norwegian translation never loaded** (#9). Home Assistant's code for Norwegian
+  Bokmål is `nb`, but the translation shipped as `no.json`, so Home Assistant never read it and
+  Norwegian users saw English. With your Home Assistant language set to Norsk Bokmål, the setup
+  screens, entity names and services now appear in Norwegian. Entity IDs don't change, so
+  automations keep working. The Norway country setting (`no`) is unchanged.
 
 ## 3.05 — 2026-09-28
 - **Richer shipment tracking.** From the carrier tracking HelloFresh already provides:

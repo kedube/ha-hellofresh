@@ -12,7 +12,9 @@ NOT check wording (no test can), only the things a machine can verify:
   Assistant raises when it formats the string;
 * preserved literals — `apiV2Auth` is a cookie name, not a word to translate;
 * no accidental English — a value byte-identical to en.json means an untranslated string
-  masquerading as a translation (proper nouns and short labels are exempt).
+  masquerading as a translation (proper nouns and short labels are exempt);
+* a file name Home Assistant asks for — it only reads `translations/<code>.json` for its own
+  language codes, so a misnamed file is never loaded at all.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import json
 from pathlib import Path
 import re
 
+from homeassistant.generated.languages import LANGUAGES
 import pytest
 
 TRANSLATIONS = (
@@ -50,6 +53,16 @@ def _load(lang: str) -> dict[str, str]:
 def test_at_least_one_translation_ships() -> None:
     """Guard the guard: if the glob broke, every other test would vacuously pass."""
     assert LANGS
+
+
+def test_file_names_are_home_assistant_language_codes() -> None:
+    """A file not named for one of Home Assistant's language codes is never loaded.
+
+    Its users silently get English instead. Norwegian shipped this way as no.json (issue #9):
+    Home Assistant calls Bokmål `nb` and Nynorsk `nn`, and never asks for `no`.
+    """
+    unknown = sorted({p.stem for p in TRANSLATIONS.glob("*.json")} - LANGUAGES)
+    assert not unknown, f"not Home Assistant language codes: {unknown}"
 
 
 @pytest.mark.parametrize("lang", LANGS)
