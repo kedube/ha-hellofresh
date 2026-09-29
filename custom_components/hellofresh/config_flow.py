@@ -31,6 +31,7 @@ from .const import (
     CONF_REFRESH_TOKEN_ISSUED_AT,
     CONF_SCAN_INTERVAL_MINUTES,
     CONF_SHOW_DATA_QUALITY_ISSUES,
+    CONF_SHOW_SIDEBAR_PANEL,
     CONF_TOKEN,
     CONF_TOKEN_TYPE,
     CONF_USERNAME,
@@ -44,6 +45,7 @@ from .const import (
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+    DEFAULT_SHOW_SIDEBAR_PANEL,
     DOMAIN,
     MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
     MAX_HISTORY_WEEKS,
@@ -517,6 +519,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                     CONF_ENABLE_FAVORITES: user_input[CONF_ENABLE_FAVORITES],
                     CONF_ENABLE_PREP_LISTS: user_input[CONF_ENABLE_PREP_LISTS],
                     CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
+                    CONF_SHOW_SIDEBAR_PANEL: user_input[CONF_SHOW_SIDEBAR_PANEL],
                     # NumberSelector yields a float; store a clean int (whole weeks/days).
                     CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
                     CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
@@ -592,6 +595,13 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                             unit_of_measurement="weeks",
                         )
                     ),
+                    vol.Required(
+                        CONF_SHOW_SIDEBAR_PANEL,
+                        default=self.config_entry.options.get(
+                            CONF_SHOW_SIDEBAR_PANEL,
+                            DEFAULT_SHOW_SIDEBAR_PANEL,
+                        ),
+                    ): cv.boolean,
                     vol.Required(
                         CONF_ENABLE_PUBLIC_MENU_FALLBACK,
                         default=self.config_entry.options.get(

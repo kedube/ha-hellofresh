@@ -35,6 +35,8 @@ const {
   accountKey,
   broadcastDataChanged,
   resizedImage,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(RECIPES_CARD_VERSION)}`,
@@ -100,6 +102,7 @@ class HelloFreshRecipesCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-recipes-card");
     this._config = {
       title: "HelloFresh Recipes",
       limit: DEFAULT_LIMIT,
@@ -378,7 +381,7 @@ class HelloFreshRecipesCard extends HTMLElement {
     return `
       <div class="head">
         ${logo ? `<img class="logo" src="${this._esc(logo)}" alt="HelloFresh">` : ""}
-        <span class="title">${this._esc(this._config.title || "HelloFresh Recipes")}</span>
+        <span class="title">${this._esc(this._config.title || "HelloFresh Recipes")}${deprecatedBadge()}</span>
         <button class="iconbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>⟳</button>
       </div>`;
   }
@@ -776,8 +779,8 @@ customElements.define("hellofresh-recipes-card-editor", HelloFreshRecipesCardEdi
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-recipes-card",
-  name: "HelloFresh Recipes Card",
-  description: "Browse HelloFresh's recipe catalog and manage your cookbook favorites.",
+  name: "HelloFresh Recipes Card (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. Browse HelloFresh's recipe catalog and manage your cookbook favorites.",
 });
 
 console.info(

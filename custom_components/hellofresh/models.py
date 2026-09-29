@@ -248,6 +248,16 @@ class HelloFreshRecipe:
     # card can group a dish's variants together even when their names differ. None when the meal
     # is not part of any variant group.
     variation_group: int | None = None
+    # Where this option sits in the website's customization list for its dish (0-based, the
+    # modularity `variations` order), so a card lists a dish's options the way the site does.
+    # None on a base dish and on meals without options.
+    variation_order: int | None = None
+    # The option's ingredient photo (the swapped-in protein or vegetable) from the same
+    # modularity entry, rebased off the retired CloudFront host onto the working one.
+    variation_image_url: str | None = None
+    # On a base dish that has options: what the website calls the unchanged version in its
+    # customization list ("No Change", "No Protein", or the base protein, e.g. "Ground Beef").
+    variation_default_title: str | None = None
     # Sold out for this week, so it cannot be chosen. Only the menus-service catalog carries
     # this (the delivery-menu endpoint omits it entirely), and HelloFresh sets `isHidden`
     # alongside it — the website drops such meals from the grid rather than showing them
@@ -313,6 +323,9 @@ class HelloFreshRecipe:
             "badge_background": self.badge_background,
             "variation_title": self.variation_title,
             "variation_group": self.variation_group,
+            "variation_order": self.variation_order,
+            "variation_image_url": self.variation_image_url,
+            "variation_default_title": self.variation_default_title,
             "is_favorite": self.is_favorite,
             "is_sold_out": self.is_sold_out,
             "is_hidden": self.is_hidden,

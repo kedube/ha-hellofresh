@@ -4027,7 +4027,8 @@ def test_recipe_parses_variation_title_from_modularity() -> None:
             ]
         }
     )
-    assert titles == {351: "2x Chicken Cutlets", 352: "2x Bacon", 16528: "Pitas"}
+    # `addOns` are Market cross-sells shown beside the dish, not variants of it.
+    assert titles == {351: "2x Chicken Cutlets", 352: "2x Bacon"}
 
     base = client._recipe_from_raw_meal(
         {"index": 350, "recipe": {"id": "r0", "name": "Bourguignon"}},
@@ -4092,6 +4093,116 @@ def test_variation_group_clusters_variants_including_renamed_swaps() -> None:
     # A standalone dish stays ungrouped.
     assert by_id["r500"].variation_group is None
     assert by_id["r349"].as_dict()["variation_group"] == 68
+
+
+def _real_shaped_modularity() -> dict:
+    """A W42-shaped `modularity` block (HAR 56): every meal has an entry, every entry has addOns.
+
+    Options have entries of their own too (usually without variations), and here the option
+    idx 161's own entry comes BEFORE its base's entry, as a list order the site doesn't promise.
+    """
+    cross_sells = [
+        {"index": 10003, "title": "Garlic Bread"},
+        {"index": 17662, "title": "Cookie Skillet"},
+    ]
+    return {
+        "modularity": [
+            {
+                "defaultCourseIndex": 161,
+                "noVariationsDefaultTitle": None,
+                "variations": [],
+                "addOns": cross_sells,
+            },
+            {
+                "defaultCourseIndex": 1,
+                "noVariationsDefaultTitle": "No Change",
+                "addOns": cross_sells,
+                "variations": [
+                    {
+                        "index": 164,
+                        "title": "2x Broccoli",
+                        "quantity": 2,
+                        "ingredient": {
+                            "name": "Broccoli",
+                            "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6-638c.png",
+                        },
+                    },
+                    {
+                        "index": 161,
+                        "title": "2x Chicken Cutlets",
+                        "ingredient": {
+                            "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/59c2-4f7e.png"
+                        },
+                    },
+                    {
+                        "index": 162,
+                        "title": "Salmon",
+                        "ingredient": {"imagePath": "/ingredient/68d5-f7e3.png"},
+                    },
+                ],
+            },
+            {
+                "defaultCourseIndex": 500,
+                "noVariationsDefaultTitle": None,
+                "variations": [],
+                "addOns": cross_sells,
+            },
+        ]
+    }
+
+
+def test_variation_groups_ignore_suggested_add_ons() -> None:
+    """Regression: `addOns` made EVERY dish a "variant group" of itself plus its cross-sells.
+
+    Real payloads give each dish Market cross-sells under `addOns` (never meals), so counting
+    them as members turned standalone dishes into groups, and an option whose own entry came
+    first in the list became the base of its own group instead of joining its dish.
+    """
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    groups = HelloFreshPayloadNormalizer._build_variation_groups(_real_shaped_modularity())
+    assert groups == {1: 1, 164: 1, 161: 1, 162: 1}
+    assert 500 not in groups and 10003 not in groups
+
+
+def test_variation_options_follow_the_website_list() -> None:
+    """Each option carries its place in the site's list and a loadable ingredient photo; the base
+    dish carries the site's label for the unchanged version."""
+    from custom_components.hellofresh.models import HelloFreshRecipe, HelloFreshWeek
+    from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
+
+    raw_week = _real_shaped_modularity()
+    week = HelloFreshWeek(
+        week_id="2026-W42",
+        display_name="Week 42",
+        recipes=[
+            HelloFreshRecipe(
+                recipe_id=f"r{idx}", name="Crunchy Hot Honey Chicken", course_index=idx
+            )
+            for idx in (1, 164, 161, 162, 500)
+        ],
+        raw=raw_week,
+    )
+    HelloFreshPayloadNormalizer()._apply_variation_titles([week])
+    by_idx = {r.course_index: r.as_dict() for r in week.recipes}
+
+    assert by_idx[1]["variation_default_title"] == "No Change"
+    assert by_idx[1]["variation_order"] is None and by_idx[1]["variation_title"] is None
+    assert [by_idx[i]["variation_order"] for i in (164, 161, 162)] == [0, 1, 2]
+    assert by_idx[161]["variation_title"] == "2x Chicken Cutlets"
+    # The retired CloudFront host answers 502; the same file loads from the working host.
+    base = "https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640/hellofresh_s3"
+    assert by_idx[164]["variation_image_url"] == f"{base}/ingredient/64b6-638c.png"
+    assert by_idx[161]["variation_image_url"] == f"{base}/ingredient/59c2-4f7e.png"
+    assert by_idx[162]["variation_image_url"] == f"{base}/ingredient/68d5-f7e3.png"
+    # A dish without options gets none of it.
+    assert {
+        k: by_idx[500][k] for k in ("variation_group", "variation_order", "variation_default_title")
+    } == {
+        "variation_group": None,
+        "variation_order": None,
+        "variation_default_title": None,
+    }
 
 
 def test_meatless_recipe_gets_veggie_preference_from_tag() -> None:

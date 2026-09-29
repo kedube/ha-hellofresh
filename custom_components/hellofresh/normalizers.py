@@ -11,9 +11,11 @@ from datetime import date, datetime, timedelta
 import logging
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from .const import DEFAULT_MENU_GRACE_WEEKS, RECIPE_IMAGE_BASE
 from .models import (
+    _DEAD_IMAGE_HOST,
     HelloFreshMarketItem,
     HelloFreshOrder,
     HelloFreshRecipe,
@@ -41,6 +43,29 @@ from .parsers import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# A modularity option's ingredient photo is linked on the retired CloudFront host
+# (".../200,200/ingredient/<file>.png", HTTP 502), but the working host serves the same file under
+# the bare "/ingredient/<file>" path that other payloads use (HTTP 200, checked 2026-09-29).
+_DEAD_INGREDIENT_PATH = re.compile(r"^/(?:[^/]+/)?(ingredient/[^/]+)$")
+
+
+def _option_image_url(ingredient: dict[str, Any]) -> str | None:
+    """Return a loadable photo URL for a customization option's ingredient."""
+    candidates: list[str] = []
+    for key in ("imageUrl", "imageURL", "imagePath", "image_path"):
+        value = ingredient.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        value = value.strip()
+        parts = urlsplit(value)
+        if parts.hostname == _DEAD_IMAGE_HOST and (
+            match := _DEAD_INGREDIENT_PATH.match(parts.path)
+        ):
+            value = f"/{match.group(1)}"
+        candidates.append(value)
+    return _usable_image_url(candidates, RECIPE_IMAGE_BASE)
+
 
 # Fallback billing currency per config-flow country key, used only when a payload carries no
 # currency of its own (see _extract_currency_code). Keys must stay in sync with
@@ -586,12 +611,23 @@ class HelloFreshPayloadNormalizer:
         return None
 
     @staticmethod
+    def _modularity_options(group: Any) -> list[dict[str, Any]]:
+        """A modularity group's customization options: its `variations`, in the site's order.
+
+        Only `variations` are options. A group's `addOns` are Market cross-sell suggestions
+        ("Garlic Bread", "Snickerdoodle Cookie Skillet") shown beside the dish: their indexes
+        are Market items, never meals (HAR-verified on W41-W43), and every dish carries some.
+        """
+        items = group.get("variations") if isinstance(group, dict) else None
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+    @staticmethod
     def _build_variation_titles(raw_week: dict[str, Any]) -> dict[int, str]:
         """Map a meal `index` to its variant modifier title from the `modularity` block.
 
         HelloFresh lists portion/ingredient variants of a dish as separate meals sharing the
         same name; the `modularity` array names how each variant differs ("2x Bacon",
-        "Ground Turkey", ...) via the variation/addOn `index`, which equals the meal's `index`.
+        "Ground Turkey", ...) via the variation `index`, which equals the meal's `index`.
 
         The block can sit on the week payload directly or, for weeks assembled by merging the
         authenticated menu catalog into an account/deliveries week, under ``_menu_payload``.
@@ -603,19 +639,11 @@ class HelloFreshPayloadNormalizer:
         if modularity is None:
             return titles
         for group in modularity:
-            if not isinstance(group, dict):
-                continue
-            for key in ("variations", "addOns"):
-                items = group.get(key)
-                if not isinstance(items, list):
-                    continue
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    idx = coerce_int(item.get("index"))
-                    title = item.get("title")
-                    if idx is not None and isinstance(title, str) and title.strip():
-                        titles.setdefault(idx, title.strip())
+            for item in HelloFreshPayloadNormalizer._modularity_options(group):
+                idx = coerce_int(item.get("index"))
+                title = item.get("title")
+                if idx is not None and isinstance(title, str) and title.strip():
+                    titles.setdefault(idx, title.strip())
         return titles
 
     @staticmethod
@@ -623,10 +651,14 @@ class HelloFreshPayloadNormalizer:
         """Map every meal `index` in a variant group to that group's base dish index.
 
         Keyed on the modularity group's ``defaultCourseIndex`` (the base dish). Each of the
-        group's variation/addOn indexes — AND the base index itself — maps to that base index,
-        so all members of a dish's variant set share one group key even when their names differ
-        (e.g. a Salmon dish whose variants include an "Icelandic Cod" swap). Used to group a
-        dish's variants together in the meal-planner card.
+        group's option indexes — AND the base index itself — maps to that base index, so all
+        members of a dish's variant set share one group key even when their names differ (e.g.
+        a Salmon dish whose variants include an "Icelandic Cod" swap). Used to show a dish and
+        its options as one tile in the cards.
+
+        Every meal also has a modularity entry of its own, options included, usually with no
+        variations; such an entry is not a variant set, so a dish without options — and an
+        option's own entry, wherever it sits in the list — never claims a group key.
         """
         groups: dict[int, int] = {}
         modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
@@ -639,47 +671,82 @@ class HelloFreshPayloadNormalizer:
             if base is None:
                 continue
             member_indexes = {base}
-            for key in ("variations", "addOns"):
-                items = group.get(key)
-                if not isinstance(items, list):
-                    continue
-                for item in items:
-                    if isinstance(item, dict):
-                        idx = coerce_int(item.get("index"))
-                        if idx is not None:
-                            member_indexes.add(idx)
-            # A single-member "group" (base with no variants) is not a variant set — skip it so
-            # standalone dishes don't each get a spurious one-element group key.
+            for item in HelloFreshPayloadNormalizer._modularity_options(group):
+                idx = coerce_int(item.get("index"))
+                if idx is not None:
+                    member_indexes.add(idx)
             if len(member_indexes) < 2:
                 continue
             for idx in member_indexes:
                 groups.setdefault(idx, base)
         return groups
 
+    @staticmethod
+    def _build_variation_options(raw_week: dict[str, Any]) -> dict[int, dict[str, Any]]:
+        """Per meal `index`, what the dish's customization list shows for it.
+
+        An option gets ``order`` (its position in the website's list) and ``image_url`` (its
+        ingredient photo); a base dish with options gets ``default_title``, the site's label
+        for the unchanged version (`noVariationsDefaultTitle`: "No Change", "No Protein",
+        "Ground Beef", ...).
+        """
+        details: dict[int, dict[str, Any]] = {}
+        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
+        if modularity is None:
+            return details
+        for group in modularity:
+            options = HelloFreshPayloadNormalizer._modularity_options(group)
+            base = coerce_int(group.get("defaultCourseIndex")) if options else None
+            if base is None:
+                continue
+            title = clean_optional_str(group.get("noVariationsDefaultTitle"))
+            if title and "default_title" not in details.get(base, {}):
+                details.setdefault(base, {})["default_title"] = title
+            for order, item in enumerate(options):
+                idx = coerce_int(item.get("index"))
+                if idx is None or idx == base or "order" in details.get(idx, {}):
+                    continue
+                ingredient = item.get("ingredient")
+                details.setdefault(idx, {}).update(
+                    order=order,
+                    image_url=_option_image_url(ingredient)
+                    if isinstance(ingredient, dict)
+                    else None,
+                )
+        return details
+
     def _apply_variation_titles(self, weeks: Sequence[HelloFreshWeek]) -> None:
-        """Fill in each recipe's ``variation_title`` and ``variation_group`` from ``modularity``.
+        """Fill in each recipe's ``variation_*`` fields from the week's ``modularity`` block.
 
         Recipes are built by several normalization paths (delivery weeks, menu weeks, past
         deliveries) and only some pass the modularity map through at build time. This pass runs
-        once over the fully-assembled week list so the variant modifier ("2x Bacon", ...) and the
-        variant-group key are present no matter which path produced a given week — resolved by
-        ``course_index``, the same index the modularity block keys on. Existing values are left
-        untouched.
+        once over the fully-assembled week list so the variant modifier ("2x Bacon", ...), the
+        variant-group key and the customization-list details are present no matter which path
+        produced a given week — resolved by ``course_index``, the same index the modularity
+        block keys on. Existing values are left untouched.
         """
         for week in weeks:
             if not week.recipes or not isinstance(week.raw, dict):
                 continue
             titles = self._build_variation_titles(week.raw)
             group_by_index = self._build_variation_groups(week.raw)
-            if not titles and not group_by_index:
+            options = self._build_variation_options(week.raw)
+            if not titles and not group_by_index and not options:
                 continue
             for recipe in week.recipes:
-                if recipe.course_index is not None and recipe.variation_group is None:
-                    recipe.variation_group = group_by_index.get(recipe.course_index)
-                if recipe.variation_title:
+                if recipe.course_index is None:
                     continue
-                if recipe.course_index is not None:
+                if recipe.variation_group is None:
+                    recipe.variation_group = group_by_index.get(recipe.course_index)
+                if not recipe.variation_title:
                     recipe.variation_title = titles.get(recipe.course_index)
+                detail = options.get(recipe.course_index, {})
+                if recipe.variation_order is None:
+                    recipe.variation_order = detail.get("order")
+                if recipe.variation_image_url is None:
+                    recipe.variation_image_url = detail.get("image_url")
+                if recipe.variation_default_title is None:
+                    recipe.variation_default_title = detail.get("default_title")
 
     def _market_item_from_raw(
         self, raw_item: dict[str, Any], group_type: str | None

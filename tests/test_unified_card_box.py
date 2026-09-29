@@ -191,6 +191,38 @@ def test_a_locked_week_or_a_busy_card_takes_no_edits() -> None:
     assert _run(body) == [False, False]
 
 
+def test_customizing_a_dish_swaps_in_the_option_keeping_its_servings() -> None:
+    """The drawer's "Update box": the cart gets the option's own meal in place of the old one."""
+    body = """
+      const week = makeWeek();
+      const card = makeCard([week]);
+      const box = new M.BoxStore(card);
+      box.changeMeal(week, week.recipes[0], 1);                              // r1 at 2 servings
+      const swapped = box.swapMeal(week, week.recipes[0], week.recipes[4]);  // r1 -> r5
+      const stale = box.swapMeal(week, week.recipes[0], week.recipes[4]);    // r1 is gone now
+      const merged = box.swapMeal(week, week.recipes[1], week.recipes[4]);   // r2 (1) joins r5 (2)
+      const after = [...box.displayMeals(week).entries()];
+      await box.save(week);
+      const locked = makeWeek({ allowed_actions: { mealSwap: false } });
+      const lockedSwap = new M.BoxStore(makeCard([locked])).swapMeal(locked, locked.recipes[0], locked.recipes[4]);
+      return { swapped, stale, merged, after, calls: card.calls, lockedSwap };
+    """
+    got = _run(body)
+    assert [got["swapped"], got["stale"], got["merged"], got["lockedSwap"]] == [
+        True,
+        False,
+        True,
+        False,
+    ]
+    assert got["after"] == [[3, 1], [5, 3]]
+    assert got["calls"] == [
+        [
+            "select_meals",
+            {"week_id": "2026-W41", "recipe_ids": ["r3", "r5"], "quantities": {"r5": 3}},
+        ]
+    ]
+
+
 def test_a_failed_save_keeps_the_edit_for_a_retry() -> None:
     body = """
       const week = makeWeek();

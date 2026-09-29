@@ -147,9 +147,8 @@ refresh account data immediately, outside the normal polling interval
 If a meal or Market change is accepted but HelloFresh **silently downsizes the box** to fit (a
 "seamless downgrade"), the integration raises a persistent notification so you know the saved
 selection is smaller than you asked for. `select_meals` and `select_market_items` also report it
-in their `{"downgraded": true}` response, which the [Meal planner](dashboard.md#meal-planner-card) and
-[Market](dashboard.md#market-card) cards use to show an inline, dismissable warning on the affected
-week.
+in their `{"downgraded": true}` response, which the [HelloFresh card](dashboard.md#your-box-the-box-bar-and-saving)
+uses to show a dismissable notice on the affected week.
 
 ## Calling these without YAML
 
@@ -158,9 +157,10 @@ by hand:
 
 | Instead of calling | Use |
 |---|---|
-| `select_meals`, `skip_week`, `unskip_week` | [Meal planner card](dashboard.md#meal-planner-card) |
-| `select_market_items` | [Market card](dashboard.md#market-card) |
-| `get_food_profile`, `set_food_profile` | [Food Profile card](dashboard.md#food-profile-card) |
+| `select_meals`, `select_market_items` | The HelloFresh card's [Menu](dashboard.md#menu) and [Market](dashboard.md#market) (one box, one save) |
+| `skip_week`, `unskip_week`, `reschedule_week` | **Skip** / **Change day** on any week in the HelloFresh card's [Overview](dashboard.md#overview) or [Menu](dashboard.md#menu) |
+| `get_food_profile`, `set_food_profile` | The HelloFresh card's [Account › Food preferences](dashboard.md#account) |
+| `change_plan`, `change_delivery_weekday` | The HelloFresh card's [Account › Plan settings](dashboard.md#account) |
 | `skip_week` for the next editable week | The **Skip next selectable delivery week** switch |
 
 Write actions (meal/Market selection, skip/unskip) use the website's verified endpoints first and

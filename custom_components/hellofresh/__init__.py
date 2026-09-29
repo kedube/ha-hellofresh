@@ -93,7 +93,11 @@ from .const import (
     SERVICE_UNSKIP_WEEK,
 )
 from .coordinator import HelloFreshDataUpdateCoordinator
-from .frontend import async_register_meal_planner_card
+from .frontend import (
+    async_add_entry_panel,
+    async_register_meal_planner_card,
+    async_remove_entry_panel,
+)
 from .intent import async_register_intents
 from .issues import (
     async_cleanup_stale_issues,
@@ -369,6 +373,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, _entry_platforms(entry))
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # The sidebar entry that opens the HelloFresh card full screen (when the option is on).
+    await async_add_entry_panel(hass, entry)
     return True
 
 
@@ -388,6 +394,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # all of them is both safe and the only way to unload what setup actually created.
     unload_ok = await hass.config_entries.async_unload_platforms(entry, [*PLATFORMS, Platform.TODO])
     if unload_ok:
+        await async_remove_entry_panel(hass, entry)
         # The coordinator lives in entry.runtime_data, which HA clears on unload.
         # Drop any pending token-only flag so a removed entry's id can't linger in the set.
         token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)

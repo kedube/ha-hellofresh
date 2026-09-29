@@ -9,6 +9,11 @@
  * countdown, payment date, coupon, discount, voucher, status with the carrier's finer step), the
  * month calendar with per-state markers and holiday flags, per-week skip/unskip and change-day,
  * tracking numbers, scan history, proof of delivery and the month roll-up.
+ *
+ * A shipped or past box's row opens its delivery details — the carrier's delivery photo and
+ * signature, the scan-by-scan timeline, what was in the box and what it cost. That replaces the
+ * example dashboard's old Activity view (a logbook of the delivery-events entity), with the
+ * carrier's own timestamps instead of whenever a poll happened to notice a change.
  */
 
 const OVERVIEW_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
@@ -28,7 +33,7 @@ export class OverviewView {
     this.card = card;
     this.mode = L.storageGet(L.STORAGE_KEYS.scheduleMode) === "calendar" ? "calendar" : "list";
     this.calMonth = null;
-    this.historyOpen = null;
+    this.historyOpen = null; // the next box's inline scan history
     this.pastShown = 4;
   }
 
@@ -189,6 +194,7 @@ export class OverviewView {
             <div class="hf-heromealwrap">${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg" style="aspect-ratio:16/10"></div>`}
               ${qty > 1 ? `<span class="hf-overlaypill hf-qtytag">${qty}×</span>` : ""}</div>
             <div class="hf-heromealname">${esc(recipe.name)}</div>
+            ${recipe.variation_title ? `<div class="hf-heromealopt">${esc(recipe.variation_title)}</div>` : ""}
           </div>`;
       })
       .join("");
@@ -312,6 +318,9 @@ export class OverviewView {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   }
 
+  // A month of rounded day tiles, whole weeks from Sunday (the neighbouring months' days faded).
+  // A delivery day wears its state's colour, icon and short label, and opens what its row
+  // beside the calendar opens: the delivery details once a box ships, the week's menu before.
   _calendar() {
     const card = this.card;
     const weeks = card.weeks;
@@ -321,32 +330,29 @@ export class OverviewView {
     const byDay = L.weeksByDay(weeks);
     const today = new Date();
     const todayKey = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
     const dows = [...Array(7)]
-      .map((_, i) => `<span class="hf-caldow">${esc(new Date(2023, 0, 1 + i).toLocaleDateString(undefined, { weekday: "narrow" }))}</span>`)
+      .map((_, i) => {
+        const day = new Date(2023, 0, 1 + i); // a Sunday-first week
+        const cls = `${i === 0 || i === 6 ? " weekend" : ""}${isCurrentMonth && i === today.getDay() ? " today" : ""}`;
+        return `<span class="hf-caldow${cls}" title="${esc(day.toLocaleDateString(undefined, { weekday: "long" }))}">
+            <span class="hf-dowshort">${esc(day.toLocaleDateString(undefined, { weekday: "short" }))}</span>
+            <span class="hf-dowletter">${esc(day.toLocaleDateString(undefined, { weekday: "narrow" }))}</span></span>`;
+      })
       .join("");
+    const lead = new Date(year, month, 1).getDay();
+    const span = Math.ceil((lead + new Date(year, month + 1, 0).getDate()) / 7) * 7;
+    const states = new Set();
     const cells = [];
-    const firstDow = new Date(year, month, 1).getDay();
-    for (let i = 0; i < firstDow; i += 1) cells.push(`<span class="hf-cal-day blank"></span>`);
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const key = new Date(year, month, day).getTime();
-      const week = byDay.get(key);
-      const isToday = key === todayKey ? " today" : "";
-      if (!week) {
-        cells.push(`<span class="hf-cal-day${isToday}"><span class="hf-calnum">${day}</span></span>`);
-        continue;
-      }
-      const state = L.weekState(week);
-      const selected = week.week_id === card.selectedWeekId ? " selected" : "";
-      const holiday = L.isHolidayShifted(week);
-      const title = `${week.display_name || week.week_id} — ${L.stateLabel(week, state)}${holiday ? ` — ${week.holiday_message || "Holiday delivery change"}` : ""}`;
-      cells.push(`<button class="hf-cal-day has ${state}${isToday}${selected}" data-action="goto" data-view="menu"
-          data-week-id="${esc(week.week_id)}" title="${esc(title)}" aria-label="${esc(`${L.fmtLongDate(week.delivery_date)}: ${L.stateLabel(week, state)}`)}">
-          <span class="hf-calnum">${day}${holiday ? "*" : ""}</span><span class="hf-calmark ${state}"></span></button>`);
+    for (let i = 0; i < span; i += 1) {
+      cells.push(this._calDay(new Date(year, month, 1 - lead + i), month, todayKey, byDay, states));
     }
+    const legend = ["delivered", "shipping", "ready", "needs", "locked", "skipped"]
+      .filter((s) => states.has(s))
+      .map((s) => pill(L.STATE_META[s].short, L.STATE_META[s].tone, L.STATE_META[s].icon));
+    if (isCurrentMonth) legend.push(`<span class="hf-legendtoday"><span class="hf-todaydot"></span>Today</span>`);
     const { min, max } = L.calBounds(weeks);
     const shownKey = shown.getTime();
-    const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
     const rows = L.monthWeeks(weeks, shown);
     const rollup = rows.length > 1 ? L.monthRollup(rows) : null;
     const rollupText = rollup
@@ -361,12 +367,14 @@ export class OverviewView {
     return `<div class="hf-cols two">
         <div class="hf-cal">
           <div class="hf-calhead">
-            <button class="hf-iconbtn" data-action="cal-shift" data-delta="-1" aria-label="Previous month" ${shownKey <= min ? "disabled" : ""}>${icon("mdi:chevron-left")}</button>
+            <span class="hf-calnav"><button class="hf-iconbtn" data-action="cal-shift" data-delta="-1" aria-label="Previous month" ${shownKey <= min ? "disabled" : ""}>${icon("mdi:chevron-left")}</button></span>
             <span class="hf-caltitle">${esc(shown.toLocaleDateString(undefined, { month: "long", year: "numeric" }))}</span>
-            ${isCurrentMonth ? "" : `<button class="hf-btn sm ghost" data-action="cal-today">Today</button>`}
-            <button class="hf-iconbtn" data-action="cal-shift" data-delta="1" aria-label="Next month" ${shownKey >= max ? "disabled" : ""}>${icon("mdi:chevron-right")}</button>
+            <span class="hf-calnav end">${isCurrentMonth ? "" : `<button class="hf-btn sm ghost" data-action="cal-today">Today</button>`}
+              <button class="hf-iconbtn" data-action="cal-shift" data-delta="1" aria-label="Next month" ${shownKey >= max ? "disabled" : ""}>${icon("mdi:chevron-right")}</button></span>
           </div>
-          <div class="hf-calgrid">${dows}${cells.join("")}</div>
+          <div class="hf-caldows">${dows}</div>
+          <div class="hf-calgrid">${cells.join("")}</div>
+          ${legend.length ? `<div class="hf-callegend">${legend.join("")}</div>` : ""}
         </div>
         <div>${
           rows.length
@@ -374,6 +382,37 @@ export class OverviewView {
             : `<div class="hf-empty">No deliveries in ${esc(shown.toLocaleDateString(undefined, { month: "long" }))}.</div>`
         }</div>
       </div>`;
+  }
+
+  _calDay(date, month, todayKey, byDay, states) {
+    const key = date.getTime();
+    const inMonth = date.getMonth() === month;
+    const cls = ["hf-cal-day"];
+    if (!inMonth) cls.push("other");
+    if (date.getDay() === 0 || date.getDay() === 6) cls.push("weekend");
+    if (key === todayKey) cls.push("today");
+    else if (key < todayKey) cls.push("past");
+    const current = key === todayKey ? ' aria-current="date"' : "";
+    const num = `<span class="hf-calnum">${date.getDate()}</span>`;
+    const week = byDay.get(key);
+    if (!week) {
+      return `<span class="${cls.join(" ")}"${current}${inMonth ? "" : ' aria-hidden="true"'}><span class="hf-caltop">${num}</span></span>`;
+    }
+    const state = L.weekState(week);
+    const meta = L.STATE_META[state];
+    const label = L.stateLabel(week, state);
+    if (inMonth) states.add(state);
+    cls.push("has", state, `tone-${meta.tone}`);
+    if (week.week_id === this.card.selectedWeekId) cls.push("selected");
+    const holiday = L.isHolidayShifted(week);
+    const title = `${week.display_name || week.week_id} — ${label}${holiday ? ` — ${week.holiday_message || "Holiday delivery change"}` : ""}`;
+    const weekAttr = `data-week-id="${esc(week.week_id)}"`;
+    const open = this._hasDelivery(week) ? `data-action="delivery" ${weekAttr}` : `data-action="goto" data-view="menu" ${weekAttr}`;
+    return `<button class="${cls.join(" ")}" ${open}${current} title="${esc(title)}"
+        aria-label="${esc(`${L.fmtLongDate(L.weekDay(week))}: ${label}${holiday ? " (holiday schedule)" : ""}`)}">
+        <span class="hf-caltop">${num}${holiday ? `<span class="hf-calholiday" aria-hidden="true">${icon("mdi:calendar-star")}</span>` : ""}</span>
+        <span class="hf-calstate" aria-hidden="true">${icon(meta.icon)}<span class="hf-calstatetext">${esc(label === "Preselected" ? label : meta.short)}</span></span>
+      </button>`;
   }
 
   // ---- rows (calendar month & past deliveries) -----------------------------------------------
@@ -420,8 +459,13 @@ export class OverviewView {
     if (L.canReschedule(week)) side.push(`<button class="hf-btn sm ghost" data-action="reschedule" ${weekAttr} ${card.busy ? "disabled" : ""}>Change day</button>`);
     if (L.canSkip(week)) side.push(`<button class="hf-btn sm${skipped ? " primary" : " ghost"}" data-action="skip" ${weekAttr} ${card.busy ? "disabled" : ""}>${skipped ? "Unskip" : "Skip"}</button>`);
     const when = L.weekDay(week);
-    return `<div class="hf-row" role="button" tabindex="0"
-        data-action="goto" data-view="menu" ${weekAttr} aria-label="${esc(`${L.fmtLongDate(when)}: ${label}`)}">
+    const details = this._hasDelivery(week);
+    if (details) side.push(`<span class="hf-rowchev" aria-hidden="true">${icon("mdi:chevron-right")}</span>`);
+    const open = details
+      ? `data-action="delivery" ${weekAttr} aria-label="${esc(`${L.fmtLongDate(when)}: ${label}. Delivery details`)}"`
+      : `data-action="goto" data-view="menu" ${weekAttr} aria-label="${esc(`${L.fmtLongDate(when)}: ${label}`)}"`;
+    const actions = L.canReschedule(week) || L.canSkip(week);
+    return `<div class="hf-row${actions ? " actions" : ""}" role="button" tabindex="0" ${open}>
         <span class="hf-rowicon tone-${meta.tone}">${icon(meta.icon)}</span>
         <div style="min-width:0">
           <div class="hf-rowtitle">${esc(L.fmtDate(when))}${L.isHolidayShifted(week) ? ` <span title="${esc(week.holiday_message || "Holiday delivery change")}">${icon("mdi:calendar-star")}</span>` : ""}
@@ -433,39 +477,136 @@ export class OverviewView {
       </div>`;
   }
 
-  // The compact shipment line of a row: arrival, carrier, linked tracking number, order id and
-  // the scan-history / proof-of-delivery disclosure.
+  // A box whose row opens its delivery details rather than its menu: anything shipped or
+  // delivered, and any past box that wasn't skipped.
+  _hasDelivery(week) {
+    if (L.isSkipped(week)) return false;
+    const order = week.order || {};
+    return L.isPastWeek(week) || L.isDelivered(week) || L.isShipping(week) || Boolean(order.tracking_number);
+  }
+
+  // The compact shipment line of a row: arrival, carrier and whether the carrier left a photo.
+  // The tracking number, scan history and proof of delivery are in the delivery details.
   _trackLine(week) {
     const order = week.order || {};
     const parts = [];
     const arrived = L.fmtArrival(week.delivered_at);
     if (arrived) parts.push(`<span>Delivered <strong>${esc(arrived)}</strong></span>`);
     if (order.carrier) parts.push(`<span>${esc(order.carrier)}</span>`);
-    if (order.tracking_number) {
-      const href = L.safeUrl(order.tracking_url);
-      const num = esc(order.tracking_number);
-      parts.push(href ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>` : `<span>${num}</span>`);
-    }
-    if (order.order_id) parts.push(`<span>Order ${esc(order.order_id)}</span>`);
-    const events = Array.isArray(order.tracking_events) ? order.tracking_events : [];
-    const open = this.historyOpen === week.week_id;
-    if (events.length) {
-      parts.push(`<button class="hf-link" data-action="toggle-history" data-week-id="${esc(week.week_id)}" aria-expanded="${open}">${open ? "Hide history" : `History (${events.length})`}</button>`);
-    }
-    if (!parts.length) return "";
-    const history = open
-      ? `<ul class="hf-history" aria-label="Tracking history">${events
-          .map((e) => `<li><span class="hf-when">${esc(L.fmtArrival(e && e.time) || "—")}</span>${esc(L.sentenceCase((e && (e.detail || e.status)) || ""))}</li>`)
-          .join("")}</ul>`
-      : "";
+    if (L.deliveryPhotos(week).length) parts.push(`<span class="hf-podhint">${icon("mdi:camera-outline")}Photo</span>`);
+    return parts.length ? `<div class="hf-trackline">${parts.join('<span aria-hidden="true">·</span>')}</div>` : "";
+  }
+
+  // ---- delivery details ---------------------------------------------------------------------------
+
+  _openDelivery(week) {
+    const card = this.card;
+    card.openSheet({
+      kind: "delivery",
+      narrow: true,
+      label: `Delivery details for ${L.fmtLongDate(L.weekDay(week))}`,
+      render: () => this._renderDelivery(card.weekById(week.week_id) || week),
+      onClick: (_ev, el) => {
+        const action = el && el.getAttribute("data-action");
+        if (action === "recipe") card.openRecipe(el.getAttribute("data-recipe-id"));
+        else if (action === "delivery-menu") {
+          card.closeSheet();
+          card.navigate("menu", { weekId: week.week_id });
+        }
+      },
+    });
+  }
+
+  _renderDelivery(week) {
+    const card = this.card;
+    const order = week.order || {};
+    const delivered = L.isDelivered(week);
+    const when = L.weekDay(week);
+    const arrived = L.fmtArrival(week.delivered_at);
+    const label = L.stateLabel(week, L.weekState(week));
+    const title = delivered ? `Delivered ${arrived || L.fmtLongDate(when)}` : `Box for ${L.fmtLongDate(when)}`;
+    const sub = [week.display_name || week.week_id, order.order_id ? `Order ${order.order_id}` : ""].filter(Boolean);
+    const sections = [];
+
+    // Proof of delivery. HelloFresh passes on the carrier's photo and signer only when the
+    // carrier provides them; Veho, the main US carrier, doesn't — so say so rather than leave
+    // a gap that looks like a loading failure.
     const photos = L.deliveryPhotos(week);
-    const pod =
-      photos.length || order.delivery_signed_by
-        ? `<div class="hf-pod">${photos
-            .map((url) => `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Open delivery photo"><img src="${url}" alt="Delivery photo" loading="lazy"></a>`)
-            .join("")}${order.delivery_signed_by ? `<span>Signed by ${esc(order.delivery_signed_by)}</span>` : ""}</div>`
+    if (photos.length || order.delivery_signed_by) {
+      sections.push(`<div class="hf-dphotos">${photos
+        .map((url) => `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Open the full-size photo"><img src="${url}" alt="Delivery photo" loading="lazy"></a>`)
+        .join("")}</div>${order.delivery_signed_by ? `<div class="hf-dnote">${icon("mdi:draw")}Signed by ${esc(order.delivery_signed_by)}</div>` : ""}`);
+    } else if (delivered) {
+      sections.push(`<div class="hf-dnote">${icon("mdi:camera-off-outline")}${esc(
+        order.carrier ? `${order.carrier} didn't share a delivery photo for this box.` : "No delivery photo was shared for this box."
+      )}</div>`);
+    }
+
+    // The carrier's scan history, newest first.
+    const events = Array.isArray(order.tracking_events) ? order.tracking_events : [];
+    const track = [];
+    if (order.carrier || order.tracking_number) {
+      const href = L.safeUrl(order.tracking_url);
+      const number = order.tracking_number
+        ? href
+          ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${esc(order.tracking_number)}</a>`
+          : `<span>${esc(order.tracking_number)}</span>`
         : "";
-    return `<div class="hf-trackline">${parts.join('<span aria-hidden="true">·</span>')}</div>${history}${pod}`;
+      track.push(`<div class="hf-dcarrier">${icon("mdi:truck-outline")}<span>${esc(order.carrier || "Carrier")}</span>${number}</div>`);
+    }
+    if (events.length) {
+      track.push(`<ol class="hf-timeline" aria-label="Tracking history">${events
+        .map((e) => `<li><span class="hf-when">${esc(L.fmtArrival(e && e.time) || "—")}</span><span>${esc(
+          L.sentenceCase((e && (e.detail || e.status)) || "")
+        )}</span></li>`)
+        .join("")}</ol>`);
+    } else if (!delivered && L.isShipping(week)) {
+      track.push(`<div class="hf-dnote">${esc(L.rowStatus(week, label) || "On its way")}</div>`);
+    }
+    if (track.length) sections.push(`<section class="hf-dsec"><h3>Tracking</h3>${track.join("")}</section>`);
+
+    // What was in the box.
+    const meals = UI.chosenMeals(week, card.box.displayMeals(week));
+    const marketItems = new Map((week.market_items || []).map((i) => [i.item_id, i]));
+    const extras = [...card.box.displayMarket(week).entries()].map(([id, qty]) => [marketItems.get(id), qty]).filter(([i]) => i);
+    if (meals.length || extras.length) {
+      const rows = [
+        ...meals.map(({ recipe, qty }) => {
+          const img = L.resizedImage(recipe.image_url, 120);
+          const note = [recipe.variation_title, qty > 1 ? L.plural(qty, "serving") : ""].filter(Boolean).join(" · ");
+          return `<button class="hf-dmeal" data-action="recipe" data-recipe-id="${esc(recipe.recipe_id)}" aria-label="Open recipe: ${esc(recipe.name)}">
+              ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<span class="hf-noimg"></span>`}
+              <span class="hf-dmealtext"><span>${esc(recipe.name)}</span>${note ? `<span class="hf-muted">${esc(note)}</span>` : ""}</span>
+            </button>`;
+        }),
+        ...extras.map(([item, qty]) => {
+          const img = L.resizedImage(item.image_url, 120);
+          return `<div class="hf-dmeal">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<span class="hf-noimg"></span>`}
+              <span class="hf-dmealtext"><span>${esc(item.name)}</span><span class="hf-muted">Market${qty > 1 ? ` · ${qty}×` : ""}</span></span></div>`;
+        }),
+      ];
+      sections.push(`<section class="hf-dsec"><h3>In this box</h3><div class="hf-dmeals">${rows.join("")}</div></section>`);
+    }
+
+    // What it cost.
+    const price = L.weekPriceParts(week);
+    const money = [];
+    if (price) money.push(`<div class="hf-dline"><span>${order.billed_total_price != null ? "Charged" : "Order total"}</span><strong>${esc(L.fmtPrice(price.amount, price.currency))}</strong></div>`);
+    if (Number(order.discount_amount) > 0) {
+      money.push(`<div class="hf-dline"><span>Discount${order.coupon_code ? ` (${esc(order.coupon_code)})` : ""}</span><span>−${esc(L.fmtPrice(order.discount_amount, price ? price.currency : order.currency))}</span></div>`);
+    }
+    if (money.length) sections.push(`<section class="hf-dsec"><h3>Charges</h3>${money.join("")}</section>`);
+
+    const menuButton = card.hasView("menu")
+      ? `<button class="hf-btn ghost" data-action="delivery-menu">${icon("mdi:silverware-fork-knife")}View this week's menu</button>`
+      : "";
+    return `
+      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${esc(title)}</h2>
+        <div class="hf-sheetsub">${esc(sub.join(" · "))}</div></div>
+        ${delivered ? "" : pill(label, "info")}
+        <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
+      <div class="hf-sheetbody">${sections.join("") || `<div class="hf-empty">No details for this box yet.</div>`}</div>
+      ${menuButton ? `<div class="hf-sheetfoot">${menuButton}</div>` : ""}`;
   }
 
   // ---- past deliveries ------------------------------------------------------------------------
@@ -500,6 +641,9 @@ export class OverviewView {
         break;
       case "recipe":
         card.openRecipe(el.getAttribute("data-recipe-id"));
+        break;
+      case "delivery":
+        if (week) this._openDelivery(week);
         break;
       case "toggle-history": {
         const id = el.getAttribute("data-week-id");

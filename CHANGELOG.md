@@ -12,12 +12,22 @@ version heading and publishes it as the release's Highlights.
   - **Overview** leads with the next box: its date, a live deadline countdown, the meals in it,
     a delivery tracker (Preparing → Shipped → Out for delivery → Delivered) with scan history and
     proof of delivery, and the pantry staples to buy before it arrives as a tickable checklist.
-    Other weeks needing picks, the weeks coming up (as cards or a month calendar) and recent
-    deliveries follow.
+    Other weeks needing picks, the weeks coming up (as cards, or a month calendar whose day tiles
+    wear each box's state) and recent deliveries follow; tap a delivery for its details — the
+    carrier's delivery photo and signature when there is one, every tracking scan, what was in the
+    box and what it cost.
   - **Menu and Market share one week strip and one box.** Build a week's meals and add-ons, watch
     a live price estimate in a sticky box bar (from HelloFresh's own price calculation), review
     what's new or removed, and save both with one tap. Unsaved changes survive switching tabs,
     weeks and background refreshes.
+  - **One tile per dish, customized like on the website.** HelloFresh's menu has a separate meal
+    for each version of a dish (2× protein, a protein or vegetable swap, "Added Bacon") — a
+    week's ~460 meals are ~85 dishes. As on the website, each dish is one tile with a selector
+    for its current choice, opening a drawer of every option with its ingredient photo and
+    surcharge; a filter shows the option that fits when the dish itself doesn't (the Salmon
+    version of a chicken dish under Seafood). Protein filters also ask HelloFresh's filter
+    service, so a swap the menu leaves without a protein (a "2x Tofu" option) shows under Veggie
+    as it does on the site.
   - The menu gains **search** and a **Favorites** highlight, meals can be edited in "In my box"
     view, and large menus load 60 tiles at a time.
   - **Account** holds plan & billing — now including the recurring **box size** and **delivery
@@ -26,13 +36,35 @@ version heading and publishes it as the release's Highlights.
     and can use your theme's accent colour (`accent: theme`). A single entry in `views` gives a
     focused card, e.g. just Recipes.
 
-  The example dashboard, `dashboard/hellofresh.yaml`, is now this one card, full width; the
-  previous multi-view layout lives on as `dashboard/hellofresh-classic.yaml`. The classic cards
-  are unchanged and keep working; they share filters and the selected week with the new card.
+  The example dashboard, `dashboard/hellofresh.yaml`, is now this one card, full width — its
+  delivery-activity logbook view is replaced by the delivery details; the previous multi-view
+  layout lives on as `dashboard/hellofresh-classic.yaml`.
+- **New: HelloFresh in the sidebar.** The integration adds a **HelloFresh** entry to Home
+  Assistant's sidebar that opens the HelloFresh card full screen, so there's no dashboard to
+  build. On a phone it runs edge to edge, with the usual button to open the sidebar. With more
+  than one account, each gets its own entry, named after its integration entry. It's on by
+  default; the new **Show HelloFresh in the sidebar** option removes it.
+- **Deprecated: the seven classic cards** (Meal planner, Market, Recipes, Food Profile, Schedule,
+  Subscription and Cost) and `dashboard/hellofresh-classic.yaml`. The HelloFresh card does
+  everything they do; they will be removed in a future release. They still work and still share
+  filters and the selected week with the new card, but now say so: "(deprecated)" in the card
+  picker, a **Deprecated** badge in the card's title linking to
+  [Moving from the classic cards](https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md#moving-from-the-classic-cards), and one
+  console warning.
+- **The README and `docs/dashboard.md` are rewritten around the HelloFresh card**, with new
+  screenshots up front.
 - **`hellofresh.select_meals` accepts `market_quantities`** to set the week's Market add-ons in
   the same cart write as the meals. Saving meals and extras as two back-to-back writes could let
   the second one restore the first one's old selection (each rebuilds the cart from the last
   poll); one write can't. Omitting it keeps the current add-ons, as before.
+- **`get_weeks` recipes describe a dish's customization options** the way the website's
+  customization drawer does: `variation_order` (the option's place in the list),
+  `variation_image_url` (its ingredient photo, moved off the retired CloudFront host, which
+  answers every request with an error) and, on the base dish, `variation_default_title` ("No
+  Change", "No Protein", "Ground Beef"). Also fixed: `variation_group` counted each dish's
+  suggested Market add-ons as variants, so every dish looked like a variant set of itself and an
+  option listed before its base could end up in a group of its own. It is now `null` for a dish
+  without options.
 
 ## 3.07 — 2026-09-29
 - **Fixed: the Norwegian translation never loaded** (#9). Home Assistant's code for Norwegian

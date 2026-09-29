@@ -38,6 +38,8 @@ const {
   accountKey,
   broadcastWeek,
   DATA_CHANGED_EVENT,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(SUBSCRIPTION_CARD_VERSION)}`,
@@ -81,6 +83,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-subscription-card");
     this._config = { title: "Subscription", ...config };
     this._render();
   }
@@ -241,7 +244,7 @@ class HelloFreshSubscriptionCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Subscription")}</span>
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Subscription")}${deprecatedBadge()}</span>
       <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
@@ -608,8 +611,8 @@ customElements.define("hellofresh-subscription-card", HelloFreshSubscriptionCard
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-subscription-card",
-  name: "HelloFresh Subscription Card",
-  description: "Condensed HelloFresh account overview: plan, status, credit, and notices.",
+  name: "HelloFresh Subscription Card (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. Condensed HelloFresh account overview: plan, status, credit, and notices.",
 });
 
 console.info(

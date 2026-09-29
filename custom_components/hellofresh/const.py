@@ -87,6 +87,13 @@ DEFAULT_ENABLE_FAVORITES = True
 CONF_ENABLE_PREP_LISTS = "enable_prep_lists"
 DEFAULT_ENABLE_PREP_LISTS = True
 
+# A "HelloFresh" entry in Home Assistant's sidebar that opens the HelloFresh card full screen
+# (frontend.py registers it), so the whole experience needs no dashboard. On by default; with
+# several accounts each gets its own entry. Changing it reloads the entry, which re-syncs the
+# sidebar.
+CONF_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
+DEFAULT_SHOW_SIDEBAR_PANEL = True
+
 # Platforms set up for every entry. The to-do platform is conditional (see
 # CONF_ENABLE_PREP_LISTS) and is appended by `_entry_platforms` at setup/unload time rather
 # than living here, so both paths derive the same list from the same option.

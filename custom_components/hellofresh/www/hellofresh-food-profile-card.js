@@ -35,6 +35,8 @@ const {
   accountKey,
   broadcastDataChanged,
   DATA_CHANGED_EVENT,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(FOOD_PROFILE_CARD_VERSION)}`,
@@ -185,6 +187,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-food-profile-card");
     this._config = { title: "Food Profile", ...config };
     this._render();
   }
@@ -504,7 +507,7 @@ class HelloFreshFoodProfileCard extends HTMLElement {
     const focus = this._captureFocus();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Food Profile")}</span>`;
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Food Profile")}${deprecatedBadge()}</span>`;
     this._shell.body.innerHTML = this._renderBody();
     this._shell.toast.innerHTML = this._toast
       ? `<div class="toast ${this._toast.isError ? "error" : ""}">${this._esc(this._toast.message)}</div>`
@@ -1178,8 +1181,8 @@ customElements.define("hellofresh-food-profile-card-editor", HelloFreshFoodProfi
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-food-profile-card",
-  name: "HelloFresh Food Profile Card",
-  description: "View and edit the preferences HelloFresh uses to auto-preselect meals.",
+  name: "HelloFresh Food Profile Card (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. View and edit the preferences HelloFresh uses to auto-preselect meals.",
 });
 
 console.info(
