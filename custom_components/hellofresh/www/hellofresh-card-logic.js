@@ -675,6 +675,80 @@ export function deliveryPhotos(week) {
     .slice(0, 3);
 }
 
+// ---- live tracking (the Netherlands) ------------------------------------------------------
+// Where HelloFresh drives its own vans (the integration's TRACEY_COUNTRIES, today only the
+// Netherlands) its tracking page, hftrack.nl, is backed by a live tracker. The integration
+// polls it into sensors: the phase sensor carries the whole snapshot as attributes, the ETA
+// sensor the arrival time. Phases are HelloFresh's own; `step` indexes LIVE_STEPS.
+export const LIVE_STEPS = ["Packed", "On the way", "Delivered"];
+export const LIVE_PHASES = {
+  AT_DEPOT: { label: "Packed at the depot", step: 0 },
+  DRIVER_DEPARTED: { label: "The driver has set off", step: 1 },
+  ON_THE_WAY: { label: "On the way to you", step: 1 },
+  DELAYED: { label: "Running late", step: 1, tone: "warn" },
+  DELIVERED: { label: "Delivered", step: 2 },
+  DELIVERED_HOME: { label: "Delivered", step: 2 },
+  CANCELLED: { label: "Delivery cancelled", step: -1, tone: "danger" },
+};
+
+// The live snapshot from the two sensors' states, or null while no delivery is live (the
+// sensors read Unknown and `active` is false outside a delivery).
+export function liveTracking(phaseState, etaState) {
+  const a = (phaseState && phaseState.attributes) || null;
+  if (!a || a.active !== true) return null;
+  const raw = upper(a.phase);
+  const known = LIVE_PHASES[raw];
+  const date = (value) => {
+    const d = value ? new Date(value) : null;
+    return d && !Number.isNaN(d.getTime()) ? d : null;
+  };
+  const etaValue = etaState && !["unknown", "unavailable", ""].includes(String(etaState.state)) ? etaState.state : null;
+  const stops = a.amount_of_stops_before;
+  return {
+    phase: raw,
+    label: known ? known.label : sentenceCase(phaseState.state || raw),
+    step: known ? known.step : 1,
+    tone: (known && known.tone) || "",
+    eta: date(etaValue),
+    window: a.delivery_time ? String(a.delivery_time) : "",
+    stops: typeof stops === "number" && Number.isFinite(stops) ? stops : null,
+    driver: a.driver_name ? String(a.driver_name) : "",
+    message: a.personal_customer_message ? String(a.personal_customer_message) : "",
+    trackingUrl: a.tracking_url ? String(a.tracking_url) : "",
+    mapUrl: safeUrl(a.tracking_url),
+    updated: date(a.last_fetched),
+  };
+}
+
+// The tracker is keyed by the order's tracking link, so that is what ties it to a week.
+export function liveTrackingFor(live, week) {
+  const url = week && week.order && week.order.tracking_url;
+  return Boolean(live && live.trackingUrl && url && live.trackingUrl === url);
+}
+
+// "6:42 PM"
+export function fmtTime(date) {
+  try {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  } catch (_e) {
+    return "";
+  }
+}
+
+// "in 35 min" / "in 1 h 5 min" / "any minute now"; "" once the time has passed.
+export function untilText(date, now = new Date()) {
+  const minutes = Math.round((date.getTime() - now.getTime()) / 60000);
+  if (minutes < 0) return "";
+  if (minutes <= 1) return "any minute now";
+  return `in ${formatMinutes(minutes)}`;
+}
+
+// "just now" / "2 min ago" / "1 h 5 min ago".
+export function agoText(date, now = new Date()) {
+  const minutes = Math.max(0, Math.round((now.getTime() - date.getTime()) / 60000));
+  return minutes < 1 ? "just now" : `${formatMinutes(minutes)} ago`;
+}
+
 // ---- meal selection -------------------------------------------------------------------------
 
 // Stable selection key: the course index (what the cart writes) when present, else the recipe
