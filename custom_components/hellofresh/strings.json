@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Quantities",
           "description": "Optional map of recipe ID to serving count (positive integer). Recipes omitted default to one serving; the required-meal minimum is checked against total servings."
+        },
+        "market_quantities": {
+          "name": "Market quantities",
+          "description": "Optional map of Market item ID, SKU or index to quantity, saved in the same cart write as the meals (0 or omitted removes an item). Leave it out to keep the week's current add-ons."
         }
       }
     },

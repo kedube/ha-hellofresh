@@ -607,6 +607,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         week_id: str,
         recipe_ids: list[str],
         quantities: dict[str, int] | None = None,
+        market_quantities: dict[str, int] | None = None,
     ) -> bool:
         """Submit meal choices for a week.
 
@@ -615,6 +616,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         stepper); recipes absent from the map default to a quantity of 1. The included-meal
         minimum is checked against TOTAL servings (sum of quantities), mirroring HelloFresh's
         box math where a meal at quantity 2 fills two of the box's slots.
+
+        ``market_quantities`` optionally sets the week's Market add-ons in the SAME cart write,
+        with :meth:`async_select_market_items`' semantics (item id/sku/index -> total quantity;
+        omitted or zero items are removed). Without it the current add-ons are preserved. One
+        write matters here: meal and Market writes each rebuild the whole cart from the last
+        poll, so two back-to-back writes could let the second put back the first one's old half
+        before the integration has re-read the week.
 
         Returns ``True`` when HelloFresh applied a **seamless downgrade** — it accepted the
         write but silently shrank the box to fit (the cart response's ``hasSeamlessDowngraded``
@@ -631,6 +639,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 raise HelloFreshError(
                     f"Quantity for recipe {recipe_id} must be a positive integer, got {quantity!r}"
                 )
+        # Resolve the add-ons before anything is written, so a bad item fails the whole save
+        # rather than leaving the meals saved and the extras not.
+        extras: list[dict[str, Any]] | None = None
+        if market_quantities is not None:
+            extras = self._build_cart_extras(
+                self._resolve_market_selection(week, market_quantities)
+            )
 
         # Warn (do not block) when a requested meal is flagged sold out. The flag comes from
         # the menus-service catalog, which is the anonymous REGIONAL menu — it has not been
@@ -688,6 +703,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             week=week,
             recipe_ids=deduplicated_recipe_ids,
             quantities=requested,
+            extras=extras,
         )
         if cart_update is not None:
             response = await self._async_api_request(
@@ -699,6 +715,14 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             )
             _LOGGER.info("HelloFresh meal selection succeeded using %s", cart_update["path"])
             return await self._cart_response_downgraded(response, week_id)
+
+        if extras is not None:
+            # The legacy selection endpoints below carry meals only; silently dropping the
+            # requested add-ons would report success for half the change.
+            raise HelloFreshNotImplementedError(
+                f"Week {week_id} is missing the cart metadata needed to save meals and Market "
+                "add-ons together."
+            )
 
         payload_variants = [
             {"weekId": week_id, "recipes": deduplicated_recipe_ids},
@@ -773,33 +797,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 f"Week {week_id} does not expose a subscription id, so market selection cannot be submitted safely."
             )
 
-        # Resolve requested quantities against the catalog by id/sku/index, clamped to maxQuantity.
-        by_key: dict[str, HelloFreshMarketItem] = {}
-        for item in week.market_items:
-            for key in (item.item_id, item.sku, str(item.index)):
-                if key:
-                    by_key.setdefault(str(key), item)
-
-        # Each requested quantity is the desired TOTAL servings. HelloFresh splits a selection
-        # into a recurring (preselected) part and a this-week (one-off) part; we keep any existing
-        # recurring portion and apply the rest as one-off, matching how the web app writes changes.
-        resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
-        for raw_key, raw_qty in quantities.items():
-            quantity = coerce_int(raw_qty) or 0
-            if quantity <= 0:
-                continue
-            item = by_key.get(str(raw_key))
-            if item is None or item.index is None:
-                raise HelloFreshError(f"Market item {raw_key!r} is not in week {week_id}'s catalog")
-            if item.max_quantity is not None and quantity > item.max_quantity:
-                raise HelloFreshError(
-                    f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
-                )
-            preselected = min(item.preselected_quantity or 0, quantity)
-            one_off = quantity - preselected
-            resolved.append((item, one_off, preselected))
-
-        extras = self._build_cart_extras(resolved)
+        extras = self._build_cart_extras(self._resolve_market_selection(week, quantities))
         subscription = await self._async_get_subscription_for_week(week)
         meals = self._build_cart_existing_meals(week)  # preserve the meal selection
         cart_update = await self._async_build_cart_update(week, subscription, meals, extras)
@@ -816,6 +814,46 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         )
         _LOGGER.info("HelloFresh market selection succeeded using %s", cart_update["path"])
         return await self._cart_response_downgraded(response, week_id)
+
+    @staticmethod
+    def _resolve_market_selection(
+        week: HelloFreshWeek,
+        quantities: dict[str, int],
+    ) -> list[tuple[HelloFreshMarketItem, int, int]]:
+        """Resolve requested Market quantities into (item, one_off, preselected) tuples.
+
+        Keys are a Market item's id, sku or index (as get_weeks returns them); values are the
+        desired TOTAL quantity, clamped by nothing but checked against ``max_quantity``. Zero or
+        omitted items are simply absent (removed from the cart). Shared by the Market write and
+        the combined meals-and-Market write so both resolve exactly alike.
+        """
+        by_key: dict[str, HelloFreshMarketItem] = {}
+        for item in week.market_items:
+            for key in (item.item_id, item.sku, str(item.index)):
+                if key:
+                    by_key.setdefault(str(key), item)
+
+        # Each requested quantity is the desired TOTAL servings. HelloFresh splits a selection
+        # into a recurring (preselected) part and a this-week (one-off) part; we keep any existing
+        # recurring portion and apply the rest as one-off, matching how the web app writes changes.
+        resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
+        for raw_key, raw_qty in quantities.items():
+            quantity = coerce_int(raw_qty) or 0
+            if quantity <= 0:
+                continue
+            item = by_key.get(str(raw_key))
+            if item is None or item.index is None:
+                raise HelloFreshError(
+                    f"Market item {raw_key!r} is not in week {week.week_id}'s catalog"
+                )
+            if item.max_quantity is not None and quantity > item.max_quantity:
+                raise HelloFreshError(
+                    f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
+                )
+            preselected = min(item.preselected_quantity or 0, quantity)
+            one_off = quantity - preselected
+            resolved.append((item, one_off, preselected))
+        return resolved
 
     # ---- Food profile (auto-preselection preferences) ------------------------
     #
@@ -1692,8 +1730,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         week: HelloFreshWeek,
         recipe_ids: Sequence[str],
         quantities: dict[str, int] | None = None,
+        extras: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
-        """Build the cart update request that HelloFresh currently uses for meal selection."""
+        """Build the cart update request that HelloFresh currently uses for meal selection.
+
+        ``extras`` replaces the week's Market add-ons in the same write; without it the add-ons
+        currently selected are carried over unchanged.
+        """
         menu_payload = week.raw.get("_menu_payload")
         if not isinstance(menu_payload, dict):
             return None
@@ -1702,8 +1745,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         if selected_meals is None:
             return None
 
-        # Preserve any currently-selected market items so a meal write doesn't clear extras.
-        extras = self._build_cart_existing_extras(week)
+        # Preserve any currently-selected market items so a meal write doesn't clear extras —
+        # unless the caller is setting them in this same write.
+        if extras is None:
+            extras = self._build_cart_existing_extras(week)
         return await self._async_build_cart_update(week, subscription, selected_meals, extras)
 
     # HelloFresh box SKUs encode the plan as ``<PREFIX>-<MEALS>-<SERVINGS>-<N>`` (e.g.

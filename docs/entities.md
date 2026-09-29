@@ -162,8 +162,9 @@ automation:
 `todo.prep_list` and `todo.prep_list_week_2` list the pantry staples HelloFresh does **not** put
 in the box — salt, oil, butter, eggs — for the meals you have selected on your next two
 deliveries, so you can have them on hand before each box lands instead of discovering them
-mid-recipe. Add each to a **To-do list** card; the [example dashboard](../dashboard/hellofresh.yaml)
-puts them side by side under a
+mid-recipe. The [HelloFresh card](dashboard.md#hellofresh-card) shows them as a checklist with the
+box they belong to; or add each to a **To-do list** card, as the
+[classic dashboard](../dashboard/hellofresh-classic.yaml) does side by side under a
 [*Missing Ingredients* view](dashboard.md#missing-ingredients-view).
 
 > **Optional.** Both entities are created by default, and the **Create pantry prep lists**

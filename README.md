@@ -31,7 +31,7 @@ It also exposes delivery-history summaries, shipment tracking metadata, billing/
 | Document | Contents |
 |---|---|
 | [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
-| [docs/dashboard.md](docs/dashboard.md) | The dashboard's views and all seven Lovelace cards: options, features, screenshots |
+| [docs/dashboard.md](docs/dashboard.md) | The unified HelloFresh card, the example dashboards, and the seven classic cards: options, features, screenshots |
 | [docs/services.md](docs/services.md) | All 25 services: parameters and responses |
 
 
@@ -246,7 +246,32 @@ Other useful triggers: the `calendar.delivery_schedule` entity for day-of-delive
 
 ## HelloFresh Dashboard
 
-A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml), organized around how you actually use HelloFresh. It is **100% built-in Lovelace plus the integration's packaged cards** — no HACS frontend add-ons required (the Missing Ingredients, Schedule, and Diagnostics views use HA's built-in `sections` grid layout, so HA 2024.8+ is expected). Its seven views:
+### The HelloFresh card
+
+**`custom:hellofresh-card`** puts the whole HelloFresh experience in one card, laid out the way
+hellofresh.com is:
+
+- **Overview** — the next box front and centre: its date, the selection-deadline countdown, the
+  meals in it, delivery tracking, and the pantry staples to buy before it arrives; then the weeks
+  coming up (as cards or a month calendar) and recent deliveries.
+- **Menu** and **Market** — one week strip, one box. Pick meals and add-ons for a week, see a live
+  price estimate in the sticky box bar, and save both with a single tap.
+- **Recipes** — the ~10,000-recipe catalog and your cookbook.
+- **Account** — plan and billing (including box size and delivery day), food preferences, and
+  spending.
+
+```yaml
+type: custom:hellofresh-card
+```
+
+It works in a narrow column or a phone, but shines full width: the ready-made
+[`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml) is a single panel view. Setting
+`views:` to one section gives a focused card (for example just Recipes on a kitchen tablet). See
+[docs/dashboard.md](docs/dashboard.md#hellofresh-card) for every option.
+
+### Classic dashboard
+
+The original multi-view dashboard is still included as [`dashboard/hellofresh-classic.yaml`](dashboard/hellofresh-classic.yaml), built from the seven single-purpose cards. It is **100% built-in Lovelace plus the integration's packaged cards** — no HACS frontend add-ons required (the Missing Ingredients, Schedule, and Diagnostics views use HA's built-in `sections` grid layout, so HA 2024.8+ is expected). Its seven views:
 
 - **My Menu** — the packaged [Meal planner card](docs/dashboard.md#meal-planner-card) (below), shown full width (`panel: true`): browse every week's full menu with images, see your selected meals highlighted, change the selection and per-meal serving quantity on editable weeks, and skip/unskip — all reading per-week recipes on demand via `hellofresh.get_weeks`. A filter bar mirrors the website's own filter panel: Categories (its menu sections), Main Protein, Dietary Preference (GLP-1 Support, Carb Conscious, Under 650 Calories, …), Total Cooking Time, and Highlights (New / Bestsellers / Cooked Before). A per-week strip at the top shows that week's order (tracking, status, carrier, billed total).
 - **Market** — the packaged [Market card](docs/dashboard.md#market-card): browse and order HelloFresh Market add-ons (appetizers, sides, desserts, proteins, …) per week, grouped by category with a Categories filter bar, with prices and a quantity stepper per item.
@@ -258,13 +283,15 @@ A ready-to-use Lovelace dashboard is included at [`dashboard/hellofresh.yaml`](d
 
 ### The packaged cards
 
-The integration ships **seven Lovelace cards**, registered automatically — no manual resource entry
-and no HACS frontend add-on. Each reads on demand from the integration's services rather than from
-entity attributes, so they show detail (full menus, images, per-item prices) that would never fit
-in a sensor.
+The integration ships **eight Lovelace cards** — the unified HelloFresh card and the seven classic
+single-purpose cards it combines — registered automatically, with no manual resource entry and no
+HACS frontend add-on. Each reads on demand from the integration's services rather than from entity
+attributes, so they show detail (full menus, images, per-item prices) that would never fit in a
+sensor.
 
 | Card | Type | What it is for |
 |---|---|---|
+| **HelloFresh** | `custom:hellofresh-card` | Everything below in one card: next box, menu and Market with one save, recipes, account |
 | Meal planner | `custom:hellofresh-meal-planner-card` | Browse each week's menu, change your meal selection, skip/unskip |
 | Market | `custom:hellofresh-market-card` | Browse and order Market add-ons per week |
 | Recipes | `custom:hellofresh-recipes-card` | Browse the public ~10,000-recipe catalog and manage favorites |
@@ -303,7 +330,7 @@ more or fewer meals than your plan resizes that week's box automatically (minimu
 **Browsing the public catalog** — ~10,000 recipes by category, full cooking detail, and cookbook
 favoriting (including the full cookbook, which HelloFresh's own site only previews).
 
-**In Home Assistant** — 50+ entities, a delivery calendar, two prep-list to-do lists, seven Lovelace cards, voice intents,
+**In Home Assistant** — 50+ entities, a delivery calendar, two prep-list to-do lists, eight Lovelace cards, voice intents,
 response-returning services for dashboards, and Repairs issues when something needs your attention.
 
 ### Known limitations

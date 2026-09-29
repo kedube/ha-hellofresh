@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Antal",
           "description": "Valfri koppling mellan recept-ID och antal portioner (positivt heltal). Recept som utelämnas får en portion som standard; minimiantalet rätter kontrolleras mot det totala antalet portioner."
+        },
+        "market_quantities": {
+          "name": "Market-antal",
+          "description": "Valfri koppling mellan Market-artikelns ID, SKU eller index och antal, sparad i samma varukorgsuppdatering som rätterna (0 eller utelämnad tar bort en artikel). Utelämna den för att behålla veckans nuvarande tillägg."
         }
       }
     },

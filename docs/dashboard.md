@@ -1,19 +1,23 @@
 # Dashboard & card reference
 
-The integration packages seven Lovelace cards. They are **registered automatically** — no manual
-resource entry, no HACS frontend add-on — and each reads its data on demand from the integration's
-services rather than from entity attributes, so they show detail (full menus, images, per-item
-prices) that would never fit in a sensor.
+The integration packages eight Lovelace cards: the unified [HelloFresh card](#hellofresh-card),
+which combines everything into one experience, and the seven classic single-purpose cards it grew
+out of. They are **registered automatically** — no manual resource entry, no HACS frontend add-on
+— and each reads its data on demand from the integration's services rather than from entity
+attributes, so they show detail (full menus, images, per-item prices) that would never fit in a
+sensor.
 
-For the ready-made dashboard that assembles these into views, see
-[`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml) and the
+Two ready-made dashboards are included: [`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml)
+(the HelloFresh card, full width) and the classic multi-view
+[`dashboard/hellofresh-classic.yaml`](../dashboard/hellofresh-classic.yaml) — see the
 [HelloFresh Dashboard](../README.md#hellofresh-dashboard) section of the README. This page covers
-each packaged card, plus the one dashboard view built without one
-(the [Missing Ingredients view](#missing-ingredients-view), which uses Home Assistant's built-in
-to-do card).
+each packaged card, plus the one classic view built without one (the
+[Missing Ingredients view](#missing-ingredients-view), which uses Home Assistant's built-in to-do
+card).
 
 | Card | Type | What it is for |
 |---|---|---|
+| [**HelloFresh**](#hellofresh-card) | `custom:hellofresh-card` | Everything in one card: next box, menu and Market with one save, recipes, account |
 | [Meal planner](#meal-planner-card) | `custom:hellofresh-meal-planner-card` | Browse each week's menu, change your meal selection, skip/unskip |
 | [Market](#market-card) | `custom:hellofresh-market-card` | Browse and order Market add-ons per week |
 | [Recipes](#recipes-card) | `custom:hellofresh-recipes-card` | Browse the public ~10,000-recipe catalog and manage favorites |
@@ -38,6 +42,193 @@ A minimal card is just its type:
 ```yaml
 type: custom:hellofresh-market-card
 ```
+
+## HelloFresh card
+
+**`custom:hellofresh-card`** is the whole HelloFresh experience in one card, organised the way
+hellofresh.com is: a tab bar across the top — **Overview**, **Menu**, **Market**, **Recipes**,
+**Account** — over one shared set of data. Everything the seven classic cards do is here (see
+[where everything went](#where-the-classic-cards-features-went)); what changes is that the pieces
+now work together: a week you open from the Overview is the week the Menu and Market show, meals
+and add-ons for that week are one box with one Save, and the pantry list sits with the box it
+belongs to.
+
+```yaml
+type: custom:hellofresh-card
+# views: [overview, menu, market, recipes, account]   # sections to show, in this order
+# default_view: overview       # open here every time (otherwise: the section you used last)
+# accent: brand                # brand = HelloFresh green; theme = your HA theme's primary colour
+# title: HelloFresh            # "" hides the title
+# logo: true                   # false hides it, or a URL for your own image
+# image_width: 400             # recipe image resize width
+# recipes_limit: 50            # recipes per category in Recipes (1–200)
+# recipes_collection: chicken-recipes   # Recipes opens on this category (default: Top rated)
+# spending_months: 12          # months in the spending chart (1–24)
+```
+
+It adapts to its width, not the screen's: a phone or a narrow sections column gets a compact tab
+bar, two-column grids and a slimmer box bar; a full-width panel view spreads the menu across as many
+columns as fit. The ready-made [`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml)
+shows it as a single panel view. It follows Home Assistant's dark mode (the theme's own flag, so a
+pinned theme wins over the device setting) and keeps the theme's surfaces and text colours; only the
+accent is HelloFresh green, and `accent: theme` swaps that for your theme's primary colour.
+
+**Focused ("breakout") cards.** With a single entry in `views`, the tab bar disappears and the card
+is just that section — for example a recipe browser on a kitchen tablet:
+
+```yaml
+type: custom:hellofresh-card
+views: [recipes]
+title: Recipes
+```
+
+### Overview
+
+- **Next box** — the nearest box that ships (or, with everything skipped, the next skipped week;
+  with nothing upcoming, the last box). Its date, how far off it is, the delivery window, the box
+  name and any holiday change; a **Make changes by** line with a live countdown (red under 24
+  hours); the price, charge date, discount, coupon and voucher; and up to five of the chosen meals
+  as photos (tap one for its recipe). **Review meals** / **Edit meals** / **Choose meals** and
+  **Add extras** go straight to that week in Menu and Market; **Change delivery day** and **Skip
+  this week** sit underneath. When HelloFresh picked the meals, it says so; when you have unsaved
+  changes to this box, it offers to finish them.
+- **Delivery tracking** — once a box has a carrier, a four-step tracker (Preparing → Shipped → Out
+  for delivery → Delivered) with the carrier's latest step, its estimate, the linked tracking
+  number, a **History (N)** list of every scan, and the delivery photo and signer when the carrier
+  provides them.
+- **Needs your picks** — every other editable week still waiting on you, each a tap away, with its
+  own countdown.
+- **Before it arrives** — the pantry staples the next box doesn't include (the integration's
+  [prep list](entities.md#prep-lists)), as a checklist you can tick right here. Ticks are the same
+  to-do items the prep-list entities hold, so they sync with the companion app and voice.
+- **Coming up** — the following weeks as cards (meal photos, state, price, deadline, and
+  Edit / Change day / Skip or Unskip), or switch to **Calendar** for a month grid with every
+  delivery day marked by state, a month roll-up (boxes, skipped weeks, cost) and the month's weeks
+  listed beside it. Tapping a week opens it in Menu.
+- **Recent deliveries** — delivered boxes, newest first: when each actually arrived, what was in
+  it, its bill, carrier and tracking number, scan history and proof of delivery. **Show more**
+  reaches back through the [Past delivery history](../README.md#options) window.
+
+### Menu
+
+- **Week strip** — every browsable week as a chip (day, date, and state: Open, Review, Pick meals,
+  On its way, Delivered, Skipped, Locked). The next box is tagged **Next**, weeks with unsaved
+  changes carry a dot, and ‹ › step through them. The card opens on the next box.
+- **Week header** — the date, state, voucher and holiday badges, the deadline countdown, and the
+  week's own actions: **Pantry**, **Change day**, **Skip week** / **Unskip week**. Notices explain
+  a skipped, auto-picked, locked or downsized box; a settled box (locked, shipped, delivered) shows
+  its order details or tracker.
+- **Search** — type to narrow the week's menu by name, description, variant or tag (every word must
+  match). New in the unified card: a planning week can list hundreds of meals.
+- **Filters** — the same groups as the website's filter panel and the classic meal planner:
+  Categories (the site's menu sections), Main protein, Dietary preference (ANDed, as on the site),
+  Cuisine type, Dish type and Ingredients to avoid (answered by HelloFresh's own filter service),
+  Total cooking time, Highlights — New, Bestsellers, Cooked Before, and new **Favorites** (meals in
+  your cookbook) — and Hide variants. Active filters show as removable chips when the panel is
+  closed. Meals in your box always stay visible under a filter.
+- **In my box** — show only what's in the box. Unlike the classic planner you can still change
+  servings or remove a meal here.
+- **Meal tiles** — photo, HelloFresh's own badge in its colours, favourite heart, promo-video play
+  button, premium surcharge, protein dot, variant modifier ("2x Protein"), time / calories /
+  protein, up to two dietary chips (the rest on hover), "Ordered 2× · last 2026-W34", your rating,
+  and the per-serving price. Sold-out meals are greyed with a ribbon but still choosable (the flag
+  is advisory, as in the classic planner). True duplicates collapse into one tile; a dish's
+  variants sit together. Large menus show 60 meals at a time with **Show more**.
+- **+ Add** puts a meal in the box; its tile then becomes a **− N servings +** stepper (the bin at
+  one serving removes it). Tapping a tile opens the full recipe, whose footer has the same Add /
+  servings controls. Past weeks outside the [Full menu history](../README.md#options) window show
+  just what was delivered.
+
+### Market
+
+The same week strip and header as Menu (a **Meals | Extras** switch moves between the two), then
+the week's add-ons grouped by shelf with a category rail, search and **In my box**. **+ Add** then a
+**− N +** stepper per item (capped at the item's maximum; sold-out items can only be reduced). Tap
+an item for its recipe; the recipe footer adds it too. Past weeks show only what was ordered.
+
+### Your box: the box bar and saving
+
+Menu and Market edit **one pending box per week**. A bar pinned to the bottom of the card shows it:
+meal slots against your plan (amber when you've resized the box), meals, servings and extras, and
+the price —
+
+- unchanged: the box's bill (or your plan price, labelled as such);
+- after changing meals: an **estimated total** from HelloFresh's own price calculation for exactly
+  those meals (`hellofresh.preview_meal_price`, asked once you pause) plus your extras;
+- after changing only extras: what the extras add.
+
+**Save box** writes everything in one go: meals only through `hellofresh.select_meals`, extras only
+through `hellofresh.select_market_items`, and both together through `select_meals` with
+[`market_quantities`](services.md#hellofreshselect_meals) — one cart write, so a meal change can
+never be undone by the Market write that follows it. **Review** opens the whole box: every meal and
+extra with what's new, changed or removed, the price breakdown, and Save / Discard. Choosing more
+or fewer meals than your plan resizes that week's box (minimum two), and the bar says so. If
+HelloFresh downsizes the box on save, a notice stays on that week until you dismiss it.
+
+Pending changes survive switching tabs and weeks, and the card's own background refreshes — they are
+only dropped when saved, discarded, or no longer possible (the deadline passed).
+
+### Recipes
+
+HelloFresh's public catalog and your cookbook, exactly as the classic [Recipes card](#recipes-card):
+**Top rated**, **Cookbook**, every category HelloFresh publishes (in one scrollable rail — **All
+categories** expands it), the **Refine** row of sub-categories, catalog-wide search (the cookbook
+filters locally), favourite hearts and the full recipe view. Favouriting also refreshes the hearts
+on the Menu.
+
+### Account
+
+- **Plan & billing** — your plan, meal preference (its full preset name), servings, meals per box,
+  plan price with its shipping and discount split, credit, card on file (with its expiry state),
+  boxes received, account ID and address; **Upcoming** counters, where "Need picks" and "Next
+  skipped" open their week; **Plan settings** to change your **box size** and **delivery day** (this
+  integration's [select entities](entities.md), behind a confirmation — they change every future
+  box and the bill); the **Meal presets** reference; and **Integration status** (token health, write
+  actions, payload checks, and a **Refresh from HelloFresh** button).
+- **Food preferences** — the food profile editor, with every rule the classic
+  [Food Profile card](#food-profile-card) enforces: diet-dependent proteins, Like / Dislike weights,
+  up to three personal goals, at least one cooking style, "None" where allowed, household size,
+  completion prompts, and Save / Reset. The save bar pins to the bottom only while there are changes.
+- **Spending** — lifetime total, box count, average box and what vouchers saved; a monthly cost
+  chart with a trend line (empty months keep their slot); the by-month roll-up; and recent boxes
+  with their vouchers. Upcoming boxes are shown but never counted as spent.
+
+Banners across the top of every section warn about an expiring or expired payment card, announce a
+holiday delivery change, and report a failed refresh with **Retry**.
+
+### Stays current
+
+The card reads `hellofresh.get_weeks` once for Overview, Menu and Market, plus
+`get_account_summary` for the header and Account. It re-reads on the integration's
+[Refresh interval](../README.md#options) (or the **Delivery-day watch interval** while a box is on
+the road), when the browser tab comes back after the data has aged, and right after any HelloFresh
+card saves a change. Countdowns tick every minute without re-rendering. Everything else (recipes,
+food profile, spending, presets, delivery-day names) loads when you first open it.
+
+It shares the classic cards' view preferences — filters, "In my box" and so on are stored under the
+same keys — and their week-sync channel, so both kinds of card can live on one dashboard.
+
+### Where the classic cards' features went
+
+| Classic | In the HelloFresh card |
+|---|---|
+| [Meal planner card](#meal-planner-card) | Menu (plus search, a Favorites highlight, and editing in "In my box") |
+| [Market card](#market-card) | Market, saving together with Menu |
+| [Recipes card](#recipes-card) | Recipes |
+| [Food Profile card](#food-profile-card) | Account › Food preferences |
+| [Schedule card](#schedule-card) | Overview: next box, tracking, Coming up (cards or calendar), Recent deliveries; skip and change day on every week |
+| [Subscription card](#subscription-card) | Account › Plan & billing; the payment and holiday notices are banners on every section |
+| [Cost card](#cost-card) | Account › Spending |
+| [Missing Ingredients view](#missing-ingredients-view) | Overview › Before it arrives, and **Pantry** on each covered week |
+| Plan controls (entities card) | Account › Plan settings |
+| Diagnostics view | Account › Integration status |
+
+The **Delivery activity** logbook from the classic Schedule view isn't a card feature; the example
+dashboard keeps it as a second view.
+
+**Deliberate differences.** A *paused* week is treated as skipped everywhere (the classic planner
+still offered meal edits on one); the week list keeps skipped future weeks visible so they can be
+unskipped; and a shipped box has its own **On its way** state rather than reading as "Locked".
 
 ## Meal planner card
 
@@ -82,7 +273,7 @@ What it does:
 
 > Meal-selection writes are confirmed on the US and UK sites; other regions fall back to best-effort guesses (see [Current Scope](../README.md#current-scope)). Browsing works everywhere the menu loads.
 
-> **YAML-mode dashboards only.** Storage-mode dashboards register every card automatically — nothing to do. In **YAML mode**, add each card once under **Settings → Dashboards → Resources** as a *JavaScript module*: `/hellofresh/hellofresh-<name>-card.js?v=<integration version>` (e.g. `?v=2.68`). The `?v=` must match your installed version, and you must update it after each upgrade or browsers keep serving the cached card. The startup log prints the exact URLs. (`hellofresh-recipe-detail.js` and `hellofresh-shared.js` are shared modules the cards import themselves — not resources you register.)
+> **YAML-mode dashboards only.** Storage-mode dashboards register every card automatically — nothing to do. In **YAML mode**, add each card you use once under **Settings → Dashboards → Resources** as a *JavaScript module*: `/hellofresh/hellofresh-card.js?v=<integration version>` for the HelloFresh card, `/hellofresh/hellofresh-<name>-card.js?v=<integration version>` for a classic one (e.g. `?v=2.68`). The `?v=` must match your installed version, and you must update it after each upgrade or browsers keep serving the cached card. The startup log prints the exact URLs. (`hellofresh-recipe-detail.js`, `hellofresh-shared.js` and the HelloFresh card's own `hellofresh-card-*.js` modules are imported by the cards themselves — not resources you register.)
 
 ## Market card
 
@@ -170,7 +361,7 @@ each item due-dated to its week's delivery, so you can check things off as you s
 ```
 
 (Substitute your own entity prefix, and repeat with `todo.hellofresh_us_prep_list_week_2` for the
-second week — the [example dashboard](../dashboard/hellofresh.yaml) lays both out in a `sections`
+second week — the [classic dashboard](../dashboard/hellofresh-classic.yaml) lays both out in a `sections`
 grid.) The lists themselves are ordinary to-do entities, so they also work from the companion app
 or a voice assistant. How they are built — the two-entity design, what qualifies as "not
 shipped", and the exact-conversion rules for summed quantities — is documented under

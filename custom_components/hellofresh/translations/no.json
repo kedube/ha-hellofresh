@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Antall",
           "description": "Valgfri kobling mellom oppskrifts-ID og antall porsjoner (positivt heltall). Oppskrifter som utelates får én porsjon som standard; minimumsantallet retter kontrolleres mot det totale antallet porsjoner."
+        },
+        "market_quantities": {
+          "name": "Market-antall",
+          "description": "Valgfri kobling mellom Market-varens ID, SKU eller indeks og antall, lagret i samme handlekurvoppdatering som rettene (0 eller utelatt fjerner en vare). Utelat den for å beholde ukens nåværende tillegg."
         }
       }
     },

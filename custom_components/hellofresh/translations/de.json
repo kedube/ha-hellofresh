@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Mengen",
           "description": "Optionale Zuordnung von Rezept-ID zu Portionsanzahl (positive ganze Zahl). Nicht aufgeführte Rezepte erhalten standardmäßig eine Portion; die Mindestanzahl an Gerichten wird anhand der Gesamtportionen geprüft."
+        },
+        "market_quantities": {
+          "name": "Market-Mengen",
+          "description": "Optionale Zuordnung von Market-Artikel-ID, SKU oder Index zur Menge, gespeichert im selben Warenkorb-Update wie die Gerichte (0 oder nicht aufgeführt entfernt einen Artikel). Weglassen, um die aktuellen Extras der Woche zu behalten."
         }
       }
     },

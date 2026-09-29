@@ -5,6 +5,35 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **New: the HelloFresh card — your whole account in one card.** `custom:hellofresh-card` brings
+  the seven classic cards together the way hellofresh.com is organised, with tabs for
+  **Overview**, **Menu**, **Market**, **Recipes** and **Account**:
+  - **Overview** leads with the next box: its date, a live deadline countdown, the meals in it,
+    a delivery tracker (Preparing → Shipped → Out for delivery → Delivered) with scan history and
+    proof of delivery, and the pantry staples to buy before it arrives as a tickable checklist.
+    Other weeks needing picks, the weeks coming up (as cards or a month calendar) and recent
+    deliveries follow.
+  - **Menu and Market share one week strip and one box.** Build a week's meals and add-ons, watch
+    a live price estimate in a sticky box bar (from HelloFresh's own price calculation), review
+    what's new or removed, and save both with one tap. Unsaved changes survive switching tabs,
+    weeks and background refreshes.
+  - The menu gains **search** and a **Favorites** highlight, meals can be edited in "In my box"
+    view, and large menus load 60 tiles at a time.
+  - **Account** holds plan & billing — now including the recurring **box size** and **delivery
+    day** controls, behind a confirmation — food preferences, spending, and integration status.
+  - It adapts to its width (phone, sections column or full-width panel), follows HA's dark mode,
+    and can use your theme's accent colour (`accent: theme`). A single entry in `views` gives a
+    focused card, e.g. just Recipes.
+
+  The example dashboard, `dashboard/hellofresh.yaml`, is now this one card, full width; the
+  previous multi-view layout lives on as `dashboard/hellofresh-classic.yaml`. The classic cards
+  are unchanged and keep working; they share filters and the selected week with the new card.
+- **`hellofresh.select_meals` accepts `market_quantities`** to set the week's Market add-ons in
+  the same cart write as the meals. Saving meals and extras as two back-to-back writes could let
+  the second one restore the first one's old selection (each rebuilds the cart from the last
+  poll); one write can't. Omitting it keeps the current add-ons, as before.
+
 ## 3.05 — 2026-09-28
 - **Richer shipment tracking.** From the carrier tracking HelloFresh already provides:
   - **Finer status** — the carrier's current step alongside the coarse status, e.g. "In Transit ·

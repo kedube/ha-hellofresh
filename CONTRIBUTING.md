@@ -50,10 +50,20 @@ once shipped precisely because nothing validated them. Two guards now cover that
 Because the logic tests parse the card sources with a regex, renaming `_browsableWeeks` or
 reindenting it will break extraction — the script fails loudly rather than silently passing.
 
+The unified HelloFresh card (`hellofresh-card.js` and its `hellofresh-card-*.js` modules) keeps
+its decisions in a DOM-free module, `hellofresh-card-logic.js`, which the checks import directly.
+`tests/test_unified_card_logic.py` also runs the classic cards' own methods (lifted as above) side
+by side with it — filter tags, week states, skip rules, prices, month roll-ups — so the two can't
+quietly drift apart while both ship. When you change one of those behaviours in a classic card,
+change it in the logic module too (or document the difference in that test).
+
 ## Project layout
 
 - `custom_components/hellofresh/` contains the integration code.
-- `custom_components/hellofresh/www/` contains the Lovelace cards (plain ES modules, no build step).
+- `custom_components/hellofresh/www/` contains the Lovelace cards (plain ES modules, no build step):
+  the unified `hellofresh-card.js` with its view, logic and style modules (`hellofresh-card-*.js`),
+  the seven classic cards, and the two modules they share (`hellofresh-shared.js`,
+  `hellofresh-recipe-detail.js`).
 - `tests/` contains the pytest suite. `tests/test_repo_consistency.py` pins hand-edited metadata
   (HACS country list, translation completeness, `services.yaml`, card registration) that otherwise
   drifts out of step with the code.
@@ -61,7 +71,7 @@ reindenting it will break extraction — the script fails loudly rather than sil
 - `docs/` contains the user reference documentation split out of the README. Keep the README as the
   narrative landing page (install → configure → what you get → troubleshoot) and put detail here:
   - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch, button, the delivery calendar, and the prep-list to-do entities.
-  - [`docs/dashboard.md`](docs/dashboard.md) — the seven Lovelace cards. Options shared by every card live
+  - [`docs/dashboard.md`](docs/dashboard.md) — the HelloFresh card and the seven classic cards. Options shared by every card live
     in its **Common options** table, so per-card examples stay minimal; don't repeat them.
   - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
   - [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md) — the endpoint and normalization reference.

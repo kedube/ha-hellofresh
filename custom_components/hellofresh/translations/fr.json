@@ -400,6 +400,10 @@
         "quantities": {
           "name": "Quantités",
           "description": "Correspondance facultative entre identifiant de recette et nombre de parts (entier positif). Les recettes omises reçoivent une part par défaut ; le minimum de repas requis est vérifié sur le total des parts."
+        },
+        "market_quantities": {
+          "name": "Quantités Market",
+          "description": "Correspondance facultative entre identifiant, SKU ou index d'article Market et quantité, enregistrée dans la même mise à jour du panier que les repas (0 ou absent retire l'article). Omettez-la pour conserver les extras actuels de la semaine."
         }
       }
     },
