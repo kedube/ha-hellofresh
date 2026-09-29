@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 3.07 — 2026-09-29
 - **Fixed: the Norwegian translation never loaded** (#9). Home Assistant's code for Norwegian
   Bokmål is `nb`, but the translation shipped as `no.json`, so Home Assistant never read it and
   Norwegian users saw English. With your Home Assistant language set to Norsk Bokmål, the setup
