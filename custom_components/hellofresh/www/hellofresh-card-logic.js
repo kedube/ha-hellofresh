@@ -70,6 +70,17 @@ export const PREFERENCE_COLORS = {
 
 export const PROTEIN_FILTERS = ["Beef", "Poultry", "Pork", "Seafood", "Lamb", "Veggie"];
 
+// The website's "Main protein" slugs for the chips it also has (it has no Lamb). The menu leaves
+// a few meals without a protein — W42's "2x Tofu" swap of a beef ramen — and only HelloFresh's
+// filter service places those, so the chips ask it as well (proteinServerFilters).
+export const PROTEIN_SERVER_SLUGS = {
+  Beef: "beef",
+  Poultry: "poultry",
+  Pork: "pork",
+  Seafood: "fish-seafood",
+  Veggie: "vegetarian",
+};
+
 // The website's "Dietary preference" group. `tags` lists every spelling seen in real menu
 // payloads (HelloFresh renames these between seasons); whole-string matching is what keeps
 // "Contains Gluten" off the gluten-free aliases. See the classic planner for the history.
@@ -147,7 +158,6 @@ export const MARKET_GROUP_LABELS = {
 export const STORAGE_KEYS = {
   showSelectedOnly: "hellofresh-meal-planner:show-selected-only",
   protein: "hellofresh-meal-planner:protein-filter",
-  showVariants: "hellofresh-meal-planner:show-variants",
   diet: "hellofresh-meal-planner:diet-filter",
   time: "hellofresh-meal-planner:time-filter",
   highlight: "hellofresh-meal-planner:highlight-filter",
@@ -772,11 +782,113 @@ export function buildMealWrite(week, selection) {
   return { recipe_ids: recipeIds, quantities };
 }
 
-// ---- menu filters ---------------------------------------------------------------------------
+// ---- dishes & their customization options ---------------------------------------------------
+//
+// HelloFresh lists a dish's customization options ("2x Chicken Cutlets", "Salmon", "Added
+// Bacon") as separate menu meals — a week's ~460 meals are only ~85 dishes. `variation_group`
+// names the base dish each option belongs to. Like the website, the Menu shows ONE tile per dish
+// and switches between its options in a customization drawer; choosing one simply selects that
+// option's own meal in place of the base.
+
+// "3 teaspoon (tsp)" -> "3 tsp". Pantry amounts use HelloFresh's "unit (abbrev)" spelling (see
+// todo.py), and a shopping list wants the abbreviation; an amount without one stays as it is.
+export function shortAmount(text) {
+  return String(text || "")
+    .split(" + ")
+    .map((part) => {
+      const m = part.trim().match(/^(\S+)\s+[^()]*\(([^()]+)\)$/);
+      return m ? `${m[1]} ${m[2].trim()}` : part.trim();
+    })
+    .join(" + ");
+}
 
 export function isDefaultMeal(r) {
   return r.variation_group == null || r.course_index === r.variation_group;
 }
+
+// Recipes grouped into dishes, each at its base's place in the catalog (as the website orders
+// them; an option can come before its base in the menu). Each dish lists the base first, then
+// its options in the website's order: {key, base, members}.
+export function dishGroups(recipes) {
+  const byKey = new Map();
+  const place = new Map();
+  (recipes || []).forEach((r, i) => {
+    const key = r.variation_group != null ? `g:${r.variation_group}` : `r:${selKey(r)}`;
+    if (!byKey.has(key)) byKey.set(key, { key, members: [] });
+    byKey.get(key).members.push(r);
+    place.set(r, i);
+  });
+  const rank = (r) => (isDefaultMeal(r) ? -1 : Number.isFinite(r.variation_order) ? r.variation_order : Infinity);
+  const groups = [...byKey.values()].map((group) => {
+    group.members.sort((a, b) => (rank(a) > rank(b)) - (rank(a) < rank(b)));
+    group.base = group.members.find(isDefaultMeal) || group.members[0];
+    return group;
+  });
+  return groups.sort((a, b) => place.get(a.base) - place.get(b.base));
+}
+
+// How the customization list names one of a dish's members: an option by its modifier, the
+// unchanged dish by the site's own label for it ("No Change", "No Protein", "Ground Beef").
+export function optionLabel(recipe) {
+  if (!isDefaultMeal(recipe)) return recipe.variation_title || recipe.name || "";
+  return recipe.variation_default_title || "Original recipe";
+}
+
+// The Menu grid: one tile per dish — or one per chosen option when several of a dish's options
+// are in the box, so nothing chosen is ever hidden. An unchosen dish shows its base, unless the
+// filters or search rule the base out, in which case its first option that fits stands in
+// ("Crunchy Hot Honey Salmon" under Seafood); a dish with nothing that fits is left out. That is
+// the website's own rule (HAR 57: its grid, tile for tile, unfiltered and under each protein).
+//
+//   * `selectedOnly` shows just the box.
+//   * `applyFilters` (current/upcoming weeks outside selected-only) applies protein / dietary /
+//     time / highlight filters plus the section and server id-sets; `proteinIds`, HelloFresh's
+//     own answer for the protein chips, adds the meals the menu leaves without a protein.
+//     Chosen meals always pass them, so a chosen meal never vanishes while editing.
+//   * `query` is a plain search and applies to every tile, chosen or not.
+//
+// Chosen tiles lead; the rest keep catalog order. Returns [{recipe, group}].
+export function menuTiles(recipes, options) {
+  const {
+    sel,
+    selectedOnly = false,
+    applyFilters = false,
+    protein = new Set(),
+    proteinIds = null,
+    diet = new Set(),
+    time = "",
+    highlight = "",
+    sectionIds = null,
+    serverIds = null,
+    query = "",
+  } = options;
+  const passesProtein = (r) =>
+    protein.size === 0 || protein.has(r.preference) || Boolean(proteinIds && proteinIds.has(bareRecipeId(r)));
+  const passesFilters = (r) => {
+    if (!applyFilters) return true;
+    if (!passesProtein(r)) return false;
+    if (!passesDietFilters(r, diet)) return false;
+    if (!passesTimeFilter(r, time)) return false;
+    if (!passesHighlightFilter(r, highlight)) return false;
+    if (sectionIds && !sectionIds.has(bareRecipeId(r))) return false;
+    if (serverIds && !serverIds.has(bareRecipeId(r))) return false;
+    return true;
+  };
+  const tiles = [];
+  for (const group of dishGroups(recipes)) {
+    const chosen = group.members.filter((r) => sel(r));
+    if (chosen.length) {
+      for (const recipe of chosen) if (matchesQuery(recipe, query)) tiles.push({ recipe, group });
+      continue;
+    }
+    if (selectedOnly) continue;
+    const recipe = group.members.find((r) => passesFilters(r) && matchesQuery(r, query));
+    if (recipe) tiles.push({ recipe, group });
+  }
+  return tiles.sort((a, b) => (sel(b.recipe) ? 1 : 0) - (sel(a.recipe) ? 1 : 0));
+}
+
+// ---- menu filters ---------------------------------------------------------------------------
 
 // One dietary/time category: an alias tag, or the category's numeric fallback. The menu
 // payload swaps its time names: prep_time_minutes carries the headline time the website shows,
@@ -863,63 +975,23 @@ export function activeServerFilters(week, selections) {
   return out;
 }
 
+// The chosen protein chips as a filter-service query, {"main-protein": [slugs]}, limited to the
+// slugs this week's menu declares; {} when there is nothing to ask.
+export function proteinServerFilters(week, protein) {
+  const group = ((week && week.menu_filters) || []).find((g) => g && g.slug === "main-protein");
+  const declared = new Set(((group && group.options) || []).map((o) => o.slug));
+  const slugs = PROTEIN_FILTERS.filter((p) => protein && protein.has(p))
+    .map((p) => PROTEIN_SERVER_SLUGS[p])
+    .filter((slug) => slug && declared.has(slug));
+  return slugs.length ? { "main-protein": slugs } : {};
+}
+
 export function serverFilterKey(weekId, filters) {
   return `${weekId}|${JSON.stringify(filters)}`;
 }
 
 export function bareRecipeId(recipe) {
   return String(recipe.recipe_id).split("-")[0];
-}
-
-// Filter + order a week's (deduped) recipes for the grid.
-//
-//   * `selectedOnly` shows just the box.
-//   * `applyFilters` (current/upcoming weeks outside selected-only) applies protein / dietary /
-//     time / highlight / variant filters plus the section and server id-sets. Selected meals
-//     always pass them, so a chosen meal never vanishes while editing.
-//   * `query` is a plain search and applies to every tile, chosen or not.
-//
-// Ordering: chosen meals lead; the rest cluster by variant group (so a dish's 2x-protein and
-// swap versions sit together), base meal first. Array.sort is stable, so catalog order holds.
-export function visibleRecipes(recipes, options) {
-  const {
-    sel,
-    selectedOnly = false,
-    applyFilters = false,
-    protein = new Set(),
-    diet = new Set(),
-    time = "",
-    highlight = "",
-    showVariants = true,
-    sectionIds = null,
-    serverIds = null,
-    query = "",
-  } = options;
-  let visible = selectedOnly ? recipes.filter((r) => sel(r)) : recipes.slice();
-  if (applyFilters) {
-    visible = visible.filter((r) => {
-      if (sel(r)) return true;
-      if (protein.size > 0 && !protein.has(r.preference)) return false;
-      if (!passesDietFilters(r, diet)) return false;
-      if (!passesTimeFilter(r, time)) return false;
-      if (!passesHighlightFilter(r, highlight)) return false;
-      if (!showVariants && !isDefaultMeal(r)) return false;
-      if (sectionIds && !sectionIds.has(bareRecipeId(r))) return false;
-      if (serverIds && !serverIds.has(bareRecipeId(r))) return false;
-      return true;
-    });
-  }
-  if (query && String(query).trim()) visible = visible.filter((r) => matchesQuery(r, query));
-  const groupKey = (r) => (r.variation_group != null ? `g:${r.variation_group}` : `n:${r.name || ""}`);
-  const isBase = (r) => (r.variation_group != null && r.course_index === r.variation_group ? 0 : 1);
-  return visible.sort((a, b) => {
-    const selDelta = (sel(b) ? 1 : 0) - (sel(a) ? 1 : 0);
-    if (selDelta !== 0) return selDelta;
-    if (sel(a)) return 0;
-    const groupDelta = groupKey(a).localeCompare(groupKey(b));
-    if (groupDelta !== 0) return groupDelta;
-    return isBase(a) - isBase(b);
-  });
 }
 
 // Dietary chips for a tile, from the same alias table as the filter (tags only — the numeric

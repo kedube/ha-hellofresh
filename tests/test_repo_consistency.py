@@ -145,6 +145,8 @@ def test_every_card_registers_in_the_card_picker() -> None:
     appears in the dashboard's card picker (the subscription card shipped that way)."""
     frontend_src = (COMPONENT / "frontend.py").read_text(encoding="utf-8")
     for name in re.findall(r'"(hellofresh-[a-z0-9-]+\.js)"', frontend_src):
+        if name == "hellofresh-panel.js":
+            continue  # the sidebar panel hosts the unified card; it is not a card itself
         card_src = (COMPONENT / "www" / name).read_text(encoding="utf-8")
         card_type = name.removesuffix(".js")
         assert "window.customCards.push" in card_src, f"{name} never registers in the picker"

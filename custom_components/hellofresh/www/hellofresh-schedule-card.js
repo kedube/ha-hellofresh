@@ -54,6 +54,8 @@ const {
   broadcastDataChanged,
   WEEK_SYNC_EVENT,
   DATA_CHANGED_EVENT,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(SCHEDULE_CARD_VERSION)}`,
@@ -118,6 +120,7 @@ class HelloFreshScheduleCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-schedule-card");
     this._config = { title: "Schedule", max_weeks: 8, past_weeks: 4, calendar: true, ...config };
     this._selectedWeekId = this._loadSyncedWeekId();
     this._render();
@@ -503,7 +506,7 @@ class HelloFreshScheduleCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Schedule")}</span>
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Schedule")}${deprecatedBadge()}</span>
       <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
@@ -1460,9 +1463,9 @@ customElements.define("hellofresh-schedule-card", HelloFreshScheduleCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-schedule-card",
-  name: "HelloFresh Schedule Card",
+  name: "HelloFresh Schedule Card (deprecated)",
   description:
-    "HelloFresh delivery schedule: next-box summary, a month calendar of delivery days, and a timeline of past and upcoming weeks with status.",
+    "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. HelloFresh delivery schedule: next-box summary, a month calendar of delivery days, and a timeline of past and upcoming weeks with status.",
 });
 
 console.info(

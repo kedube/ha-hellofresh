@@ -258,3 +258,48 @@ export function refetchIntervalMs(contract) {
   }
   return mins * 60000;
 }
+
+// ---- deprecation (the classic cards) ------------------------------------------------------------
+// The seven single-purpose cards are replaced by the HelloFresh card (custom:hellofresh-card),
+// which does everything they do, and go away in a future release. Each marks its title with
+// this badge (styled inline: every card has its own shadow CSS), linking to how to switch, and
+// says so once in the console.
+
+export const CLASSIC_CARD_DEPRECATION_URL =
+  "https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md#moving-from-the-classic-cards";
+
+const DEPRECATED_BADGE_STYLE = [
+  "display:inline-flex",
+  "align-items:center",
+  "height:18px",
+  "margin-left:8px",
+  "padding:0 8px",
+  "border-radius:9px",
+  "vertical-align:middle",
+  "font-size:10px",
+  "font-weight:700",
+  "letter-spacing:0.06em",
+  "text-transform:uppercase",
+  "text-decoration:none",
+  "white-space:nowrap",
+  "color:var(--primary-text-color)",
+  "background:color-mix(in srgb, var(--warning-color, #ffa600) 22%, transparent)",
+  "border:1px solid color-mix(in srgb, var(--warning-color, #ffa600) 55%, transparent)",
+].join(";");
+
+export function deprecatedBadge() {
+  return `<a href="${CLASSIC_CARD_DEPRECATION_URL}" target="_blank" rel="noreferrer" style="${DEPRECATED_BADGE_STYLE}"
+    title="Replaced by the HelloFresh card, which does all this and more. This card goes away in a future release — tap for how to switch.">Deprecated</a>`;
+}
+
+const deprecationWarned = new Set();
+
+export function warnDeprecated(type) {
+  if (deprecationWarned.has(type)) return;
+  deprecationWarned.add(type);
+  // eslint-disable-next-line no-console
+  console.warn(
+    `hellofresh: custom:${type} is deprecated and goes away in a future release. The HelloFresh card ` +
+      `(custom:hellofresh-card) does everything it does: ${CLASSIC_CARD_DEPRECATION_URL}`
+  );
+}

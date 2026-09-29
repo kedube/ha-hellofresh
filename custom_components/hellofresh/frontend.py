@@ -11,6 +11,10 @@ usable without the user manually adding a resource, the integration:
 
 Registration is best-effort: a failure here never blocks integration setup, since the
 sensors/calendar/services work without the card.
+
+It also puts a **HelloFresh** entry in the sidebar: a custom panel (``www/hellofresh-panel.js``)
+that shows the HelloFresh card full screen, one per account whose "Show HelloFresh in the
+sidebar" option is on, so the whole experience needs no dashboard at all.
 """
 
 from __future__ import annotations
@@ -19,10 +23,12 @@ import json
 import logging
 from pathlib import Path
 
+from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_SHOW_SIDEBAR_PANEL, DEFAULT_SHOW_SIDEBAR_PANEL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +76,19 @@ _CARDS = tuple(
 )
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
+
+# The sidebar panel: a web component hosting the HelloFresh card full screen. It lives BESIDE,
+# not under, the static /hellofresh/ path: a panel at /hellofresh would send a page reload
+# there to the static file handler (a directory) instead of Home Assistant's app.
+PANEL_FILENAME = "hellofresh-panel.js"
+PANEL_ELEMENT = "hellofresh-panel"
+PANEL_URL_PATH = "hellofresh-app"
+PANEL_TITLE = "HelloFresh"
+PANEL_ICON = "mdi:silverware-variant"
+PANEL_MODULE_URL = f"{WWW_URL_BASE}/{PANEL_FILENAME}?v={INTEGRATION_VERSION}"
+# Entries that are set up (entry id -> entry), and the panels we registered (url -> spec).
+_PANEL_ENTRIES_KEY = f"{DOMAIN}_panel_entries"
+_PANELS_KEY = f"{DOMAIN}_panels"
 
 
 async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
@@ -174,6 +193,98 @@ async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
             _LOGGER.exception("HelloFresh could not auto-register card resource %s", resource_url)
 
 
+async def async_add_entry_panel(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Note a set-up account and bring the sidebar in line (called at entry setup)."""
+    hass.data.setdefault(_PANEL_ENTRIES_KEY, {})[entry.entry_id] = entry
+    await _async_sync_panels_safely(hass)
+
+
+async def async_remove_entry_panel(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Forget an unloaded account and bring the sidebar in line (called at entry unload)."""
+    hass.data.setdefault(_PANEL_ENTRIES_KEY, {}).pop(entry.entry_id, None)
+    await _async_sync_panels_safely(hass)
+
+
+async def _async_sync_panels_safely(hass: HomeAssistant) -> None:
+    try:
+        await _async_sync_panels(hass)
+    except Exception:  # noqa: BLE001 - the sidebar must never fail an entry's setup or unload
+        _LOGGER.exception("HelloFresh could not update its sidebar panel")
+
+
+def _wanted_panels(
+    entries: list[ConfigEntry],
+) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
+    """The sidebar panels these set-up entries call for: url path -> (title, config items).
+
+    One account gets plain "HelloFresh" at /hellofresh-app and a card with no account pinned,
+    so it shares its stored view and week with any HelloFresh card on a dashboard. With several
+    accounts each panel is titled after its entry and pins its account.
+    """
+    several = len(entries) > 1
+    wanted: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {}
+    titles: set[str] = set()
+    showing = [
+        entry
+        for entry in entries
+        if entry.options.get(CONF_SHOW_SIDEBAR_PANEL, DEFAULT_SHOW_SIDEBAR_PANEL)
+    ]
+    for number, entry in enumerate(showing, start=1):
+        url_path = PANEL_URL_PATH if number == 1 else f"{PANEL_URL_PATH}-{number}"
+        title = (entry.title or PANEL_TITLE) if several else PANEL_TITLE
+        if title in titles:
+            title = f"{title} {number}"
+        titles.add(title)
+        config = (("config_entry_id", entry.entry_id),) if several else ()
+        wanted[url_path] = (title, config)
+    return wanted
+
+
+async def _async_sync_panels(hass: HomeAssistant) -> None:
+    """Register the panels the set-up entries want and remove the ones they no longer do."""
+    active: dict[str, ConfigEntry] = hass.data.setdefault(_PANEL_ENTRIES_KEY, {})
+    # Config-entry order, not setup order (entries set up concurrently), keeps each account's
+    # sidebar address stable across restarts.
+    listed = getattr(hass.config_entries, "async_entries", None)
+    order = [entry.entry_id for entry in listed(DOMAIN)] if callable(listed) else []
+    entries = sorted(
+        active.values(),
+        key=lambda entry: order.index(entry.entry_id) if entry.entry_id in order else len(order),
+    )
+    wanted = _wanted_panels(entries)
+    registered: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = hass.data.setdefault(
+        _PANELS_KEY, {}
+    )
+    for url_path, spec in list(registered.items()):
+        if wanted.get(url_path) == spec:
+            continue
+        try:
+            frontend.async_remove_panel(hass, url_path, warn_if_unknown=False)
+        except Exception:  # noqa: BLE001 - the sidebar is best-effort
+            _LOGGER.debug("Could not remove the HelloFresh sidebar panel %s", url_path)
+        del registered[url_path]
+    for url_path, spec in wanted.items():
+        if url_path in registered:
+            continue
+        title, config = spec
+        try:
+            await panel_custom.async_register_panel(
+                hass,
+                frontend_url_path=url_path,
+                webcomponent_name=PANEL_ELEMENT,
+                sidebar_title=title,
+                sidebar_icon=PANEL_ICON,
+                module_url=PANEL_MODULE_URL,
+                config=dict(config),
+                require_admin=False,
+            )
+        except Exception:  # noqa: BLE001 - the sidebar is best-effort
+            _LOGGER.exception("HelloFresh could not add its sidebar panel at /%s", url_path)
+            continue
+        registered[url_path] = spec
+        _LOGGER.debug("Added the HelloFresh sidebar panel at /%s", url_path)
+
+
 def async_get_frontend_diagnostics(hass: HomeAssistant) -> dict[str, object]:
     """Return card-version info for the diagnostics export.
 
@@ -200,4 +311,5 @@ def async_get_frontend_diagnostics(hass: HomeAssistant) -> dict[str, object]:
             filename: resource_url for filename, _url_path, resource_url in _CARDS
         },
         "registered_resources": registered,
+        "sidebar_panels": sorted(hass.data.get(_PANELS_KEY, {})),
     }

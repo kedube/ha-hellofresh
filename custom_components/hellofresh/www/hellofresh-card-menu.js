@@ -160,6 +160,20 @@ export class BoxStore {
     return true;
   }
 
+  // Customization: a chosen dish switches to another of its options, keeping its servings (the
+  // cart holds the option's own meal in place of the old one, as the website does).
+  swapMeal(week, fromRecipe, toRecipe) {
+    if (!this.canEdit(week)) return false;
+    const pending = this._pendingMeals(week);
+    const from = L.activeIndex(pending, fromRecipe);
+    const to = L.activeIndex(pending, toRecipe);
+    if (from == null || to == null || from === to || !pending.has(from)) return false;
+    const servings = pending.get(from);
+    pending.delete(from);
+    pending.set(to, Math.min(L.MAX_MEAL_SERVINGS, (pending.get(to) || 0) + servings));
+    return true;
+  }
+
   // Market stepper, clamped to the item's cap; a sold-out item can only go down.
   changeMarket(week, item, delta) {
     if (!this.canEdit(week)) return false;
@@ -575,12 +589,10 @@ export class MealsView {
       highlight: loadHighlight(),
       section: L.storageGet(K.section, "") || "",
       server: loadServerFilter(),
-      showVariants: L.storageGet(K.showVariants) !== "0",
       expanded: L.storageGet(K.filtersExpanded) === "1",
     };
     this._serverCache = new Map();
-    this._serverPending = null;
-    this._serverSeq = 0;
+    this._serverPending = new Set();
     this._rendered = new Map();
     this._stripWeek = null;
     this._historyOpen = null;
@@ -609,7 +621,6 @@ export class MealsView {
     const server = {};
     for (const [group, set] of Object.entries(f.server)) server[group] = [...set];
     L.storageSet(K.server, JSON.stringify(server));
-    L.storageSet(K.showVariants, f.showVariants ? "1" : "0");
     L.storageSet(K.filtersExpanded, f.expanded ? "1" : "0");
   }
 
@@ -634,7 +645,6 @@ export class MealsView {
         if (set && set.has(o.slug)) out.push({ kind: group.slug, value: o.slug, label: o.name });
       }
     }
-    if (!f.showVariants) out.push({ kind: "variants", value: "", label: "Variants hidden" });
     return out;
   }
 
@@ -645,7 +655,6 @@ export class MealsView {
     else if (kind === "time") f.time = "";
     else if (kind === "highlight") f.highlight = "";
     else if (kind === "section") f.section = "";
-    else if (kind === "variants") f.showVariants = true;
     else if (f.server[kind]) f.server[kind].delete(value);
   }
 
@@ -657,37 +666,32 @@ export class MealsView {
     f.highlight = "";
     f.section = "";
     for (const set of Object.values(f.server)) set.clear();
-    f.showVariants = true;
   }
 
   // HelloFresh's own filter service answers cuisine / dish type / ingredients to avoid (menu
-  // recipes carry neither allergen data nor those slugs). Cached per week + selection; while a
-  // lookup runs the grid stays as it is, and a failure falls back to the client-side filters.
-  _serverIds(week) {
-    const filters = L.activeServerFilters(week, this.f.server);
+  // recipes carry neither allergen data nor those slugs), and places the meals the menu leaves
+  // without a protein for the protein chips. Cached per week + query; while a lookup runs the
+  // grid stays as it is, and a failure falls back to the client-side filters.
+  _lookup(week, filters) {
     if (!Object.keys(filters).length) return null;
     const key = L.serverFilterKey(week.week_id, filters);
     if (this._serverCache.has(key)) return this._serverCache.get(key);
-    if (this._serverPending !== key) this._fetchServerIds(week.week_id, filters, key);
+    if (!this._serverPending.has(key)) this._fetchServerIds(week.week_id, filters, key);
     return null;
   }
 
   async _fetchServerIds(weekId, filters, key) {
-    const seq = ++this._serverSeq;
-    this._serverPending = key;
+    this._serverPending.add(key);
     try {
       const response = await this.card.call("get_menu_courses", { week_id: weekId, filters });
       this._serverCache.set(key, new Set((response.recipe_ids || []).map((id) => String(id).split("-")[0])));
     } catch (err) {
-      if (seq !== this._serverSeq) return;
       // eslint-disable-next-line no-console
-      console.warn("hellofresh: menu filter lookup failed; showing unfiltered results", err);
+      console.warn("hellofresh: menu filter lookup failed; filtering on the menu data alone", err);
       this._serverCache.set(key, null);
     } finally {
-      if (seq === this._serverSeq) {
-        this._serverPending = null;
-        if (this.card.view === "menu") this.card.renderView();
-      }
+      this._serverPending.delete(key);
+      if (this.card.view === "menu") this.card.renderView();
     }
   }
 
@@ -717,8 +721,9 @@ export class MealsView {
     const card = this.card;
     const box = card.box;
     const history = L.isHistoryWeek(week, card.menuGraceWeeks());
-    const { recipes, nameCounts } = box.deduped(week);
+    const { recipes } = box.deduped(week);
     this._rendered = new Map(recipes.map((r) => [String(L.selKey(r)), r]));
+    this._units = new Map();
     if (!recipes.length) {
       const message = L.isSkipped(week)
         ? "No meals this week."
@@ -732,30 +737,24 @@ export class MealsView {
     const f = this.f;
     const applyFilters = !history && !f.selectedOnly;
     const sectionIds = applyFilters ? L.menuSectionIds(week, f.section) : null;
-    const serverIds = applyFilters ? this._serverIds(week) : null;
-    const visible = L.visibleRecipes(recipes, {
+    const serverIds = applyFilters ? this._lookup(week, L.activeServerFilters(week, f.server)) : null;
+    const proteinIds = applyFilters ? this._lookup(week, L.proteinServerFilters(week, f.protein)) : null;
+    const visible = L.menuTiles(recipes, {
       sel,
       selectedOnly: f.selectedOnly && !history,
       applyFilters,
       protein: f.protein,
+      proteinIds,
       diet: f.diet,
       time: f.time,
       highlight: f.highlight,
-      showVariants: f.showVariants,
       sectionIds,
       serverIds,
       query: this.query,
     });
-    const ctx = {
-      editable: box.canEdit(week),
-      history,
-      nameCounts,
-      selection,
-      sel,
-      showSoldOut: L.isWeekEditable(week),
-      currency: card.account && card.account.selected_plan_total_price_currency,
-      imageWidth: card.config.image_width,
-    };
+    for (const unit of visible) this._units.set(String(L.selKey(unit.recipe)), unit);
+    const total = L.menuTiles(recipes, { sel }).length; // the grid before any narrowing
+    const ctx = this._tileContext(week, { history, selection, sel });
 
     const active = applyFilters ? this._activeFilters(week) : [];
     const toolbar = `<div class="hf-toolbar">
@@ -766,7 +765,7 @@ export class MealsView {
           <button class="hf-chip${f.selectedOnly ? " on" : ""}" data-action="toggle-selected-only" aria-pressed="${f.selectedOnly}">
             ${icon("mdi:package-variant-closed")}In my box</button>`}
         <span class="hf-spacer"></span>
-        ${this._serverPending ? `<span class="hf-busynote" role="status">Filtering…</span>` : ""}
+        ${this._serverPending.size ? `<span class="hf-busynote" role="status">Filtering…</span>` : ""}
       </div>`;
     const chips =
       active.length && !f.expanded
@@ -789,13 +788,13 @@ export class MealsView {
       grid = `<div class="hf-empty">${icon("mdi:food-off-outline")}${why}</div>`;
     } else {
       const shown = visible.slice(0, this.limit);
-      const narrowed = visible.length !== recipes.length;
+      const narrowed = visible.length !== total;
       const note = narrowed
-        ? `<p class="hf-resultnote">${visible.length} of ${recipes.length} meals</p>`
+        ? `<p class="hf-resultnote">${visible.length} of ${L.plural(total, "meal")}</p>`
         : history
           ? `<p class="hf-resultnote">Delivered this week</p>`
           : "";
-      grid = `${note}<div class="hf-grid${card.busy ? " busy" : ""}">${shown.map((r) => this._tile(r, ctx)).join("")}</div>
+      grid = `${note}<div class="hf-grid${card.busy ? " busy" : ""}">${shown.map((unit) => this._tile(unit, ctx)).join("")}</div>
         ${visible.length > shown.length ? `<div class="hf-more-row"><button class="hf-btn" data-action="more">
           Show ${Math.min(PAGE_SIZE, visible.length - shown.length)} more · ${visible.length - shown.length} left</button></div>` : ""}`;
     }
@@ -867,22 +866,43 @@ export class MealsView {
           ).join("")
       )
     );
-    rows.push(
-      this._filterRow(
-        "Variants",
-        `<button class="hf-chip${f.showVariants ? "" : " on"}" data-action="f-variants" aria-pressed="${!f.showVariants}"
-          title="Variants are the 2× protein, protein-swap and veggie-swap versions of a meal">Hide variants</button>`
-      )
-    );
     return `<div class="hf-filterpanel">${rows.join("")}
       ${active.length ? `<div class="hf-actions" style="justify-content:flex-end;padding-top:8px"><button class="hf-btn sm ghost" data-action="clear-filters">Clear all filters</button></div>` : ""}</div>`;
   }
 
-  _tile(r, ctx) {
+  _tileContext(week, { history = false, selection, sel }) {
+    const card = this.card;
+    return {
+      editable: card.box.canEdit(week),
+      history,
+      selection,
+      sel,
+      showSoldOut: L.isWeekEditable(week),
+      currency: card.account && card.account.selected_plan_total_price_currency,
+      imageWidth: card.config.image_width,
+    };
+  }
+
+  // The tile's customization line: on a week you can edit, a selector that opens the options
+  // drawer — "Customize · 8 options" while the dish is as written, the chosen option's name once
+  // it isn't; otherwise just the chosen option's name.
+  _optionLine(r, group, ctx) {
+    const options = group.members.length - 1;
+    const custom = !L.isDefaultMeal(r);
+    if (options > 0 && ctx.editable) {
+      return `<button class="hf-optselect${custom ? " custom" : ""}" data-action="customize" data-key="${esc(String(L.selKey(r)))}"
+          aria-haspopup="dialog" aria-label="${esc(`Customize ${group.base.name}: ${L.optionLabel(r)}, ${L.plural(options, "option")}`)}">
+          ${icon("mdi:tune-variant")}<span class="hf-optlabel">${esc(custom ? L.optionLabel(r) : "Customize")}</span>
+          ${custom ? "" : `<span class="hf-optcount">${esc(L.plural(options, "option"))}</span>`}${icon("mdi:chevron-down")}</button>`;
+    }
+    return r.variation_title ? `<div class="hf-tvariant">${esc(r.variation_title)}</div>` : "";
+  }
+
+  _tile(unit, ctx) {
+    const { recipe: r, group } = unit;
     const key = esc(String(L.selKey(r)));
     const selected = ctx.sel(r);
     const qty = selected ? L.tileQuantity(ctx.selection, r) : 0;
-    const variant = ctx.nameCounts[r.name] > 1;
     const soldOut = r.is_sold_out === true && ctx.showSoldOut;
     const img = L.resizedImage(r.image_url, ctx.imageWidth);
     const video = L.safeMediaUrl(r.video_url);
@@ -923,7 +943,7 @@ export class MealsView {
       selected && !ctx.history ? `<span class="hf-checkmark" title="In your box">${icon("mdi:check-bold")}</span>` : "",
       qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : "",
     ].join("");
-    return `<div class="hf-tile${selected && !ctx.history ? " selected" : ""}${variant ? " variant" : ""}${soldOut ? " soldout" : ""}"
+    return `<div class="hf-tile${selected && !ctx.history ? " selected" : ""}${soldOut ? " soldout" : ""}"
         role="button" tabindex="0" data-action="open-recipe" data-key="${key}" aria-label="Open recipe: ${esc(r.name)}">
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
@@ -935,7 +955,7 @@ export class MealsView {
         </div>
         <div class="hf-tbody">
           <div class="hf-tname"><span class="hf-pdot" style="background:${color}" title="${esc(r.preference || "")}"></span><span>${esc(r.name)}</span></div>
-          ${r.variation_title ? `<div class="hf-tvariant">${esc(r.variation_title)}</div>` : ""}
+          ${this._optionLine(r, group, ctx)}
           ${r.description ? `<div class="hf-tdesc">${esc(r.description)}</div>` : ""}
           ${meta.length ? `<div class="hf-tmeta">${meta.join("")}</div>` : ""}
           ${chips.length ? `<div class="hf-tchips">${chips.join("")}</div>` : ""}
@@ -960,28 +980,23 @@ export class MealsView {
     }
     const key = String(L.selKey(recipe));
     const tile = root.querySelector(`.hf-tile[data-key="${CSS.escape(key)}"]`);
-    if (tile) {
-      const selection = card.box.displayMeals(week);
-      const { nameCounts } = card.box.deduped(week);
-      const html = this._tile(recipe, {
-        editable: card.box.canEdit(week),
-        history: false,
-        nameCounts,
-        selection,
-        sel: (r) => L.tileSelected(selection, r),
-        showSoldOut: L.isWeekEditable(week),
-        currency: card.account && card.account.selected_plan_total_price_currency,
-        imageWidth: card.config.image_width,
-      });
-      const tpl = document.createElement("template");
-      tpl.innerHTML = html.trim();
-      const hadFocus = tile.contains(card.shadowRoot.activeElement);
-      const replacement = tpl.content.firstElementChild;
-      tile.replaceWith(replacement);
-      if (hadFocus) {
-        const target = replacement.querySelector("[data-action='qty'], [data-action='add']") || replacement;
-        target.focus({ preventScroll: true });
-      }
+    const unit = this._units && this._units.get(key);
+    if (!tile || !unit) {
+      // No tile shows this meal as itself — e.g. an option added from its recipe sheet while
+      // its dish's tile shows the base — so the grid must be rebuilt.
+      card.renderView();
+      return;
+    }
+    const selection = card.box.displayMeals(week);
+    const html = this._tile(unit, this._tileContext(week, { selection, sel: (r) => L.tileSelected(selection, r) }));
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html.trim();
+    const hadFocus = tile.contains(card.shadowRoot.activeElement);
+    const replacement = tpl.content.firstElementChild;
+    tile.replaceWith(replacement);
+    if (hadFocus) {
+      const target = replacement.querySelector("[data-action='qty'], [data-action='add']") || replacement;
+      target.focus({ preventScroll: true });
     }
     const chip = root.querySelector(`.hf-weekchip[data-week-id="${CSS.escape(week.week_id)}"]`);
     if (chip) {
@@ -1010,6 +1025,101 @@ export class MealsView {
       inc: () => box.changeMeal(week, recipe, 1) && this.afterSelection(week, recipe),
       dec: () => box.changeMeal(week, recipe, -1) && this.afterSelection(week, recipe),
     };
+  }
+
+  // ---- customization drawer ----------------------------------------------------------------
+  //
+  // Like the website's: every way to have the dish — the unchanged version first, then each
+  // option with its ingredient photo and surcharge. Picking one marks it; the button applies it:
+  // a dish in the box switches over keeping its servings, one that isn't is added as chosen.
+
+  _openCustomize(week, unit) {
+    const state = { choice: String(L.selKey(unit.recipe)) };
+    this.card.openSheet({
+      kind: "customize",
+      narrow: true,
+      label: `Customize ${unit.group.base.name}`,
+      render: () => this._renderCustomize(this.card.weekById(week.week_id) || week, unit, state),
+      onClick: (_ev, el) => this._onCustomizeClick(week, unit, state, el),
+    });
+  }
+
+  _renderCustomize(week, unit, state) {
+    const card = this.card;
+    const { recipe: current, group } = unit;
+    const selection = card.box.displayMeals(week);
+    const inBox = L.tileSelected(selection, current);
+    const editable = card.box.canEdit(week);
+    const currency = card.account && card.account.selected_plan_total_price_currency;
+    const rows = group.members
+      .map((m) => {
+        const key = String(L.selKey(m));
+        const on = key === state.choice;
+        const soldOut = m.is_sold_out === true && L.isWeekEditable(week);
+        // Another tile already holds this option (two versions of the dish in one box).
+        const taken = m !== current && L.tileSelected(selection, m);
+        const note = soldOut ? "Sold out" : taken ? "Already in your box" : "";
+        const photo = L.isDefaultMeal(m) ? L.resizedImage(m.image_url, 160) : L.resizedImage(m.variation_image_url, 96);
+        const price = m.surcharge_label
+          ? `<span class="hf-optprice">${esc(L.fmtSurcharge(m.surcharge_label, currency))}<span>/serving</span></span>`
+          : `<span class="hf-optprice included">Included</span>`;
+        const sub = m.name && m.name !== group.base.name ? m.name : L.isDefaultMeal(m) ? "As the recipe is written" : "";
+        return `<button class="hf-optrow${on ? " on" : ""}" aria-pressed="${on}" data-action="opt-pick" data-key="${esc(key)}"
+            ${soldOut || taken || !editable ? "disabled" : ""}>
+            <span class="hf-radio" aria-hidden="true"></span>
+            ${photo ? `<img class="hf-optimg${L.isDefaultMeal(m) ? " dish" : ""}" src="${esc(photo)}" alt="" loading="lazy">` : `<span class="hf-optimg"></span>`}
+            <span class="hf-opttext"><span class="hf-optname">${esc(L.optionLabel(m))}</span>
+              ${sub || note ? `<span class="hf-optsub">${esc(note || sub)}</span>` : ""}</span>
+            ${price}
+          </button>`;
+      })
+      .join("");
+    const chosen = group.members.find((m) => String(L.selKey(m)) === state.choice) || current;
+    const changed = chosen !== current;
+    const primary = !editable
+      ? ""
+      : inBox
+        ? `<button class="hf-btn primary" data-action="opt-apply" ${changed ? "" : "disabled"}>Update box</button>`
+        : `<button class="hf-btn primary" data-action="opt-apply">${icon("mdi:plus")}Add to box</button>`;
+    return `
+      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Customize</h2>
+        <div class="hf-sheetsub">${esc(group.base.name)}${inBox ? " · in your box" : ""}</div></div>
+        <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
+      <div class="hf-sheetbody hf-optlist" role="group" aria-label="Ways to have this meal">${rows}</div>
+      <div class="hf-sheetfoot"><button class="hf-btn ghost" data-action="opt-recipe">${icon("mdi:book-open-page-variant-outline")}View recipe</button>
+        ${primary}</div>`;
+  }
+
+  _onCustomizeClick(week, unit, state, el) {
+    if (!el) return;
+    const card = this.card;
+    const current = card.weekById(week.week_id) || week;
+    const chosen = unit.group.members.find((m) => String(L.selKey(m)) === state.choice) || unit.recipe;
+    switch (el.getAttribute("data-action")) {
+      case "opt-pick": {
+        state.choice = el.getAttribute("data-key");
+        card.renderSheet();
+        const row = card.shadowRoot.querySelector(`.hf-optrow[data-key="${CSS.escape(state.choice)}"]`);
+        if (row) row.focus({ preventScroll: true });
+        break;
+      }
+      case "opt-apply": {
+        const inBox = L.tileSelected(card.box.displayMeals(current), unit.recipe);
+        const changed = inBox ? card.box.swapMeal(current, unit.recipe, chosen) : card.box.addMeal(current, chosen);
+        card.closeSheet();
+        if (changed) {
+          card.box.schedulePreview(current);
+          card.renderView();
+        }
+        break;
+      }
+      case "opt-recipe":
+        card.closeSheet();
+        card.openRecipe(chosen.recipe_id, () => this._detailSelection(card.selectedWeek(), chosen));
+        break;
+      default:
+        break;
+    }
   }
 
   onInput(ev) {
@@ -1046,6 +1156,11 @@ export class MealsView {
       case "play":
         if (recipe) card.openVideo(recipe);
         break;
+      case "customize": {
+        const unit = this._units && this._units.get(el.getAttribute("data-key"));
+        if (unit) this._openCustomize(week, unit);
+        break;
+      }
       case "open-recipe":
         if (recipe) card.openRecipe(recipe.recipe_id, () => this._detailSelection(card.selectedWeek(), recipe));
         break;
@@ -1131,10 +1246,6 @@ export class MealsView {
         refilter();
         break;
       }
-      case "f-variants":
-        f.showVariants = !f.showVariants;
-        refilter();
-        break;
       default:
         break;
     }
@@ -1476,12 +1587,16 @@ function renderReview(card, week) {
     const was = saved.get(key);
     const tag = was == null ? pill("New", "ok") : was !== qty ? pill(`Was ${was}`, "info") : "";
     const price = r.price != null ? ` · ${esc(L.fmtPerServing(r.price, r.currency))}/serving` : "";
-    mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${L.plural(qty, "serving")}${price}`, tag));
+    const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
+    mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${L.plural(qty, "serving")}${price}`, tag));
   }
   for (const [key] of saved) {
     if (meals.has(key)) continue;
     const r = byKey.get(key);
-    if (r) mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, "Removed", pill("Removed", "danger"), true));
+    if (r) {
+      const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
+      mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}Removed`, pill("Removed", "danger"), true));
+    }
   }
   const market = box.displayMarket(week);
   const savedMarket = box.savedMarket(week);

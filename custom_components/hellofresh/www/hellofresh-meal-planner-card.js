@@ -57,6 +57,8 @@ const {
   broadcastDataChanged,
   WEEK_SYNC_EVENT,
   resizedImage,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(CARD_VERSION)}`,
@@ -174,6 +176,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-meal-planner-card");
     this._config = {
       title: "HelloFresh Meal Planner",
       image_width: 400,
@@ -1451,7 +1454,7 @@ class HelloFreshMealPlannerCard extends HTMLElement {
     return `
       <div class="card-header">
         ${logoUrl ? `<img class="logo" src="${this._esc(logoUrl)}" alt="HelloFresh">` : ""}
-        ${title ? `<span class="title-text">${this._esc(title)}</span>` : ""}
+        <span class="title-text">${title ? this._esc(title) : ""}${deprecatedBadge()}</span>
       </div>`;
   }
 
@@ -2936,8 +2939,8 @@ customElements.define("hellofresh-meal-planner-card-editor", HelloFreshMealPlann
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-meal-planner-card",
-  name: "HelloFresh Meal Planner",
-  description: "Browse HelloFresh weeks and select meals with images.",
+  name: "HelloFresh Meal Planner (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. Browse HelloFresh weeks and select meals with images.",
   preview: false,
   documentationURL: "https://github.com/kedube/ha-hellofresh",
 });

@@ -1,9 +1,12 @@
 ################################################################################
 # HelloFresh — classic example dashboard (one single-purpose card per view)
 #
-# The integration's original layout, kept for anyone who prefers separate cards. The
-# recommended dashboard is dashboard/hellofresh.yaml, which puts everything below into ONE
-# card (`custom:hellofresh-card`).
+# DEPRECATED: the seven classic cards this dashboard is built from are replaced by the
+# HelloFresh card (`custom:hellofresh-card`) and will be removed — with this file — in a
+# future release. The integration puts the HelloFresh card in the sidebar already; see
+# "Moving from the classic cards" in docs/dashboard.md for where each feature went.
+#
+# The integration's original layout, kept for anyone who prefers separate cards until then.
 #
 # A ready-to-use dashboard built entirely from entities and cards this integration
 # provides. No HACS frontend add-ons required.

@@ -376,12 +376,12 @@ def test_filters_keep_chosen_meals_but_search_does_not() -> None:
       ];
       const chosen = new Map([[2, 1]]);
       const sel = (r) => L.tileSelected(chosen, r);
-      const ids = (list) => list.map((r) => r.recipe_id);
+      const ids = (tiles) => tiles.map((t) => t.recipe.recipe_id);
       return [
-        ids(L.visibleRecipes(recipes, { sel, applyFilters: true, protein: new Set(["Seafood"]) })),
-        ids(L.visibleRecipes(recipes, { sel, query: "chicken" })),
-        ids(L.visibleRecipes(recipes, { sel, query: "tacos" })),
-        ids(L.visibleRecipes(recipes, { sel, selectedOnly: true })),
+        ids(L.menuTiles(recipes, { sel, applyFilters: true, protein: new Set(["Seafood"]) })),
+        ids(L.menuTiles(recipes, { sel, query: "chicken" })),
+        ids(L.menuTiles(recipes, { sel, query: "tacos" })),
+        ids(L.menuTiles(recipes, { sel, selectedOnly: true })),
       ];
     """
     by_protein, by_query, multi, box = _run(body)
@@ -391,23 +391,152 @@ def test_filters_keep_chosen_meals_but_search_does_not() -> None:
     assert box == ["2"]
 
 
-def test_variant_hiding_and_grouping() -> None:
-    body = """
-      const recipes = [
-        { recipe_id: "x", course_index: 5, name: "Zucchini", tags: [] },
-        { recipe_id: "b", course_index: 11, name: "Base", variation_group: 10, tags: [] },
-        { recipe_id: "a", course_index: 10, name: "Base", variation_group: 10, tags: [] },
-      ];
-      const sel = () => false;
-      const ids = (list) => list.map((r) => r.recipe_id);
+# A W42-shaped dish: base 10 with options listed Salmon, 2x Chicken, Organic (sold out) — in the
+# site's order, which is not course-index order — and a standalone dish.
+DISH = """
+  const recipes = [
+    { recipe_id: "org", course_index: 13, name: "Honey Organic Chicken", variation_group: 10,
+      variation_title: "Organic Chicken", variation_order: 2, preference: "Poultry", tags: [] },
+    { recipe_id: "base", course_index: 10, name: "Honey Chicken", variation_group: 10,
+      variation_default_title: "No Change", preference: "Poultry", tags: [] },
+    { recipe_id: "2x", course_index: 11, name: "Honey 2x Chicken", variation_group: 10,
+      variation_title: "2x Chicken Cutlets", variation_order: 1, preference: "Poultry", tags: [] },
+    { recipe_id: "salmon", course_index: 12, name: "Honey Salmon", variation_group: 10,
+      variation_title: "Salmon", variation_order: 0, preference: "Seafood", tags: [] },
+    { recipe_id: "tacos", course_index: 5, name: "Beef Tacos", preference: "Beef", tags: [] },
+  ];
+  const ids = (tiles) => tiles.map((t) => t.recipe.recipe_id);
+  const tiles = (chosen, opts = {}) =>
+    ids(L.menuTiles(recipes, { sel: (r) => L.tileSelected(chosen, r), ...opts }));
+"""
+
+
+def test_a_dish_and_its_options_are_one_tile() -> None:
+    body = (
+        DISH
+        + """
+      const [dish] = L.dishGroups(recipes);
+      return {
+        members: dish.members.map((r) => r.recipe_id),
+        base: dish.base.recipe_id,
+        none: tiles(new Map()),
+        option: tiles(new Map([[11, 2]])),
+        both: tiles(new Map([[11, 1], [12, 1]])),
+      };
+    """
+    )
+    got = _run(body)
+    # One tile for the dish, one for the standalone meal; the base leads its options, which
+    # follow the website's list order rather than their course indexes.
+    assert got["members"] == ["base", "salmon", "2x", "org"]
+    assert got["base"] == "base"
+    assert got["none"] == ["base", "tacos"]
+    # A chosen option stands in for the dish (and leads, being in the box)…
+    assert got["option"] == ["2x", "tacos"]
+    # …and two versions of one dish in the box each get a tile (in the dish's own option order),
+    # so neither is hidden.
+    assert got["both"] == ["salmon", "2x", "tacos"]
+
+
+def test_a_filter_or_search_can_show_a_dishs_option() -> None:
+    body = (
+        DISH
+        + """
       return [
-        ids(L.visibleRecipes(recipes, { sel, applyFilters: true })),
-        ids(L.visibleRecipes(recipes, { sel, applyFilters: true, showVariants: false })),
+        tiles(new Map(), { applyFilters: true, protein: new Set(["Seafood"]) }),
+        tiles(new Map(), { query: "salmon" }),
+        tiles(new Map(), { query: "organic" }),
+        tiles(new Map([[11, 1]]), { applyFilters: true, protein: new Set(["Seafood"]) }),
       ];
     """
-    grouped, hidden = _run(body)
-    assert grouped == ["a", "b", "x"]  # the base leads its variant; groups cluster
-    assert hidden == ["a", "x"]
+    )
+    seafood, salmon, organic, chosen = _run(body)
+    assert seafood == ["salmon"]  # the chicken dish shows its Salmon version; tacos drop out
+    assert salmon == ["salmon"]
+    assert organic == ["org"]
+    assert chosen == ["2x"]  # a chosen version still stays, whatever the filter
+
+
+def test_protein_chips_also_take_hellofreshs_own_answer() -> None:
+    """The menu leaves a few meals without a protein — W42's "Chinese-Style Speedy Ramen Noodles
+    with 2x Tofu", a swap on a beef dish, has a blank category in the menu AND in its option
+    list — yet the website shows it under Veggie, because its filter service says so. The chips
+    ask that service for the proteins the week declares (the site has no Lamb) and add what it
+    returns to what the menu data already matches."""
+    body = """
+      const week = { week_id: "2026-W42", menu_filters: [{ slug: "main-protein", options: [
+        { name: "Beef", slug: "beef" }, { name: "Seafood", slug: "fish-seafood" },
+        { name: "Veggie", slug: "vegetarian" } ] }] };
+      const recipes = [
+        { recipe_id: "b1-a", course_index: 57, variation_group: 57, name: "Beef Ramen", preference: "Beef" },
+        { recipe_id: "v1-a", course_index: 8, name: "Chickpea Wraps", preference: "Veggie" },
+        { recipe_id: "t1-a", course_index: 453, variation_group: 57, variation_order: 5,
+          variation_title: "2x Tofu", name: "Ramen with 2x Tofu", preference: null },
+      ];
+      const veggie = (proteinIds) => L.menuTiles(recipes, {
+        sel: () => false, applyFilters: true, protein: new Set(["Veggie"]), proteinIds,
+      }).map((t) => t.recipe.name);
+      return [
+        L.proteinServerFilters(week, new Set(["Veggie", "Lamb", "Seafood", "Pork"])),
+        L.proteinServerFilters(week, new Set(["Lamb"])),
+        L.proteinServerFilters({ week_id: "2026-W41" }, new Set(["Veggie"])),
+        veggie(null),
+        veggie(new Set(["t1", "v1"])),
+      ];
+    """
+    query, lamb, undeclared, menu_only, with_service = _run(body)
+    assert query == {"main-protein": ["fish-seafood", "vegetarian"]}  # no Lamb; Pork not offered
+    assert lamb == {} and undeclared == {}  # nothing to ask
+    assert menu_only == ["Chickpea Wraps"]  # before the answer (or if the lookup fails)
+    assert with_service == ["Ramen with 2x Tofu", "Chickpea Wraps"]  # the beef dish's tofu swap
+
+
+def test_dishes_sit_where_their_base_does() -> None:
+    """The website orders dishes by their base's place in the menu (HAR 57); an option listed
+    ahead of its base must not pull the dish forward. Your box's meals still lead."""
+    body = """
+      const recipes = [
+        { recipe_id: "x", course_index: 33, name: "Fajitas" },
+        { recipe_id: "o", course_index: 513, variation_group: 68, variation_order: 0, name: "Salmon 2x" },
+        { recipe_id: "p", course_index: 32, name: "Meatballs" },
+        { recipe_id: "s", course_index: 68, variation_group: 68, name: "Salmon" },
+        { recipe_id: "q", course_index: 12, name: "Stew" },
+      ];
+      const order = (chosen) => L.menuTiles(recipes, { sel: (r) => chosen.includes(r.recipe_id) })
+        .map((t) => t.recipe.recipe_id);
+      return [order([]), order(["s", "p"])];
+    """
+    plain, boxed = _run(body)
+    assert plain == ["x", "p", "s", "q"]
+    assert boxed == ["p", "s", "x", "q"]
+
+
+def test_option_labels_use_the_websites_words() -> None:
+    body = (
+        DISH
+        + """
+      const by = Object.fromEntries(recipes.map((r) => [r.recipe_id, L.optionLabel(r)]));
+      return [by, L.optionLabel({ course_index: 7, variation_group: 7, name: "X" })];
+    """
+    )
+    labels, unnamed = _run(body)
+    assert labels == {
+        "base": "No Change",
+        "salmon": "Salmon",
+        "2x": "2x Chicken Cutlets",
+        "org": "Organic Chicken",
+        "tacos": "Original recipe",
+    }
+    assert unnamed == "Original recipe"
+
+
+def test_pantry_amounts_use_the_abbreviation() -> None:
+    body = """
+      return [
+        "3 teaspoon (tsp)", "2 tablespoon (tbsp) + 1 cup (c)", "1 unit", "1-2 clove", "", "¼ teaspoon (tsp)",
+      ].map((a) => L.shortAmount(a));
+    """
+    assert _run(body) == ["3 tsp", "2 tbsp + 1 c", "1 unit", "1-2 clove", "", "¼ tsp"]
 
 
 def test_market_groups_keep_boxed_items_under_a_section_filter() -> None:

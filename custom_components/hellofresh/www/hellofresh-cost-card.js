@@ -41,6 +41,8 @@ const {
   fmtPrice,
   accountKey,
   DATA_CHANGED_EVENT,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(COST_CARD_VERSION)}`,
@@ -79,6 +81,7 @@ class HelloFreshCostCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-cost-card");
     this._config = {
       title: "Cost",
       chart: true,
@@ -196,7 +199,7 @@ class HelloFreshCostCard extends HTMLElement {
     this._ensureShell();
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config ? this._config.title : "Cost")}</span>
+      <span class="title-text">${this._esc(this._config ? this._config.title : "Cost")}${deprecatedBadge()}</span>
       <button class="refreshbtn" data-action="refresh" title="Refresh" ${this._loading ? "disabled" : ""}>↻</button>`;
     this._shell.body.innerHTML = this._renderBody();
   }
@@ -609,8 +612,8 @@ customElements.define("hellofresh-cost-card", HelloFreshCostCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-cost-card",
-  name: "HelloFresh Cost Card",
-  description: "Running HelloFresh cost: lifetime total, monthly roll-up, and recent boxes.",
+  name: "HelloFresh Cost Card (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. Running HelloFresh cost: lifetime total, monthly roll-up, and recent boxes.",
 });
 
 console.info(

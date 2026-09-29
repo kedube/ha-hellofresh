@@ -178,17 +178,19 @@ export function pantryList(entityId, items, { limit = 0 } = {}) {
   return `<div class="hf-pantry">${shown
     .map((item) => {
       const isDone = item.status === "completed";
-      // Summaries read "Butter — 2 tablespoon" (todo.py); split the amount off so it can sit
-      // quietly beside the name.
+      // Summaries read "Butter — 2 tablespoon (tbsp)" (todo.py); the amount is split off so it
+      // can follow the name in a quieter, abbreviated form ("2 tbsp").
       const summary = String(item.summary || "");
       const cut = summary.indexOf(" — ");
       const name = cut >= 0 ? summary.slice(0, cut) : summary;
       const amount = cut >= 0 ? summary.slice(cut + 3) : "";
+      const short = L.shortAmount(amount);
       return `<button class="hf-pantryitem${isDone ? " done" : ""}" data-action="pantry-toggle"
           data-entity="${esc(entityId)}" data-uid="${esc(item.uid)}" aria-pressed="${isDone}">
           <span class="hf-check">${isDone ? icon("mdi:check") : ""}</span>
-          <span class="hf-pantrytext">${esc(name)}</span>
-          ${amount ? `<span class="hf-pantryamt">${esc(amount)}</span>` : ""}
+          <span class="hf-pantrytext"><span class="hf-pantryname">${esc(name)}</span>${
+            amount ? `<span class="hf-pantryamt"${short !== amount ? ` title="${esc(amount)}"` : ""}>${esc(short)}</span>` : ""
+          }</span>
         </button>`;
     })
     .join("")}</div>`;

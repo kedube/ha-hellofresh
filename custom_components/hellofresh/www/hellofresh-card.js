@@ -14,9 +14,9 @@
  * Menu and Market edit ONE pending box per week. The sticky box bar at the bottom shows what is
  * in it, a live price estimate, and saves meals and extras together in a single write.
  *
- * It replaces the seven classic cards' separate views without removing them: those still ship
- * and still work, and they share this card's filter preferences and week selection. Everything
- * here reads the same services they do; no new polling.
+ * It replaces the seven classic cards, which still ship (deprecated, to be removed in a future
+ * release) and share this card's filter preferences and week selection. Everything here reads
+ * the same services they do; no new polling.
  *
  * Config:
  *   type: custom:hellofresh-card
@@ -33,6 +33,10 @@
  *
  * A single entry in `views` gives a focused "breakout" card (no tab bar) — e.g. just Recipes on
  * a kitchen tablet.
+ *
+ * The integration also shows this card full screen as a sidebar panel (hellofresh-panel.js).
+ * There it carries a `panel` attribute and a `narrow` property from Home Assistant: on phones it
+ * runs edge to edge and its header gains the button that opens Home Assistant's sidebar.
  *
  * No build step: hand-written ES modules served from the integration's www/ directory. Every
  * module is imported with this file's own ?v= cache-bust so an upgrade never mixes versions.
@@ -118,6 +122,8 @@ class HelloFreshCard extends HTMLElement {
     this._entityIdsFor = null;
     this._entitySig = {};
     this._instanceId = Math.random().toString(36).slice(2);
+    this._narrow = false; // set by the sidebar panel: Home Assistant hides its sidebar
+    this._menuShown = false;
     this.box = new Menu.BoxStore(this);
     this._onSyncWeek = (ev) => this._receiveSyncedWeek(ev);
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
@@ -161,6 +167,7 @@ class HelloFreshCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this.toggleAttribute("dark", Boolean(hass && hass.themes && hass.themes.darkMode));
+    if (this._shell && this._wantsMenuButton() !== this._menuShown) this._renderChrome();
     if (hass && !this._fetched && this._config) {
       this._fetched = true;
       this.refresh({ quiet: true });
@@ -177,6 +184,24 @@ class HelloFreshCard extends HTMLElement {
 
   get hass() {
     return this._hass;
+  }
+
+  // The sidebar panel passes Home Assistant's `narrow` on (phones: the sidebar is hidden).
+  set narrow(narrow) {
+    this._narrow = Boolean(narrow);
+    this.toggleAttribute("narrow", this._narrow);
+    if (this._shell && this._wantsMenuButton() !== this._menuShown) this._renderChrome();
+  }
+
+  get narrow() {
+    return this._narrow;
+  }
+
+  // In the sidebar panel, wherever Home Assistant isn't showing its sidebar (the same test its
+  // own menu button uses), the header offers the way back to it.
+  _wantsMenuButton() {
+    if (!this.hasAttribute("panel")) return false;
+    return this._narrow || Boolean(this._hass && this._hass.dockedSidebar === "always_hidden");
   }
 
   connectedCallback() {
@@ -1092,8 +1117,11 @@ class HelloFreshCard extends HTMLElement {
     const logo = cfg.logo === false || cfg.logo === "" ? "" : cfg.logo === true || cfg.logo == null ? LOGO_URL : String(cfg.logo);
     const title = cfg.title;
     const sub = this._subtitle();
-    if (!logo && !title && cfg.views.length < 2) return "";
+    const menu = this._wantsMenuButton();
+    this._menuShown = menu;
+    if (!menu && !logo && !title && cfg.views.length < 2) return "";
     return `
+      ${menu ? `<button class="hf-iconbtn hf-menubtn" data-action="sidebar" title="Sidebar" aria-label="Open the sidebar">${icon("mdi:menu")}</button>` : ""}
       ${logo ? `<img class="hf-logo" src="${esc(logo)}" alt="">` : ""}
       <div class="hf-apptitle">${title ? `<h1>${esc(title)}</h1>` : ""}${sub ? `<div class="hf-sub">${esc(sub)}</div>` : ""}</div>
       <div class="hf-appactions">
@@ -1168,6 +1196,10 @@ class HelloFreshCard extends HTMLElement {
     if (el && el.disabled) return;
     if (action === "nav") return this.navigate(el.getAttribute("data-view"));
     if (action === "refresh") return this.refresh();
+    if (action === "sidebar") {
+      // Home Assistant's own menu button fires this; its main view opens the sidebar drawer.
+      return this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+    }
     if (action === "goto") {
       return this.navigate(el.getAttribute("data-view") || "menu", {
         weekId: el.getAttribute("data-week-id"),

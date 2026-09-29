@@ -54,6 +54,8 @@ const {
   broadcastDataChanged,
   WEEK_SYNC_EVENT,
   resizedImage,
+  deprecatedBadge,
+  warnDeprecated,
 } = await import(
   new URL(
     `./hellofresh-shared.js?v=${encodeURIComponent(MARKET_CARD_VERSION)}`,
@@ -132,6 +134,7 @@ class HelloFreshMarketCard extends HTMLElement {
   }
 
   setConfig(config) {
+    warnDeprecated("hellofresh-market-card");
     this._config = { title: "HelloFresh Market", image_width: 400, ...config };
     this._render();
   }
@@ -690,7 +693,7 @@ class HelloFreshMarketCard extends HTMLElement {
     const week = this._weeks ? this._weeks[this._cursor] : null;
     this._shell.head.innerHTML = `
       ${this._renderLogo()}
-      <span class="title-text">${this._esc(this._config.title)}</span>`;
+      <span class="title-text">${this._esc(this._config.title)}${deprecatedBadge()}</span>`;
     this._shell.body.innerHTML = this._renderBody(week);
     // A save in flight shows a persistent "please wait" banner (with a spinner) until the
     // reload completes; a transient toast otherwise. The saving banner takes precedence.
@@ -1276,8 +1279,8 @@ customElements.define("hellofresh-market-card", HelloFreshMarketCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hellofresh-market-card",
-  name: "HelloFresh Market Card",
-  description: "Browse and select HelloFresh Market add-ons per delivery week.",
+  name: "HelloFresh Market Card (deprecated)",
+  description: "Deprecated: the HelloFresh card does all this and more, and this card goes away in a future release. Browse and select HelloFresh Market add-ons per delivery week.",
 });
 
 console.info(`%c HELLOFRESH-MARKET-CARD %c v${MARKET_CARD_VERSION} `, "color:#fff;background:#91c11e;font-weight:700", "color:#91c11e;background:#fff");
