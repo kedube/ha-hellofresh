@@ -23,9 +23,14 @@
 
 const LOGIC_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
 
-const shared = await import(
-  new URL(`./hellofresh-shared.js?v=${encodeURIComponent(LOGIC_VERSION)}`, import.meta.url).href
-);
+const [shared, I18n] = await Promise.all([
+  import(new URL(`./hellofresh-shared.js?v=${encodeURIComponent(LOGIC_VERSION)}`, import.meta.url).href),
+  import(new URL(`./hellofresh-i18n.js?v=${encodeURIComponent(LOGIC_VERSION)}`, import.meta.url).href),
+]);
+
+// The card's text (hellofresh-i18n.js), for the views: t() plain, ht() HTML, html() markup.
+export const { t, ht, html, has: hasText, en: englishText } = I18n;
+export { I18n };
 
 export const {
   esc,
@@ -70,6 +75,12 @@ export const PREFERENCE_COLORS = {
 
 export const PROTEIN_FILTERS = ["Beef", "Poultry", "Pork", "Seafood", "Lamb", "Veggie"];
 
+// A protein chip's words. The chips' keys stay English: they are what the integration writes in
+// each meal's `preference`, and what the classic planner stored.
+export function proteinLabel(protein) {
+  return t(`filters.protein.${String(protein).toLowerCase()}`);
+}
+
 // The website's "Main protein" slugs for the chips it also has (it has no Lamb). The menu leaves
 // a few meals without a protein — W42's "2x Tofu" swap of a beef ramen — and only HelloFresh's
 // filter service places those, so the chips ask it as well (proteinServerFilters).
@@ -81,75 +92,75 @@ export const PROTEIN_SERVER_SLUGS = {
   Veggie: "vegetarian",
 };
 
+// A filter entry's `label` reads the card's text at the moment it's shown (filters.<group>.<key>),
+// so the catalogs below stay plain data in any language.
+function labelled(group, entries) {
+  return entries.map((entry) =>
+    Object.defineProperty(entry, "label", {
+      enumerable: true,
+      get() {
+        return t(`filters.${group}.${entry.key}`);
+      },
+    })
+  );
+}
+
 // The website's "Dietary preference" group. `tags` lists every spelling seen in real menu
 // payloads (HelloFresh renames these between seasons); whole-string matching is what keeps
 // "Contains Gluten" off the gluten-free aliases. See the classic planner for the history.
-export const DIET_FILTERS = [
-  { key: "vegetarian", label: "Vegetarian", tags: ["vegetarian", "veggie", "vegan"] },
+export const DIET_FILTERS = labelled("diet", [
+  { key: "vegetarian", tags: ["vegetarian", "veggie", "vegan"] },
   {
     key: "under-650-cal",
-    label: "Under 650 Calories",
     tags: ["under 650 calories", "calorie smart", "calorie-smart"],
     maxCalories: 650,
   },
-  { key: "high-protein", label: "High Protein", tags: ["high protein"] },
+  { key: "high-protein", tags: ["high protein"] },
   {
     key: "carb-conscious",
-    label: "Carb Conscious",
     tags: ["carb conscious", "carb smart", "low carb", "max-20-percent-carbs"],
   },
   {
     key: "high-fiber",
-    label: "Fiber Powered",
     tags: ["high fiber", "fiber filled", "fiber smart", "fiber powered"],
   },
   {
     key: "gluten-free",
-    label: "Gluten-Free Friendly",
     tags: ["gluten-free friendly", "gluten free friendly", "gluten-free", "gluten free"],
   },
-  { key: "sodium-smart", label: "Sodium Smart", tags: ["sodium smart", "low sodium"] },
-  { key: "low-sugar", label: "Low Added Sugar", tags: ["low added sugar", "low sugar"] },
-  { key: "organic-protein", label: "Organic Protein", tags: ["organic protein"] },
+  { key: "sodium-smart", tags: ["sodium smart", "low sodium"] },
+  { key: "low-sugar", tags: ["low added sugar", "low sugar"] },
+  { key: "organic-protein", tags: ["organic protein"] },
   {
     key: "glp1",
-    label: "GLP-1 Support",
     tags: ["glp-1 support", "glp-1 friendly", "glp-1 balance"],
   },
-];
+]);
 
 // The website's single-choice "Total cooking time" group.
-export const TIME_FILTERS = [
-  { key: "under-15-min", label: "Under 15 Minutes", tags: ["under 15 minutes"], maxMinutes: 15 },
-  { key: "under-20-min", label: "Under 20 Minutes", tags: ["under 20 minutes"], maxMinutes: 20 },
-  { key: "under-30-min", label: "Under 30 Minutes", tags: ["under 30 minutes"], maxMinutes: 30 },
-];
+export const TIME_FILTERS = labelled("time", [
+  { key: "under-15-min", tags: ["under 15 minutes"], maxMinutes: 15 },
+  { key: "under-20-min", tags: ["under 20 minutes"], maxMinutes: 20 },
+  { key: "under-30-min", tags: ["under 30 minutes"], maxMinutes: 30 },
+]);
 
 // Single-select highlight views. "Favorites" is new in the unified card: it narrows the week
 // to meals already in your cookbook, which is otherwise a hunt through hundreds of tiles.
-export const HIGHLIGHT_FILTERS = [
-  { key: "new", label: "New" },
-  { key: "bestseller", label: "Bestsellers" },
-  { key: "cooked-before", label: "Cooked Before" },
-  { key: "favorite", label: "Favorites" },
-];
+export const HIGHLIGHT_FILTERS = labelled("highlight", [
+  { key: "new" },
+  { key: "bestseller" },
+  { key: "cooked-before" },
+  { key: "favorite" },
+]);
 
 // Resolved through HelloFresh's own filter service (hellofresh.get_menu_courses), not tags.
 export const SERVER_FILTER_GROUPS = ["cuisine", "dish-type", "exclude-allergens"];
 
-// Pretty labels for HelloFresh's Market group slugs (the Market card's table).
-export const MARKET_GROUP_LABELS = {
-  appetizer: "Appetizers",
-  breakfast: "Breakfast",
-  dessert: "Desserts",
-  lunch: "Lunch",
-  protein: "Proteins",
-  sides: "Sides",
+// Names for HelloFresh's Market group slugs (the Market card's table): its brands as they are,
+// the rest in the card's language (market.group.<slug>).
+export const MARKET_BRANDS = {
   goodchop: "GoodChop",
   petstable: "The Pets Table",
-  donation: "Donations",
-  lowprices: "Low Prices",
-  modularity: "Extras",
 };
 
 // View preferences share the classic cards' localStorage keys and formats, so switching to the
@@ -203,23 +214,38 @@ export function sentenceCase(value) {
   return text ? text[0].toUpperCase() + text.slice(1) : "";
 }
 
+// A HelloFresh or carrier status code ("ON_THE_WAY", "out_for_delivery") in the card's words
+// (status.<code>); one it doesn't know yet reads title-cased, as before.
+export function statusKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+export function statusLabel(value) {
+  const key = statusKey(value);
+  return key && hasText(`status.${key}`) ? t(`status.${key}`) : titleCase(value);
+}
+
+// A carrier's scan detail ("received_at_origin_facility"): a known status in the card's words,
+// else sentence case.
+export function detailLabel(value) {
+  const key = statusKey(value);
+  return key && hasText(`status.${key}`) ? t(`status.${key}`) : sentenceCase(value);
+}
+
 // "In Transit · Received at origin facility"; the status alone when the detail adds nothing.
 export function statusWithDetail(status, detail) {
-  const head = titleCase(status);
-  const tail = sentenceCase(detail);
+  const head = statusLabel(status);
+  const tail = detail && statusKey(detail) !== statusKey(status) ? detailLabel(detail) : "";
   return tail && tail.toLowerCase() !== head.toLowerCase() ? `${head} · ${tail}` : head;
 }
 
+// "35 min", "1 h 5 min" (time.duration.*).
 export function formatMinutes(minutes) {
   if (!minutes && minutes !== 0) return "";
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return t("time.duration.minutes", { minutes });
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min` : `${hours} h`;
-}
-
-export function plural(count, one, many = `${one}s`) {
-  return `${count} ${count === 1 ? one : many}`;
+  return rest ? t("time.duration.hours_minutes", { hours, minutes: rest }) : t("time.duration.hours", { hours });
 }
 
 // ---- dates ------------------------------------------------------------------------------------
@@ -242,13 +268,13 @@ export function daysUntil(value, now = new Date()) {
 // Compact countdown to a deadline: "2d 4h left", "5h left", "12m left", "passed".
 export function countdown(when, now = Date.now()) {
   const ms = when.getTime() - now;
-  if (ms <= 0) return "passed";
+  if (ms <= 0) return t("time.left.passed");
   const mins = Math.floor(ms / 60000);
   const days = Math.floor(mins / 1440);
   const hours = Math.floor((mins % 1440) / 60);
-  if (days > 0) return hours > 0 ? `${days}d ${hours}h left` : `${days}d left`;
-  if (hours > 0) return `${hours}h left`;
-  return `${mins}m left`;
+  if (days > 0) return hours > 0 ? t("time.left.days_hours", { days, hours }) : t("time.left.days", { days });
+  if (hours > 0) return t("time.left.hours", { hours });
+  return t("time.left.minutes", { minutes: mins });
 }
 
 // "urgent" under 24 hours, "passed" once gone, "soon" otherwise.
@@ -274,12 +300,13 @@ export function fmtLongDate(iso) {
 // "Thu, Sep 3, 2:59 AM" for deadlines.
 export function fmtDateTime(date) {
   try {
-    return date.toLocaleString(undefined, {
+    return date.toLocaleString(I18n.dateLocale(), {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      ...I18n.hourOptions(),
     });
   } catch (_e) {
     return String(date);
@@ -293,11 +320,12 @@ export function fmtArrival(iso) {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleString(undefined, {
+    return d.toLocaleString(I18n.dateLocale(), {
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      ...I18n.hourOptions(),
     });
   } catch (_e) {
     return "";
@@ -395,20 +423,33 @@ export function weekState(week, now = Date.now()) {
   return "locked";
 }
 
-export const STATE_META = {
-  ready: { label: "Editable", short: "Open", icon: "mdi:pencil-outline", tone: "ok" },
-  needs: { label: "Needs picking", short: "Pick meals", icon: "mdi:alert-circle-outline", tone: "warn" },
-  shipping: { label: "On the way", short: "On its way", icon: "mdi:truck-fast-outline", tone: "info" },
-  delivered: { label: "Delivered", short: "Delivered", icon: "mdi:check-circle-outline", tone: "ok" },
-  skipped: { label: "Skipped", short: "Skipped", icon: "mdi:close-circle-outline", tone: "muted" },
-  locked: { label: "Locked", short: "Locked", icon: "mdi:lock-outline", tone: "muted" },
-};
+// Each state's colour and icon; `label` (the badge) and `short` (strips, calendar days) read the
+// card's text (state.<state>.label / .short).
+export const STATE_META = Object.fromEntries(
+  Object.entries({
+    ready: { icon: "mdi:pencil-outline", tone: "ok" },
+    needs: { icon: "mdi:alert-circle-outline", tone: "warn" },
+    shipping: { icon: "mdi:truck-fast-outline", tone: "info" },
+    delivered: { icon: "mdi:check-circle-outline", tone: "ok" },
+    skipped: { icon: "mdi:close-circle-outline", tone: "muted" },
+    locked: { icon: "mdi:lock-outline", tone: "muted" },
+  }).map(([state, meta]) => [
+    state,
+    Object.defineProperties(meta, {
+      label: { enumerable: true, get: () => t(`state.${state}.label`) },
+      short: { enumerable: true, get: () => t(`state.${state}.short`) },
+    }),
+  ])
+);
 
-// The badge text for a week. A week that "needs" attention only because HelloFresh picked for
-// it says so ("Preselected") instead of the misleading "Needs picking".
+// Which badge a week wears: its state, except that a week which "needs" attention only because
+// HelloFresh picked for it says so ("preselected") instead of the misleading "Needs picking".
+export function stateKey(week, state = weekState(week)) {
+  return state === "needs" && isAutoPicked(week) ? "preselected" : state;
+}
+
 export function stateLabel(week, state = weekState(week)) {
-  if (state === "needs" && isAutoPicked(week)) return "Preselected";
-  return STATE_META[state].label;
+  return t(`state.${stateKey(week, state)}.label`);
 }
 
 // Skip/Unskip is offered only where it can still change something: editable weeks, or a
@@ -536,7 +577,7 @@ export function weekPriceParts(week) {
 export function boxTotal(week, account) {
   if (!week || isSkipped(week)) return null;
   const own = weekPriceParts(week);
-  if (own) return { ...own, estimate: false, label: "Total" };
+  if (own) return { ...own, estimate: false, label: t("money.total") };
   if (account && account.selected_plan_total_price != null) {
     const amount = Number(account.selected_plan_total_price);
     if (Number.isFinite(amount)) {
@@ -544,7 +585,7 @@ export function boxTotal(week, account) {
         amount,
         currency: account.selected_plan_total_price_currency,
         estimate: true,
-        label: "Plan price",
+        label: t("money.plan_price"),
       };
     }
   }
@@ -572,9 +613,9 @@ export function nextBoxVoucher(week, account) {
   const parts = [];
   if (benefit.expires_at) {
     const expires = new Date(benefit.expires_at);
-    if (!Number.isNaN(expires.getTime())) parts.push(`expires ${fmtDate(expires.toISOString())}`);
+    if (!Number.isNaN(expires.getTime())) parts.push(t("voucher.expires", { date: fmtDate(expires.toISOString()) }));
   }
-  if (benefit.one_time) parts.push("one-time");
+  if (benefit.one_time) parts.push(t("voucher.one_time"));
   return { label: benefit.label, note: parts.join(" · "), code: benefit.voucher_code || null };
 }
 
@@ -594,7 +635,7 @@ export function fmtSurcharge(label, currency) {
   const amount = Number.parseFloat(m[1]);
   if (!Number.isFinite(amount)) return String(label);
   try {
-    return amount.toLocaleString(undefined, {
+    return amount.toLocaleString(I18n.numberLocale(), {
       style: "currency",
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -611,7 +652,7 @@ export function fmtSurcharge(label, currency) {
 export function fmtPerServing(amount, currency) {
   if (typeof amount !== "number" || !Number.isFinite(amount)) return "";
   try {
-    return amount.toLocaleString(undefined, {
+    return amount.toLocaleString(I18n.numberLocale(), {
       style: "currency",
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -628,7 +669,7 @@ export function fmtPriceCompact(amount, currency) {
   const num = Number(amount);
   if (!Number.isFinite(num)) return "";
   try {
-    return num.toLocaleString(undefined, {
+    return num.toLocaleString(I18n.numberLocale(), {
       style: "currency",
       currency: currency || "USD",
       maximumFractionDigits: 0,
@@ -640,7 +681,8 @@ export function fmtPriceCompact(amount, currency) {
 
 // ---- tracking ------------------------------------------------------------------------------
 
-export const TRACK_STEPS = ["Preparing", "Shipped", "Out for delivery", "Delivered"];
+// The carrier journey's steps (tracking.step.<key>).
+export const TRACK_STEPS = ["preparing", "shipped", "out_for_delivery", "delivered"];
 
 // Where a box is in its journey, as an index into TRACK_STEPS; -1 when there is nothing to
 // track yet (no order, no carrier data). Driven by the carrier's own status when present.
@@ -659,9 +701,12 @@ export function trackingStep(week) {
 // The box/tracking status for a week when it adds something beyond the state badge.
 export function rowStatus(week, badgeLabel) {
   const order = (week && week.order) || {};
-  const status = titleCase(order.tracking_status || order.status || (week && week.status) || "");
+  const code = order.tracking_status || order.status || (week && week.status) || "";
+  const status = code ? statusLabel(code) : "";
   const shown = status && status.toLowerCase() !== String(badgeLabel || "").toLowerCase() ? status : "";
-  const detail = sentenceCase(order.tracking_status_detail);
+  const detail = order.tracking_status_detail && statusKey(order.tracking_status_detail) !== statusKey(code)
+    ? detailLabel(order.tracking_status_detail)
+    : "";
   const repeats = [status, badgeLabel].some((s) => s && s.toLowerCase() === detail.toLowerCase());
   return [shown, detail && !repeats ? detail : ""].filter(Boolean).join(" · ");
 }
@@ -680,15 +725,16 @@ export function deliveryPhotos(week) {
 // Netherlands) its tracking page, hftrack.nl, is backed by a live tracker. The integration
 // polls it into sensors: the phase sensor carries the whole snapshot as attributes, the ETA
 // sensor the arrival time. Phases are HelloFresh's own; `step` indexes LIVE_STEPS.
-export const LIVE_STEPS = ["Packed", "On the way", "Delivered"];
+// Steps read live.step.<key>; phases live.phase.<phase>.
+export const LIVE_STEPS = ["packed", "on_the_way", "delivered"];
 export const LIVE_PHASES = {
-  AT_DEPOT: { label: "Packed at the depot", step: 0 },
-  DRIVER_DEPARTED: { label: "The driver has set off", step: 1 },
-  ON_THE_WAY: { label: "On the way to you", step: 1 },
-  DELAYED: { label: "Running late", step: 1, tone: "warn" },
-  DELIVERED: { label: "Delivered", step: 2 },
-  DELIVERED_HOME: { label: "Delivered", step: 2 },
-  CANCELLED: { label: "Delivery cancelled", step: -1, tone: "danger" },
+  AT_DEPOT: { step: 0 },
+  DRIVER_DEPARTED: { step: 1 },
+  ON_THE_WAY: { step: 1 },
+  DELAYED: { step: 1, tone: "warn" },
+  DELIVERED: { step: 2 },
+  DELIVERED_HOME: { step: 2 },
+  CANCELLED: { step: -1, tone: "danger" },
 };
 
 // The live snapshot from the two sensors' states, or null while no delivery is live (the
@@ -706,7 +752,7 @@ export function liveTracking(phaseState, etaState) {
   const stops = a.amount_of_stops_before;
   return {
     phase: raw,
-    label: known ? known.label : sentenceCase(phaseState.state || raw),
+    label: known ? t(`live.phase.${raw.toLowerCase()}`) : sentenceCase(phaseState.state || raw),
     step: known ? known.step : 1,
     tone: (known && known.tone) || "",
     eta: date(etaValue),
@@ -729,7 +775,7 @@ export function liveTrackingFor(live, week) {
 // "6:42 PM"
 export function fmtTime(date) {
   try {
-    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return date.toLocaleTimeString(I18n.timeLocale(), { hour: "numeric", minute: "2-digit", ...I18n.hourOptions() });
   } catch (_e) {
     return "";
   }
@@ -739,14 +785,14 @@ export function fmtTime(date) {
 export function untilText(date, now = new Date()) {
   const minutes = Math.round((date.getTime() - now.getTime()) / 60000);
   if (minutes < 0) return "";
-  if (minutes <= 1) return "any minute now";
-  return `in ${formatMinutes(minutes)}`;
+  if (minutes <= 1) return t("time.any_minute");
+  return t("time.in", { duration: formatMinutes(minutes) });
 }
 
 // "just now" / "2 min ago" / "1 h 5 min ago".
 export function agoText(date, now = new Date()) {
   const minutes = Math.max(0, Math.round((now.getTime() - date.getTime()) / 60000));
-  return minutes < 1 ? "just now" : `${formatMinutes(minutes)} ago`;
+  return minutes < 1 ? t("time.just_now") : t("time.ago", { duration: formatMinutes(minutes) });
 }
 
 // ---- meal selection -------------------------------------------------------------------------
@@ -905,7 +951,7 @@ export function dishGroups(recipes) {
 // unchanged dish by the site's own label for it ("No Change", "No Protein", "Ground Beef").
 export function optionLabel(recipe) {
   if (!isDefaultMeal(recipe)) return recipe.variation_title || recipe.name || "";
-  return recipe.variation_default_title || "Original recipe";
+  return recipe.variation_default_title || t("menu.original_recipe");
 }
 
 // The Menu grid: one tile per dish — or one per chosen option when several of a dish's options
@@ -1069,16 +1115,20 @@ export function bareRecipeId(recipe) {
 }
 
 // Dietary chips for a tile, from the same alias table as the filter (tags only — the numeric
-// fallback that widens the filter must not pin a label HelloFresh didn't give the meal).
+// fallback that widens the filter must not pin a label HelloFresh didn't give the meal). A chip
+// saying what the meal's badge already says is dropped; HelloFresh writes its badges in the
+// account's language, so the chip is compared in English as well as in the card's language.
 export function tileChipLabels(r) {
-  const tags = (r.tags || []).map((t) => String(t).toLowerCase());
-  const labels = tags.includes("double-protein") ? ["2x Protein"] : [];
+  const tags = (r.tags || []).map((tag) => String(tag).toLowerCase());
+  const chips = tags.includes("double-protein") ? [["filters.double_protein", t("filters.double_protein")]] : [];
   for (const f of DIET_FILTERS) {
     if (f.key === "vegetarian") continue;
-    if (f.tags.some((t) => tags.includes(t))) labels.push(f.label);
+    if (f.tags.some((tag) => tags.includes(tag))) chips.push([`filters.diet.${f.key}`, f.label]);
   }
   const badge = String(r.badge || "").toLowerCase();
-  return badge ? labels.filter((l) => l.toLowerCase() !== badge) : labels;
+  const repeatsBadge = ([key, label]) =>
+    badge && (label.toLowerCase() === badge || String(englishText(key) || "").toLowerCase() === badge);
+  return chips.filter((chip) => !repeatsBadge(chip)).map(([, label]) => label);
 }
 
 // HelloFresh's own badge colours, re-validated as #hex so a payload can't inject CSS.
@@ -1126,7 +1176,9 @@ export function marketCap(item) {
 }
 
 export function marketGroupLabel(slug) {
-  return MARKET_GROUP_LABELS[slug] || titleCase(slug);
+  if (MARKET_BRANDS[slug]) return MARKET_BRANDS[slug];
+  const key = `market.group.${statusKey(slug)}`;
+  return hasText(key) ? t(key) : titleCase(slug);
 }
 
 // Section slugs present in a week's catalog, in first-appearance order.
@@ -1307,7 +1359,7 @@ export function fmtMonth(key, options = { month: "short", year: "numeric" }) {
   const m = typeof key === "string" && /^(\d{4})-(\d{2})$/.exec(key);
   if (!m) return key || "—";
   try {
-    return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString(undefined, options);
+    return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString(I18n.dateLocale(), options);
   } catch (_e) {
     return key;
   }
@@ -1321,9 +1373,9 @@ export function cardOnFile(summary) {
   const name = raw ? String(raw) : "";
   if (!name) return "";
   const humanized = name.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
-  const brand = humanized.replace(/^Credit Card$/, "Credit card");
+  const brand = humanized === "Credit Card" ? t("account.credit_card") : humanized;
   const last4 = /^\d{4}$/.test(String(summary.payment_card_last4 || "")) ? summary.payment_card_last4 : "";
-  return last4 ? `${brand} ending in ${last4}` : brand;
+  return last4 ? t("account.card_ending", { brand, last4 }) : brand;
 }
 
 export function fmtCardExpiry(value) {
@@ -1331,7 +1383,7 @@ export function fmtCardExpiry(value) {
   if (!match) return "";
   const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
   try {
-    return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    return date.toLocaleDateString(I18n.dateLocale(), { month: "long", year: "numeric" });
   } catch (_err) {
     return `${match[2]}/${match[1]}`;
   }

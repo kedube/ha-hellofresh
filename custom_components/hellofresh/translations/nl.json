@@ -751,5 +751,842 @@
         }
       }
     }
+  },
+  "config_panel": {
+    "card": {
+      "meta": {
+        "language": "nl"
+      },
+      "common": {
+        "close": "Sluiten",
+        "refresh": "Vernieuwen",
+        "retry": "Opnieuw proberen",
+        "try_again": "Opnieuw proberen",
+        "loading": "Laden …",
+        "loading_label": "Laden",
+        "show_more": "Meer tonen",
+        "dismiss": "Sluiten",
+        "clear_search": "Zoekopdracht wissen",
+        "cancel": "Annuleren",
+        "fewer": "Minder",
+        "more": "Meer"
+      },
+      "views": {
+        "overview": "Overzicht",
+        "menu": "Menu",
+        "market": "Market",
+        "recipes": "Recepten",
+        "account": "Account"
+      },
+      "card": {
+        "sections": "HelloFresh-onderdelen",
+        "sidebar": "Zijbalk",
+        "open_sidebar": "Zijbalk openen",
+        "plan_size": {
+          "one": "{count} maaltijd voor {people}",
+          "other": "{count} maaltijden voor {people}"
+        },
+        "weeks_need_picks": {
+          "one": "{count} week wacht op je maaltijdkeuze",
+          "other": "{count} weken wachten op je maaltijdkeuze"
+        },
+        "load_failed": "Je bezorgingen konden niet worden geladen: {error}"
+      },
+      "banner": {
+        "refresh_failed": "Vernieuwen mislukt: {error}",
+        "payment_card": "betaalkaart",
+        "card_expired": "Je kaart ({card}) is verlopen. Werk hem bij bij HelloFresh, anders wordt je volgende box misschien niet verstuurd.",
+        "card_expired_date": "Je kaart ({card}) is verlopen ({date}). Werk hem bij bij HelloFresh, anders wordt je volgende box misschien niet verstuurd.",
+        "card_expiring": "Je kaart ({card}) verloopt binnenkort. Werk hem bij bij HelloFresh voordat je volgende box wordt afgeschreven.",
+        "card_expiring_date": "Je kaart ({card}) verloopt binnenkort ({date}). Werk hem bij bij HelloFresh voordat je volgende box wordt afgeschreven.",
+        "holiday_date": "Nieuwe bezorgdatum: {date}."
+      },
+      "state": {
+        "ready": {
+          "label": "Wijzigbaar",
+          "short": "Open"
+        },
+        "needs": {
+          "label": "Keuze nodig",
+          "short": "Kies maaltijden"
+        },
+        "preselected": {
+          "label": "Vooraf gekozen",
+          "short": "Vooraf gekozen",
+          "hint": "HelloFresh heeft deze maaltijden voor je gekozen — bekijk en pas ze aan vóór de deadline."
+        },
+        "shipping": {
+          "label": "Onderweg",
+          "short": "Onderweg"
+        },
+        "delivered": {
+          "label": "Bezorgd",
+          "short": "Bezorgd"
+        },
+        "skipped": {
+          "label": "Overgeslagen",
+          "short": "Overgeslagen"
+        },
+        "locked": {
+          "label": "Vergrendeld",
+          "short": "Vergrendeld"
+        }
+      },
+      "status": {
+        "active": "Actief",
+        "inactive": "Inactief",
+        "paused": "Gepauzeerd",
+        "running": "Actief",
+        "cancelled": "Opgezegd",
+        "canceled": "Opgezegd",
+        "skipped": "Overgeslagen",
+        "delivered": "Bezorgd",
+        "shipped": "Verzonden",
+        "in_transit": "Onderweg",
+        "out_for_delivery": "Wordt bezorgd",
+        "on_the_way": "Onderweg",
+        "pre_transit": "Verzendlabel aangemaakt",
+        "label_created": "Verzendlabel aangemaakt",
+        "received_at_origin_facility": "Ontvangen in het sorteercentrum",
+        "failed": "Mislukt",
+        "exception": "Bezorgprobleem",
+        "delivery_exception": "Bezorgprobleem",
+        "delayed": "Vertraagd",
+        "complete": "Voltooid",
+        "completed": "Voltooid",
+        "unknown": "Onbekend"
+      },
+      "time": {
+        "duration": {
+          "minutes": "{minutes} min",
+          "hours": "{hours} u",
+          "hours_minutes": "{hours} u {minutes} min",
+          "seconds": "{seconds} sec"
+        },
+        "left": {
+          "passed": "verstreken",
+          "days_hours": "nog {days} d {hours} u",
+          "days": "nog {days} d",
+          "hours": "nog {hours} u",
+          "minutes": "nog {minutes} min"
+        },
+        "any_minute": "elk moment",
+        "in": "over {duration}",
+        "just_now": "zojuist",
+        "ago": "{duration} geleden"
+      },
+      "week": {
+        "skip_this_week": "Deze week overslaan",
+        "skip_week": "Week overslaan",
+        "holiday_change": "Gewijzigde bezorging vanwege een feestdag",
+        "holiday_schedule": "Feestdagschema",
+        "make_changes_by": "Wijzigen kan tot {date}",
+        "autopicked_title": "HelloFresh heeft deze maaltijden voor je gekozen.",
+        "unskip_this_week": "Deze week toch bezorgen",
+        "review": "Bekijken",
+        "edit": "Wijzigen",
+        "choose": "Kiezen",
+        "change_day": "Dag wijzigen",
+        "unskip": "Toch bezorgen",
+        "skip": "Overslaan",
+        "nothing_ships": "Deze week wordt er niets bezorgd.",
+        "edit_by": "Wijzigen tot {date}",
+        "no_box": "Geen box deze week",
+        "review_picks": "Bekijk de keuzes van HelloFresh",
+        "pick_n_meals": {
+          "one": "Kies {count} maaltijd",
+          "other": "Kies {count} maaltijden"
+        },
+        "pick_your_meals": "Kies je maaltijden",
+        "plan_n": "abonnement: {count}",
+        "next": "Volgende",
+        "previous_week": "Vorige week",
+        "next_week": "Volgende week",
+        "preselected_title": "HelloFresh heeft de maaltijden van deze week gekozen.",
+        "pantry": "Boodschappenlijst",
+        "unskip_week": "Week toch bezorgen",
+        "skipped_title": "Deze week is overgeslagen.",
+        "unskip_to_choose": "Zet hem terug om maaltijden te kiezen.",
+        "autopicked_before": "Houd ze of ruil er een paar om vóór {date}.",
+        "closed": "Deze box kan niet meer worden gewijzigd — hij wordt bezorgd zoals getoond."
+      },
+      "skip": {
+        "title": "{date} overslaan?",
+        "body": "Die week wordt er geen box bezorgd en betaal je niets. Je kunt de week tot de deadline terugzetten.",
+        "keep": "Box houden",
+        "skip_failed": "De week kon niet worden overgeslagen: {error}",
+        "unskip_failed": "De week kon niet worden teruggezet: {error}",
+        "restored": "Week teruggezet — je box komt gewoon.",
+        "done": "Week overgeslagen."
+      },
+      "reschedule": {
+        "title": "Bezorgdag wijzigen",
+        "current": "Huidig",
+        "only_this_box": "Alleen voor de box van {date}",
+        "none": "Er zijn geen andere dagen beschikbaar.",
+        "failed": "De dag kon niet worden gewijzigd: {error}",
+        "done": "Bezorgdag voor die week gewijzigd."
+      },
+      "pantry": {
+        "update_failed": "De lijst kon niet worden bijgewerkt: {error}",
+        "list": "Boodschappenlijst",
+        "title": "Basisingrediënten",
+        "nothing": "Voor deze box hoef je niets extra te kopen.",
+        "sub": {
+          "one": "Niet in de box van {date} · {count} te halen",
+          "other": "Niet in de box van {date} · {count} te halen"
+        }
+      },
+      "overview": {
+        "no_deliveries": "Geen bezorgingen gevonden voor dit account.",
+        "last_box": "Laatste box",
+        "arriving_today": "Komt vandaag",
+        "arriving_tomorrow": "Komt morgen",
+        "next_box": "Volgende box",
+        "skipped_title": "Deze box is overgeslagen.",
+        "skipped_body": "Er wordt niets bezorgd en je betaalt niets.",
+        "skipped_body_unskip": "Er wordt niets bezorgd en je betaalt niets — je kunt hem tot de deadline terugzetten.",
+        "autopicked_body": "Houd ze of ruil er een paar om vóór de deadline.",
+        "unsaved": "Je hebt niet-opgeslagen wijzigingen in deze box.",
+        "finish": "Afronden",
+        "price_plan": "{price} abonnementsprijs",
+        "price_total": "{price} totaal",
+        "charged": "Afgeschreven op {date}",
+        "discount": "−{amount} korting",
+        "coupon": "Kortingscode {code}",
+        "review_meals": "Maaltijden bekijken",
+        "edit_meals": "Maaltijden wijzigen",
+        "choose_meals": "Maaltijden kiezen",
+        "add_extras": "Extra's toevoegen",
+        "view_meals": "Maaltijden bekijken",
+        "no_box": "Geen box deze week.",
+        "extras_line": "{extras}: {names}",
+        "no_meals": "Nog geen maaltijden gekozen.",
+        "pick_meals": "Kies maaltijden",
+        "more": "+{count} meer",
+        "chip_review": "bekijken",
+        "chip_pick": "kies maaltijden",
+        "more_weeks_need_picks": {
+          "one": "Nog {count} week wacht op je keuze",
+          "other": "Nog {count} weken wachten op je keuze"
+        },
+        "before_it_arrives": "Voordat de box komt",
+        "pantry_note": {
+          "one": "{count} basisingrediënt dat niet in de box zit",
+          "other": "{count} basisingrediënten die niet in de box zitten"
+        },
+        "pantry_done": "Alle basisingrediënten zijn afgevinkt",
+        "see_all": "Alle {count} bekijken",
+        "layout": "Weergave van het bezorgschema",
+        "weeks": "Weken",
+        "calendar": "Kalender",
+        "delivery_calendar": "Bezorgkalender",
+        "coming_up": "Binnenkort",
+        "subscription_inactive": "Je abonnement is {status} — er zijn geen boxen gepland.",
+        "no_later_weeks": "HelloFresh heeft latere weken nog niet gepubliceerd.",
+        "recent_deliveries": "Recente bezorgingen",
+        "history_weeks": {
+          "one": "{count} week geschiedenis",
+          "other": "{count} weken geschiedenis"
+        }
+      },
+      "live": {
+        "step": {
+          "packed": "Ingepakt",
+          "on_the_way": "Onderweg",
+          "delivered": "Bezorgd"
+        },
+        "phase": {
+          "at_depot": "Ingepakt in het depot",
+          "driver_departed": "De bezorger is vertrokken",
+          "on_the_way": "Onderweg naar jou",
+          "delayed": "Vertraagd",
+          "delivered": "Bezorgd",
+          "delivered_home": "Bezorgd",
+          "cancelled": "Bezorging geannuleerd"
+        },
+        "arrives": "Komt om {time}",
+        "youre_next": "Jij bent de volgende",
+        "stops_before": "{stops} vóór jou",
+        "stops": {
+          "one": "{count} stop",
+          "other": "{count} stops"
+        },
+        "driver": "Bezorger {name}",
+        "window": "Tijdvak {window}",
+        "badge": "Live",
+        "map": "Live-kaart",
+        "updated": "Bijgewerkt {ago}"
+      },
+      "tracking": {
+        "step": {
+          "preparing": "In voorbereiding",
+          "shipped": "Verzonden",
+          "out_for_delivery": "Wordt bezorgd",
+          "delivered": "Bezorgd"
+        },
+        "delivered_at": "Bezorgd {when}",
+        "estimated": "Verwacht {date}",
+        "hide_history": "Geschiedenis verbergen",
+        "history": "Geschiedenis ({count})",
+        "history_label": "Track & trace-geschiedenis",
+        "open_photo": "Bezorgfoto openen",
+        "photo": "Bezorgfoto",
+        "photo_n": "Bezorgfoto {number}",
+        "signed_by": "Getekend door {name}",
+        "progress": "Voortgang van de bezorging",
+        "photo_hint": "Foto"
+      },
+      "order": {
+        "status": "Status",
+        "carrier": "Vervoerder",
+        "tracking": "Track & trace",
+        "delivered": "Bezorgd",
+        "order": "Bestelling"
+      },
+      "delivery": {
+        "row_label": "{date}: {state}. Bezorgdetails",
+        "label": "Bezorgdetails voor {date}",
+        "delivered_title": "Bezorgd {when}",
+        "box_for": "Box voor {date}",
+        "order": "Bestelling {id}",
+        "open_full_photo": "Foto op volledige grootte openen",
+        "no_photo_carrier": "{carrier} heeft geen bezorgfoto van deze box gedeeld.",
+        "no_photo": "Er is geen bezorgfoto van deze box gedeeld.",
+        "in_box": "In deze box",
+        "charged": "Afgeschreven",
+        "order_total": "Totaal bestelling",
+        "charges": "Kosten",
+        "view_menu": "Menu van deze week bekijken",
+        "no_details": "Nog geen details voor deze box."
+      },
+      "calendar": {
+        "today": "Vandaag",
+        "boxes": {
+          "one": "{count} box",
+          "other": "{count} boxen"
+        },
+        "skipped": {
+          "one": "{count} overgeslagen",
+          "other": "{count} overgeslagen"
+        },
+        "previous_month": "Vorige maand",
+        "next_month": "Volgende maand",
+        "no_deliveries": "Geen bezorgingen in {month}.",
+        "holiday_note": "feestdagschema"
+      },
+      "meals": {
+        "none_chosen": "Nog geen maaltijden gekozen",
+        "extras": {
+          "one": "{count} extra",
+          "other": "{count} extra's"
+        },
+        "count": {
+          "one": "{count} maaltijd",
+          "other": "{count} maaltijden"
+        },
+        "servings": {
+          "one": "{count} portie",
+          "other": "{count} porties"
+        }
+      },
+      "menu": {
+        "original_recipe": "Origineel recept",
+        "no_weeks": "Geen bezorgweken gevonden.",
+        "no_meals_skipped": "Deze week geen maaltijden.",
+        "no_meals_delivered": "Deze week zijn er geen maaltijden bezorgd.",
+        "not_published": "Het menu van deze week is nog niet gepubliceerd.",
+        "search_delivered": "Bezorgde maaltijden doorzoeken",
+        "search": "Menu van deze week doorzoeken",
+        "filters": "Filters",
+        "in_my_box": "In mijn box",
+        "filtering": "Filteren …",
+        "remove_filter": "Verwijderen: {label}",
+        "clear_all": "Alles wissen",
+        "no_match_query": "Geen maaltijden gevonden voor ‘{query}’.",
+        "nothing_in_box": "Nog niets in je box — zet ‘{in_my_box}’ uit om het menu te zien.",
+        "no_match_filters": "Geen maaltijden passen bij deze filters.",
+        "result_count": "{shown} van {total}",
+        "delivered_this_week": "Deze week bezorgd",
+        "show_more": "Nog {count} tonen · {left} over",
+        "protein_g": "{grams} g eiwit",
+        "ordered": "{count}× besteld",
+        "ordered_last": "{count}× besteld · laatst {week}",
+        "you_rated": "Jouw beoordeling: {rating}/{scale}",
+        "add_aria": "{name} aan je box toevoegen",
+        "add": "Toevoegen",
+        "servings_of": "Porties van {name}",
+        "remove_meal": "Maaltijd verwijderen",
+        "fewer_servings": "Minder porties",
+        "more_servings": "Meer porties",
+        "serving_unit": {
+          "one": "portie",
+          "other": "porties"
+        },
+        "in_box": "In de box",
+        "per_serving": "/portie",
+        "in_cookbook": "In je kookboek",
+        "in_your_box": "In je box",
+        "sold_out": "Uitverkocht",
+        "play_video": "Video van {name} afspelen",
+        "surcharge": "Premiumtoeslag per portie"
+      },
+      "filters": {
+        "protein": {
+          "beef": "Rund",
+          "poultry": "Gevogelte",
+          "pork": "Varken",
+          "seafood": "Vis en zeevruchten",
+          "lamb": "Lam",
+          "veggie": "Vegetarisch"
+        },
+        "diet": {
+          "vegetarian": "Vegetarisch",
+          "under-650-cal": "Minder dan 650 calorieën",
+          "high-protein": "Eiwitrijk",
+          "carb-conscious": "Koolhydraatbewust",
+          "high-fiber": "Vezelrijk",
+          "gluten-free": "Glutenvrij",
+          "sodium-smart": "Zoutarm",
+          "low-sugar": "Weinig toegevoegde suiker",
+          "organic-protein": "Biologisch eiwit",
+          "glp1": "GLP-1-ondersteuning"
+        },
+        "time": {
+          "under-15-min": "Binnen 15 minuten",
+          "under-20-min": "Binnen 20 minuten",
+          "under-30-min": "Binnen 30 minuten"
+        },
+        "highlight": {
+          "new": "Nieuw",
+          "bestseller": "Bestsellers",
+          "cooked-before": "Eerder gekookt",
+          "favorite": "Favorieten"
+        },
+        "double_protein": "2x eiwit",
+        "categories": "Categorieën",
+        "all": "Alle",
+        "main_protein": "Hoofdeiwit",
+        "dietary": "Voedingsvoorkeur",
+        "cooking_time": "Totale bereidingstijd",
+        "any": "Alle",
+        "highlights": "Uitgelicht",
+        "clear_all": "Alle filters wissen"
+      },
+      "customize": {
+        "aria": "{dish} aanpassen: {option}, {options}",
+        "title": "Aanpassen",
+        "options": {
+          "one": "{count} optie",
+          "other": "{count} opties"
+        },
+        "label": "{dish} aanpassen",
+        "taken": "Zit al in je box",
+        "included": "Inbegrepen",
+        "as_written": "Zoals het recept is",
+        "update": "Box bijwerken",
+        "add": "Aan box toevoegen",
+        "in_box": "in je box",
+        "ways": "Varianten van deze maaltijd",
+        "view_recipe": "Recept bekijken"
+      },
+      "box": {
+        "closed_toast": "Deze week kan niet meer worden gewijzigd — de box wordt bezorgd zoals hij is opgeslagen.",
+        "min_toast": "Kies minstens {min} maaltijden voordat je opslaat ({selected} gekozen).",
+        "saving": "Je box wordt opgeslagen …",
+        "save_failed": "Je box kon niet worden opgeslagen: {error}",
+        "saved": "Je box is opgeslagen.",
+        "unsaved_changes": "Niet-opgeslagen wijzigingen",
+        "downsized_title": "HelloFresh heeft deze box verkleind zodat hij bij je abonnement past.",
+        "downsized_body": "Er zijn minder artikelen opgeslagen dan je koos — bekijk de opgeslagen box hieronder.",
+        "kind_label": "Maaltijden of extra's",
+        "meals": "Maaltijden",
+        "extras": "Extra's",
+        "box_total": "Totaal box",
+        "selected_of_required": "{selected} van {required} maaltijden",
+        "deadline_passed": "De deadline is verstreken — deze wijzigingen kunnen niet worden opgeslagen",
+        "min_note": "Kies minstens {min} maaltijden om op te slaan",
+        "resized_note": "Box deze week aangepast naar {selected} maaltijden (abonnement: {required}) — HelloFresh berekent de prijs opnieuw",
+        "saved_note": "Opgeslagen · wijzigen kan tot de deadline",
+        "estimated_total": "Geschat totaal",
+        "updating_price": "Prijs bijwerken …",
+        "discard_changes": "Wijzigingen verwerpen",
+        "discard": "Verwerpen",
+        "save": "Box opslaan",
+        "your_box": "Je box",
+        "new": "Nieuw",
+        "was": "Was {count}",
+        "removed": "Verwijderd",
+        "shipping": "Verzendkosten",
+        "tax": "Btw",
+        "extras_change": "Extra's (deze wijziging)",
+        "updating": "Bijwerken …",
+        "price": "Prijs",
+        "estimate_note": "Een schatting — HelloFresh berekent de definitieve prijs bij het afschrijven.",
+        "min_notice": "Kies minstens {min} maaltijden — kleiner kan de box van HelloFresh niet.",
+        "resized_notice": "De box van deze week is aangepast naar {meals} (je abonnement heeft er {required}). HelloFresh berekent de prijs opnieuw; je abonnement zelf verandert niet.",
+        "unsaved_lower": "niet-opgeslagen wijzigingen",
+        "keep_editing": "Verder bewerken"
+      },
+      "market": {
+        "group": {
+          "appetizer": "Voorgerechten",
+          "breakfast": "Ontbijt",
+          "dessert": "Desserts",
+          "lunch": "Lunch",
+          "protein": "Eiwitten",
+          "sides": "Bijgerechten",
+          "donation": "Donaties",
+          "lowprices": "Lage prijzen",
+          "modularity": "Extra's"
+        },
+        "search": "Extra's doorzoeken",
+        "none_ordered": "Deze week zijn er geen extra's besteld.",
+        "not_open": "De Market voor deze week is nog niet open.",
+        "no_match_query": "Geen extra's gevonden voor ‘{query}’.",
+        "none_in_box": "Nog geen extra's in je box.",
+        "no_match_categories": "Geen extra's passen bij deze categorieën.",
+        "add_aria": "{name} toevoegen",
+        "quantity_of": "Aantal van {name}",
+        "remove": "Verwijderen",
+        "in_box_unit": "in de box",
+        "ordered": "{count} besteld",
+        "open": "Openen: {name}"
+      },
+      "money": {
+        "total": "Totaal",
+        "plan_price": "Abonnementsprijs",
+        "discount": "Korting"
+      },
+      "voucher": {
+        "expires": "verloopt {date}",
+        "one_time": "eenmalig",
+        "code": "Tegoedbon {code}",
+        "label": "Tegoedbon"
+      },
+      "recipe": {
+        "open": "Recept openen: {name}",
+        "close": "Recept sluiten",
+        "loading": "Recept laden …",
+        "difficulty": "Moeilijkheid {level}",
+        "servings": "Porties",
+        "not_in_box": "(niet in de box)",
+        "contains": "Bevat {allergens}",
+        "step": "Stap {number}",
+        "nutrition": "Voedingswaarden",
+        "per_serving": "per portie",
+        "allergens": "Allergenen: {allergens}",
+        "ingredients": "Ingrediënten",
+        "utensils": "Dit heb je nodig",
+        "instructions": "Bereiding",
+        "video": "Receptvideo bekijken",
+        "card_pdf": "Receptkaart om te printen (PDF)",
+        "view_site": "Bekijken bij HelloFresh",
+        "not_in_week_box": "Niet in de box van deze week",
+        "add": "+ Toevoegen",
+        "in_week_box": "In de box van deze week",
+        "fewer_items": "Minder artikelen",
+        "more_items": "Meer artikelen",
+        "item_unit": {
+          "one": "artikel",
+          "other": "artikelen"
+        }
+      },
+      "recipes": {
+        "search_failed": "Zoeken mislukt: {error}",
+        "saved": "Opgeslagen in je kookboek.",
+        "removed": "Verwijderd uit je kookboek.",
+        "save_failed": "Het recept kon niet worden opgeslagen: {error}",
+        "remove_failed": "Het recept kon niet worden verwijderd: {error}",
+        "search_label": "Recepten zoeken",
+        "filter_cookbook": "Je kookboek filteren",
+        "search_catalog": "Zoek in meer dan 10.000 recepten",
+        "top_rated": "Best beoordeeld",
+        "cookbook": "Kookboek",
+        "fewer_categories": "Minder",
+        "all_categories": "Alle categorieën",
+        "refine": "Verfijnen",
+        "none": "Geen recepten gevonden.",
+        "no_match": "Geen recepten gevonden voor ‘{query}’.",
+        "results": {
+          "one": "{count} resultaat in alle categorieën",
+          "other": "{count} resultaten in alle categorieën"
+        },
+        "cookbook_empty": "Je kookboek is leeg. Tik op het hartje bij een recept om het hier te bewaren.",
+        "no_saved_match": "Geen bewaarde recepten gevonden voor ‘{query}’.",
+        "remove_aria": "Uit kookboek verwijderen: {name}",
+        "save_aria": "In kookboek bewaren: {name}",
+        "remove_title": "Uit kookboek verwijderen",
+        "save_title": "In kookboek bewaren"
+      },
+      "account": {
+        "credit_card": "Creditcard",
+        "card_ending": "{brand} eindigend op {last4}",
+        "tab": {
+          "plan": "Abonnement en betaling",
+          "profile": "Eetvoorkeuren",
+          "spending": "Uitgaven"
+        },
+        "sections": "Accountonderdelen",
+        "load_failed": "Je account kon niet worden geladen.",
+        "plan": "Abonnement",
+        "meal_preference": "Maaltijdvoorkeur",
+        "servings": "Porties",
+        "meals_per_box": "Maaltijden per box",
+        "credit": "Tegoed",
+        "card_on_file": "Opgeslagen kaart",
+        "card_expiry": "geldig tot {date}",
+        "card_expired": "verlopen",
+        "card_expiring": "verloopt binnenkort",
+        "boxes_received": "Ontvangen boxen",
+        "account_id": "Account-ID",
+        "delivery_address": "Bezorgadres",
+        "upcoming_boxes": "Komende boxen",
+        "need_picks": "Keuze nodig",
+        "tap_to_review": "Tik om te bekijken",
+        "next_skipped": "Volgende overgeslagen",
+        "your_plan": "Je abonnement",
+        "upcoming": "Binnenkort",
+        "presets": "Menuvoorkeuren",
+        "presets_loading": "Menuvoorkeuren laden …",
+        "presets_none": "Geen menuvoorkeuren beschikbaar.",
+        "yours": "Jouw keuze",
+        "presets_note": "Wat elke voorkeur betekent — HelloFresh gebruikt de jouwe om maaltijden te kiezen. Je wijzigt hem bij HelloFresh."
+      },
+      "plan": {
+        "options_loading": "Opties worden zo geladen …",
+        "settings": "Abonnementsinstellingen",
+        "settings_note": "Dit wijzigt elke toekomstige box — en wat je betaalt. Wil je maar één week wijzigen, gebruik dan {change_day} of {skip} bij die week.",
+        "from_to": "Van {from} naar {to}",
+        "every_future_box": "elke toekomstige box",
+        "box_size": {
+          "label": "Boxgrootte",
+          "hint": "Maaltijden per week en porties per maaltijd",
+          "option": "{meals} × {servings}",
+          "change": "Boxgrootte wijzigen",
+          "title": "Je boxgrootte wijzigen?",
+          "body": "Dit geldt voor {every_future_box} en verandert wat je betaalt. Boxen waarvan de deadline verstreken is, houden hun huidige instelling.",
+          "changed": "Boxgrootte gewijzigd.",
+          "failed": "De boxgrootte kon niet worden gewijzigd: {error}"
+        },
+        "delivery_day": {
+          "label": "Bezorgdag",
+          "hint": "Je vaste bezorgdag en tijdvak",
+          "change": "Bezorgdag wijzigen",
+          "title": "Je bezorgdag wijzigen?",
+          "body": "Dit geldt voor {every_future_box}. Boxen waarvan de deadline verstreken is, houden hun huidige instelling.",
+          "changed": "Bezorgdag gewijzigd.",
+          "failed": "De bezorgdag kon niet worden gewijzigd: {error}"
+        }
+      },
+      "health": {
+        "title": "Integratiestatus",
+        "access_token": "Access token",
+        "minutes_left": {
+          "one": "nog {count} min",
+          "other": "nog {count} min"
+        },
+        "refresh_token": "Refresh token",
+        "days_left": {
+          "one": "nog {count} dag",
+          "other": "nog {count} dagen"
+        },
+        "write_actions": "Schrijfacties",
+        "available": "Beschikbaar",
+        "unavailable": "Niet beschikbaar",
+        "api_payloads": "API-gegevens",
+        "payload_changed": "Gewijzigd — bekijk de logs",
+        "payload_ok": "Zoals verwacht",
+        "no_sensors": "De statussensoren zijn niet beschikbaar.",
+        "card_updated": "Kaart bijgewerkt {time}",
+        "refresh": "Vernieuwen vanuit HelloFresh",
+        "refreshed": "Vernieuwd vanuit HelloFresh.",
+        "refresh_failed": "Vernieuwen mislukt: {error}"
+      },
+      "spending": {
+        "load_failed": "Je uitgaven konden niet worden geladen: {error}",
+        "none": "Nog geen uitgaven.",
+        "total_spent": "Totaal uitgegeven",
+        "lifetime": "Bezorgde boxen, in totaal",
+        "boxes": "Boxen",
+        "average_box": "Gemiddeld per box",
+        "saved_vouchers": "Bespaard met tegoedbonnen",
+        "no_box": "geen box",
+        "upcoming_note": "gepland",
+        "monthly": "Kosten per maand",
+        "peak": "Hoogste {price}",
+        "chart_label": {
+          "one": "Maandelijkse HelloFresh-kosten van de afgelopen maand",
+          "other": "Maandelijkse HelloFresh-kosten van de afgelopen {count} maanden"
+        },
+        "by_month": "Per maand",
+        "recent_boxes": "Recente boxen",
+        "upcoming": "Gepland"
+      },
+      "profile": {
+        "field": {
+          "exclusions": "Vermijden",
+          "primary_proteins": "Eiwitten",
+          "flavors": "Smaken",
+          "goals": "Persoonlijk",
+          "nutritions": "Voeding",
+          "cuisines": "Keukens",
+          "dish_types": "Soorten gerechten",
+          "meal_types": "Kookstijlen",
+          "dietary_preferences": "Eetpatroon"
+        },
+        "value": {
+          "mostly-meat": "Ik eet alles",
+          "flexitarian": "Flexitarisch",
+          "pescatarian": "Pescotarisch",
+          "vegetarian": "Vegetarisch",
+          "vegan": "Veganistisch",
+          "quick-easy": "Snelle recepten",
+          "batch": "Recepten om vooruit te koken",
+          "chef-style": "Recepten in chefstijl",
+          "family-style": "Gezinsrecepten",
+          "bake": "Ovenschotels",
+          "bowl": "Bowls",
+          "burger": "Burgers",
+          "main-plus-sides": "Hoofdgerecht met bijgerechten",
+          "pizza": "Pizza's",
+          "salad": "Salades",
+          "sandwich": "Sandwiches",
+          "soups-stews": "Soepen of stoofpotten",
+          "stir-fry": "Roerbakgerechten",
+          "wrap": "Wraps",
+          "noodle": "Noedels",
+          "pasta": "Pasta",
+          "glp1-support": "GLP-1-vriendelijk",
+          "plant-based": "Plantaardig",
+          "high-protein": "Eiwitrijk",
+          "low-calorie": "Caloriearm",
+          "low-carb": "Koolhydraatarm",
+          "make-cooking-easy": "Makkelijker koken",
+          "try-new-recipes": "Nieuwe recepten proberen",
+          "save-time": "Tijd besparen",
+          "save-money": "Geld besparen",
+          "eat-healthier": "Gezonder eten",
+          "improve-health": "Gezondheid verbeteren",
+          "waste-less-food": "Minder eten verspillen",
+          "beef": "Rund",
+          "pork": "Varken",
+          "chicken": "Kip",
+          "poultry": "Gevogelte",
+          "fish": "Vis",
+          "shellfish": "Schaaldieren",
+          "salmon": "Zalm",
+          "cod": "Kabeljauw",
+          "tuna": "Tonijn",
+          "seabass": "Zeebaars",
+          "tilapia": "Tilapia",
+          "barramundi": "Barramundi",
+          "trout": "Forel",
+          "tofu": "Tofu",
+          "halloumi": "Halloumi",
+          "legumes": "Peulvruchten",
+          "plant-based-proteins": "Plantaardige eiwitten",
+          "mushroom-based-proteins": "Eiwitten op basis van paddenstoelen",
+          "shrimp-prawns": "Garnalen",
+          "meat-alternative": "Vleesvervangers",
+          "nuts": "Noten",
+          "tree-nuts": "Boomnoten",
+          "mushrooms": "Paddenstoelen",
+          "olives": "Olijven",
+          "gluten": "Gluten",
+          "brussel-sprouts": "Spruitjes",
+          "egg": "Eieren",
+          "cheesy": "Kazig",
+          "herbs": "Kruiden",
+          "spicy": "Pittig",
+          "sweet": "Zoet",
+          "smoky": "Rokerig",
+          "tangy": "Friszuur",
+          "caribbean": "Caribisch",
+          "chinese": "Chinees",
+          "classic-american": "Klassiek Amerikaans",
+          "french": "Frans",
+          "greek": "Grieks",
+          "indian": "Indiaas",
+          "italian": "Italiaans",
+          "japanese": "Japans",
+          "korean": "Koreaans",
+          "mexican": "Mexicaans",
+          "middle-eastern": "Midden-Oosters",
+          "new-zealand": "Nieuw-Zeelands",
+          "thai": "Thais"
+        },
+        "value_hint": {
+          "quick-easy": "Binnen 20 minuten, weinig voorbereiding",
+          "batch": "Kook vooruit en bespaar de hele week tijd",
+          "chef-style": "Ovenschotels, gebraden gerechten en meer in 20–40 minuten",
+          "family-style": "Recepten voor kinderen en volwassenen"
+        },
+        "diet_hint": {
+          "flexitarian": "Vooral plantaardig, af en toe met vlees.",
+          "mostly-meat": "Ik wissel af. Vlees, groente en alles daartussen.",
+          "vegetarian": "Zonder vlees en vis, met de nadruk op planten, zuivel en eieren.",
+          "pescatarian": "Met vis en zeevruchten, maar zonder ander vlees.",
+          "vegan": "Zonder dierlijke producten, volledig plantaardig."
+        },
+        "protein_question": {
+          "pescatarian": "Van welke vis en zeevruchten houd je?",
+          "vegetarian": "Van welke vleesvrije eiwitten houd je?",
+          "vegan": "Van welke veganistische eiwitten houd je?",
+          "default": "Van welke eiwitten houd je?"
+        },
+        "goals_hint": "Kies er maximaal {max} die voor jou het belangrijkst zijn.",
+        "meal_types_required": "Kies minstens één kookstijl",
+        "exclude_notice": "Let op: sommige recepten in je menu kunnen deze ingrediënten toch bevatten. Controleer elk recept voordat je bestelt.",
+        "save_scope": "De wijzigingen gelden voor toekomstige automatische keuzes. Recepten die je zelf voor komende weken hebt gekozen, blijven zoals ze zijn.",
+        "panel": {
+          "dietary_habits": "Eetgewoonten",
+          "goals": "Doelen",
+          "cooking": "Kookvoorkeuren"
+        },
+        "saved": "Eetvoorkeuren opgeslagen.",
+        "save_failed": "Je voorkeuren konden niet worden opgeslagen: {error}",
+        "tell_us_more": "Vertel ons meer",
+        "load_failed": "Je eetvoorkeuren konden niet worden geladen: {error}",
+        "none": "Geen voedingsprofiel beschikbaar.",
+        "completion": "{completed} van de {total} profielonderdelen ingevuld",
+        "hero_title": "Maaltijden die bij je smaak passen",
+        "hero_body": "Met je voedingsprofiel kiest HelloFresh je maaltijden en sorteert het menu op wat voor jou het meest relevant is. Je hebt altijd toegang tot het hele menu.",
+        "your_diet": "Je eetpatroon",
+        "adults": "Volwassenen",
+        "kids": "Kinderen (jonger dan 12)",
+        "household": "Huishouden",
+        "none_option": "Geen",
+        "like": "Lekker",
+        "dislike": "Niet lekker",
+        "up_to_date": "Je voorkeuren zijn bijgewerkt.",
+        "reload": "Opnieuw laden",
+        "reset": "Herstellen",
+        "saving": "Opslaan …",
+        "save": "Voorkeuren opslaan",
+        "discard_confirm": "Niet-opgeslagen wijzigingen verwerpen en je eetvoorkeuren opnieuw laden?"
+      },
+      "video": {
+        "close": "Video sluiten",
+        "error": "Deze clip kan hier niet worden afgespeeld.",
+        "fallback": "Speelt de video niet af? Open hem direct"
+      },
+      "editor": {
+        "title": "Titel",
+        "logo": "HelloFresh-logo tonen",
+        "views": "Onderdelen",
+        "default_view": "Openen op",
+        "accent": "Accentkleur",
+        "image_width": "Breedte van receptafbeeldingen (px)",
+        "config_entry_id": "HelloFresh-account",
+        "accent_brand": "HelloFresh-groen",
+        "accent_theme": "Primaire kleur van het thema",
+        "help": {
+          "views": "Kies één onderdeel voor een gerichte kaart zonder tabbalk.",
+          "default_view": "Laat leeg om het laatst gebruikte onderdeel te openen.",
+          "config_entry_id": "Alleen nodig met meer dan één HelloFresh-account."
+        }
+      }
+    }
   }
 }

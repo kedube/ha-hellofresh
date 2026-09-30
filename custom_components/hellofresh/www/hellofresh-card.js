@@ -62,17 +62,18 @@ const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { Accoun
 // opened, so it loads in the background rather than blocking first paint.
 const detailModule = import(moduleUrl("hellofresh-recipe-detail.js"));
 
-const { esc } = L;
+const { esc, t, ht, html } = L;
 const { icon } = UI;
 const LOGO_URL = "/hellofresh/hellofresh-logo.png";
 
+// Each section's tab; `label` reads the card's text (views.<key>) when shown.
 export const VIEWS = [
-  { key: "overview", label: "Overview", icon: "mdi:home-variant-outline" },
-  { key: "menu", label: "Menu", icon: "mdi:silverware-fork-knife" },
-  { key: "market", label: "Market", icon: "mdi:storefront-outline" },
-  { key: "recipes", label: "Recipes", icon: "mdi:book-open-page-variant-outline" },
-  { key: "account", label: "Account", icon: "mdi:account-circle-outline" },
-];
+  { key: "overview", icon: "mdi:home-variant-outline" },
+  { key: "menu", icon: "mdi:silverware-fork-knife" },
+  { key: "market", icon: "mdi:storefront-outline" },
+  { key: "recipes", icon: "mdi:book-open-page-variant-outline" },
+  { key: "account", icon: "mdi:account-circle-outline" },
+].map((view) => Object.defineProperty(view, "label", { enumerable: true, get: () => t(`views.${view.key}`) }));
 const VIEW_KEYS = VIEWS.map((v) => v.key);
 
 // Views that edit a week's box, and so carry the sticky box bar.
@@ -124,6 +125,9 @@ class HelloFreshCard extends HTMLElement {
     this._instanceId = Math.random().toString(36).slice(2);
     this._narrow = false; // set by the sidebar panel: Home Assistant hides its sidebar
     this._menuShown = false;
+    // The card's words come from Home Assistant in the user's language (hellofresh-i18n.js);
+    // until they are here the card shows its loading skeleton rather than flash English.
+    this._textLoaded = false;
     this.box = new Menu.BoxStore(this);
     this._onSyncWeek = (ev) => this._receiveSyncedWeek(ev);
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
@@ -166,6 +170,11 @@ class HelloFreshCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    const textLoaded = L.I18n.useHass(hass);
+    if (textLoaded !== this._textLoaded) {
+      this._textLoaded = textLoaded;
+      if (textLoaded) this._render();
+    }
     this.toggleAttribute("dark", Boolean(hass && hass.themes && hass.themes.darkMode));
     if (this._shell && this._wantsMenuButton() !== this._menuShown) this._renderChrome();
     if (hass && !this._fetched && this._config) {
@@ -205,6 +214,7 @@ class HelloFreshCard extends HTMLElement {
   }
 
   connectedCallback() {
+    this._offText = L.I18n.onChange(() => this._onTextChanged());
     window.addEventListener(L.WEEK_SYNC_EVENT, this._onSyncWeek);
     window.addEventListener(L.DATA_CHANGED_EVENT, this._onDataChanged);
     document.addEventListener("visibilitychange", this._onVisibility);
@@ -214,6 +224,8 @@ class HelloFreshCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._offText) this._offText();
+    this._offText = null;
     window.removeEventListener(L.WEEK_SYNC_EVENT, this._onSyncWeek);
     window.removeEventListener(L.DATA_CHANGED_EVENT, this._onDataChanged);
     document.removeEventListener("visibilitychange", this._onVisibility);
@@ -227,6 +239,14 @@ class HelloFreshCard extends HTMLElement {
       this._shell.toast.innerHTML = "";
     }
     if (this._detail) this._detail.close();
+  }
+
+  // The text arrived (or changed language): draw everything again in it.
+  _onTextChanged() {
+    if (!this._hass) return;
+    this._textLoaded = L.I18n.useHass(this._hass);
+    this._render();
+    if (this._sheetState) this.renderSheet();
   }
 
   getCardSize() {
@@ -648,7 +668,7 @@ class HelloFreshCard extends HTMLElement {
       );
     } catch (err) {
       item.status = previous;
-      this.toast(`Couldn't update the list: ${(err && err.message) || err}`, true);
+      this.toast(t("pantry.update_failed", { error: (err && err.message) || err }), true);
       this.renderView();
       if (this._sheetState && this._sheetState.kind === "pantry") this.renderSheet();
     }
@@ -703,14 +723,13 @@ class HelloFreshCard extends HTMLElement {
     this.openSheet({
       kind: "confirm",
       narrow: true,
-      label: "Skip this week",
+      label: t("week.skip_this_week"),
       render: () => `
-        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Skip ${esc(date)}?</h2></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
-        <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">No box ships that week and you
-          won't be charged for it. You can unskip it until the selection deadline.</p></div>
-        <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>Keep my box</button>
-          <button class="hf-btn primary" data-action="confirm-skip">Skip week</button></div>`,
+        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("skip.title", { date })}</h2></div>
+          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+        <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">${ht("skip.body")}</p></div>
+        <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>${ht("skip.keep")}</button>
+          <button class="hf-btn primary" data-action="confirm-skip">${ht("week.skip_week")}</button></div>`,
       onClick: (_ev, el) => {
         if (el && el.dataset.action === "confirm-skip") {
           this.closeSheet();
@@ -736,9 +755,9 @@ class HelloFreshCard extends HTMLElement {
     this._busy = false;
     await this._fetchWeeks({ quiet: true });
     this._fetchSummary();
-    if (failed) this.toast(`Couldn't ${unskip ? "unskip" : "skip"} the week: ${failed}`, true);
+    if (failed) this.toast(t(unskip ? "skip.unskip_failed" : "skip.skip_failed", { error: failed }), true);
     else {
-      this.toast(unskip ? "Week restored — your box is back on." : "Week skipped.");
+      this.toast(t(unskip ? "skip.restored" : "skip.done"));
       this.broadcastDataChanged();
     }
   }
@@ -762,7 +781,7 @@ class HelloFreshCard extends HTMLElement {
     this.openSheet({
       kind: "reschedule",
       narrow: true,
-      label: "Change delivery day",
+      label: t("reschedule.title"),
       render: () => {
         const catalog = this._deliveryOptions || {};
         const currency = this._account && this._account.selected_plan_total_price_currency;
@@ -778,15 +797,15 @@ class HelloFreshCard extends HTMLElement {
                 data-action="pick-day" data-handle="${esc(o.handle)}" ${current || this._busy ? "disabled" : ""}>
                 <span style="text-align:left"><span class="hf-controllabel">${esc(name)}</span>
                   ${date ? `<span class="hf-controlhint">${esc(date)}</span>` : ""}</span>
-                <span>${current ? UI.pill("Current", "ok") : price ? `<span class="hf-muted hf-small">${esc(price)}</span>` : ""}</span>
+                <span>${current ? UI.pill(t("reschedule.current"), "ok") : price ? `<span class="hf-muted hf-small">${esc(price)}</span>` : ""}</span>
               </button>`;
           })
           .join("");
         return `
-          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Change delivery day</h2>
-            <div class="hf-sheetsub">For the box scheduled ${esc(L.fmtLongDate(week.delivery_date))} only</div></div>
-            <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
-          <div class="hf-sheetbody" style="gap:4px">${buttons || `<div class="hf-empty">No other days are available.</div>`}</div>`;
+          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("reschedule.title")}</h2>
+            <div class="hf-sheetsub">${ht("reschedule.only_this_box", { date: L.fmtLongDate(week.delivery_date) })}</div></div>
+            <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+          <div class="hf-sheetbody" style="gap:4px">${buttons || `<div class="hf-empty">${ht("reschedule.none")}</div>`}</div>`;
       },
       onClick: (_ev, el) => {
         if (el && el.dataset.action === "pick-day") {
@@ -811,9 +830,9 @@ class HelloFreshCard extends HTMLElement {
     }
     this._busy = false;
     await this._fetchWeeks({ quiet: true });
-    if (failed) this.toast(`Couldn't change the day: ${failed}`, true);
+    if (failed) this.toast(t("reschedule.failed", { error: failed }), true);
     else {
-      this.toast("Delivery day changed for that week.");
+      this.toast(t("reschedule.done"));
       this.broadcastDataChanged();
     }
   }
@@ -823,20 +842,20 @@ class HelloFreshCard extends HTMLElement {
     this.openSheet({
       kind: "pantry",
       narrow: true,
-      label: "Pantry list",
+      label: t("pantry.list"),
       render: () => {
         const st = this.pantry(entityId);
         const items = (st && st.items) || [];
         const open = items.filter((i) => i.status !== "completed").length;
         const body = !st || (st.loading && !st.items)
-          ? `<div class="hf-empty">Loading…</div>`
+          ? `<div class="hf-empty">${ht("common.loading")}</div>`
           : items.length
             ? UI.pantryList(entityId, items)
-            : `<div class="hf-empty">${icon("mdi:check-all")}Nothing extra to buy for this box.</div>`;
+            : `<div class="hf-empty">${icon("mdi:check-all")}${ht("pantry.nothing")}</div>`;
         return `
-          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Pantry staples</h2>
-            <div class="hf-sheetsub">Not in the ${esc(L.fmtLongDate(week && week.delivery_date))} box · ${open} to get</div></div>
-            <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
+          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("pantry.title")}</h2>
+            <div class="hf-sheetsub">${ht("pantry.sub", { date: L.fmtLongDate(week && week.delivery_date), count: open })}</div></div>
+            <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
           <div class="hf-sheetbody">${body}</div>`;
       },
       onClick: (_ev, el) => {
@@ -879,11 +898,11 @@ class HelloFreshCard extends HTMLElement {
       label: recipe.name,
       render: () => `
         <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${esc(recipe.name)}</h2></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="Close video">${icon("mdi:close")}</button></div>
+          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("video.close")}">${icon("mdi:close")}</button></div>
         <div class="hf-videobox">
           <video controls autoplay playsinline><source src="${esc(url)}" type="video/mp4"></video>
-          <div class="hf-videoerr" hidden>This clip could not be played here.</div>
-          <a class="hf-videofallback" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Video not playing? Open it directly</a>
+          <div class="hf-videoerr" hidden>${ht("video.error")}</div>
+          <a class="hf-videofallback" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${ht("video.fallback")}</a>
         </div>`,
     });
     const video = this._shell.sheet.querySelector("video");
@@ -977,7 +996,7 @@ class HelloFreshCard extends HTMLElement {
     card.innerHTML = `
       <div class="hf-app">
         <header class="hf-appbar js-appbar"></header>
-        <nav class="hf-tabs js-tabs" aria-label="HelloFresh sections"></nav>
+        <nav class="hf-tabs js-tabs"></nav>
         <div class="hf-banners js-banners"></div>
         <main class="hf-main js-main"></main>
         <div class="hf-boxbar js-boxbar"></div>
@@ -1033,13 +1052,29 @@ class HelloFreshCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._config) return;
     this._ensureShell();
+    if (!this._textLoaded) {
+      this._renderWaiting();
+      return;
+    }
     this._renderChrome();
     this.renderView();
     this._renderToast();
   }
 
+  // Before hass (and its language's text) arrives: the loading skeleton alone, no words.
+  _renderWaiting() {
+    const shell = this._shell;
+    shell.appbar.hidden = true;
+    shell.tabs.hidden = true;
+    shell.banners.innerHTML = "";
+    shell.boxbar.innerHTML = "";
+    shell.main.innerHTML = `<div class="hf-skeletons" aria-busy="true"><div class="hf-skeleton"></div>
+      <div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
+  }
+
   _renderChrome() {
-    if (!this._shell || !this._config) return;
+    if (!this._shell || !this._config || !this._textLoaded) return;
+    this._shell.tabs.setAttribute("aria-label", t("card.sections"));
     this._shell.appbar.innerHTML = this._renderAppbar();
     this._shell.appbar.hidden = !this._shell.appbar.innerHTML.trim();
     this._shell.tabs.innerHTML = this._renderTabs();
@@ -1049,7 +1084,7 @@ class HelloFreshCard extends HTMLElement {
 
   // Re-render the active view (and the box bar), keeping focus, caret and rail scroll positions.
   renderView() {
-    if (!this._shell || !this._config) return;
+    if (!this._shell || !this._config || !this._textLoaded) return;
     const main = this._shell.main;
     const view = this._activeView();
     const ui = this._captureUi(main);
@@ -1123,9 +1158,9 @@ class HelloFreshCard extends HTMLElement {
       if (s.selected_plan) parts.push(s.selected_plan);
       const meals = Number(s.required_meal_count);
       const people = Number(s.number_of_people);
-      if (meals && people) parts.push(`${meals} meals for ${people}`);
+      if (meals && people) parts.push(t("card.plan_size", { count: meals, people }));
       if (s.subscription_status && String(s.subscription_status).toLowerCase() !== "active") {
-        parts.push(L.titleCase(s.subscription_status));
+        parts.push(L.statusLabel(s.subscription_status));
       }
     }
     if (!parts.length && this._weeks && this._weeks.length) {
@@ -1144,12 +1179,12 @@ class HelloFreshCard extends HTMLElement {
     this._menuShown = menu;
     if (!menu && !logo && !title && cfg.views.length < 2) return "";
     return `
-      ${menu ? `<button class="hf-iconbtn hf-menubtn" data-action="sidebar" title="Sidebar" aria-label="Open the sidebar">${icon("mdi:menu")}</button>` : ""}
+      ${menu ? `<button class="hf-iconbtn hf-menubtn" data-action="sidebar" title="${ht("card.sidebar")}" aria-label="${ht("card.open_sidebar")}">${icon("mdi:menu")}</button>` : ""}
       ${logo ? `<img class="hf-logo" src="${esc(logo)}" alt="">` : ""}
       <div class="hf-apptitle">${title ? `<h1>${esc(title)}</h1>` : ""}${sub ? `<div class="hf-sub">${esc(sub)}</div>` : ""}</div>
       <div class="hf-appactions">
-        <button class="hf-iconbtn${this._loading ? " spin" : ""}" data-action="refresh" title="Refresh"
-          aria-label="Refresh" ${this._loading ? "disabled" : ""}>${icon("mdi:refresh")}</button>
+        <button class="hf-iconbtn${this._loading ? " spin" : ""}" data-action="refresh" title="${ht("common.refresh")}"
+          aria-label="${ht("common.refresh")}" ${this._loading ? "disabled" : ""}>${icon("mdi:refresh")}</button>
       </div>`;
   }
 
@@ -1163,7 +1198,7 @@ class HelloFreshCard extends HTMLElement {
         const current = v.key === this._view;
         const badge =
           v.key === "menu" && needs
-            ? `<span class="hf-count" title="${needs} week${needs === 1 ? "" : "s"} need meal picks">${needs}</span>`
+            ? `<span class="hf-count" title="${ht("card.weeks_need_picks", { count: needs })}">${needs}</span>`
             : "";
         return `<button class="hf-tab" data-action="nav" data-view="${v.key}" ${
           current ? 'aria-current="page"' : ""
@@ -1176,22 +1211,21 @@ class HelloFreshCard extends HTMLElement {
     const out = [];
     if (this._error && this._weeks) {
       out.push(`<div class="hf-notice tone-danger" role="alert">${icon("mdi:cloud-alert-outline")}
-        <div class="hf-noticebody">Couldn't refresh: ${esc(this._error)}</div>
-        <button class="hf-btn sm" data-action="refresh">Retry</button></div>`);
+        <div class="hf-noticebody">${ht("banner.refresh_failed", { error: this._error })}</div>
+        <button class="hf-btn sm" data-action="refresh">${ht("common.retry")}</button></div>`);
     }
     const s = this._summary;
     if (s && (s.payment_method_expiring || s.payment_method_expired)) {
-      const card = L.cardOnFile(s) || "payment card";
-      const when = L.fmtCardExpiry(s.payment_card_expiry);
-      const text = s.payment_method_expired
-        ? `Your <strong>${esc(card)}</strong> has expired${when ? ` (${esc(when)})` : ""}. Update it on HelloFresh or your next box may not ship.`
-        : `Your <strong>${esc(card)}</strong> expires soon${when ? ` (${esc(when)})` : ""}. Update it on HelloFresh before your next box is charged.`;
+      const card = html(`<strong>${esc(L.cardOnFile(s) || t("banner.payment_card"))}</strong>`);
+      const date = L.fmtCardExpiry(s.payment_card_expiry);
+      const key = `banner.card_${s.payment_method_expired ? "expired" : "expiring"}${date ? "_date" : ""}`;
+      const text = ht(key, { card, date });
       out.push(`<div class="hf-notice ${s.payment_method_expired ? "tone-danger" : "tone-warn"}" role="alert">
         ${icon(s.payment_method_expired ? "mdi:credit-card-off-outline" : "mdi:credit-card-clock-outline")}<div class="hf-noticebody">${text}</div></div>`);
     }
     if (s && s.next_holiday_message) {
       const date = s.next_holiday_delivery_date
-        ? ` New delivery date: <strong>${esc(L.fmtLongDate(s.next_holiday_delivery_date))}</strong>.`
+        ? ` ${ht("banner.holiday_date", { date: html(`<strong>${esc(L.fmtLongDate(s.next_holiday_delivery_date))}</strong>`) })}`
         : "";
       out.push(`<div class="hf-notice tone-info">${icon("mdi:calendar-star")}
         <div class="hf-noticebody">${esc(s.next_holiday_message)}${date}</div></div>`);
@@ -1203,11 +1237,11 @@ class HelloFreshCard extends HTMLElement {
   weeksPlaceholder() {
     if (this._weeks) return "";
     if (this._error) {
-      return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}Couldn't load your deliveries:
-        ${esc(this._error)}<div class="hf-actions" style="justify-content:center;margin-top:12px">
-        <button class="hf-btn primary" data-action="refresh">Try again</button></div></div>`;
+      return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("card.load_failed", { error: this._error })}
+        <div class="hf-actions" style="justify-content:center;margin-top:12px">
+        <button class="hf-btn primary" data-action="refresh">${ht("common.try_again")}</button></div></div>`;
     }
-    return `<div class="hf-skeletons" aria-label="Loading"><div class="hf-skeleton"></div>
+    return `<div class="hf-skeletons" aria-label="${ht("common.loading_label")}"><div class="hf-skeleton"></div>
       <div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
   }
 
@@ -1268,44 +1302,32 @@ customElements.define("hellofresh-card", HelloFreshCard);
 
 // ---- visual config editor --------------------------------------------------------------------
 
-const VIEW_OPTIONS = VIEWS.map((v) => ({ value: v.key, label: v.label }));
-
-const EDITOR_SCHEMA = [
-  { name: "title", selector: { text: {} } },
-  { name: "logo", selector: { boolean: {} } },
-  { name: "views", selector: { select: { multiple: true, mode: "list", options: VIEW_OPTIONS } } },
-  { name: "default_view", selector: { select: { mode: "dropdown", options: VIEW_OPTIONS } } },
-  {
-    name: "accent",
-    selector: {
-      select: {
-        mode: "dropdown",
-        options: [
-          { value: "brand", label: "HelloFresh green" },
-          { value: "theme", label: "Theme primary colour" },
-        ],
+// Built when shown, so its words are in the card's language (editor.*).
+function editorSchema() {
+  const views = VIEWS.map((v) => ({ value: v.key, label: v.label }));
+  return [
+    { name: "title", selector: { text: {} } },
+    { name: "logo", selector: { boolean: {} } },
+    { name: "views", selector: { select: { multiple: true, mode: "list", options: views } } },
+    { name: "default_view", selector: { select: { mode: "dropdown", options: views } } },
+    {
+      name: "accent",
+      selector: {
+        select: {
+          mode: "dropdown",
+          options: [
+            { value: "brand", label: t("editor.accent_brand") },
+            { value: "theme", label: t("editor.accent_theme") },
+          ],
+        },
       },
     },
-  },
-  { name: "image_width", selector: { number: { min: 100, max: 1200, step: 50, mode: "box" } } },
-  { name: "config_entry_id", selector: { config_entry: { integration: "hellofresh" } } },
-];
+    { name: "image_width", selector: { number: { min: 100, max: 1200, step: 50, mode: "box" } } },
+    { name: "config_entry_id", selector: { config_entry: { integration: "hellofresh" } } },
+  ];
+}
 
-const EDITOR_LABELS = {
-  title: "Title",
-  logo: "Show HelloFresh logo",
-  views: "Sections",
-  default_view: "Open on",
-  accent: "Accent colour",
-  image_width: "Recipe image width (px)",
-  config_entry_id: "HelloFresh account",
-};
-
-const EDITOR_HELPERS = {
-  views: "Pick one section for a focused card without the tab bar.",
-  default_view: "Leave empty to reopen the last section used.",
-  config_entry_id: "Only needed with more than one HelloFresh account.",
-};
+const EDITOR_HELPERS = new Set(["views", "default_view", "config_entry_id"]);
 
 class HelloFreshCardEditor extends HTMLElement {
   setConfig(config) {
@@ -1315,18 +1337,29 @@ class HelloFreshCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    L.I18n.useHass(hass);
     if (this._form) this._form.hass = hass;
   }
 
+  connectedCallback() {
+    this._offText = L.I18n.onChange(() => this._render());
+  }
+
+  disconnectedCallback() {
+    if (this._offText) this._offText();
+    this._offText = null;
+  }
+
   _render() {
+    if (!this._config) return;
     if (!this._form) {
       this._form = document.createElement("ha-form");
-      this._form.schema = EDITOR_SCHEMA;
-      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
-      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name] || "";
+      this._form.computeLabel = (s) => t(`editor.${s.name}`);
+      this._form.computeHelper = (s) => (EDITOR_HELPERS.has(s.name) ? t(`editor.help.${s.name}`) : "");
       this._form.addEventListener("value-changed", (ev) => this._onFormChanged(ev));
       this.appendChild(this._form);
     }
+    this._form.schema = editorSchema();
     if (this._hass) this._form.hass = this._hass;
     this._form.data = {
       title: this._config.title != null ? this._config.title : "HelloFresh",

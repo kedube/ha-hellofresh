@@ -94,11 +94,12 @@ def test_code_literals_are_preserved(lang: str) -> None:
 def test_no_untranslated_prose(lang: str) -> None:
     """A multi-word value identical to English is an untranslated string, not a translation.
 
-    Short labels are exempt: "Market", "Login" and product names legitimately match.
+    Short labels are exempt: "Market", "Login" and product names legitimately match. Placeholders
+    are not words: French writes "{hours} h {minutes} min" exactly as English does.
     """
     untranslated = [
         key
         for key, value in _load(lang).items()
-        if value == EN_FLAT[key] and len(value.split()) > 2
+        if value == EN_FLAT[key] and len(re.sub(r"\{\w+\}", " ", value).split()) > 2
     ]
     assert not untranslated, f"{lang}.json has untranslated English at: {untranslated[:5]}"

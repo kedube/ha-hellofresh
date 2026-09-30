@@ -22,7 +22,7 @@ class HelloFreshCoordinatorEntity(CoordinatorEntity[HelloFreshDataUpdateCoordina
         (translated, user-facing) display name, so renaming a sensor would silently
         change its entity_id. Setting ``entity_id`` explicitly suggests a stable id
         based on the ``key`` instead, so ids stay constant across display-name changes
-        and match the ids the README and example dashboard reference
+        and match the ids the README and docs reference
         (e.g. ``sensor.hellofresh_us_<key>``). ``entity_id_format`` is the platform's
         ``ENTITY_ID_FORMAT`` (e.g. ``"sensor.{}"``).
         """

@@ -98,6 +98,11 @@ jobs:
       - name: Test card week-selection logic
         run: node .github/scripts/check_card_logic.mjs
 
+      # The card's English text ships twice: in strings.json (the source Home Assistant serves)
+      # and as www/hellofresh-i18n-en.js, generated from it. This fails when they drift.
+      - name: Check the card's English text module
+        run: python .github/scripts/generate_card_strings.py --check
+
   browser:
     name: Browser flows
     runs-on: ubuntu-latest

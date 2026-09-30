@@ -1,5 +1,6 @@
-// Tiny static server for the HelloFresh card harness: the integration's www/ at /hellofresh/, MDI
-// icon paths at /mdi.js, procedural "plate" images at /img/*.svg, and the harness page itself —
+// Tiny static server for the HelloFresh card harness: the integration's www/ at /hellofresh/, its
+// translation files at /translations/ (the fake Home Assistant serves the card's text from them),
+// MDI icon paths at /mdi.js, procedural "plate" images at /img/*.svg, and the harness page itself —
 // also under /hellofresh-app/..., the sidebar panel's address. `node server.mjs` serves on $PORT
 // (8765); the flows and screenshots start their own on a free port.
 import http from "node:http";
@@ -9,8 +10,16 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WWW = path.resolve(here, "../../custom_components/hellofresh/www");
+const TRANSLATIONS = path.resolve(here, "../../custom_components/hellofresh/translations");
 
-const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html", ".png": "image/png", ".svg": "image/svg+xml" };
+const TYPES = {
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".html": "text/html",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+};
 
 function hash(s) {
   let h = 2166136261;
@@ -66,6 +75,8 @@ function handle(req, res) {
   let type = "text/plain";
   if (url.pathname.startsWith("/hellofresh/")) {
     file = path.join(WWW, url.pathname.slice("/hellofresh/".length));
+  } else if (/^\/translations\/[a-zA-Z-]+\.json$/.test(url.pathname)) {
+    file = path.join(TRANSLATIONS, path.basename(url.pathname));
   } else if (url.pathname === "/mdi.js") {
     file = path.join(here, "node_modules/@mdi/js/mdi.js");
   } else if (url.pathname.startsWith("/img/")) {

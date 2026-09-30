@@ -34,6 +34,16 @@
  * add-ons; without it the footer reads in servings, as it always has.
  */
 
+// The card text layer (hellofresh-i18n.js), loaded with this module's own ?v= stamp: the sheet
+// reads in the HelloFresh card's language, and in English for the classic cards.
+const I18n = await import(
+  new URL(
+    `./hellofresh-i18n.js?v=${encodeURIComponent(new URL(import.meta.url).searchParams.get("v") || "unknown")}`,
+    import.meta.url
+  ).href
+);
+const { t, ht } = I18n;
+
 // ---- helpers (self-contained: this module must not depend on a host card's internals) ------
 
 export function escapeHtml(value) {
@@ -68,10 +78,10 @@ export function resizedImage(url, width) {
 
 export function formatMinutes(minutes) {
   if (!minutes && minutes !== 0) return "";
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return t("time.duration.minutes", { minutes });
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+  return rest ? t("time.duration.hours_minutes", { hours, minutes: rest }) : t("time.duration.hours", { hours });
 }
 
 // Step timers arrive in seconds so a short "rest 30 sec" timer survives; whole minutes read
@@ -80,8 +90,8 @@ export function formatSeconds(seconds) {
   const total = Math.round(Number(seconds));
   if (!Number.isFinite(total) || total <= 0) return "";
   if (total % 60 === 0) return formatMinutes(total / 60);
-  if (total < 60) return `${total} sec`;
-  return `${formatMinutes(Math.floor(total / 60))} ${total % 60} sec`;
+  if (total < 60) return t("time.duration.seconds", { seconds: total });
+  return `${formatMinutes(Math.floor(total / 60))} ${t("time.duration.seconds", { seconds: total % 60 })}`;
 }
 
 // Step photos render as thumbnails (at most 180px wide), so request 2x that, not the hero's 640.
@@ -334,10 +344,10 @@ export class RecipeDetailOverlay {
   }
 
   _body() {
-    const close = `<button class="detailclose" title="Close" aria-label="Close recipe">✕</button>`;
+    const close = `<button class="detailclose" title="${ht("common.close")}" aria-label="${ht("recipe.close")}">✕</button>`;
     if (this._loading && !this._detail) {
       return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg">Loading recipe…</div></div>`;
+                <div class="msg">${ht("recipe.loading")}</div></div>`;
     }
     if (this._error) {
       return `<div class="detailbox"><div class="detailhead">${close}</div>
@@ -351,7 +361,7 @@ export class RecipeDetailOverlay {
       facts.push(formatMinutes(r.prep_time_minutes || r.total_time_minutes));
     }
     if (r.calories_kcal) facts.push(`${Math.round(r.calories_kcal)} kcal`);
-    if (r.difficulty) facts.push(`Difficulty ${r.difficulty}`);
+    if (r.difficulty) facts.push(t("recipe.difficulty", { level: r.difficulty }));
     if (r.rating) facts.push(`★ ${Number(r.rating).toFixed(1)}`);
 
     // Serving switcher: amounts are resolved server-side per yield, so changing this refetches.
@@ -359,7 +369,7 @@ export class RecipeDetailOverlay {
     const servingsBar =
       yields.length > 1
         ? `<div class="servings">
-             <span class="slabel">Servings</span>
+             <span class="slabel">${ht("recipe.servings")}</span>
              ${yields
                .map(
                  (y) =>
@@ -374,9 +384,9 @@ export class RecipeDetailOverlay {
       .map((i) => {
         const amount = i.amount != null ? `${i.amount}${i.unit ? " " + i.unit : ""} ` : "";
         // Pantry staples you supply yourself are called out; everything else ships in the box.
-        const pantry = i.shipped === false ? ` <span class="pantry">(not in box)</span>` : "";
+        const pantry = i.shipped === false ? ` <span class="pantry">${ht("recipe.not_in_box")}</span>` : "";
         const contains = Array.isArray(i.allergens) && i.allergens.length
-          ? `<span class="ingallerg">Contains ${escapeHtml(i.allergens.join(", "))}</span>`
+          ? `<span class="ingallerg">${ht("recipe.contains", { allergens: i.allergens.join(", ") })}</span>`
           : "";
         // The name sits right beside the photo, so the image is decorative (empty alt). A row
         // without one keeps an empty 32px slot so the names stay aligned.
@@ -427,7 +437,7 @@ export class RecipeDetailOverlay {
           .join("");
         const figure = photo
           ? `<figure class="stepfig">
-               <img class="stepimg" src="${escapeHtml(photo)}" alt="Step ${i + 1}"
+               <img class="stepimg" src="${escapeHtml(photo)}" alt="${ht("recipe.step", { number: i + 1 })}"
                  loading="lazy" decoding="async">
                ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
              </figure>`
@@ -444,7 +454,7 @@ export class RecipeDetailOverlay {
     // HelloFresh's values are per serving, in its own order (calories first).
     const nutrition = Object.entries(r.nutrition || {}).filter(([k, v]) => k && v != null && v !== "");
     const nutritionTable = nutrition.length
-      ? `<h4>Nutrition <span class="slabel">per serving</span></h4>
+      ? `<h4>${ht("recipe.nutrition")} <span class="slabel">${ht("recipe.per_serving")}</span></h4>
          <dl class="nutri">${nutrition
            .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
            .join("")}</dl>`
@@ -475,22 +485,22 @@ export class RecipeDetailOverlay {
           ${r.description ? `<p class="detaildesc">${escapeHtml(r.description)}</p>` : ""}
           ${
             (r.allergens || []).length
-              ? `<div class="allerg">Allergens: ${escapeHtml(r.allergens.join(", "))}</div>`
+              ? `<div class="allerg">${ht("recipe.allergens", { allergens: r.allergens.join(", ") })}</div>`
               : ""
           }
           ${servingsBar}
-          ${ingredients ? `<h4>Ingredients</h4><ul class="ing">${ingredients}</ul>` : ""}
+          ${ingredients ? `<h4>${ht("recipe.ingredients")}</h4><ul class="ing">${ingredients}</ul>` : ""}
           ${
             (r.utensils || []).length
-              ? `<h4>You'll need</h4><div class="utensils">${escapeHtml(r.utensils.join(" · "))}</div>`
+              ? `<h4>${ht("recipe.utensils")}</h4><div class="utensils">${escapeHtml(r.utensils.join(" · "))}</div>`
               : ""
           }
-          ${steps ? `<h4>Instructions</h4><ol class="steps">${steps}</ol>` : ""}
+          ${steps ? `<h4>${ht("recipe.instructions")}</h4><ol class="steps">${steps}</ol>` : ""}
           ${nutritionTable}
           <div class="detaillinks">
-            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">Watch the recipe video</a>` : ""}
-            ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">Printable recipe card (PDF)</a>` : ""}
-            ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">View on hellofresh.com</a>` : ""}
+            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">${ht("recipe.video")}</a>` : ""}
+            ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">${ht("recipe.card_pdf")}</a>` : ""}
+            ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${ht("recipe.view_site")}</a>` : ""}
           </div>
         </div>
         ${this._selectionBar()}
@@ -505,21 +515,21 @@ export class RecipeDetailOverlay {
     if (!sel) return "";
     if (!sel.qty) {
       return `<div class="selfooter">
-                <span class="selstate">Not in this week's box</span>
-                <button class="sadd" data-sel="add">+ Add</button>
+                <span class="selstate">${ht("recipe.not_in_week_box")}</span>
+                <button class="sadd" data-sel="add">${ht("recipe.add")}</button>
               </div>`;
     }
-    const unit = sel.unit === "item" ? "item" : "serving";
-    const removeTitle = unit === "item" ? "Remove" : "Remove meal";
+    const item = sel.unit === "item";
+    const qty = Number(sel.qty);
     return `<div class="selfooter">
-              <span class="selstate">In this week's box</span>
+              <span class="selstate">${ht("recipe.in_week_box")}</span>
               <span class="selstep">
                 <button class="sqbtn" data-sel="dec"
-                  title="${sel.qty === 1 ? removeTitle : `Fewer ${unit}s`}">−</button>
-                <span class="sqval">${Number(sel.qty)}</span>
+                  title="${qty === 1 ? ht(item ? "market.remove" : "menu.remove_meal") : ht(item ? "recipe.fewer_items" : "menu.fewer_servings")}">−</button>
+                <span class="sqval">${qty}</span>
                 <button class="sqbtn" data-sel="inc" ${sel.qty >= sel.maxQty ? "disabled" : ""}
-                  title="More ${unit}s">+</button>
-                <span class="slabel">${unit}${sel.qty === 1 ? "" : "s"}</span>
+                  title="${ht(item ? "recipe.more_items" : "menu.more_servings")}">+</button>
+                <span class="slabel">${ht(item ? "recipe.item_unit" : "menu.serving_unit", { count: qty })}</span>
               </span>
             </div>`;
   }

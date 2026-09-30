@@ -1592,7 +1592,7 @@ Sensors backed by the next configurable week:
 | `next_selectable_delivery_meal_count` | `HelloFreshAccountData.next_modifiable_week.meals_selected` | Meals chosen so far for the next *modifiable* week (`nextModifiableDeliveryWeek`); `0` when no modifiable week is resolved |
 | `required_meal_count` | `HelloFreshAccountData.next_configurable_week.meals_required` | Meals required for the next upcoming week, falls back to subscription default |
 
-The `next_selection_deadline` sensor still carries per-week context in its attributes (the `next_selection_week` summary and the `weeks` list the example dashboard reads), even though its **state** comes from the next delivery week's `cutoffDate` (with `nextCutoffDate` as a fallback). The separate `next_selectable_delivery_selection_deadline` sensor tracks the later *modifiable* week's `cutoffDate`.
+The `next_selection_deadline` sensor still carries per-week context in its attributes (the `next_selection_week` summary and the `weeks` list, for templates and automations), even though its **state** comes from the next delivery week's `cutoffDate` (with `nextCutoffDate` as a fallback). The separate `next_selectable_delivery_selection_deadline` sensor tracks the later *modifiable* week's `cutoffDate`.
 
 Current UI-facing labels that differ from the raw entity ids:
 

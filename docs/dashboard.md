@@ -52,9 +52,16 @@ add-on), so on any dashboard it is one line — or pick **HelloFresh** in the ca
 type: custom:hellofresh-card
 ```
 
-It works in a narrow column or a phone but shines full width. The ready-made
-[`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml) is a single panel view with just this
-card, if you want a dashboard of your own rather than the sidebar entry.
+It works in a narrow column or on a phone but shines full width. For a dashboard of its own rather
+than the sidebar entry, give it a view to itself with the **Panel** layout:
+
+```yaml
+views:
+  - title: HelloFresh
+    type: panel
+    cards:
+      - type: custom:hellofresh-card
+```
 
 | Option | Default | Description |
 |---|---|---|
@@ -299,6 +306,17 @@ take focus when they open, close with Escape and hand focus back.
 
 <br clear="right">
 
+## Language
+
+The card speaks the language of your Home Assistant profile: Danish, Dutch, English, French,
+German, Norwegian (Bokmål) or Swedish, like the rest of the integration. It writes dates, times and
+prices the way that language does, and follows the profile's number format and 12/24-hour clock.
+Change the language in your profile and the card follows without a reload. Any other language
+shows the card in English.
+
+What HelloFresh itself writes (dish names and descriptions, menu categories, delivery windows,
+voucher names, carrier scans) comes in your HelloFresh account's language, whatever the card's.
+
 ## Stays current
 
 The card reads `hellofresh.get_weeks` once for Overview, Menu and Market, plus
@@ -319,10 +337,9 @@ working together.
 To switch:
 
 1. Open **HelloFresh** in the sidebar ([above](#in-the-sidebar)) — or put
-   `type: custom:hellofresh-card` on a dashboard, or use
-   [`dashboard/hellofresh.yaml`](../dashboard/hellofresh.yaml).
-2. Remove the classic cards from your dashboards, or delete the dashboard you made from
-   [`dashboard/hellofresh-classic.yaml`](../dashboard/hellofresh-classic.yaml).
+   `type: custom:hellofresh-card` on a dashboard ([above](#adding-the-card-to-a-dashboard)).
+2. Remove the classic cards from your dashboards, or delete the dashboard you made from the old
+   example dashboard (it was built from them).
 
 Your filters, "In my box" and the week you were on carry over: the HelloFresh card stores them under
 the same keys. Nothing changes on the integration side — entities, services and automations are
@@ -439,8 +456,8 @@ type: custom:hellofresh-cost-card
 
 ### Missing Ingredients view
 
-The classic dashboard's view of two built-in **to-do list** cards, one per delivery week, over the
-[prep lists](entities.md#prep-lists) (`todo.<prefix>_prep_list` and
+The old example dashboard's view of two built-in **to-do list** cards, one per delivery week, over
+the [prep lists](entities.md#prep-lists) (`todo.<prefix>_prep_list` and
 `todo.<prefix>_prep_list_week_2`). The lists are ordinary to-do entities and aren't going anywhere;
 only this view is replaced, by [Overview › Before it arrives](#overview).
 

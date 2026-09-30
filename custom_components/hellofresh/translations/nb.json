@@ -751,5 +751,842 @@
         }
       }
     }
+  },
+  "config_panel": {
+    "card": {
+      "meta": {
+        "language": "nb"
+      },
+      "common": {
+        "close": "Lukk",
+        "refresh": "Oppdater",
+        "retry": "Prøv igjen",
+        "try_again": "Prøv igjen",
+        "loading": "Laster …",
+        "loading_label": "Laster",
+        "show_more": "Vis flere",
+        "dismiss": "Lukk",
+        "clear_search": "Tøm søk",
+        "cancel": "Avbryt",
+        "fewer": "Færre",
+        "more": "Flere"
+      },
+      "views": {
+        "overview": "Oversikt",
+        "menu": "Meny",
+        "market": "Market",
+        "recipes": "Oppskrifter",
+        "account": "Konto"
+      },
+      "card": {
+        "sections": "HelloFresh-seksjoner",
+        "sidebar": "Sidepanel",
+        "open_sidebar": "Åpne sidepanelet",
+        "plan_size": {
+          "one": "{count} rett for {people}",
+          "other": "{count} retter for {people}"
+        },
+        "weeks_need_picks": {
+          "one": "{count} uke trenger valg av retter",
+          "other": "{count} uker trenger valg av retter"
+        },
+        "load_failed": "Kunne ikke laste leveringene dine: {error}"
+      },
+      "banner": {
+        "refresh_failed": "Kunne ikke oppdatere: {error}",
+        "payment_card": "betalingskort",
+        "card_expired": "Kortet ditt, {card}, har utløpt. Oppdater det hos HelloFresh, ellers blir kanskje ikke neste kasse sendt.",
+        "card_expired_date": "Kortet ditt, {card}, har utløpt ({date}). Oppdater det hos HelloFresh, ellers blir kanskje ikke neste kasse sendt.",
+        "card_expiring": "Kortet ditt, {card}, utløper snart. Oppdater det hos HelloFresh før neste kasse belastes.",
+        "card_expiring_date": "Kortet ditt, {card}, utløper snart ({date}). Oppdater det hos HelloFresh før neste kasse belastes.",
+        "holiday_date": "Ny leveringsdato: {date}."
+      },
+      "state": {
+        "ready": {
+          "label": "Kan endres",
+          "short": "Åpen"
+        },
+        "needs": {
+          "label": "Valg kreves",
+          "short": "Velg retter"
+        },
+        "preselected": {
+          "label": "Forhåndsvalgt",
+          "short": "Forhåndsvalgt",
+          "hint": "HelloFresh valgte disse rettene for deg — se over og juster før fristen."
+        },
+        "shipping": {
+          "label": "På vei",
+          "short": "På vei"
+        },
+        "delivered": {
+          "label": "Levert",
+          "short": "Levert"
+        },
+        "skipped": {
+          "label": "Hoppet over",
+          "short": "Hoppet over"
+        },
+        "locked": {
+          "label": "Låst",
+          "short": "Låst"
+        }
+      },
+      "status": {
+        "active": "Aktiv",
+        "inactive": "Inaktiv",
+        "paused": "Pauset",
+        "running": "Aktiv",
+        "cancelled": "Avsluttet",
+        "canceled": "Avsluttet",
+        "skipped": "Hoppet over",
+        "delivered": "Levert",
+        "shipped": "Sendt",
+        "in_transit": "Underveis",
+        "out_for_delivery": "Ute for levering",
+        "on_the_way": "På vei",
+        "pre_transit": "Etikett opprettet",
+        "label_created": "Etikett opprettet",
+        "received_at_origin_facility": "Mottatt på avsenderterminalen",
+        "failed": "Mislyktes",
+        "exception": "Leveringsproblem",
+        "delivery_exception": "Leveringsproblem",
+        "delayed": "Forsinket",
+        "complete": "Fullført",
+        "completed": "Fullført",
+        "unknown": "Ukjent"
+      },
+      "time": {
+        "duration": {
+          "minutes": "{minutes} min",
+          "hours": "{hours} t",
+          "hours_minutes": "{hours} t {minutes} min",
+          "seconds": "{seconds} sek"
+        },
+        "left": {
+          "passed": "utløpt",
+          "days_hours": "{days} d {hours} t igjen",
+          "days": "{days} d igjen",
+          "hours": "{hours} t igjen",
+          "minutes": "{minutes} min igjen"
+        },
+        "any_minute": "når som helst nå",
+        "in": "om {duration}",
+        "just_now": "akkurat nå",
+        "ago": "for {duration} siden"
+      },
+      "week": {
+        "skip_this_week": "Hopp over denne uken",
+        "skip_week": "Hopp over uke",
+        "holiday_change": "Endret levering på grunn av helligdag",
+        "holiday_schedule": "Helligdagsplan",
+        "make_changes_by": "Gjør endringer innen {date}",
+        "autopicked_title": "HelloFresh valgte disse rettene for deg.",
+        "unskip_this_week": "Gjenopprett denne uken",
+        "review": "Se over",
+        "edit": "Endre",
+        "choose": "Velg",
+        "change_day": "Endre dag",
+        "unskip": "Gjenopprett",
+        "skip": "Hopp over",
+        "nothing_ships": "Ingenting sendes denne uken.",
+        "edit_by": "Endre innen {date}",
+        "no_box": "Ingen kasse denne uken",
+        "review_picks": "Se over HelloFreshs valg",
+        "pick_n_meals": {
+          "one": "Velg {count} rett",
+          "other": "Velg {count} retter"
+        },
+        "pick_your_meals": "Velg rettene dine",
+        "plan_n": "abonnement: {count}",
+        "next": "Neste",
+        "previous_week": "Forrige uke",
+        "next_week": "Neste uke",
+        "preselected_title": "HelloFresh valgte rettene for denne uken.",
+        "pantry": "Handleliste",
+        "unskip_week": "Gjenopprett uke",
+        "skipped_title": "Denne uken er hoppet over.",
+        "unskip_to_choose": "Gjenopprett den for å velge retter.",
+        "autopicked_before": "Behold dem eller bytt noen før {date}.",
+        "closed": "Endringer er stengt for denne kassen — den sendes slik den er."
+      },
+      "skip": {
+        "title": "Hoppe over {date}?",
+        "body": "Ingen kasse sendes den uken, og du belastes ikke for den. Du kan gjenopprette den frem til valgfristen.",
+        "keep": "Behold kassen",
+        "skip_failed": "Kunne ikke hoppe over uken: {error}",
+        "unskip_failed": "Kunne ikke gjenopprette uken: {error}",
+        "restored": "Uken er gjenopprettet — kassen din kommer som vanlig.",
+        "done": "Uken er hoppet over."
+      },
+      "reschedule": {
+        "title": "Endre leveringsdag",
+        "current": "Nåværende",
+        "only_this_box": "Bare for kassen som er planlagt {date}",
+        "none": "Ingen andre dager er tilgjengelige.",
+        "failed": "Kunne ikke endre dag: {error}",
+        "done": "Leveringsdagen er endret for den uken."
+      },
+      "pantry": {
+        "update_failed": "Kunne ikke oppdatere listen: {error}",
+        "list": "Handleliste",
+        "title": "Basisvarer",
+        "nothing": "Ingenting ekstra å kjøpe til denne kassen.",
+        "sub": {
+          "one": "Ikke i kassen for {date} · {count} å skaffe",
+          "other": "Ikke i kassen for {date} · {count} å skaffe"
+        }
+      },
+      "overview": {
+        "no_deliveries": "Fant ingen leveringer for denne kontoen.",
+        "last_box": "Forrige kasse",
+        "arriving_today": "Kommer i dag",
+        "arriving_tomorrow": "Kommer i morgen",
+        "next_box": "Neste kasse",
+        "skipped_title": "Denne kassen er hoppet over.",
+        "skipped_body": "Ingenting sendes, og du belastes ikke.",
+        "skipped_body_unskip": "Ingenting sendes, og du belastes ikke — gjenopprett den før fristen.",
+        "autopicked_body": "Behold dem eller bytt noen før fristen.",
+        "unsaved": "Du har endringer i denne kassen som ikke er lagret.",
+        "finish": "Fullfør",
+        "price_plan": "{price} abonnementspris",
+        "price_total": "{price} totalt",
+        "charged": "Belastes {date}",
+        "discount": "−{amount} rabatt",
+        "coupon": "Rabattkode {code}",
+        "review_meals": "Se over rettene",
+        "edit_meals": "Endre retter",
+        "choose_meals": "Velg retter",
+        "add_extras": "Legg til ekstra",
+        "view_meals": "Se rettene",
+        "no_box": "Ingen kasse denne uken.",
+        "extras_line": "{extras}: {names}",
+        "no_meals": "Ingen retter valgt ennå.",
+        "pick_meals": "Velg retter",
+        "more": "+{count} til",
+        "chip_review": "se over",
+        "chip_pick": "velg retter",
+        "more_weeks_need_picks": {
+          "one": "{count} uke til trenger valgene dine",
+          "other": "{count} uker til trenger valgene dine"
+        },
+        "before_it_arrives": "Før kassen kommer",
+        "pantry_note": {
+          "one": "{count} basisvare som ikke er i kassen",
+          "other": "{count} basisvarer som ikke er i kassen"
+        },
+        "pantry_done": "Alle basisvarer er krysset av",
+        "see_all": "Se alle {count}",
+        "layout": "Visning av leveringsplanen",
+        "weeks": "Uker",
+        "calendar": "Kalender",
+        "delivery_calendar": "Leveringskalender",
+        "coming_up": "Kommende",
+        "subscription_inactive": "Abonnementet ditt er {status} — ingen kasser er planlagt.",
+        "no_later_weeks": "HelloFresh har ikke publisert senere uker ennå.",
+        "recent_deliveries": "Siste leveringer",
+        "history_weeks": {
+          "one": "{count} uke med historikk",
+          "other": "{count} uker med historikk"
+        }
+      },
+      "live": {
+        "step": {
+          "packed": "Pakket",
+          "on_the_way": "På vei",
+          "delivered": "Levert"
+        },
+        "phase": {
+          "at_depot": "Pakket på depotet",
+          "driver_departed": "Sjåføren har kjørt",
+          "on_the_way": "På vei til deg",
+          "delayed": "Forsinket",
+          "delivered": "Levert",
+          "delivered_home": "Levert",
+          "cancelled": "Leveringen er kansellert"
+        },
+        "arrives": "Kommer {time}",
+        "youre_next": "Du er neste",
+        "stops_before": "{stops} før deg",
+        "stops": {
+          "one": "{count} stopp",
+          "other": "{count} stopp"
+        },
+        "driver": "Sjåfør {name}",
+        "window": "Tidsrom {window}",
+        "badge": "Live",
+        "map": "Live-kart",
+        "updated": "Oppdatert {ago}"
+      },
+      "tracking": {
+        "step": {
+          "preparing": "Klargjøres",
+          "shipped": "Sendt",
+          "out_for_delivery": "Ute for levering",
+          "delivered": "Levert"
+        },
+        "delivered_at": "Levert {when}",
+        "estimated": "Forventet {date}",
+        "hide_history": "Skjul historikk",
+        "history": "Historikk ({count})",
+        "history_label": "Sporingshistorikk",
+        "open_photo": "Åpne leveringsbildet",
+        "photo": "Leveringsbilde",
+        "photo_n": "Leveringsbilde {number}",
+        "signed_by": "Signert av {name}",
+        "progress": "Leveringsforløp",
+        "photo_hint": "Bilde"
+      },
+      "order": {
+        "status": "Status",
+        "carrier": "Transportør",
+        "tracking": "Sporing",
+        "delivered": "Levert",
+        "order": "Ordre"
+      },
+      "delivery": {
+        "row_label": "{date}: {state}. Leveringsdetaljer",
+        "label": "Leveringsdetaljer for {date}",
+        "delivered_title": "Levert {when}",
+        "box_for": "Kasse for {date}",
+        "order": "Ordre {id}",
+        "open_full_photo": "Åpne bildet i full størrelse",
+        "no_photo_carrier": "{carrier} delte ikke noe leveringsbilde for denne kassen.",
+        "no_photo": "Det ble ikke delt noe leveringsbilde for denne kassen.",
+        "in_box": "I denne kassen",
+        "charged": "Belastet",
+        "order_total": "Ordretotal",
+        "charges": "Betaling",
+        "view_menu": "Se menyen for denne uken",
+        "no_details": "Ingen detaljer for denne kassen ennå."
+      },
+      "calendar": {
+        "today": "I dag",
+        "boxes": {
+          "one": "{count} kasse",
+          "other": "{count} kasser"
+        },
+        "skipped": {
+          "one": "{count} hoppet over",
+          "other": "{count} hoppet over"
+        },
+        "previous_month": "Forrige måned",
+        "next_month": "Neste måned",
+        "no_deliveries": "Ingen leveringer i {month}.",
+        "holiday_note": "helligdagsplan"
+      },
+      "meals": {
+        "none_chosen": "Ingen retter valgt ennå",
+        "extras": {
+          "one": "{count} ekstravare",
+          "other": "{count} ekstravarer"
+        },
+        "count": {
+          "one": "{count} rett",
+          "other": "{count} retter"
+        },
+        "servings": {
+          "one": "{count} porsjon",
+          "other": "{count} porsjoner"
+        }
+      },
+      "menu": {
+        "original_recipe": "Originaloppskrift",
+        "no_weeks": "Fant ingen leveringsuker.",
+        "no_meals_skipped": "Ingen retter denne uken.",
+        "no_meals_delivered": "Ingen retter ble levert denne uken.",
+        "not_published": "Menyen for denne uken er ikke publisert ennå.",
+        "search_delivered": "Søk i leverte retter",
+        "search": "Søk i ukens meny",
+        "filters": "Filtre",
+        "in_my_box": "I kassen min",
+        "filtering": "Filtrerer …",
+        "remove_filter": "Fjern: {label}",
+        "clear_all": "Fjern alle",
+        "no_match_query": "Ingen retter passer med «{query}».",
+        "nothing_in_box": "Ingenting i kassen ennå — slå av «{in_my_box}» for å se menyen.",
+        "no_match_filters": "Ingen retter passer med disse filtrene.",
+        "result_count": "{shown} av {total}",
+        "delivered_this_week": "Levert denne uken",
+        "show_more": "Vis {count} til · {left} igjen",
+        "protein_g": "{grams} g protein",
+        "ordered": "Bestilt {count}×",
+        "ordered_last": "Bestilt {count}× · sist {week}",
+        "you_rated": "Din vurdering: {rating}/{scale}",
+        "add_aria": "Legg {name} i kassen",
+        "add": "Legg til",
+        "servings_of": "Porsjoner av {name}",
+        "remove_meal": "Fjern rett",
+        "fewer_servings": "Færre porsjoner",
+        "more_servings": "Flere porsjoner",
+        "serving_unit": {
+          "one": "porsjon",
+          "other": "porsjoner"
+        },
+        "in_box": "I kassen",
+        "per_serving": "/porsjon",
+        "in_cookbook": "I kokeboken din",
+        "in_your_box": "I kassen din",
+        "sold_out": "Utsolgt",
+        "play_video": "Spill av video for {name}",
+        "surcharge": "Premiumtillegg per porsjon"
+      },
+      "filters": {
+        "protein": {
+          "beef": "Storfe",
+          "poultry": "Fjærkre",
+          "pork": "Svin",
+          "seafood": "Sjømat",
+          "lamb": "Lam",
+          "veggie": "Vegetar"
+        },
+        "diet": {
+          "vegetarian": "Vegetar",
+          "under-650-cal": "Under 650 kalorier",
+          "high-protein": "Proteinrik",
+          "carb-conscious": "Karbohydratbevisst",
+          "high-fiber": "Fiberrik",
+          "gluten-free": "Glutenfri",
+          "sodium-smart": "Lite salt",
+          "low-sugar": "Lite tilsatt sukker",
+          "organic-protein": "Økologisk protein",
+          "glp1": "GLP-1-støtte"
+        },
+        "time": {
+          "under-15-min": "Under 15 minutter",
+          "under-20-min": "Under 20 minutter",
+          "under-30-min": "Under 30 minutter"
+        },
+        "highlight": {
+          "new": "Nyhet",
+          "bestseller": "Bestselgere",
+          "cooked-before": "Laget tidligere",
+          "favorite": "Favoritter"
+        },
+        "double_protein": "2x protein",
+        "categories": "Kategorier",
+        "all": "Alle",
+        "main_protein": "Hovedprotein",
+        "dietary": "Kostholdspreferanse",
+        "cooking_time": "Total tilberedningstid",
+        "any": "Alle",
+        "highlights": "Høydepunkter",
+        "clear_all": "Fjern alle filtre"
+      },
+      "customize": {
+        "aria": "Tilpass {dish}: {option}, {options}",
+        "title": "Tilpass",
+        "options": {
+          "one": "{count} valg",
+          "other": "{count} valg"
+        },
+        "label": "Tilpass {dish}",
+        "taken": "Allerede i kassen din",
+        "included": "Inkludert",
+        "as_written": "Slik oppskriften er skrevet",
+        "update": "Oppdater kassen",
+        "add": "Legg i kassen",
+        "in_box": "i kassen din",
+        "ways": "Måter å lage denne retten på",
+        "view_recipe": "Se oppskriften"
+      },
+      "box": {
+        "closed_toast": "Endringer er stengt for denne uken — kassen sendes slik den ble lagret.",
+        "min_toast": "Velg minst {min} retter før du lagrer ({selected} valgt).",
+        "saving": "Lagrer kassen …",
+        "save_failed": "Kunne ikke lagre kassen: {error}",
+        "saved": "Kassen er lagret.",
+        "unsaved_changes": "Endringer som ikke er lagret",
+        "downsized_title": "HelloFresh reduserte denne kassen for å passe til abonnementet ditt.",
+        "downsized_body": "Færre varer enn du valgte, ble lagret — sjekk den lagrede kassen nedenfor.",
+        "kind_label": "Retter eller ekstra",
+        "meals": "Retter",
+        "extras": "Ekstra",
+        "box_total": "Kassetotal",
+        "selected_of_required": "{selected} av {required} retter",
+        "deadline_passed": "Fristen har gått ut — disse endringene kan ikke lagres",
+        "min_note": "Velg minst {min} retter for å lagre",
+        "resized_note": "Kassen er endret til {selected} retter denne uken (abonnement: {required}) — HelloFresh beregner ny pris",
+        "saved_note": "Lagret · kan endres frem til fristen",
+        "estimated_total": "Beregnet total",
+        "updating_price": "Oppdaterer pris …",
+        "discard_changes": "Forkast endringer",
+        "discard": "Forkast",
+        "save": "Lagre kassen",
+        "your_box": "Kassen din",
+        "new": "Ny",
+        "was": "Var {count}",
+        "removed": "Fjernet",
+        "shipping": "Frakt",
+        "tax": "MVA",
+        "extras_change": "Ekstra (denne endringen)",
+        "updating": "Oppdaterer …",
+        "price": "Pris",
+        "estimate_note": "Et anslag — HelloFresh beregner endelig pris når kassen belastes.",
+        "min_notice": "Velg minst {min} retter — HelloFresh har ingen mindre kasse.",
+        "resized_notice": "Kassen denne uken er endret til {meals} (abonnementet ditt har {required}). HelloFresh beregner ny pris; selve abonnementet endres ikke.",
+        "unsaved_lower": "endringer som ikke er lagret",
+        "keep_editing": "Fortsett å endre"
+      },
+      "market": {
+        "group": {
+          "appetizer": "Forretter",
+          "breakfast": "Frokost",
+          "dessert": "Desserter",
+          "lunch": "Lunsj",
+          "protein": "Proteiner",
+          "sides": "Tilbehør",
+          "donation": "Donasjoner",
+          "lowprices": "Lave priser",
+          "modularity": "Ekstra"
+        },
+        "search": "Søk i ekstravarer",
+        "none_ordered": "Ingen ekstravarer ble bestilt denne uken.",
+        "not_open": "Market for denne uken er ikke åpen ennå.",
+        "no_match_query": "Ingen ekstravarer passer med «{query}».",
+        "none_in_box": "Ingen ekstravarer i kassen ennå.",
+        "no_match_categories": "Ingen ekstravarer passer med disse kategoriene.",
+        "add_aria": "Legg til {name}",
+        "quantity_of": "Antall av {name}",
+        "remove": "Fjern",
+        "in_box_unit": "i kassen",
+        "ordered": "{count} bestilt",
+        "open": "Åpne: {name}"
+      },
+      "money": {
+        "total": "Totalt",
+        "plan_price": "Abonnementspris",
+        "discount": "Rabatt"
+      },
+      "voucher": {
+        "expires": "utløper {date}",
+        "one_time": "engangsbruk",
+        "code": "Kupong {code}",
+        "label": "Kupong"
+      },
+      "recipe": {
+        "open": "Åpne oppskrift: {name}",
+        "close": "Lukk oppskriften",
+        "loading": "Laster oppskrift …",
+        "difficulty": "Vanskelighetsgrad {level}",
+        "servings": "Porsjoner",
+        "not_in_box": "(ikke i kassen)",
+        "contains": "Inneholder {allergens}",
+        "step": "Trinn {number}",
+        "nutrition": "Næringsinnhold",
+        "per_serving": "per porsjon",
+        "allergens": "Allergener: {allergens}",
+        "ingredients": "Ingredienser",
+        "utensils": "Du trenger",
+        "instructions": "Fremgangsmåte",
+        "video": "Se oppskriftsvideoen",
+        "card_pdf": "Utskriftsvennlig oppskriftskort (PDF)",
+        "view_site": "Vis hos HelloFresh",
+        "not_in_week_box": "Ikke i denne ukens kasse",
+        "add": "+ Legg til",
+        "in_week_box": "I denne ukens kasse",
+        "fewer_items": "Færre varer",
+        "more_items": "Flere varer",
+        "item_unit": {
+          "one": "vare",
+          "other": "varer"
+        }
+      },
+      "recipes": {
+        "search_failed": "Søket mislyktes: {error}",
+        "saved": "Lagret i kokeboken din.",
+        "removed": "Fjernet fra kokeboken din.",
+        "save_failed": "Kunne ikke lagre oppskriften: {error}",
+        "remove_failed": "Kunne ikke fjerne oppskriften: {error}",
+        "search_label": "Søk etter oppskrifter",
+        "filter_cookbook": "Filtrer kokeboken din",
+        "search_catalog": "Søk i over 10 000 oppskrifter",
+        "top_rated": "Best vurdert",
+        "cookbook": "Kokebok",
+        "fewer_categories": "Færre",
+        "all_categories": "Alle kategorier",
+        "refine": "Filtrer",
+        "none": "Fant ingen oppskrifter.",
+        "no_match": "Ingen oppskrifter passer med «{query}».",
+        "results": {
+          "one": "{count} treff i alle kategorier",
+          "other": "{count} treff i alle kategorier"
+        },
+        "cookbook_empty": "Kokeboken din er tom. Trykk på hjertet på en oppskrift for å lagre den her.",
+        "no_saved_match": "Ingen lagrede oppskrifter passer med «{query}».",
+        "remove_aria": "Fjern fra kokeboken: {name}",
+        "save_aria": "Lagre i kokeboken: {name}",
+        "remove_title": "Fjern fra kokeboken",
+        "save_title": "Lagre i kokeboken"
+      },
+      "account": {
+        "credit_card": "Betalingskort",
+        "card_ending": "{brand} som slutter på {last4}",
+        "tab": {
+          "plan": "Abonnement og betaling",
+          "profile": "Matpreferanser",
+          "spending": "Utgifter"
+        },
+        "sections": "Kontoseksjoner",
+        "load_failed": "Kunne ikke laste kontoen din.",
+        "plan": "Abonnement",
+        "meal_preference": "Måltidspreferanse",
+        "servings": "Porsjoner",
+        "meals_per_box": "Retter per kasse",
+        "credit": "Tilgodebeløp",
+        "card_on_file": "Registrert kort",
+        "card_expiry": "utløper {date}",
+        "card_expired": "utløpt",
+        "card_expiring": "utløper snart",
+        "boxes_received": "Mottatte kasser",
+        "account_id": "Konto-ID",
+        "delivery_address": "Leveringsadresse",
+        "upcoming_boxes": "Kommende kasser",
+        "need_picks": "Trenger valg",
+        "tap_to_review": "Trykk for å se over",
+        "next_skipped": "Neste som hoppes over",
+        "your_plan": "Abonnementet ditt",
+        "upcoming": "Kommende",
+        "presets": "Måltidsprofiler",
+        "presets_loading": "Laster måltidsprofiler …",
+        "presets_none": "Ingen måltidsprofiler tilgjengelig.",
+        "yours": "Din",
+        "presets_note": "Hva hver profil betyr — HelloFresh bruker din til å velge retter. Du endrer den hos HelloFresh."
+      },
+      "plan": {
+        "options_loading": "Valgene lastes straks …",
+        "settings": "Abonnementsinnstillinger",
+        "settings_note": "Disse endrer alle fremtidige kasser — og hva du belastes. For å endre én uke bruker du {change_day} eller {skip} på den uken.",
+        "from_to": "Fra {from} til {to}",
+        "every_future_box": "alle fremtidige kasser",
+        "box_size": {
+          "label": "Kassestørrelse",
+          "hint": "Retter per uke og porsjoner per rett",
+          "option": "{meals} × {servings}",
+          "change": "Endre kassestørrelse",
+          "title": "Endre kassestørrelsen?",
+          "body": "Dette gjelder {every_future_box} og endrer hva du belastes. Kasser der valgfristen har gått ut, beholder gjeldende innstilling.",
+          "changed": "Kassestørrelsen er endret.",
+          "failed": "Kunne ikke endre kassestørrelsen: {error}"
+        },
+        "delivery_day": {
+          "label": "Leveringsdag",
+          "hint": "Den vanlige leveringsdagen og tidsrommet ditt",
+          "change": "Endre leveringsdag",
+          "title": "Endre leveringsdagen?",
+          "body": "Dette gjelder {every_future_box}. Kasser der valgfristen har gått ut, beholder gjeldende innstilling.",
+          "changed": "Leveringsdagen er endret.",
+          "failed": "Kunne ikke endre leveringsdagen: {error}"
+        }
+      },
+      "health": {
+        "title": "Integrasjonsstatus",
+        "access_token": "Tilgangstoken",
+        "minutes_left": {
+          "one": "{count} min igjen",
+          "other": "{count} min igjen"
+        },
+        "refresh_token": "Fornyelsestoken",
+        "days_left": {
+          "one": "{count} dag igjen",
+          "other": "{count} dager igjen"
+        },
+        "write_actions": "Skrivehandlinger",
+        "available": "Tilgjengelig",
+        "unavailable": "Utilgjengelig",
+        "api_payloads": "API-data",
+        "payload_changed": "Endret — sjekk loggene",
+        "payload_ok": "Som forventet",
+        "no_sensors": "Statussensorene er ikke tilgjengelige.",
+        "card_updated": "Kortet oppdatert {time}",
+        "refresh": "Oppdater fra HelloFresh",
+        "refreshed": "Oppdatert fra HelloFresh.",
+        "refresh_failed": "Oppdatering mislyktes: {error}"
+      },
+      "spending": {
+        "load_failed": "Kunne ikke laste utgiftene dine: {error}",
+        "none": "Ingen utgiftshistorikk ennå.",
+        "total_spent": "Totalt brukt",
+        "lifetime": "Leverte kasser, totalt",
+        "boxes": "Kasser",
+        "average_box": "Snitt per kasse",
+        "saved_vouchers": "Spart med kuponger",
+        "no_box": "ingen kasse",
+        "upcoming_note": "kommende",
+        "monthly": "Kostnad per måned",
+        "peak": "Høyest {price}",
+        "chart_label": {
+          "one": "Månedlig HelloFresh-kostnad den siste måneden",
+          "other": "Månedlig HelloFresh-kostnad de siste {count} månedene"
+        },
+        "by_month": "Per måned",
+        "recent_boxes": "Siste kasser",
+        "upcoming": "Kommende"
+      },
+      "profile": {
+        "field": {
+          "exclusions": "Unngå",
+          "primary_proteins": "Proteiner",
+          "flavors": "Smaker",
+          "goals": "Personlige mål",
+          "nutritions": "Ernæring",
+          "cuisines": "Kjøkken",
+          "dish_types": "Rettstyper",
+          "meal_types": "Tilberedningsstiler",
+          "dietary_preferences": "Kostholdstype"
+        },
+        "value": {
+          "mostly-meat": "Jeg spiser alt",
+          "flexitarian": "Fleksitarianer",
+          "pescatarian": "Pescetarianer",
+          "vegetarian": "Vegetarianer",
+          "vegan": "Veganer",
+          "quick-easy": "Raske oppskrifter",
+          "batch": "Oppskrifter for flere dager",
+          "chef-style": "Oppskrifter i kokkestil",
+          "family-style": "Familieoppskrifter",
+          "bake": "Ovnsretter",
+          "bowl": "Bowls",
+          "burger": "Burgere",
+          "main-plus-sides": "Hovedrett med tilbehør",
+          "pizza": "Pizzaer",
+          "salad": "Salater",
+          "sandwich": "Smørbrød",
+          "soups-stews": "Supper eller gryteretter",
+          "stir-fry": "Wokretter",
+          "wrap": "Wraps",
+          "noodle": "Nudler",
+          "pasta": "Pasta",
+          "glp1-support": "GLP-1-vennlig",
+          "plant-based": "Plantebasert",
+          "high-protein": "Proteinrik",
+          "low-calorie": "Kaloriredusert",
+          "low-carb": "Lite karbohydrater",
+          "make-cooking-easy": "Gjør matlagingen enklere",
+          "try-new-recipes": "Prøve nye oppskrifter",
+          "save-time": "Spare tid",
+          "save-money": "Spare penger",
+          "eat-healthier": "Spise sunnere",
+          "improve-health": "Bedre helse",
+          "waste-less-food": "Kaste mindre mat",
+          "beef": "Storfe",
+          "pork": "Svin",
+          "chicken": "Kylling",
+          "poultry": "Fjærkre",
+          "fish": "Fisk",
+          "shellfish": "Skalldyr",
+          "salmon": "Laks",
+          "cod": "Torsk",
+          "tuna": "Tunfisk",
+          "seabass": "Havabbor",
+          "tilapia": "Tilapia",
+          "barramundi": "Barramundi",
+          "trout": "Ørret",
+          "tofu": "Tofu",
+          "halloumi": "Halloumi",
+          "legumes": "Belgfrukter",
+          "plant-based-proteins": "Plantebaserte proteiner",
+          "mushroom-based-proteins": "Soppbaserte proteiner",
+          "shrimp-prawns": "Reker",
+          "meat-alternative": "Kjøtterstatninger",
+          "nuts": "Nøtter",
+          "tree-nuts": "Trenøtter",
+          "mushrooms": "Sopp",
+          "olives": "Oliven",
+          "gluten": "Gluten",
+          "brussel-sprouts": "Rosenkål",
+          "egg": "Egg",
+          "cheesy": "Ostete",
+          "herbs": "Urter",
+          "spicy": "Sterk",
+          "sweet": "Søt",
+          "smoky": "Røkt",
+          "tangy": "Syrlig",
+          "caribbean": "Karibisk",
+          "chinese": "Kinesisk",
+          "classic-american": "Klassisk amerikansk",
+          "french": "Fransk",
+          "greek": "Gresk",
+          "indian": "Indisk",
+          "italian": "Italiensk",
+          "japanese": "Japansk",
+          "korean": "Koreansk",
+          "mexican": "Meksikansk",
+          "middle-eastern": "Midtøsten",
+          "new-zealand": "New Zealand",
+          "thai": "Thai"
+        },
+        "value_hint": {
+          "quick-easy": "Under 20 minutter, lite forberedelser",
+          "batch": "Forbered på forhånd og spar tid gjennom uken",
+          "chef-style": "Ovnsretter, steker og mer på 20–40 minutter",
+          "family-style": "Oppskrifter som passer både barn og voksne"
+        },
+        "diet_hint": {
+          "flexitarian": "Hovedsakelig plantebasert, med litt kjøtt innimellom.",
+          "mostly-meat": "Jeg varierer. Kjøtt, grønnsaker og alt imellom.",
+          "vegetarian": "Uten kjøtt og fisk, med vekt på planter, meieriprodukter og egg.",
+          "pescatarian": "Inneholder fisk og sjømat, men ikke annet kjøtt.",
+          "vegan": "Uten animalske produkter, helt plantebasert."
+        },
+        "protein_question": {
+          "pescatarian": "Hvilken sjømat liker du?",
+          "vegetarian": "Hvilke kjøttfrie proteiner liker du?",
+          "vegan": "Hvilke veganske proteiner liker du?",
+          "default": "Hvilke proteiner liker du?"
+        },
+        "goals_hint": "Velg opptil {max} som betyr mest for deg.",
+        "meal_types_required": "Du må velge minst én tilberedningsstil",
+        "exclude_notice": "Vær oppmerksom på at noen oppskrifter i menyen fortsatt kan inneholde disse ingrediensene. Sjekk hver oppskrift før du bestiller.",
+        "save_scope": "Endringene gjelder fremtidige automatiske valg. Oppskrifter du selv har valgt for kommende uker, blir stående som de er.",
+        "panel": {
+          "dietary_habits": "Kosthold",
+          "goals": "Mål",
+          "cooking": "Matlagingspreferanser"
+        },
+        "saved": "Matpreferansene er lagret.",
+        "save_failed": "Kunne ikke lagre preferansene dine: {error}",
+        "tell_us_more": "Fortell oss mer",
+        "load_failed": "Kunne ikke laste matpreferansene dine: {error}",
+        "none": "Ingen matprofil tilgjengelig.",
+        "completion": "Profil {completed} av {total} ferdig",
+        "hero_title": "Middager tilpasset smaken din",
+        "hero_body": "Matprofilen hjelper HelloFresh med å velge rettene dine og sortere menyen etter det som passer best for deg. Du har alltid tilgang til hele menyen.",
+        "your_diet": "Ditt kosthold",
+        "adults": "Voksne",
+        "kids": "Barn (under 12 år)",
+        "household": "Husstand",
+        "none_option": "Ingen",
+        "like": "Liker",
+        "dislike": "Liker ikke",
+        "up_to_date": "Preferansene dine er oppdatert.",
+        "reload": "Last inn på nytt",
+        "reset": "Tilbakestill",
+        "saving": "Lagrer …",
+        "save": "Lagre preferanser",
+        "discard_confirm": "Forkaste ulagrede endringer og laste inn matpreferansene på nytt?"
+      },
+      "video": {
+        "close": "Lukk videoen",
+        "error": "Dette klippet kunne ikke spilles av her.",
+        "fallback": "Spilles ikke videoen av? Åpne den direkte"
+      },
+      "editor": {
+        "title": "Tittel",
+        "logo": "Vis HelloFresh-logo",
+        "views": "Seksjoner",
+        "default_view": "Åpne på",
+        "accent": "Uthevingsfarge",
+        "image_width": "Bildebredde for oppskrifter (px)",
+        "config_entry_id": "HelloFresh-konto",
+        "accent_brand": "HelloFresh-grønn",
+        "accent_theme": "Temaets primærfarge",
+        "help": {
+          "views": "Velg én seksjon for et fokusert kort uten fanelinje.",
+          "default_view": "La stå tomt for å åpne sist brukte seksjon.",
+          "config_entry_id": "Trengs bare med mer enn én HelloFresh-konto."
+        }
+      }
+    }
   }
 }

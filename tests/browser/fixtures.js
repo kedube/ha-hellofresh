@@ -539,7 +539,27 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
 
 // ---- fake hass ----------------------------------------------------------------------------
 
-export function buildHass(origin, { dark = false, scenario = "default", latency = 250, fail = "" } = {}) {
+// Home Assistant's frontend/get_translations for this integration: the language's translation
+// file over English, flattened to "component.hellofresh.<category>.<path>" keys, as it answers.
+async function translations(origin, language, category) {
+  const load = async (lang) => {
+    const res = await fetch(`${origin}/translations/${lang}.json`);
+    return res.ok ? res.json() : {};
+  };
+  const flat = (node, prefix, out) => {
+    for (const [key, value] of Object.entries(node || {})) {
+      if (value && typeof value === "object") flat(value, `${prefix}.${key}`, out);
+      else out[`${prefix}.${key}`] = value;
+    }
+    return out;
+  };
+  const prefix = `component.hellofresh.${category}`;
+  const english = flat((await load("en"))[category], prefix, {});
+  const own = language === "en" ? {} : flat((await load(language))[category], prefix, {});
+  return { resources: { ...english, ...own } };
+}
+
+export function buildHass(origin, { dark = false, scenario = "default", latency = 250, fail = "", language = "en" } = {}) {
   const fx = buildFixtures(origin, { scenario });
   const calls = [];
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -766,7 +786,15 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     states,
     entities,
     devices,
-    language: "en",
+    language,
+    // ?lang= gives the profile a language (and Home Assistant's other locale settings).
+    ...(language !== "en" ? { locale: { language, number_format: "language", time_format: "language", first_weekday: "language" } } : {}),
+    async callWS(msg) {
+      calls.push({ ws: msg.type, data: { ...msg } });
+      await sleep(Math.min(latency, 80));
+      if (msg.type === "frontend/get_translations") return translations(origin, msg.language, msg.category);
+      throw new Error(`Unknown command ${msg.type}`);
+    },
     async callService(domain, service, data = {}, target = undefined, _notify = false, returnResponse = false) {
       calls.push({ domain, service, data: JSON.parse(JSON.stringify(data || {})), target });
       await sleep(latency);
