@@ -751,5 +751,842 @@
         }
       }
     }
+  },
+  "config_panel": {
+    "card": {
+      "meta": {
+        "language": "sv"
+      },
+      "common": {
+        "close": "Stäng",
+        "refresh": "Uppdatera",
+        "retry": "Försök igen",
+        "try_again": "Försök igen",
+        "loading": "Laddar …",
+        "loading_label": "Laddar",
+        "show_more": "Visa fler",
+        "dismiss": "Stäng",
+        "clear_search": "Rensa sökningen",
+        "cancel": "Avbryt",
+        "fewer": "Färre",
+        "more": "Fler"
+      },
+      "views": {
+        "overview": "Översikt",
+        "menu": "Meny",
+        "market": "Market",
+        "recipes": "Recept",
+        "account": "Konto"
+      },
+      "card": {
+        "sections": "HelloFresh-avsnitt",
+        "sidebar": "Sidofält",
+        "open_sidebar": "Öppna sidofältet",
+        "plan_size": {
+          "one": "{count} rätt för {people}",
+          "other": "{count} rätter för {people}"
+        },
+        "weeks_need_picks": {
+          "one": "{count} vecka behöver val av rätter",
+          "other": "{count} veckor behöver val av rätter"
+        },
+        "load_failed": "Det gick inte att läsa in dina leveranser: {error}"
+      },
+      "banner": {
+        "refresh_failed": "Det gick inte att uppdatera: {error}",
+        "payment_card": "betalkort",
+        "card_expired": "Ditt kort, {card}, har gått ut. Uppdatera det hos HelloFresh, annars kanske nästa matkasse inte skickas.",
+        "card_expired_date": "Ditt kort, {card}, har gått ut ({date}). Uppdatera det hos HelloFresh, annars kanske nästa matkasse inte skickas.",
+        "card_expiring": "Ditt kort, {card}, går snart ut. Uppdatera det hos HelloFresh innan nästa matkasse debiteras.",
+        "card_expiring_date": "Ditt kort, {card}, går snart ut ({date}). Uppdatera det hos HelloFresh innan nästa matkasse debiteras.",
+        "holiday_date": "Nytt leveransdatum: {date}."
+      },
+      "state": {
+        "ready": {
+          "label": "Kan ändras",
+          "short": "Öppen"
+        },
+        "needs": {
+          "label": "Val krävs",
+          "short": "Välj rätter"
+        },
+        "preselected": {
+          "label": "Förvald",
+          "short": "Förvald",
+          "hint": "HelloFresh har valt de här rätterna åt dig — gå igenom och justera före valfristen."
+        },
+        "shipping": {
+          "label": "På väg",
+          "short": "På väg"
+        },
+        "delivered": {
+          "label": "Levererad",
+          "short": "Levererad"
+        },
+        "skipped": {
+          "label": "Överhoppad",
+          "short": "Överhoppad"
+        },
+        "locked": {
+          "label": "Låst",
+          "short": "Låst"
+        }
+      },
+      "status": {
+        "active": "Aktiv",
+        "inactive": "Inaktiv",
+        "paused": "Pausad",
+        "running": "Aktiv",
+        "cancelled": "Avslutad",
+        "canceled": "Avslutad",
+        "skipped": "Överhoppad",
+        "delivered": "Levererad",
+        "shipped": "Skickad",
+        "in_transit": "Under transport",
+        "out_for_delivery": "Ute för leverans",
+        "on_the_way": "På väg",
+        "pre_transit": "Fraktsedel skapad",
+        "label_created": "Fraktsedel skapad",
+        "received_at_origin_facility": "Mottagen på avsändarterminalen",
+        "failed": "Misslyckades",
+        "exception": "Leveransproblem",
+        "delivery_exception": "Leveransproblem",
+        "delayed": "Försenad",
+        "complete": "Slutförd",
+        "completed": "Slutförd",
+        "unknown": "Okänd"
+      },
+      "time": {
+        "duration": {
+          "minutes": "{minutes} min",
+          "hours": "{hours} tim",
+          "hours_minutes": "{hours} tim {minutes} min",
+          "seconds": "{seconds} sek"
+        },
+        "left": {
+          "passed": "passerad",
+          "days_hours": "{days} d {hours} tim kvar",
+          "days": "{days} d kvar",
+          "hours": "{hours} tim kvar",
+          "minutes": "{minutes} min kvar"
+        },
+        "any_minute": "när som helst nu",
+        "in": "om {duration}",
+        "just_now": "just nu",
+        "ago": "för {duration} sedan"
+      },
+      "week": {
+        "skip_this_week": "Hoppa över den här veckan",
+        "skip_week": "Hoppa över vecka",
+        "holiday_change": "Ändrad leverans på grund av helgdag",
+        "holiday_schedule": "Helgdagsschema",
+        "make_changes_by": "Gör ändringar senast {date}",
+        "autopicked_title": "HelloFresh har valt de här rätterna åt dig.",
+        "unskip_this_week": "Återuppta den här veckan",
+        "review": "Gå igenom",
+        "edit": "Ändra",
+        "choose": "Välj",
+        "change_day": "Byt dag",
+        "unskip": "Återuppta",
+        "skip": "Hoppa över",
+        "nothing_ships": "Inget skickas den här veckan.",
+        "edit_by": "Ändra senast {date}",
+        "no_box": "Ingen matkasse den här veckan",
+        "review_picks": "Gå igenom HelloFreshs val",
+        "pick_n_meals": {
+          "one": "Välj {count} rätt",
+          "other": "Välj {count} rätter"
+        },
+        "pick_your_meals": "Välj dina rätter",
+        "plan_n": "abonnemang: {count}",
+        "next": "Nästa",
+        "previous_week": "Föregående vecka",
+        "next_week": "Nästa vecka",
+        "preselected_title": "HelloFresh har valt rätterna för den här veckan.",
+        "pantry": "Inköpslista",
+        "unskip_week": "Återuppta vecka",
+        "skipped_title": "Den här veckan är överhoppad.",
+        "unskip_to_choose": "Återuppta den för att välja rätter.",
+        "autopicked_before": "Behåll dem eller byt ut några före {date}.",
+        "closed": "Den här matkassen kan inte längre ändras — den skickas som den är."
+      },
+      "skip": {
+        "title": "Hoppa över {date}?",
+        "body": "Ingen matkasse skickas den veckan och du debiteras inte för den. Du kan återuppta den fram till valfristen.",
+        "keep": "Behåll min matkasse",
+        "skip_failed": "Det gick inte att hoppa över veckan: {error}",
+        "unskip_failed": "Det gick inte att återuppta veckan: {error}",
+        "restored": "Veckan är återupptagen — din matkasse kommer som vanligt.",
+        "done": "Veckan är överhoppad."
+      },
+      "reschedule": {
+        "title": "Byt leveransdag",
+        "current": "Nuvarande",
+        "only_this_box": "Bara för matkassen som är planerad till {date}",
+        "none": "Inga andra dagar är tillgängliga.",
+        "failed": "Det gick inte att byta dag: {error}",
+        "done": "Leveransdagen är ändrad för den veckan."
+      },
+      "pantry": {
+        "update_failed": "Det gick inte att uppdatera listan: {error}",
+        "list": "Inköpslista",
+        "title": "Baslivsmedel",
+        "nothing": "Inget extra att köpa till den här matkassen.",
+        "sub": {
+          "one": "Inte i matkassen för {date} · {count} att skaffa",
+          "other": "Inte i matkassen för {date} · {count} att skaffa"
+        }
+      },
+      "overview": {
+        "no_deliveries": "Inga leveranser hittades för det här kontot.",
+        "last_box": "Senaste matkassen",
+        "arriving_today": "Kommer i dag",
+        "arriving_tomorrow": "Kommer i morgon",
+        "next_box": "Nästa matkasse",
+        "skipped_title": "Den här matkassen är överhoppad.",
+        "skipped_body": "Inget skickas och du debiteras inte.",
+        "skipped_body_unskip": "Inget skickas och du debiteras inte — återuppta den före valfristen.",
+        "autopicked_body": "Behåll dem eller byt ut några före valfristen.",
+        "unsaved": "Du har ändringar i den här matkassen som inte är sparade.",
+        "finish": "Slutför",
+        "price_plan": "{price} abonnemangspris",
+        "price_total": "{price} totalt",
+        "charged": "Debiteras {date}",
+        "discount": "−{amount} rabatt",
+        "coupon": "Rabattkod {code}",
+        "review_meals": "Gå igenom rätterna",
+        "edit_meals": "Ändra rätter",
+        "choose_meals": "Välj rätter",
+        "add_extras": "Lägg till extra",
+        "view_meals": "Visa rätterna",
+        "no_box": "Ingen matkasse den här veckan.",
+        "extras_line": "{extras}: {names}",
+        "no_meals": "Inga rätter valda ännu.",
+        "pick_meals": "Välj rätter",
+        "more": "+{count} till",
+        "chip_review": "gå igenom",
+        "chip_pick": "välj rätter",
+        "more_weeks_need_picks": {
+          "one": "{count} vecka till behöver dina val",
+          "other": "{count} veckor till behöver dina val"
+        },
+        "before_it_arrives": "Innan matkassen kommer",
+        "pantry_note": {
+          "one": "{count} baslivsmedel som inte ingår i matkassen",
+          "other": "{count} baslivsmedel som inte ingår i matkassen"
+        },
+        "pantry_done": "Alla baslivsmedel är avbockade",
+        "see_all": "Visa alla {count}",
+        "layout": "Visning av leveransschemat",
+        "weeks": "Veckor",
+        "calendar": "Kalender",
+        "delivery_calendar": "Leveranskalender",
+        "coming_up": "Kommande",
+        "subscription_inactive": "Ditt abonnemang är {status} — inga matkassar är planerade.",
+        "no_later_weeks": "HelloFresh har inte publicerat senare veckor ännu.",
+        "recent_deliveries": "Senaste leveranserna",
+        "history_weeks": {
+          "one": "{count} veckas historik",
+          "other": "{count} veckors historik"
+        }
+      },
+      "live": {
+        "step": {
+          "packed": "Packad",
+          "on_the_way": "På väg",
+          "delivered": "Levererad"
+        },
+        "phase": {
+          "at_depot": "Packad på depån",
+          "driver_departed": "Föraren har åkt",
+          "on_the_way": "På väg till dig",
+          "delayed": "Försenad",
+          "delivered": "Levererad",
+          "delivered_home": "Levererad",
+          "cancelled": "Leveransen är inställd"
+        },
+        "arrives": "Kommer {time}",
+        "youre_next": "Du är näst på tur",
+        "stops_before": "{stops} före dig",
+        "stops": {
+          "one": "{count} stopp",
+          "other": "{count} stopp"
+        },
+        "driver": "Förare {name}",
+        "window": "Tidsfönster {window}",
+        "badge": "Live",
+        "map": "Livekarta",
+        "updated": "Uppdaterad {ago}"
+      },
+      "tracking": {
+        "step": {
+          "preparing": "Förbereds",
+          "shipped": "Skickad",
+          "out_for_delivery": "Ute för leverans",
+          "delivered": "Levererad"
+        },
+        "delivered_at": "Levererad {when}",
+        "estimated": "Beräknad {date}",
+        "hide_history": "Dölj historik",
+        "history": "Historik ({count})",
+        "history_label": "Spårningshistorik",
+        "open_photo": "Öppna leveransbilden",
+        "photo": "Leveransbild",
+        "photo_n": "Leveransbild {number}",
+        "signed_by": "Signerad av {name}",
+        "progress": "Leveransförlopp",
+        "photo_hint": "Bild"
+      },
+      "order": {
+        "status": "Status",
+        "carrier": "Transportör",
+        "tracking": "Spårning",
+        "delivered": "Levererad",
+        "order": "Order"
+      },
+      "delivery": {
+        "row_label": "{date}: {state}. Leveransdetaljer",
+        "label": "Leveransdetaljer för {date}",
+        "delivered_title": "Levererad {when}",
+        "box_for": "Matkasse för {date}",
+        "order": "Order {id}",
+        "open_full_photo": "Öppna bilden i full storlek",
+        "no_photo_carrier": "{carrier} delade ingen leveransbild för den här matkassen.",
+        "no_photo": "Ingen leveransbild delades för den här matkassen.",
+        "in_box": "I den här matkassen",
+        "charged": "Debiterat",
+        "order_total": "Ordersumma",
+        "charges": "Betalning",
+        "view_menu": "Visa veckans meny",
+        "no_details": "Inga detaljer för den här matkassen ännu."
+      },
+      "calendar": {
+        "today": "I dag",
+        "boxes": {
+          "one": "{count} matkasse",
+          "other": "{count} matkassar"
+        },
+        "skipped": {
+          "one": "{count} överhoppad",
+          "other": "{count} överhoppade"
+        },
+        "previous_month": "Föregående månad",
+        "next_month": "Nästa månad",
+        "no_deliveries": "Inga leveranser i {month}.",
+        "holiday_note": "helgdagsschema"
+      },
+      "meals": {
+        "none_chosen": "Inga rätter valda ännu",
+        "extras": {
+          "one": "{count} extravara",
+          "other": "{count} extravaror"
+        },
+        "count": {
+          "one": "{count} rätt",
+          "other": "{count} rätter"
+        },
+        "servings": {
+          "one": "{count} portion",
+          "other": "{count} portioner"
+        }
+      },
+      "menu": {
+        "original_recipe": "Originalrecept",
+        "no_weeks": "Inga leveransveckor hittades.",
+        "no_meals_skipped": "Inga rätter den här veckan.",
+        "no_meals_delivered": "Inga rätter levererades den här veckan.",
+        "not_published": "Veckans meny är inte publicerad ännu.",
+        "search_delivered": "Sök bland levererade rätter",
+        "search": "Sök i veckans meny",
+        "filters": "Filter",
+        "in_my_box": "I min matkasse",
+        "filtering": "Filtrerar …",
+        "remove_filter": "Ta bort: {label}",
+        "clear_all": "Rensa alla",
+        "no_match_query": "Inga rätter matchar ”{query}”.",
+        "nothing_in_box": "Inget i matkassen ännu — stäng av ”{in_my_box}” för att se menyn.",
+        "no_match_filters": "Inga rätter matchar de här filtren.",
+        "result_count": "{shown} av {total}",
+        "delivered_this_week": "Levererade den här veckan",
+        "show_more": "Visa {count} till · {left} kvar",
+        "protein_g": "{grams} g protein",
+        "ordered": "Beställd {count}×",
+        "ordered_last": "Beställd {count}× · senast {week}",
+        "you_rated": "Ditt betyg: {rating}/{scale}",
+        "add_aria": "Lägg {name} i matkassen",
+        "add": "Lägg till",
+        "servings_of": "Portioner av {name}",
+        "remove_meal": "Ta bort rätten",
+        "fewer_servings": "Färre portioner",
+        "more_servings": "Fler portioner",
+        "serving_unit": {
+          "one": "portion",
+          "other": "portioner"
+        },
+        "in_box": "I matkassen",
+        "per_serving": "/portion",
+        "in_cookbook": "I din kokbok",
+        "in_your_box": "I din matkasse",
+        "sold_out": "Slutsåld",
+        "play_video": "Spela upp video för {name}",
+        "surcharge": "Premiumtillägg per portion"
+      },
+      "filters": {
+        "protein": {
+          "beef": "Nötkött",
+          "poultry": "Fågel",
+          "pork": "Fläsk",
+          "seafood": "Fisk och skaldjur",
+          "lamb": "Lamm",
+          "veggie": "Vegetariskt"
+        },
+        "diet": {
+          "vegetarian": "Vegetariskt",
+          "under-650-cal": "Under 650 kalorier",
+          "high-protein": "Proteinrikt",
+          "carb-conscious": "Kolhydratsmart",
+          "high-fiber": "Fiberrikt",
+          "gluten-free": "Glutenfritt",
+          "sodium-smart": "Lite salt",
+          "low-sugar": "Lite tillsatt socker",
+          "organic-protein": "Ekologiskt protein",
+          "glp1": "GLP-1-stöd"
+        },
+        "time": {
+          "under-15-min": "Under 15 minuter",
+          "under-20-min": "Under 20 minuter",
+          "under-30-min": "Under 30 minuter"
+        },
+        "highlight": {
+          "new": "Nyhet",
+          "bestseller": "Bästsäljare",
+          "cooked-before": "Lagat förut",
+          "favorite": "Favoriter"
+        },
+        "double_protein": "2x protein",
+        "categories": "Kategorier",
+        "all": "Alla",
+        "main_protein": "Huvudprotein",
+        "dietary": "Kostpreferens",
+        "cooking_time": "Total tillagningstid",
+        "any": "Alla",
+        "highlights": "Höjdpunkter",
+        "clear_all": "Rensa alla filter"
+      },
+      "customize": {
+        "aria": "Anpassa {dish}: {option}, {options}",
+        "title": "Anpassa",
+        "options": {
+          "one": "{count} alternativ",
+          "other": "{count} alternativ"
+        },
+        "label": "Anpassa {dish}",
+        "taken": "Redan i din matkasse",
+        "included": "Ingår",
+        "as_written": "Som receptet är skrivet",
+        "update": "Uppdatera matkassen",
+        "add": "Lägg i matkassen",
+        "in_box": "i din matkasse",
+        "ways": "Sätt att äta den här rätten",
+        "view_recipe": "Visa receptet"
+      },
+      "box": {
+        "closed_toast": "Den här veckan kan inte längre ändras — matkassen skickas som den sparades.",
+        "min_toast": "Välj minst {min} rätter innan du sparar ({selected} valda).",
+        "saving": "Sparar din matkasse …",
+        "save_failed": "Det gick inte att spara din matkasse: {error}",
+        "saved": "Din matkasse är sparad.",
+        "unsaved_changes": "Osparade ändringar",
+        "downsized_title": "HelloFresh har gjort matkassen mindre så att den passar ditt abonnemang.",
+        "downsized_body": "Färre varor än du valde sparades — kontrollera den sparade matkassen nedan.",
+        "kind_label": "Rätter eller extra",
+        "meals": "Rätter",
+        "extras": "Extra",
+        "box_total": "Matkassens summa",
+        "selected_of_required": "{selected} av {required} rätter",
+        "deadline_passed": "Valfristen har passerat — de här ändringarna kan inte sparas",
+        "min_note": "Välj minst {min} rätter för att spara",
+        "resized_note": "Matkassen är ändrad till {selected} rätter den här veckan (abonnemang: {required}) — HelloFresh räknar om priset",
+        "saved_note": "Sparad · kan ändras fram till valfristen",
+        "estimated_total": "Beräknad summa",
+        "updating_price": "Uppdaterar priset …",
+        "discard_changes": "Släng ändringarna",
+        "discard": "Släng",
+        "save": "Spara matkassen",
+        "your_box": "Din matkasse",
+        "new": "Ny",
+        "was": "Var {count}",
+        "removed": "Borttagen",
+        "shipping": "Frakt",
+        "tax": "Moms",
+        "extras_change": "Extra (den här ändringen)",
+        "updating": "Uppdaterar …",
+        "price": "Pris",
+        "estimate_note": "En uppskattning — HelloFresh räknar ut det slutliga priset när matkassen debiteras.",
+        "min_notice": "Välj minst {min} rätter — HelloFresh har ingen mindre matkasse.",
+        "resized_notice": "Veckans matkasse är ändrad till {meals} (ditt abonnemang har {required}). HelloFresh räknar om priset; själva abonnemanget ändras inte.",
+        "unsaved_lower": "osparade ändringar",
+        "keep_editing": "Fortsätt ändra"
+      },
+      "market": {
+        "group": {
+          "appetizer": "Förrätter",
+          "breakfast": "Frukost",
+          "dessert": "Efterrätter",
+          "lunch": "Lunch",
+          "protein": "Proteiner",
+          "sides": "Tillbehör",
+          "donation": "Donationer",
+          "lowprices": "Låga priser",
+          "modularity": "Extra"
+        },
+        "search": "Sök bland extravaror",
+        "none_ordered": "Inga extravaror beställdes den här veckan.",
+        "not_open": "Market för den här veckan har inte öppnat ännu.",
+        "no_match_query": "Inga extravaror matchar ”{query}”.",
+        "none_in_box": "Inga extravaror i matkassen ännu.",
+        "no_match_categories": "Inga extravaror matchar de här kategorierna.",
+        "add_aria": "Lägg till {name}",
+        "quantity_of": "Antal av {name}",
+        "remove": "Ta bort",
+        "in_box_unit": "i matkassen",
+        "ordered": "{count} beställda",
+        "open": "Öppna: {name}"
+      },
+      "money": {
+        "total": "Totalt",
+        "plan_price": "Abonnemangspris",
+        "discount": "Rabatt"
+      },
+      "voucher": {
+        "expires": "går ut {date}",
+        "one_time": "engångs",
+        "code": "Kupong {code}",
+        "label": "Kupong"
+      },
+      "recipe": {
+        "open": "Öppna recept: {name}",
+        "close": "Stäng receptet",
+        "loading": "Laddar recept …",
+        "difficulty": "Svårighetsgrad {level}",
+        "servings": "Portioner",
+        "not_in_box": "(ingår inte i matkassen)",
+        "contains": "Innehåller {allergens}",
+        "step": "Steg {number}",
+        "nutrition": "Näringsvärde",
+        "per_serving": "per portion",
+        "allergens": "Allergener: {allergens}",
+        "ingredients": "Ingredienser",
+        "utensils": "Du behöver",
+        "instructions": "Gör så här",
+        "video": "Se receptvideon",
+        "card_pdf": "Utskrivbart receptkort (PDF)",
+        "view_site": "Visa hos HelloFresh",
+        "not_in_week_box": "Inte i veckans matkasse",
+        "add": "+ Lägg till",
+        "in_week_box": "I veckans matkasse",
+        "fewer_items": "Färre varor",
+        "more_items": "Fler varor",
+        "item_unit": {
+          "one": "vara",
+          "other": "varor"
+        }
+      },
+      "recipes": {
+        "search_failed": "Sökningen misslyckades: {error}",
+        "saved": "Sparat i din kokbok.",
+        "removed": "Borttaget från din kokbok.",
+        "save_failed": "Det gick inte att spara receptet: {error}",
+        "remove_failed": "Det gick inte att ta bort receptet: {error}",
+        "search_label": "Sök recept",
+        "filter_cookbook": "Filtrera din kokbok",
+        "search_catalog": "Sök bland 10 000+ recept",
+        "top_rated": "Bäst betyg",
+        "cookbook": "Kokbok",
+        "fewer_categories": "Färre",
+        "all_categories": "Alla kategorier",
+        "refine": "Förfina",
+        "none": "Inga recept hittades.",
+        "no_match": "Inga recept matchar ”{query}”.",
+        "results": {
+          "one": "{count} träff i alla kategorier",
+          "other": "{count} träffar i alla kategorier"
+        },
+        "cookbook_empty": "Din kokbok är tom. Tryck på hjärtat på ett recept för att spara det här.",
+        "no_saved_match": "Inga sparade recept matchar ”{query}”.",
+        "remove_aria": "Ta bort från kokboken: {name}",
+        "save_aria": "Spara i kokboken: {name}",
+        "remove_title": "Ta bort från kokboken",
+        "save_title": "Spara i kokboken"
+      },
+      "account": {
+        "credit_card": "Betalkort",
+        "card_ending": "{brand} som slutar på {last4}",
+        "tab": {
+          "plan": "Abonnemang och betalning",
+          "profile": "Matpreferenser",
+          "spending": "Utgifter"
+        },
+        "sections": "Kontoavsnitt",
+        "load_failed": "Det gick inte att läsa in ditt konto.",
+        "plan": "Abonnemang",
+        "meal_preference": "Måltidspreferens",
+        "servings": "Portioner",
+        "meals_per_box": "Rätter per matkasse",
+        "credit": "Tillgodohavande",
+        "card_on_file": "Registrerat kort",
+        "card_expiry": "går ut {date}",
+        "card_expired": "har gått ut",
+        "card_expiring": "går snart ut",
+        "boxes_received": "Mottagna matkassar",
+        "account_id": "Konto-ID",
+        "delivery_address": "Leveransadress",
+        "upcoming_boxes": "Kommande matkassar",
+        "need_picks": "Behöver val",
+        "tap_to_review": "Tryck för att gå igenom",
+        "next_skipped": "Nästa överhoppade",
+        "your_plan": "Ditt abonnemang",
+        "upcoming": "Kommande",
+        "presets": "Måltidsprofiler",
+        "presets_loading": "Laddar måltidsprofiler …",
+        "presets_none": "Inga måltidsprofiler tillgängliga.",
+        "yours": "Din",
+        "presets_note": "Vad varje profil betyder — HelloFresh använder din för att välja rätter. Du ändrar den hos HelloFresh."
+      },
+      "plan": {
+        "options_loading": "Alternativen laddas strax …",
+        "settings": "Abonnemangsinställningar",
+        "settings_note": "De här ändrar alla framtida matkassar — och vad du debiteras. Använd {change_day} eller {skip} på en vecka för att bara ändra den.",
+        "from_to": "Från {from} till {to}",
+        "every_future_box": "alla framtida matkassar",
+        "box_size": {
+          "label": "Lådstorlek",
+          "hint": "Rätter per vecka och portioner per rätt",
+          "option": "{meals} × {servings}",
+          "change": "Byt lådstorlek",
+          "title": "Byta lådstorlek?",
+          "body": "Det gäller {every_future_box} och ändrar vad du debiteras. Matkassar vars valfrist har passerat behåller den nuvarande inställningen.",
+          "changed": "Lådstorleken är ändrad.",
+          "failed": "Det gick inte att ändra lådstorleken: {error}"
+        },
+        "delivery_day": {
+          "label": "Leveransdag",
+          "hint": "Din vanliga leveransdag och ditt tidsfönster",
+          "change": "Byt leveransdag",
+          "title": "Byta leveransdag?",
+          "body": "Det gäller {every_future_box}. Matkassar vars valfrist har passerat behåller den nuvarande inställningen.",
+          "changed": "Leveransdagen är ändrad.",
+          "failed": "Det gick inte att ändra leveransdagen: {error}"
+        }
+      },
+      "health": {
+        "title": "Integrationsstatus",
+        "access_token": "Åtkomsttoken",
+        "minutes_left": {
+          "one": "{count} min kvar",
+          "other": "{count} min kvar"
+        },
+        "refresh_token": "Förnyelsetoken",
+        "days_left": {
+          "one": "{count} dag kvar",
+          "other": "{count} dagar kvar"
+        },
+        "write_actions": "Skrivåtgärder",
+        "available": "Tillgängliga",
+        "unavailable": "Otillgängliga",
+        "api_payloads": "API-data",
+        "payload_changed": "Ändrat — kontrollera loggarna",
+        "payload_ok": "Som väntat",
+        "no_sensors": "Statussensorerna är inte tillgängliga.",
+        "card_updated": "Kortet uppdaterat {time}",
+        "refresh": "Uppdatera från HelloFresh",
+        "refreshed": "Uppdaterat från HelloFresh.",
+        "refresh_failed": "Uppdateringen misslyckades: {error}"
+      },
+      "spending": {
+        "load_failed": "Det gick inte att läsa in dina utgifter: {error}",
+        "none": "Ingen utgiftshistorik ännu.",
+        "total_spent": "Totalt spenderat",
+        "lifetime": "Levererade matkassar, totalt",
+        "boxes": "Matkassar",
+        "average_box": "Snitt per matkasse",
+        "saved_vouchers": "Sparat med kuponger",
+        "no_box": "ingen matkasse",
+        "upcoming_note": "kommande",
+        "monthly": "Kostnad per månad",
+        "peak": "Högst {price}",
+        "chart_label": {
+          "one": "Månatlig HelloFresh-kostnad den senaste månaden",
+          "other": "Månatlig HelloFresh-kostnad de senaste {count} månaderna"
+        },
+        "by_month": "Per månad",
+        "recent_boxes": "Senaste matkassarna",
+        "upcoming": "Kommande"
+      },
+      "profile": {
+        "field": {
+          "exclusions": "Undvik",
+          "primary_proteins": "Proteiner",
+          "flavors": "Smaker",
+          "goals": "Personliga mål",
+          "nutritions": "Näring",
+          "cuisines": "Kök",
+          "dish_types": "Rätttyper",
+          "meal_types": "Matlagningsstilar",
+          "dietary_preferences": "Kosttyp"
+        },
+        "value": {
+          "mostly-meat": "Jag äter allt",
+          "flexitarian": "Flexitarian",
+          "pescatarian": "Pescetarian",
+          "vegetarian": "Vegetarian",
+          "vegan": "Vegan",
+          "quick-easy": "Snabba recept",
+          "batch": "Recept för flera dagar",
+          "chef-style": "Recept i kockstil",
+          "family-style": "Familjerecept",
+          "bake": "Ugnsrätter",
+          "bowl": "Bowls",
+          "burger": "Burgare",
+          "main-plus-sides": "Huvudrätt med tillbehör",
+          "pizza": "Pizzor",
+          "salad": "Sallader",
+          "sandwich": "Smörgåsar",
+          "soups-stews": "Soppor eller grytor",
+          "stir-fry": "Wokrätter",
+          "wrap": "Wraps",
+          "noodle": "Nudlar",
+          "pasta": "Pasta",
+          "glp1-support": "GLP-1-vänligt",
+          "plant-based": "Växtbaserat",
+          "high-protein": "Proteinrikt",
+          "low-calorie": "Kalorisnålt",
+          "low-carb": "Lite kolhydrater",
+          "make-cooking-easy": "Enklare matlagning",
+          "try-new-recipes": "Prova nya recept",
+          "save-time": "Spara tid",
+          "save-money": "Spara pengar",
+          "eat-healthier": "Äta nyttigare",
+          "improve-health": "Bättre hälsa",
+          "waste-less-food": "Slänga mindre mat",
+          "beef": "Nötkött",
+          "pork": "Fläsk",
+          "chicken": "Kyckling",
+          "poultry": "Fågel",
+          "fish": "Fisk",
+          "shellfish": "Skaldjur",
+          "salmon": "Lax",
+          "cod": "Torsk",
+          "tuna": "Tonfisk",
+          "seabass": "Havsabborre",
+          "tilapia": "Tilapia",
+          "barramundi": "Barramundi",
+          "trout": "Öring",
+          "tofu": "Tofu",
+          "halloumi": "Halloumi",
+          "legumes": "Baljväxter",
+          "plant-based-proteins": "Växtbaserade proteiner",
+          "mushroom-based-proteins": "Svampbaserade proteiner",
+          "shrimp-prawns": "Räkor",
+          "meat-alternative": "Köttalternativ",
+          "nuts": "Nötter",
+          "tree-nuts": "Trädnötter",
+          "mushrooms": "Svamp",
+          "olives": "Oliver",
+          "gluten": "Gluten",
+          "brussel-sprouts": "Brysselkål",
+          "egg": "Ägg",
+          "cheesy": "Ostigt",
+          "herbs": "Örter",
+          "spicy": "Starkt",
+          "sweet": "Sött",
+          "smoky": "Rökigt",
+          "tangy": "Syrligt",
+          "caribbean": "Karibiskt",
+          "chinese": "Kinesiskt",
+          "classic-american": "Klassiskt amerikanskt",
+          "french": "Franskt",
+          "greek": "Grekiskt",
+          "indian": "Indiskt",
+          "italian": "Italienskt",
+          "japanese": "Japanskt",
+          "korean": "Koreanskt",
+          "mexican": "Mexikanskt",
+          "middle-eastern": "Mellanöstern",
+          "new-zealand": "Nya Zeeland",
+          "thai": "Thailändskt"
+        },
+        "value_hint": {
+          "quick-easy": "Under 20 minuter, minimal förberedelse",
+          "batch": "Förbered i förväg och spara tid resten av veckan",
+          "chef-style": "Ugnsrätter, stekar och mer på 20–40 minuter",
+          "family-style": "Recept som passar både barn och vuxna"
+        },
+        "diet_hint": {
+          "flexitarian": "Mest växtbaserat, med kött ibland.",
+          "mostly-meat": "Jag blandar. Kött, grönsaker och allt däremellan.",
+          "vegetarian": "Utan kött och fisk, med fokus på växter, mejeriprodukter och ägg.",
+          "pescatarian": "Med fisk och skaldjur men utan andra köttprodukter.",
+          "vegan": "Utan animaliska produkter, helt växtbaserat."
+        },
+        "protein_question": {
+          "pescatarian": "Vilka fisk och skaldjur gillar du?",
+          "vegetarian": "Vilka köttfria proteiner gillar du?",
+          "vegan": "Vilka veganska proteiner gillar du?",
+          "default": "Vilka proteiner gillar du?"
+        },
+        "goals_hint": "Välj upp till {max} som betyder mest för dig.",
+        "meal_types_required": "Minst en matlagningsstil krävs",
+        "exclude_notice": "Observera att vissa recept i menyn fortfarande kan innehålla de här ingredienserna. Kontrollera varje recept innan du beställer.",
+        "save_scope": "Ändringarna gäller framtida automatiska val. Recept som du själv har valt för kommande veckor förblir som de är.",
+        "panel": {
+          "dietary_habits": "Kostvanor",
+          "goals": "Mål",
+          "cooking": "Matlagningspreferenser"
+        },
+        "saved": "Matpreferenserna är sparade.",
+        "save_failed": "Det gick inte att spara dina preferenser: {error}",
+        "tell_us_more": "Berätta mer",
+        "load_failed": "Det gick inte att läsa in dina matpreferenser: {error}",
+        "none": "Ingen matprofil tillgänglig.",
+        "completion": "Profilen {completed} av {total} klar",
+        "hero_title": "Rätter efter din smak",
+        "hero_body": "Din matprofil hjälper HelloFresh att välja dina rätter och sortera menyn efter det som är mest relevant för dig. Du har alltid tillgång till hela menyn.",
+        "your_diet": "Din kost",
+        "adults": "Vuxna",
+        "kids": "Barn (under 12)",
+        "household": "Hushåll",
+        "none_option": "Inga",
+        "like": "Gillar",
+        "dislike": "Gillar inte",
+        "up_to_date": "Dina preferenser är uppdaterade.",
+        "reload": "Läs in igen",
+        "reset": "Återställ",
+        "saving": "Sparar …",
+        "save": "Spara preferenser",
+        "discard_confirm": "Vill du slänga osparade ändringar och läsa in dina matpreferenser igen?"
+      },
+      "video": {
+        "close": "Stäng videon",
+        "error": "Klippet kunde inte spelas upp här.",
+        "fallback": "Spelas inte videon? Öppna den direkt"
+      },
+      "editor": {
+        "title": "Titel",
+        "logo": "Visa HelloFresh-logga",
+        "views": "Avsnitt",
+        "default_view": "Öppna på",
+        "accent": "Accentfärg",
+        "image_width": "Bildbredd för recept (px)",
+        "config_entry_id": "HelloFresh-konto",
+        "accent_brand": "HelloFresh-grön",
+        "accent_theme": "Temats primärfärg",
+        "help": {
+          "views": "Välj ett avsnitt för ett fokuserat kort utan flikrad.",
+          "default_view": "Lämna tomt för att öppna det senast använda avsnittet.",
+          "config_entry_id": "Behövs bara med mer än ett HelloFresh-konto."
+        }
+      }
+    }
   }
 }

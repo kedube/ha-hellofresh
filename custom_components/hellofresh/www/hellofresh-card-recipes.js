@@ -18,7 +18,7 @@ const [L, UI] = await Promise.all([
   import(new URL(`./hellofresh-card-ui.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc } = L;
+const { esc, t, ht } = L;
 const { icon } = UI;
 
 // Sentinel collection for the customer's own cookbook (a different service than the catalog);
@@ -117,7 +117,7 @@ export class RecipesView {
     } catch (err) {
       if (seq !== this._searchSeq) return;
       this.searchResults = null;
-      this.card.toast(`Search failed: ${(err && err.message) || err}`, true);
+      this.card.toast(t("recipes.search_failed", { error: (err && err.message) || err }), true);
     } finally {
       if (seq === this._searchSeq) {
         this.searchLoading = false;
@@ -151,12 +151,12 @@ export class RecipesView {
       if (!makeFavorite && this.collection === COOKBOOK) {
         this.recipes = this.recipes.filter((r) => r.recipe_id !== recipe.recipe_id);
       }
-      card.toast(makeFavorite ? "Saved to your cookbook." : "Removed from your cookbook.");
+      card.toast(t(makeFavorite ? "recipes.saved" : "recipes.removed"));
       // The menu's hearts come from get_weeks, which the favourite write just refreshed.
       card.broadcastDataChanged();
       card.reloadWeeks();
     } catch (err) {
-      card.toast(`${makeFavorite ? "Couldn't save" : "Couldn't remove"} the recipe: ${(err && err.message) || err}`, true);
+      card.toast(t(makeFavorite ? "recipes.save_failed" : "recipes.remove_failed", { error: (err && err.message) || err }), true);
     } finally {
       this.busyIds.delete(recipe.recipe_id);
       if (card.view === "recipes") card.renderView();
@@ -176,10 +176,10 @@ export class RecipesView {
       queueMicrotask(() => this._fetch());
     }
     const search = `<div class="hf-toolbar"><label class="hf-search" style="max-width:none">
-        <span class="sr-only">Search recipes</span>${icon("mdi:magnify")}
+        <span class="sr-only">${ht("recipes.search_label")}</span>${icon("mdi:magnify")}
         <input type="search" data-focus-key="recipe-search" data-input="recipe-search" value="${esc(this.query)}"
-          placeholder="${this.collection === COOKBOOK ? "Filter your cookbook" : "Search 10,000+ recipes"}" spellcheck="false" autocomplete="off">
-        ${this.query ? `<button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="Clear search">${icon("mdi:close")}</button>` : ""}
+          placeholder="${ht(this.collection === COOKBOOK ? "recipes.filter_cookbook" : "recipes.search_catalog")}" spellcheck="false" autocomplete="off">
+        ${this.query ? `<button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="${ht("common.clear_search")}">${icon("mdi:close")}</button>` : ""}
       </label></div>`;
     return `${search}${this._chips()}${this._body()}`;
   }
@@ -191,21 +191,21 @@ export class RecipesView {
 
   _chips() {
     const fixed = [
-      this._chip("", `${icon("mdi:star-outline")}Top rated`),
-      this._chip(COOKBOOK, `${icon("mdi:heart-outline")}Cookbook`),
+      this._chip("", `${icon("mdi:star-outline")}${ht("recipes.top_rated")}`),
+      this._chip(COOKBOOK, `${icon("mdi:heart-outline")}${ht("recipes.cookbook")}`),
     ];
     const cats = this.collections.map((c) => this._chip(c.path || c.slug, esc(c.name)));
     const toggle = this.collections.length
       ? `<button class="hf-chip" data-action="show-all-cats" aria-expanded="${this.showAll}">${icon(
           this.showAll ? "mdi:chevron-up" : "mdi:dots-grid"
-        )}${this.showAll ? "Fewer" : "All categories"}</button>`
+        )}${ht(this.showAll ? "recipes.fewer_categories" : "recipes.all_categories")}</button>`
       : "";
     const main = this.showAll
       ? `<div class="hf-chiprow" style="margin-bottom:10px">${fixed.join("")}${toggle}${cats.join("")}</div>`
       : `<div class="hf-rail" data-scroll-key="recipe-cats" style="margin-bottom:10px">${fixed.join("")}${toggle}${cats.join("")}</div>`;
     const subs = this.subcollections.length
       ? `<div class="hf-rail" data-scroll-key="recipe-subcats" style="margin-bottom:12px;align-items:center">
-          <span class="hf-eyebrow" style="padding-right:4px">Refine</span>
+          <span class="hf-eyebrow" style="padding-right:4px">${ht("recipes.refine")}</span>
           ${this.subcollections.map((c) => this._chip(c.path || c.slug, esc(c.name))).join("")}</div>`
       : "";
     return main + subs;
@@ -214,33 +214,33 @@ export class RecipesView {
   _body() {
     if (this.error) {
       return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${esc(this.error)}
-        <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="retry">Try again</button></div></div>`;
+        <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="retry">${ht("common.try_again")}</button></div></div>`;
     }
     const query = this.query.trim();
     if (query && this.collection !== COOKBOOK) {
       if (this.searchResults === null) {
         return this.searchLoading
           ? `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`
-          : `<div class="hf-empty">No recipes found.</div>`;
+          : `<div class="hf-empty">${ht("recipes.none")}</div>`;
       }
       if (!this.searchResults.length) {
-        return `<div class="hf-empty">${icon("mdi:magnify-close")}No recipes match “${esc(query)}”.</div>`;
+        return `<div class="hf-empty">${icon("mdi:magnify-close")}${ht("recipes.no_match", { query })}</div>`;
       }
-      return `<p class="hf-resultnote">${this.searchResults.length} results across every category</p>${this._grid(this.searchResults)}`;
+      return `<p class="hf-resultnote">${ht("recipes.results", { count: this.searchResults.length })}</p>${this._grid(this.searchResults)}`;
     }
     if (this.loading && !this.recipes.length) {
       return `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
     if (!this.recipes.length) {
       return this.collection === COOKBOOK
-        ? `<div class="hf-empty">${icon("mdi:heart-outline")}Your cookbook is empty. Tap the heart on any recipe to save it here.</div>`
-        : `<div class="hf-empty">No recipes found.</div>`;
+        ? `<div class="hf-empty">${icon("mdi:heart-outline")}${ht("recipes.cookbook_empty")}</div>`
+        : `<div class="hf-empty">${ht("recipes.none")}</div>`;
     }
     const visible = query
       ? this.recipes.filter((r) => `${r.name || ""}\n${r.headline || ""}`.toLowerCase().includes(query.toLowerCase()))
       : this.recipes;
     if (!visible.length) {
-      return `<div class="hf-empty">No saved recipes match “${esc(query)}”.</div>`;
+      return `<div class="hf-empty">${ht("recipes.no_saved_match", { query })}</div>`;
     }
     return this._grid(visible);
   }
@@ -256,18 +256,18 @@ export class RecipesView {
     const fav = recipe.is_favorite === true;
     const stats = [];
     if (recipe.rating) {
-      const count = recipe.ratings_count ? ` (${Number(recipe.ratings_count).toLocaleString()})` : "";
+      const count = recipe.ratings_count ? ` (${Number(recipe.ratings_count).toLocaleString(L.I18n.numberLocale())})` : "";
       stats.push(`<span class="hf-rating">${icon("mdi:star")}${esc(Number(recipe.rating).toFixed(1))}${esc(count)}</span>`);
     }
     const time = L.formatMinutes(recipe.prep_time_minutes);
     if (time) stats.push(`<span>${icon("mdi:timer-outline")}${esc(time)}</span>`);
     return `<div class="hf-tile" role="button" tabindex="0" data-action="open" data-id="${esc(recipe.recipe_id)}"
-        aria-label="Open recipe: ${esc(recipe.name)}">
+        aria-label="${ht("recipe.open", { name: recipe.name })}">
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
           <div class="hf-tr"><button class="hf-favbtn${fav ? " on" : ""}" data-action="fav" data-id="${esc(recipe.recipe_id)}"
-            ${busy ? "disabled" : ""} aria-pressed="${fav}" aria-label="${fav ? "Remove from" : "Save to"} cookbook: ${esc(recipe.name)}"
-            title="${fav ? "Remove from cookbook" : "Save to cookbook"}">${icon(busy ? "mdi:dots-horizontal" : fav ? "mdi:heart" : "mdi:heart-outline")}</button></div>
+            ${busy ? "disabled" : ""} aria-pressed="${fav}" aria-label="${ht(fav ? "recipes.remove_aria" : "recipes.save_aria", { name: recipe.name })}"
+            title="${ht(fav ? "recipes.remove_title" : "recipes.save_title")}">${icon(busy ? "mdi:dots-horizontal" : fav ? "mdi:heart" : "mdi:heart-outline")}</button></div>
         </div>
         <div class="hf-tbody">
           <div class="hf-tname"><span>${link ? `<a href="${link}" target="_blank" rel="noopener noreferrer">${esc(recipe.name)}</a>` : esc(recipe.name)}</span></div>

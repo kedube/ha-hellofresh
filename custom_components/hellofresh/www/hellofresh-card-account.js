@@ -23,14 +23,30 @@ const [L, UI, { ProfileEditor }] = await Promise.all([
   import(new URL(`./hellofresh-card-profile.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc } = L;
+const { esc, t, ht, html } = L;
 const { icon, pill } = UI;
 
+// `label` reads account.tab.<key> when shown.
 const TABS = [
-  { key: "plan", label: "Plan & billing", icon: "mdi:card-account-details-outline" },
-  { key: "profile", label: "Food preferences", icon: "mdi:food-apple-outline" },
-  { key: "spending", label: "Spending", icon: "mdi:chart-bar" },
-];
+  { key: "plan", icon: "mdi:card-account-details-outline" },
+  { key: "profile", icon: "mdi:food-apple-outline" },
+  { key: "spending", icon: "mdi:chart-bar" },
+].map((tab) => Object.defineProperty(tab, "label", { enumerable: true, get: () => t(`account.tab.${tab.key}`) }));
+
+// The recurring plan controls (plan.<key>.*): which select entity, and what its confirmation says.
+const PLAN_CONTROLS = ["box_size", "delivery_day"];
+
+// How a plan option reads. The integration names box sizes in English ("3 meals × 2 servings");
+// the card shows them in its own language and still writes the option exactly as it is. Delivery
+// days are HelloFresh's own labels, already in the account's language.
+function planOptionLabel(key, option) {
+  const size = key === "box_size" && /^(\d+) meals × (\d+) servings$/.exec(String(option));
+  if (!size) return String(option);
+  return t("plan.box_size.option", {
+    meals: t("meals.count", { count: Number(size[1]) }),
+    servings: t("meals.servings", { count: Number(size[2]) }),
+  });
+}
 
 export class AccountView {
   constructor(card) {
@@ -53,7 +69,7 @@ export class AccountView {
   }
 
   render() {
-    const tabs = `<div class="hf-segment hf-subtabs" role="tablist" aria-label="Account sections">${TABS.map(
+    const tabs = `<div class="hf-segment hf-subtabs" role="tablist" aria-label="${ht("account.sections")}">${TABS.map(
       (t) => `<button role="tab" data-action="acct-tab" data-tab="${t.key}" aria-pressed="${this.tab === t.key}" aria-selected="${this.tab === t.key}">${icon(t.icon)}${esc(t.label)}</button>`
     ).join("")}</div>`;
     let body = "";
@@ -70,7 +86,7 @@ export class AccountView {
     const s = card.summary;
     if (!s) {
       return card.error
-        ? `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}Couldn't load your account.</div>`
+        ? `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("account.load_failed")}</div>`
         : `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
     if (s.plan_preference && this.presets === null && !this.presetsLoading) this._fetchPresets();
@@ -79,30 +95,31 @@ export class AccountView {
     const discount = L.breakdownAmount(s, "discount_amount", true);
     const cardOnFile = L.cardOnFile(s);
     const expiry = L.fmtCardExpiry(s.payment_card_expiry);
+    const cardState = s.payment_method_expired ? "account.card_expired" : s.payment_method_expiring ? "account.card_expiring" : "";
     const cells = [
-      ["Plan", s.selected_plan],
-      ["Meal preference", L.preferenceName(s.plan_preference, this.presets)],
-      ["Servings", s.number_of_people],
-      ["Meals per box", s.required_meal_count],
-      ["Plan price", price(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
-      ["Shipping", shipping == null ? null : price(shipping, s.selected_plan_total_price_currency)],
-      ["Discount", discount == null ? null : `−${price(discount, s.selected_plan_total_price_currency)}`],
-      ["Credit", price(s.account_credit, s.account_credit_currency)],
+      [t("account.plan"), s.selected_plan],
+      [t("account.meal_preference"), L.preferenceName(s.plan_preference, this.presets)],
+      [t("account.servings"), s.number_of_people],
+      [t("account.meals_per_box"), s.required_meal_count],
+      [t("money.plan_price"), price(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
+      [t("box.shipping"), shipping == null ? null : price(shipping, s.selected_plan_total_price_currency)],
+      [t("money.discount"), discount == null ? null : `−${price(discount, s.selected_plan_total_price_currency)}`],
+      [t("account.credit"), price(s.account_credit, s.account_credit_currency)],
       [
-        "Card on file",
+        t("account.card_on_file"),
         cardOnFile
-          ? `${cardOnFile}${expiry ? ` · exp. ${expiry}` : ""}${s.payment_method_expired ? " · expired" : s.payment_method_expiring ? " · expiring" : ""}`
+          ? [cardOnFile, expiry ? t("account.card_expiry", { date: expiry }) : "", cardState ? t(cardState) : ""].filter(Boolean).join(" · ")
           : null,
       ],
-      ["Boxes received", s.boxes_received],
-      ["Account ID", s.account_id],
-      ["Delivery address", s.delivery_address, true],
+      [t("account.boxes_received"), s.boxes_received],
+      [t("account.account_id"), s.account_id],
+      [t("account.delivery_address"), s.delivery_address, true],
     ].filter(([, value]) => value !== null && value !== undefined && value !== "");
     const kv = cells
       .map(([k, v, wide]) => `<div class="${wide ? "wide" : ""}"><div class="hf-k">${esc(k)}</div><div class="hf-v">${esc(v)}</div></div>`)
       .join("");
     const status = s.subscription_status
-      ? pill(L.titleCase(s.subscription_status), String(s.subscription_status).toLowerCase() === "active" ? "ok" : "warn")
+      ? pill(L.statusLabel(s.subscription_status), String(s.subscription_status).toLowerCase() === "active" ? "ok" : "warn")
       : "";
 
     const needsId = (s.weeks_needing_selection_ids || [])[0];
@@ -116,22 +133,22 @@ export class AccountView {
     const skippedWeek = s.next_skipped_week_id ? card.weekById(s.next_skipped_week_id) : null;
     const nextSkipped = skippedWeek ? L.fmtDate(skippedWeek.delivery_date) : s.next_skipped_week;
     const stats = [
-      stat("Upcoming boxes", s.upcoming_delivery_count),
-      stat("Need picks", s.weeks_needing_selection, needsId, needsId ? "Tap to review" : ""),
-      stat("Skipped", s.skipped_week_count),
-      stat("Next skipped", nextSkipped, s.next_skipped_week_id),
+      stat(t("account.upcoming_boxes"), s.upcoming_delivery_count),
+      stat(t("account.need_picks"), s.weeks_needing_selection, needsId, needsId ? t("account.tap_to_review") : ""),
+      stat(t("state.skipped.label"), s.skipped_week_count),
+      stat(t("account.next_skipped"), nextSkipped, s.next_skipped_week_id),
     ].join("");
 
     return `<div class="hf-cols two">
         <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
           <section class="hf-panel">
-            <div class="hf-sectionhead" style="margin-top:0"><h2 class="hf-h2">Your plan</h2>${status}</div>
+            <div class="hf-sectionhead" style="margin-top:0"><h2 class="hf-h2">${ht("account.your_plan")}</h2>${status}</div>
             <div class="hf-kv">${kv}</div>
           </section>
           ${this._controls()}
         </div>
         <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
-          ${stats ? `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:12px">Upcoming</h2><div class="hf-stats">${stats}</div></section>` : ""}
+          ${stats ? `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:12px">${ht("account.upcoming")}</h2><div class="hf-stats">${stats}</div></section>` : ""}
           ${this._presetsPanel(s)}
           ${this._healthPanel()}
         </div>
@@ -144,54 +161,59 @@ export class AccountView {
     const card = this.card;
     const ids = card.entities();
     const rows = [];
-    const control = (entityId, key, label, hint) => {
+    const control = (entityId, key) => {
       const state = card.entityState(entityId);
       if (!state) return;
       const options = (state.attributes && state.attributes.options) || [];
       const unavailable = state.state === "unavailable" || state.state === "unknown" || !options.length;
       const select = unavailable
-        ? `<span class="hf-muted hf-small">Options load shortly…</span>`
+        ? `<span class="hf-muted hf-small">${ht("plan.options_loading")}</span>`
         : `<select class="hf-select" style="min-width:200px" data-plan-control="${esc(key)}" data-entity="${esc(entityId)}"
-            data-focus-key="plan-${esc(key)}" ${card.busy ? "disabled" : ""} aria-label="${esc(label)}">
-            ${options.map((o) => `<option value="${esc(o)}" ${o === state.state ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
-      rows.push(`<div class="hf-controlrow"><div><div class="hf-controllabel">${esc(label)}</div>
-          <div class="hf-controlhint">${esc(hint)}</div></div>${select}</div>`);
+            data-focus-key="plan-${esc(key)}" ${card.busy ? "disabled" : ""} aria-label="${ht(`plan.${key}.label`)}">
+            ${options.map((o) => `<option value="${esc(o)}" ${o === state.state ? "selected" : ""}>${esc(planOptionLabel(key, o))}</option>`).join("")}</select>`;
+      rows.push(`<div class="hf-controlrow"><div><div class="hf-controllabel">${ht(`plan.${key}.label`)}</div>
+          <div class="hf-controlhint">${ht(`plan.${key}.hint`)}</div></div>${select}</div>`);
     };
-    control(ids.boxSize, "box_size", "Box size", "Meals per week and servings per meal");
-    control(ids.deliveryDay, "delivery_day", "Delivery day", "Your usual delivery day and window");
+    control(ids.boxSize, "box_size");
+    control(ids.deliveryDay, "delivery_day");
     if (!rows.length) return "";
-    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:4px">Plan settings</h2>
-        <p class="hf-small hf-muted" style="margin:0 0 6px">These change every future box — and what you're billed.
-          To change a single week, use Change day or Skip on that week.</p>${rows.join("")}</section>`;
+    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:4px">${ht("plan.settings")}</h2>
+        <p class="hf-small hf-muted" style="margin:0 0 6px">${ht("plan.settings_note", {
+          change_day: t("week.change_day"),
+          skip: t("week.skip"),
+        })}</p>${rows.join("")}</section>`;
   }
 
   _confirmPlanChange(entityId, key, option) {
     const card = this.card;
     const current = card.entityState(entityId);
-    const what = key === "box_size" ? "box size" : "delivery day";
+    if (!PLAN_CONTROLS.includes(key)) return;
     card.openSheet({
       kind: "confirm",
       narrow: true,
-      label: `Change ${what}`,
+      label: t(`plan.${key}.change`),
       render: () => `
-        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Change your ${esc(what)}?</h2>
-          <div class="hf-sheetsub">From ${esc(current ? current.state : "—")} to ${esc(option)}</div></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
-        <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">This applies to <strong>every future box</strong>${
-          key === "box_size" ? " and changes what you're billed" : ""
-        }. Boxes past their selection deadline keep their current setting.</p></div>
-        <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>Cancel</button>
-          <button class="hf-btn primary" data-action="confirm-plan">Change ${esc(what)}</button></div>`,
+        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht(`plan.${key}.title`)}</h2>
+          <div class="hf-sheetsub">${ht("plan.from_to", {
+            from: current ? planOptionLabel(key, current.state) : "—",
+            to: planOptionLabel(key, option),
+          })}</div></div>
+          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+        <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">${ht(`plan.${key}.body`, {
+          every_future_box: html(`<strong>${ht("plan.every_future_box")}</strong>`),
+        })}</p></div>
+        <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>${ht("common.cancel")}</button>
+          <button class="hf-btn primary" data-action="confirm-plan">${ht(`plan.${key}.change`)}</button></div>`,
       onClick: async (_ev, el) => {
         if (!el || el.getAttribute("data-action") !== "confirm-plan") return;
         card.closeSheet();
         try {
           await card.hass.callService("select", "select_option", { option }, { entity_id: entityId });
-          card.toast(`${what[0].toUpperCase()}${what.slice(1)} changed.`);
+          card.toast(t(`plan.${key}.changed`));
           card.broadcastDataChanged();
           card.reloadWeeks();
         } catch (err) {
-          card.toast(`Couldn't change the ${what}: ${(err && err.message) || err}`, true);
+          card.toast(t(`plan.${key}.failed`, { error: (err && err.message) || err }), true);
           card.renderView();
         }
       },
@@ -204,23 +226,22 @@ export class AccountView {
     if (!s) return "";
     const active = String(s.plan_preference || "").toLowerCase();
     const head = `<button class="hf-disclosure" data-action="toggle-presets" aria-expanded="${this.presetsOpen}">
-        ${icon(this.presetsOpen ? "mdi:chevron-down" : "mdi:chevron-right")}Meal presets</button>`;
+        ${icon(this.presetsOpen ? "mdi:chevron-down" : "mdi:chevron-right")}${ht("account.presets")}</button>`;
     if (!this.presetsOpen) return `<section class="hf-panel">${head}</section>`;
     let list;
-    if (this.presetsLoading && this.presets === null) list = `<div class="hf-muted hf-small">Loading presets…</div>`;
-    else if (!this.presets || !this.presets.length) list = `<div class="hf-muted hf-small">No presets available.</div>`;
+    if (this.presetsLoading && this.presets === null) list = `<div class="hf-muted hf-small">${ht("account.presets_loading")}</div>`;
+    else if (!this.presets || !this.presets.length) list = `<div class="hf-muted hf-small">${ht("account.presets_none")}</div>`;
     else {
       list = `<div class="hf-presets">${this.presets
         .map((p) => {
           const handle = String((p && p.handle) || "").toLowerCase();
           const mine = handle && handle === active;
-          return `<div class="hf-preset${mine ? " active" : ""}"><div class="hf-presetname">${esc(p.name || p.handle)}${mine ? pill("Yours", "ok") : ""}</div>
+          return `<div class="hf-preset${mine ? " active" : ""}"><div class="hf-presetname">${esc(p.name || p.handle)}${mine ? pill(t("account.yours"), "ok") : ""}</div>
               ${p.description ? `<div class="hf-presetdesc">${esc(p.description)}</div>` : ""}</div>`;
         })
         .join("")}</div>`;
     }
-    return `<section class="hf-panel">${head}<p class="hf-small hf-muted" style="margin:6px 0 10px">What each preset means — HelloFresh
-        uses yours to pick meals. Change it on hellofresh.com.</p>${list}</section>`;
+    return `<section class="hf-panel">${head}<p class="hf-small hf-muted" style="margin:6px 0 10px">${ht("account.presets_note")}</p>${list}</section>`;
   }
 
   async _fetchPresets() {
@@ -240,7 +261,7 @@ export class AccountView {
     const card = this.card;
     const ids = card.entities();
     const head = `<button class="hf-disclosure" data-action="toggle-health" aria-expanded="${this.healthOpen}">
-        ${icon(this.healthOpen ? "mdi:chevron-down" : "mdi:chevron-right")}Integration status</button>`;
+        ${icon(this.healthOpen ? "mdi:chevron-down" : "mdi:chevron-right")}${ht("health.title")}</button>`;
     if (!this.healthOpen) return `<section class="hf-panel">${head}</section>`;
     const item = (label, text, tone, iconName) =>
       `<div class="hf-stat"><span class="hf-statlabel">${esc(label)}</span><span class="hf-statvalue" style="font-size:0.95em">${pill(text, tone, iconName)}</span></div>`;
@@ -248,23 +269,27 @@ export class AccountView {
     const access = card.entityState(ids.accessToken);
     if (access) {
       const mins = Number(access.state);
-      cells.push(item("Access token", Number.isFinite(mins) ? `${Math.max(0, Math.round(mins))} min left` : access.state, Number.isFinite(mins) && mins > 5 ? "ok" : "warn", "mdi:key-outline"));
+      const left = Number.isFinite(mins) ? t("health.minutes_left", { count: Math.max(0, Math.round(mins)) }) : access.state;
+      cells.push(item(t("health.access_token"), left, Number.isFinite(mins) && mins > 5 ? "ok" : "warn", "mdi:key-outline"));
     }
     const refresh = card.entityState(ids.refreshToken);
     if (refresh) {
       const days = Number(refresh.state);
-      cells.push(item("Refresh token", Number.isFinite(days) ? `${Math.max(0, Math.round(days))} days left` : refresh.state, Number.isFinite(days) && days > 3 ? "ok" : "warn", "mdi:key-chain-variant"));
+      const left = Number.isFinite(days) ? t("health.days_left", { count: Math.max(0, Math.round(days)) }) : refresh.state;
+      cells.push(item(t("health.refresh_token"), left, Number.isFinite(days) && days > 3 ? "ok" : "warn", "mdi:key-chain-variant"));
     }
     const writes = card.entityState(ids.writeActions);
-    if (writes) cells.push(item("Write actions", writes.state === "on" ? "Available" : "Unavailable", writes.state === "on" ? "ok" : "danger", "mdi:pencil-lock-outline"));
+    if (writes) cells.push(item(t("health.write_actions"), t(writes.state === "on" ? "health.available" : "health.unavailable"), writes.state === "on" ? "ok" : "danger", "mdi:pencil-lock-outline"));
     const shape = card.entityState(ids.payloadShape);
-    if (shape) cells.push(item("API payloads", shape.state === "on" ? "Changed — check logs" : "As expected", shape.state === "on" ? "warn" : "ok", "mdi:code-json"));
-    const last = card.lastFetched ? new Date(card.lastFetched).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—";
+    if (shape) cells.push(item(t("health.api_payloads"), t(shape.state === "on" ? "health.payload_changed" : "health.payload_ok"), shape.state === "on" ? "warn" : "ok", "mdi:code-json"));
+    const last = card.lastFetched
+      ? new Date(card.lastFetched).toLocaleTimeString(L.I18n.timeLocale(), { hour: "numeric", minute: "2-digit", ...L.I18n.hourOptions() })
+      : "—";
     return `<section class="hf-panel">${head}
-        ${cells.length ? `<div class="hf-health" style="margin-top:10px">${cells.join("")}</div>` : `<p class="hf-small hf-muted">Status sensors aren't available.</p>`}
+        ${cells.length ? `<div class="hf-health" style="margin-top:10px">${cells.join("")}</div>` : `<p class="hf-small hf-muted">${ht("health.no_sensors")}</p>`}
         <div class="hf-actions" style="margin-top:12px;justify-content:space-between">
-          <span class="hf-small hf-muted">Card updated ${esc(last)} · v${esc(ACCOUNT_VERSION)}</span>
-          <button class="hf-btn sm" data-action="refresh-data" ${card.busy ? "disabled" : ""}>${icon("mdi:cloud-refresh-outline")}Refresh from HelloFresh</button>
+          <span class="hf-small hf-muted">${ht("health.card_updated", { time: last })} · v${esc(ACCOUNT_VERSION)}</span>
+          <button class="hf-btn sm" data-action="refresh-data" ${card.busy ? "disabled" : ""}>${icon("mdi:cloud-refresh-outline")}${ht("health.refresh")}</button>
         </div></section>`;
   }
 
@@ -289,8 +314,8 @@ export class AccountView {
     if (!this.spending && !this.spendingError && !this.spendingLoading) queueMicrotask(() => this._fetchSpending());
     if (!this.spending) {
       if (this.spendingError) {
-        return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}Couldn't load your spending: ${esc(this.spendingError)}
-          <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="spending-retry">Try again</button></div></div>`;
+        return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("spending.load_failed", { error: this.spendingError })}
+          <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="spending-retry">${ht("common.try_again")}</button></div></div>`;
       }
       return `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
@@ -298,17 +323,17 @@ export class AccountView {
     const weeks = Array.isArray(s.weeks) ? s.weeks : [];
     const months = Array.isArray(s.months) ? s.months : [];
     if (!weeks.length && !months.length && !s.total) {
-      return `<div class="hf-empty">${icon("mdi:chart-bar")}No spending history yet.</div>`;
+      return `<div class="hf-empty">${icon("mdi:chart-bar")}${ht("spending.none")}</div>`;
     }
     const total = s.total || {};
     const boxes = Number(total.box_count) || 0;
     const avg = boxes > 0 && total.amount != null ? total.amount / boxes : null;
     const saved = Number(total.discount) > 0 ? L.fmtPrice(total.discount, total.currency) : null;
     const kpis = `<div class="hf-stats" style="margin-bottom:16px">
-        ${total.amount != null ? `<div class="hf-stat big accent"><span class="hf-statlabel">Total spent</span><span class="hf-statvalue">${esc(L.fmtPrice(total.amount, total.currency))}</span><span class="hf-statnote">Delivered boxes, lifetime</span></div>` : ""}
-        <div class="hf-stat"><span class="hf-statlabel">Boxes</span><span class="hf-statvalue">${esc(boxes)}</span></div>
-        ${avg != null ? `<div class="hf-stat"><span class="hf-statlabel">Average box</span><span class="hf-statvalue">${esc(L.fmtPrice(avg, total.currency))}</span></div>` : ""}
-        ${saved ? `<div class="hf-stat"><span class="hf-statlabel">Saved with vouchers</span><span class="hf-statvalue" style="color:var(--hf-ok-fg)">${esc(saved)}</span></div>` : ""}
+        ${total.amount != null ? `<div class="hf-stat big accent"><span class="hf-statlabel">${ht("spending.total_spent")}</span><span class="hf-statvalue">${esc(L.fmtPrice(total.amount, total.currency))}</span><span class="hf-statnote">${ht("spending.lifetime")}</span></div>` : ""}
+        <div class="hf-stat"><span class="hf-statlabel">${ht("spending.boxes")}</span><span class="hf-statvalue">${esc(boxes)}</span></div>
+        ${avg != null ? `<div class="hf-stat"><span class="hf-statlabel">${ht("spending.average_box")}</span><span class="hf-statvalue">${esc(L.fmtPrice(avg, total.currency))}</span></div>` : ""}
+        ${saved ? `<div class="hf-stat"><span class="hf-statlabel">${ht("spending.saved_vouchers")}</span><span class="hf-statvalue" style="color:var(--hf-ok-fg)">${esc(saved)}</span></div>` : ""}
       </div>`;
     return `${kpis}${this._chart(months)}
       <div class="hf-cols halves" style="margin-top:16px">${this._months(months)}${this._ledger(weeks)}</div>`;
@@ -332,7 +357,9 @@ export class AccountView {
     const cols = series
       .map((m) => {
         const cls = m.amount <= 0 ? " empty" : m.upcoming ? " upcoming" : "";
-        const title = `${L.fmtMonth(m.month)}: ${m.amount > 0 ? L.fmtPrice(m.amount, m.currency || currency) : "no box"}${m.upcoming ? " (upcoming)" : ""}`;
+        const title = `${L.fmtMonth(m.month)}: ${m.amount > 0 ? L.fmtPrice(m.amount, m.currency || currency) : t("spending.no_box")}${
+          m.upcoming ? ` (${t("spending.upcoming_note")})` : ""
+        }`;
         const h = pct(m.amount);
         return `<div class="hf-bc-col${cls}" title="${esc(title)}">
             ${m.amount > 0 ? `<span class="hf-bc-val" style="bottom:calc(${h.toFixed(1)}% + 6px)">${esc(L.fmtPriceCompact(m.amount, m.currency || currency))}</span>` : ""}
@@ -355,9 +382,9 @@ export class AccountView {
            ${priced.map((p) => `<span class="hf-bc-dot" style="left:${p.x.toFixed(2)}%;bottom:${(100 - p.y).toFixed(2)}%"></span>`).join("")}`
         : "";
     return `<section class="hf-panel">
-        <div class="hf-sectionhead" style="margin-top:0"><h2 class="hf-h2">Monthly box cost</h2>
-          ${max > 0 ? `<span class="hf-sectionnote">Peak ${esc(L.fmtPrice(max, currency))}</span>` : ""}</div>
-        <div class="hf-barchart" role="img" aria-label="Monthly HelloFresh box cost over the last ${n} months">
+        <div class="hf-sectionhead" style="margin-top:0"><h2 class="hf-h2">${ht("spending.monthly")}</h2>
+          ${max > 0 ? `<span class="hf-sectionnote">${ht("spending.peak", { price: L.fmtPrice(max, currency) })}</span>` : ""}</div>
+        <div class="hf-barchart" role="img" aria-label="${ht("spending.chart_label", { count: n })}">
           <div class="hf-bc-plot"><div class="hf-bc-cols" style="grid-template-columns:repeat(${n},minmax(0,1fr))">${cols}</div>${trend}</div>
           <div class="hf-bc-axis" style="grid-template-columns:repeat(${n},minmax(0,1fr))">${axis}</div>
         </div>
@@ -369,14 +396,14 @@ export class AccountView {
     const shown = months.slice(0, cap);
     if (!shown.length) return "";
     const max = shown.reduce((m, x) => Math.max(m, Number(x.amount) || 0), 0) || 1;
-    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:12px">By month</h2><div class="hf-bars">${shown
+    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:12px">${ht("spending.by_month")}</h2><div class="hf-bars">${shown
       .map((m) => {
         const amount = Number(m.amount) || 0;
         const pct = Math.max(2, Math.round((amount / max) * 100));
         const n = Number(m.box_count) || 0;
         return `<div class="hf-barrow${m.upcoming ? " upcoming" : ""}"><span class="hf-muted">${esc(L.fmtMonth(m.month))}</span>
             <span class="hf-bar"><span style="width:${pct}%"></span></span>
-            <span class="hf-barval">${esc(L.fmtPrice(amount, m.currency))}<small>${esc(L.plural(n, "box", "boxes"))}</small></span></div>`;
+            <span class="hf-barval">${esc(L.fmtPrice(amount, m.currency))}<small>${ht("calendar.boxes", { count: n })}</small></span></div>`;
       })
       .join("")}</div></section>`;
   }
@@ -385,12 +412,12 @@ export class AccountView {
     const cap = Number(this.card.config.spending_box_rows) || 8;
     const shown = weeks.slice(0, cap);
     if (!shown.length) return "";
-    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:4px">Recent boxes</h2><div class="hf-ledger">${shown
+    return `<section class="hf-panel"><h2 class="hf-h2" style="margin-bottom:4px">${ht("spending.recent_boxes")}</h2><div class="hf-ledger">${shown
       .map(
         (w) => `<div class="hf-ledgerrow${w.upcoming ? " upcoming" : ""}">
           <span>${esc(L.fmtDate(w.delivery_date, { month: "short", day: "numeric", year: "numeric" }))}
-            ${w.upcoming ? pill("Upcoming", "muted") : ""}
-            ${Number(w.discount) > 0 ? `<span class="hf-saved" title="${esc(w.coupon_code ? `Voucher ${w.coupon_code}` : "Voucher")}">−${esc(L.fmtPrice(w.discount, w.currency))}</span>` : ""}</span>
+            ${w.upcoming ? pill(t("spending.upcoming"), "muted") : ""}
+            ${Number(w.discount) > 0 ? `<span class="hf-saved" title="${w.coupon_code ? ht("voucher.code", { code: w.coupon_code }) : ht("voucher.label")}">−${esc(L.fmtPrice(w.discount, w.currency))}</span>` : ""}</span>
           <strong>${esc(L.fmtPrice(w.amount, w.currency))}</strong></div>`
       )
       .join("")}</div></section>`;
@@ -433,9 +460,9 @@ export class AccountView {
     try {
       await card.callAction("refresh_data");
       await card.refresh({ quiet: true });
-      card.toast("Refreshed from HelloFresh.");
+      card.toast(t("health.refreshed"));
     } catch (err) {
-      card.toast(`Refresh failed: ${(err && err.message) || err}`, true);
+      card.toast(t("health.refresh_failed", { error: (err && err.message) || err }), true);
     }
   }
 

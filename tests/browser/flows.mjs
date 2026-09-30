@@ -16,6 +16,8 @@ async function open(params = {}, viewport = [1400, 900], path = "/index.html") {
   page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
     if (msg.type() === "error" && !msg.text().includes("404")) errors.push(`console: ${msg.text()}`);
+    // The text layer warns once per key it can't find; a card string missing is a bug.
+    if (/^warn/.test(msg.type()) && msg.text().includes("no card text for")) errors.push(`console: ${msg.text()}`);
   });
   const qs = new URLSearchParams({ latency: "60", ...params });
   await page.goto(`http://localhost:${PORT}${path}?${qs}`, { waitUntil: "networkidle0" });
@@ -671,6 +673,61 @@ await check("calendar: starts on Home Assistant's first day of the week", async 
   const cells = await page.evaluate(() => window.__card.shadowRoot.querySelectorAll(".hf-calgrid .hf-cal-day").length);
   assert(before[0] === "Sun" && after[0] === "Mon" && after[6] === "Sun", JSON.stringify({ before, after }));
   assert(cells % 7 === 0, `whole weeks (${cells})`);
+  await page.close();
+});
+
+await check("in Norwegian: the card asks Home Assistant for its text once and reads nb throughout", async () => {
+  const page = await open({ lang: "nb" });
+  const ws = await page.evaluate(() => window.__calls.filter((c) => c.ws === "frontend/get_translations").map((c) => c.data));
+  assert(ws.length === 1 && ws[0].language === "nb" && ws[0].category === "config_panel", JSON.stringify(ws));
+  const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-tab > span:not(.hf-count)")].map((e) => e.textContent.trim()));
+  assert(JSON.stringify(tabs) === JSON.stringify(["Oversikt", "Meny", "Market", "Oppskrifter", "Konto"]), JSON.stringify(tabs));
+  const eyebrow = await text(page, ".hf-eyebrow");
+  assert(["Neste kasse", "Kommer i dag", "Kommer i morgen", "Forrige kasse"].includes(eyebrow.trim()), `eyebrow: ${eyebrow}`);
+  const heroDate = await text(page, ".hf-herodate");
+  assert(/mandag|tirsdag|onsdag|torsdag|fredag|lørdag|søndag/.test(heroDate), `a Norwegian date: ${heroDate}`);
+
+  await click(page, '[data-action="nav"][data-view="menu"]', 600);
+  const add = await text(page, '.hf-grid [data-action="add"]');
+  assert(add.trim() === "Legg til", `add button: ${add}`);
+  await click(page, '[data-action="toggle-filters"]', 300);
+  const rows = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-flabel")].map((e) => e.textContent.trim()));
+  assert(rows.includes("Hovedprotein") && rows.includes("Høydepunkter"), JSON.stringify(rows));
+  assert(await q(page, '[data-action="f-protein"][data-value="Seafood"]'), "chips keep their English keys");
+  const seafood = await text(page, '[data-action="f-protein"][data-value="Seafood"]');
+  assert(seafood.trim() === "Sjømat", `chip: ${seafood}`);
+  await click(page, '.hf-grid .hf-tile:not(.selected) [data-action="add"]', 400);
+  const bar = await text(page, ".js-boxbar");
+  assert(/av \d+ retter/.test(bar) && /Lagre kassen/.test(bar), `box bar: ${bar}`);
+
+  // Home Assistant switched to English: the card follows without a reload.
+  await page.evaluate(() => {
+    window.__card.hass = { ...window.__hass, language: "en", locale: { language: "en" } };
+  });
+  await sleep(300);
+  const english = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-tab > span:not(.hf-count)")].map((e) => e.textContent.trim()));
+  assert(english[0] === "Overview" && english[1] === "Menu", JSON.stringify(english));
+  await page.close();
+});
+
+await check("in Norwegian: the recipe sheet, the delivery details and the account", async () => {
+  let page = await open({ lang: "nb", view: "menu" });
+  await click(page, '.hf-grid .hf-tile[data-action="open-recipe"]', 1200);
+  const sheet = await page.evaluate(() => window.__card.shadowRoot.querySelector(".detailbox")?.textContent || "");
+  assert(/Ingredienser/.test(sheet) && /Fremgangsmåte/.test(sheet), `recipe sheet: ${sheet.slice(0, 200)}`);
+  await page.close();
+
+  page = await open({ lang: "nb" });
+  await click(page, '.hf-row[data-action="delivery"]', 900);
+  const details = await page.evaluate(() => window.__card.shadowRoot.querySelector(".hf-sheet")?.textContent || "");
+  assert(/I denne kassen|Sporing|Betaling/.test(details), `delivery details: ${details.slice(0, 200)}`);
+  await page.close();
+
+  page = await open({ lang: "nb", view: "account" });
+  const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-subtabs button")].map((e) => e.textContent.trim()));
+  assert(tabs[0] === "Abonnement og betaling" && tabs[1] === "Matpreferanser" && tabs[2] === "Utgifter", JSON.stringify(tabs));
+  const plan = await text(page, ".hf-kv");
+  assert(/Retter per kasse/.test(plan), `plan: ${plan}`);
   await page.close();
 });
 

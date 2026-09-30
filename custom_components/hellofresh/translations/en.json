@@ -751,5 +751,842 @@
         }
       }
     }
+  },
+  "config_panel": {
+    "card": {
+      "meta": {
+        "language": "en"
+      },
+      "common": {
+        "close": "Close",
+        "refresh": "Refresh",
+        "retry": "Retry",
+        "try_again": "Try again",
+        "loading": "Loading…",
+        "loading_label": "Loading",
+        "show_more": "Show more",
+        "dismiss": "Dismiss",
+        "clear_search": "Clear search",
+        "cancel": "Cancel",
+        "fewer": "Fewer",
+        "more": "More"
+      },
+      "views": {
+        "overview": "Overview",
+        "menu": "Menu",
+        "market": "Market",
+        "recipes": "Recipes",
+        "account": "Account"
+      },
+      "card": {
+        "sections": "HelloFresh sections",
+        "sidebar": "Sidebar",
+        "open_sidebar": "Open the sidebar",
+        "plan_size": {
+          "one": "{count} meal for {people}",
+          "other": "{count} meals for {people}"
+        },
+        "weeks_need_picks": {
+          "one": "{count} week needs meal picks",
+          "other": "{count} weeks need meal picks"
+        },
+        "load_failed": "Couldn't load your deliveries: {error}"
+      },
+      "banner": {
+        "refresh_failed": "Couldn't refresh: {error}",
+        "payment_card": "payment card",
+        "card_expired": "Your {card} has expired. Update it on HelloFresh or your next box may not ship.",
+        "card_expired_date": "Your {card} has expired ({date}). Update it on HelloFresh or your next box may not ship.",
+        "card_expiring": "Your {card} expires soon. Update it on HelloFresh before your next box is charged.",
+        "card_expiring_date": "Your {card} expires soon ({date}). Update it on HelloFresh before your next box is charged.",
+        "holiday_date": "New delivery date: {date}."
+      },
+      "state": {
+        "ready": {
+          "label": "Editable",
+          "short": "Open"
+        },
+        "needs": {
+          "label": "Needs picking",
+          "short": "Pick meals"
+        },
+        "preselected": {
+          "label": "Preselected",
+          "short": "Preselected",
+          "hint": "HelloFresh picked these meals for you — review and adjust before the deadline."
+        },
+        "shipping": {
+          "label": "On the way",
+          "short": "On its way"
+        },
+        "delivered": {
+          "label": "Delivered",
+          "short": "Delivered"
+        },
+        "skipped": {
+          "label": "Skipped",
+          "short": "Skipped"
+        },
+        "locked": {
+          "label": "Locked",
+          "short": "Locked"
+        }
+      },
+      "status": {
+        "active": "Active",
+        "inactive": "Inactive",
+        "paused": "Paused",
+        "running": "Running",
+        "cancelled": "Cancelled",
+        "canceled": "Cancelled",
+        "skipped": "Skipped",
+        "delivered": "Delivered",
+        "shipped": "Shipped",
+        "in_transit": "In transit",
+        "out_for_delivery": "Out for delivery",
+        "on_the_way": "On the way",
+        "pre_transit": "Label created",
+        "label_created": "Label created",
+        "received_at_origin_facility": "Received at origin facility",
+        "failed": "Failed",
+        "exception": "Delivery problem",
+        "delivery_exception": "Delivery problem",
+        "delayed": "Delayed",
+        "complete": "Completed",
+        "completed": "Completed",
+        "unknown": "Unknown"
+      },
+      "time": {
+        "duration": {
+          "minutes": "{minutes} min",
+          "hours": "{hours} h",
+          "hours_minutes": "{hours} h {minutes} min",
+          "seconds": "{seconds} sec"
+        },
+        "left": {
+          "passed": "passed",
+          "days_hours": "{days}d {hours}h left",
+          "days": "{days}d left",
+          "hours": "{hours}h left",
+          "minutes": "{minutes}m left"
+        },
+        "any_minute": "any minute now",
+        "in": "in {duration}",
+        "just_now": "just now",
+        "ago": "{duration} ago"
+      },
+      "week": {
+        "skip_this_week": "Skip this week",
+        "skip_week": "Skip week",
+        "holiday_change": "Holiday delivery change",
+        "holiday_schedule": "Holiday schedule",
+        "make_changes_by": "Make changes by {date}",
+        "autopicked_title": "HelloFresh picked these meals for you.",
+        "unskip_this_week": "Unskip this week",
+        "review": "Review",
+        "edit": "Edit",
+        "choose": "Choose",
+        "change_day": "Change day",
+        "unskip": "Unskip",
+        "skip": "Skip",
+        "nothing_ships": "Nothing ships this week.",
+        "edit_by": "Edit by {date}",
+        "no_box": "No box this week",
+        "review_picks": "Review HelloFresh's picks",
+        "pick_n_meals": {
+          "one": "Pick {count} meal",
+          "other": "Pick {count} meals"
+        },
+        "pick_your_meals": "Pick your meals",
+        "plan_n": "plan {count}",
+        "next": "Next",
+        "previous_week": "Previous week",
+        "next_week": "Next week",
+        "preselected_title": "HelloFresh picked this week's meals.",
+        "pantry": "Pantry",
+        "unskip_week": "Unskip week",
+        "skipped_title": "This week is skipped.",
+        "unskip_to_choose": "Unskip it to choose meals.",
+        "autopicked_before": "Keep them or swap any before {date}.",
+        "closed": "Changes are closed for this box — it ships as shown."
+      },
+      "skip": {
+        "title": "Skip {date}?",
+        "body": "No box ships that week and you won't be charged for it. You can unskip it until the selection deadline.",
+        "keep": "Keep my box",
+        "skip_failed": "Couldn't skip the week: {error}",
+        "unskip_failed": "Couldn't unskip the week: {error}",
+        "restored": "Week restored — your box is back on.",
+        "done": "Week skipped."
+      },
+      "reschedule": {
+        "title": "Change delivery day",
+        "current": "Current",
+        "only_this_box": "For the box scheduled {date} only",
+        "none": "No other days are available.",
+        "failed": "Couldn't change the day: {error}",
+        "done": "Delivery day changed for that week."
+      },
+      "pantry": {
+        "update_failed": "Couldn't update the list: {error}",
+        "list": "Pantry list",
+        "title": "Pantry staples",
+        "nothing": "Nothing extra to buy for this box.",
+        "sub": {
+          "one": "Not in the {date} box · {count} to get",
+          "other": "Not in the {date} box · {count} to get"
+        }
+      },
+      "overview": {
+        "no_deliveries": "No deliveries found for this account.",
+        "last_box": "Last box",
+        "arriving_today": "Arriving today",
+        "arriving_tomorrow": "Arriving tomorrow",
+        "next_box": "Next box",
+        "skipped_title": "This box is skipped.",
+        "skipped_body": "Nothing ships and you won't be charged.",
+        "skipped_body_unskip": "Nothing ships and you won't be charged — unskip it until the deadline.",
+        "autopicked_body": "Keep them or swap any before the deadline.",
+        "unsaved": "You have unsaved changes to this box.",
+        "finish": "Finish",
+        "price_plan": "{price} plan price",
+        "price_total": "{price} total",
+        "charged": "Charged {date}",
+        "discount": "−{amount} discount",
+        "coupon": "Coupon {code}",
+        "review_meals": "Review meals",
+        "edit_meals": "Edit meals",
+        "choose_meals": "Choose meals",
+        "add_extras": "Add extras",
+        "view_meals": "View meals",
+        "no_box": "No box this week.",
+        "extras_line": "{extras}: {names}",
+        "no_meals": "No meals chosen yet.",
+        "pick_meals": "Pick meals",
+        "more": "+{count} more",
+        "chip_review": "review",
+        "chip_pick": "pick meals",
+        "more_weeks_need_picks": {
+          "one": "{count} more week needs your picks",
+          "other": "{count} more weeks need your picks"
+        },
+        "before_it_arrives": "Before it arrives",
+        "pantry_note": {
+          "one": "{count} pantry staple the box doesn't include",
+          "other": "{count} pantry staples the box doesn't include"
+        },
+        "pantry_done": "All pantry staples ticked off",
+        "see_all": "See all {count}",
+        "layout": "Schedule layout",
+        "weeks": "Weeks",
+        "calendar": "Calendar",
+        "delivery_calendar": "Delivery calendar",
+        "coming_up": "Coming up",
+        "subscription_inactive": "Your subscription is {status} — no boxes are scheduled.",
+        "no_later_weeks": "HelloFresh hasn't published later weeks yet.",
+        "recent_deliveries": "Recent deliveries",
+        "history_weeks": {
+          "one": "{count} week of history",
+          "other": "{count} weeks of history"
+        }
+      },
+      "live": {
+        "step": {
+          "packed": "Packed",
+          "on_the_way": "On the way",
+          "delivered": "Delivered"
+        },
+        "phase": {
+          "at_depot": "Packed at the depot",
+          "driver_departed": "The driver has set off",
+          "on_the_way": "On the way to you",
+          "delayed": "Running late",
+          "delivered": "Delivered",
+          "delivered_home": "Delivered",
+          "cancelled": "Delivery cancelled"
+        },
+        "arrives": "Arrives {time}",
+        "youre_next": "You're next",
+        "stops_before": "{stops} before yours",
+        "stops": {
+          "one": "{count} stop",
+          "other": "{count} stops"
+        },
+        "driver": "Driver {name}",
+        "window": "Window {window}",
+        "badge": "Live",
+        "map": "Live map",
+        "updated": "Updated {ago}"
+      },
+      "tracking": {
+        "step": {
+          "preparing": "Preparing",
+          "shipped": "Shipped",
+          "out_for_delivery": "Out for delivery",
+          "delivered": "Delivered"
+        },
+        "delivered_at": "Delivered {when}",
+        "estimated": "Estimated {date}",
+        "hide_history": "Hide history",
+        "history": "History ({count})",
+        "history_label": "Tracking history",
+        "open_photo": "Open delivery photo",
+        "photo": "Delivery photo",
+        "photo_n": "Delivery photo {number}",
+        "signed_by": "Signed by {name}",
+        "progress": "Delivery progress",
+        "photo_hint": "Photo"
+      },
+      "order": {
+        "status": "Status",
+        "carrier": "Carrier",
+        "tracking": "Tracking",
+        "delivered": "Delivered",
+        "order": "Order"
+      },
+      "delivery": {
+        "row_label": "{date}: {state}. Delivery details",
+        "label": "Delivery details for {date}",
+        "delivered_title": "Delivered {when}",
+        "box_for": "Box for {date}",
+        "order": "Order {id}",
+        "open_full_photo": "Open the full-size photo",
+        "no_photo_carrier": "{carrier} didn't share a delivery photo for this box.",
+        "no_photo": "No delivery photo was shared for this box.",
+        "in_box": "In this box",
+        "charged": "Charged",
+        "order_total": "Order total",
+        "charges": "Charges",
+        "view_menu": "View this week's menu",
+        "no_details": "No details for this box yet."
+      },
+      "calendar": {
+        "today": "Today",
+        "boxes": {
+          "one": "{count} box",
+          "other": "{count} boxes"
+        },
+        "skipped": {
+          "one": "{count} skipped",
+          "other": "{count} skipped"
+        },
+        "previous_month": "Previous month",
+        "next_month": "Next month",
+        "no_deliveries": "No deliveries in {month}.",
+        "holiday_note": "holiday schedule"
+      },
+      "meals": {
+        "none_chosen": "No meals chosen yet",
+        "extras": {
+          "one": "{count} extra",
+          "other": "{count} extras"
+        },
+        "count": {
+          "one": "{count} meal",
+          "other": "{count} meals"
+        },
+        "servings": {
+          "one": "{count} serving",
+          "other": "{count} servings"
+        }
+      },
+      "menu": {
+        "original_recipe": "Original recipe",
+        "no_weeks": "No delivery weeks found.",
+        "no_meals_skipped": "No meals this week.",
+        "no_meals_delivered": "No meals were delivered this week.",
+        "not_published": "This week's menu isn't published yet.",
+        "search_delivered": "Search delivered meals",
+        "search": "Search this week's menu",
+        "filters": "Filters",
+        "in_my_box": "In my box",
+        "filtering": "Filtering…",
+        "remove_filter": "Remove: {label}",
+        "clear_all": "Clear all",
+        "no_match_query": "No meals match “{query}”.",
+        "nothing_in_box": "Nothing in your box yet — turn off “{in_my_box}” to browse the menu.",
+        "no_match_filters": "No meals match these filters.",
+        "result_count": "{shown} of {total}",
+        "delivered_this_week": "Delivered this week",
+        "show_more": "Show {count} more · {left} left",
+        "protein_g": "{grams}g protein",
+        "ordered": "Ordered {count}×",
+        "ordered_last": "Ordered {count}× · last {week}",
+        "you_rated": "You rated {rating}/{scale}",
+        "add_aria": "Add {name} to your box",
+        "add": "Add",
+        "servings_of": "Servings of {name}",
+        "remove_meal": "Remove meal",
+        "fewer_servings": "Fewer servings",
+        "more_servings": "More servings",
+        "serving_unit": {
+          "one": "serving",
+          "other": "servings"
+        },
+        "in_box": "In box",
+        "per_serving": "/serving",
+        "in_cookbook": "In your cookbook",
+        "in_your_box": "In your box",
+        "sold_out": "Sold out",
+        "play_video": "Play video for {name}",
+        "surcharge": "Premium surcharge per serving"
+      },
+      "filters": {
+        "protein": {
+          "beef": "Beef",
+          "poultry": "Poultry",
+          "pork": "Pork",
+          "seafood": "Seafood",
+          "lamb": "Lamb",
+          "veggie": "Veggie"
+        },
+        "diet": {
+          "vegetarian": "Vegetarian",
+          "under-650-cal": "Under 650 Calories",
+          "high-protein": "High Protein",
+          "carb-conscious": "Carb Conscious",
+          "high-fiber": "Fiber Powered",
+          "gluten-free": "Gluten-Free Friendly",
+          "sodium-smart": "Sodium Smart",
+          "low-sugar": "Low Added Sugar",
+          "organic-protein": "Organic Protein",
+          "glp1": "GLP-1 Support"
+        },
+        "time": {
+          "under-15-min": "Under 15 Minutes",
+          "under-20-min": "Under 20 Minutes",
+          "under-30-min": "Under 30 Minutes"
+        },
+        "highlight": {
+          "new": "New",
+          "bestseller": "Bestsellers",
+          "cooked-before": "Cooked Before",
+          "favorite": "Favorites"
+        },
+        "double_protein": "2x Protein",
+        "categories": "Categories",
+        "all": "All",
+        "main_protein": "Main protein",
+        "dietary": "Dietary preference",
+        "cooking_time": "Total cooking time",
+        "any": "Any",
+        "highlights": "Highlights",
+        "clear_all": "Clear all filters"
+      },
+      "customize": {
+        "aria": "Customize {dish}: {option}, {options}",
+        "title": "Customize",
+        "options": {
+          "one": "{count} option",
+          "other": "{count} options"
+        },
+        "label": "Customize {dish}",
+        "taken": "Already in your box",
+        "included": "Included",
+        "as_written": "As the recipe is written",
+        "update": "Update box",
+        "add": "Add to box",
+        "in_box": "in your box",
+        "ways": "Ways to have this meal",
+        "view_recipe": "View recipe"
+      },
+      "box": {
+        "closed_toast": "Changes are closed for this week — its box ships as it was saved.",
+        "min_toast": "Choose at least {min} meals before saving ({selected} selected).",
+        "saving": "Saving your box…",
+        "save_failed": "Couldn't save your box: {error}",
+        "saved": "Your box is saved.",
+        "unsaved_changes": "Unsaved changes",
+        "downsized_title": "HelloFresh downsized this box to fit your plan.",
+        "downsized_body": "Fewer items were saved than you picked — check the saved box below.",
+        "kind_label": "Meals or extras",
+        "meals": "Meals",
+        "extras": "Extras",
+        "box_total": "Box total",
+        "selected_of_required": "{selected} of {required} meals",
+        "deadline_passed": "The deadline passed — these changes can't be saved",
+        "min_note": "Choose at least {min} meals to save",
+        "resized_note": "Box resized to {selected} meals for this week (plan: {required}) — HelloFresh reprices it",
+        "saved_note": "Saved · edit until the deadline",
+        "estimated_total": "Estimated total",
+        "updating_price": "Updating price…",
+        "discard_changes": "Discard changes",
+        "discard": "Discard",
+        "save": "Save box",
+        "your_box": "Your box",
+        "new": "New",
+        "was": "Was {count}",
+        "removed": "Removed",
+        "shipping": "Shipping",
+        "tax": "Tax",
+        "extras_change": "Extras (this change)",
+        "updating": "Updating…",
+        "price": "Price",
+        "estimate_note": "An estimate — HelloFresh calculates the final price when it charges the box.",
+        "min_notice": "Choose at least {min} meals — HelloFresh has no smaller box.",
+        "resized_notice": "This week's box is resized to {meals} (your plan has {required}). HelloFresh reprices it; your plan itself doesn't change.",
+        "unsaved_lower": "unsaved changes",
+        "keep_editing": "Keep editing"
+      },
+      "market": {
+        "group": {
+          "appetizer": "Appetizers",
+          "breakfast": "Breakfast",
+          "dessert": "Desserts",
+          "lunch": "Lunch",
+          "protein": "Proteins",
+          "sides": "Sides",
+          "donation": "Donations",
+          "lowprices": "Low Prices",
+          "modularity": "Extras"
+        },
+        "search": "Search extras",
+        "none_ordered": "No extras were ordered this week.",
+        "not_open": "The Market for this week isn't open yet.",
+        "no_match_query": "No extras match “{query}”.",
+        "none_in_box": "No extras in your box yet.",
+        "no_match_categories": "No extras match these categories.",
+        "add_aria": "Add {name}",
+        "quantity_of": "Quantity of {name}",
+        "remove": "Remove",
+        "in_box_unit": "in box",
+        "ordered": "{count} ordered",
+        "open": "Open: {name}"
+      },
+      "money": {
+        "total": "Total",
+        "plan_price": "Plan price",
+        "discount": "Discount"
+      },
+      "voucher": {
+        "expires": "expires {date}",
+        "one_time": "one-time",
+        "code": "Voucher {code}",
+        "label": "Voucher"
+      },
+      "recipe": {
+        "open": "Open recipe: {name}",
+        "close": "Close recipe",
+        "loading": "Loading recipe…",
+        "difficulty": "Difficulty {level}",
+        "servings": "Servings",
+        "not_in_box": "(not in box)",
+        "contains": "Contains {allergens}",
+        "step": "Step {number}",
+        "nutrition": "Nutrition",
+        "per_serving": "per serving",
+        "allergens": "Allergens: {allergens}",
+        "ingredients": "Ingredients",
+        "utensils": "You'll need",
+        "instructions": "Instructions",
+        "video": "Watch the recipe video",
+        "card_pdf": "Printable recipe card (PDF)",
+        "view_site": "View on hellofresh.com",
+        "not_in_week_box": "Not in this week's box",
+        "add": "+ Add",
+        "in_week_box": "In this week's box",
+        "fewer_items": "Fewer items",
+        "more_items": "More items",
+        "item_unit": {
+          "one": "item",
+          "other": "items"
+        }
+      },
+      "recipes": {
+        "search_failed": "Search failed: {error}",
+        "saved": "Saved to your cookbook.",
+        "removed": "Removed from your cookbook.",
+        "save_failed": "Couldn't save the recipe: {error}",
+        "remove_failed": "Couldn't remove the recipe: {error}",
+        "search_label": "Search recipes",
+        "filter_cookbook": "Filter your cookbook",
+        "search_catalog": "Search 10,000+ recipes",
+        "top_rated": "Top rated",
+        "cookbook": "Cookbook",
+        "fewer_categories": "Fewer",
+        "all_categories": "All categories",
+        "refine": "Refine",
+        "none": "No recipes found.",
+        "no_match": "No recipes match “{query}”.",
+        "results": {
+          "one": "{count} result across every category",
+          "other": "{count} results across every category"
+        },
+        "cookbook_empty": "Your cookbook is empty. Tap the heart on any recipe to save it here.",
+        "no_saved_match": "No saved recipes match “{query}”.",
+        "remove_aria": "Remove from cookbook: {name}",
+        "save_aria": "Save to cookbook: {name}",
+        "remove_title": "Remove from cookbook",
+        "save_title": "Save to cookbook"
+      },
+      "account": {
+        "credit_card": "Credit card",
+        "card_ending": "{brand} ending in {last4}",
+        "tab": {
+          "plan": "Plan & billing",
+          "profile": "Food preferences",
+          "spending": "Spending"
+        },
+        "sections": "Account sections",
+        "load_failed": "Couldn't load your account.",
+        "plan": "Plan",
+        "meal_preference": "Meal preference",
+        "servings": "Servings",
+        "meals_per_box": "Meals per box",
+        "credit": "Credit",
+        "card_on_file": "Card on file",
+        "card_expiry": "exp. {date}",
+        "card_expired": "expired",
+        "card_expiring": "expiring",
+        "boxes_received": "Boxes received",
+        "account_id": "Account ID",
+        "delivery_address": "Delivery address",
+        "upcoming_boxes": "Upcoming boxes",
+        "need_picks": "Need picks",
+        "tap_to_review": "Tap to review",
+        "next_skipped": "Next skipped",
+        "your_plan": "Your plan",
+        "upcoming": "Upcoming",
+        "presets": "Meal presets",
+        "presets_loading": "Loading presets…",
+        "presets_none": "No presets available.",
+        "yours": "Yours",
+        "presets_note": "What each preset means — HelloFresh uses yours to pick meals. Change it on hellofresh.com."
+      },
+      "plan": {
+        "options_loading": "Options load shortly…",
+        "settings": "Plan settings",
+        "settings_note": "These change every future box — and what you're billed. To change a single week, use {change_day} or {skip} on that week.",
+        "from_to": "From {from} to {to}",
+        "every_future_box": "every future box",
+        "box_size": {
+          "label": "Box size",
+          "hint": "Meals per week and servings per meal",
+          "option": "{meals} × {servings}",
+          "change": "Change box size",
+          "title": "Change your box size?",
+          "body": "This applies to {every_future_box} and changes what you're billed. Boxes past their selection deadline keep their current setting.",
+          "changed": "Box size changed.",
+          "failed": "Couldn't change the box size: {error}"
+        },
+        "delivery_day": {
+          "label": "Delivery day",
+          "hint": "Your usual delivery day and window",
+          "change": "Change delivery day",
+          "title": "Change your delivery day?",
+          "body": "This applies to {every_future_box}. Boxes past their selection deadline keep their current setting.",
+          "changed": "Delivery day changed.",
+          "failed": "Couldn't change the delivery day: {error}"
+        }
+      },
+      "health": {
+        "title": "Integration status",
+        "access_token": "Access token",
+        "minutes_left": {
+          "one": "{count} min left",
+          "other": "{count} min left"
+        },
+        "refresh_token": "Refresh token",
+        "days_left": {
+          "one": "{count} day left",
+          "other": "{count} days left"
+        },
+        "write_actions": "Write actions",
+        "available": "Available",
+        "unavailable": "Unavailable",
+        "api_payloads": "API payloads",
+        "payload_changed": "Changed — check logs",
+        "payload_ok": "As expected",
+        "no_sensors": "Status sensors aren't available.",
+        "card_updated": "Card updated {time}",
+        "refresh": "Refresh from HelloFresh",
+        "refreshed": "Refreshed from HelloFresh.",
+        "refresh_failed": "Refresh failed: {error}"
+      },
+      "spending": {
+        "load_failed": "Couldn't load your spending: {error}",
+        "none": "No spending history yet.",
+        "total_spent": "Total spent",
+        "lifetime": "Delivered boxes, lifetime",
+        "boxes": "Boxes",
+        "average_box": "Average box",
+        "saved_vouchers": "Saved with vouchers",
+        "no_box": "no box",
+        "upcoming_note": "upcoming",
+        "monthly": "Monthly box cost",
+        "peak": "Peak {price}",
+        "chart_label": {
+          "one": "Monthly HelloFresh box cost over the last month",
+          "other": "Monthly HelloFresh box cost over the last {count} months"
+        },
+        "by_month": "By month",
+        "recent_boxes": "Recent boxes",
+        "upcoming": "Upcoming"
+      },
+      "profile": {
+        "field": {
+          "exclusions": "Exclude",
+          "primary_proteins": "Proteins",
+          "flavors": "Flavors",
+          "goals": "Personal",
+          "nutritions": "Nutrition",
+          "cuisines": "Cuisines",
+          "dish_types": "Dish types",
+          "meal_types": "Cooking styles",
+          "dietary_preferences": "Diet type"
+        },
+        "value": {
+          "mostly-meat": "I eat everything",
+          "flexitarian": "Flexitarian",
+          "pescatarian": "Pescatarian",
+          "vegetarian": "Vegetarian",
+          "vegan": "Vegan",
+          "quick-easy": "Quick recipes",
+          "batch": "Batch recipes",
+          "chef-style": "Chef-style recipes",
+          "family-style": "Family-style recipes",
+          "bake": "Bakes",
+          "bowl": "Bowls",
+          "burger": "Burgers",
+          "main-plus-sides": "Main + sides",
+          "pizza": "Pizzas",
+          "salad": "Salads",
+          "sandwich": "Sandwiches",
+          "soups-stews": "Soups or Stews",
+          "stir-fry": "Stir fries",
+          "wrap": "Wraps",
+          "noodle": "Noodles",
+          "pasta": "Pasta",
+          "glp1-support": "GLP-1 friendly",
+          "plant-based": "Plant based",
+          "high-protein": "High protein",
+          "low-calorie": "Low calorie",
+          "low-carb": "Low carb",
+          "make-cooking-easy": "Cook easier",
+          "try-new-recipes": "Try new recipes",
+          "save-time": "Save time",
+          "save-money": "Save money",
+          "eat-healthier": "Eat healthier",
+          "improve-health": "Improve health",
+          "waste-less-food": "Waste less food",
+          "beef": "Beef",
+          "pork": "Pork",
+          "chicken": "Chicken",
+          "poultry": "Poultry",
+          "fish": "Fish",
+          "shellfish": "Shellfish",
+          "salmon": "Salmon",
+          "cod": "Cod",
+          "tuna": "Tuna",
+          "seabass": "Seabass",
+          "tilapia": "Tilapia",
+          "barramundi": "Barramundi",
+          "trout": "Trout",
+          "tofu": "Tofu",
+          "halloumi": "Halloumi",
+          "legumes": "Legumes",
+          "plant-based-proteins": "Plant based proteins",
+          "mushroom-based-proteins": "Mushroom-based proteins",
+          "shrimp-prawns": "Shrimp/Prawns",
+          "meat-alternative": "Meat alternatives",
+          "nuts": "Nuts",
+          "tree-nuts": "Tree nuts",
+          "mushrooms": "Mushrooms",
+          "olives": "Olives",
+          "gluten": "Gluten",
+          "brussel-sprouts": "Brussels sprouts",
+          "egg": "Eggs",
+          "cheesy": "Cheesy",
+          "herbs": "Herbs",
+          "spicy": "Spicy",
+          "sweet": "Sweet",
+          "smoky": "Smoky",
+          "tangy": "Tangy",
+          "caribbean": "Caribbean",
+          "chinese": "Chinese",
+          "classic-american": "Classic American",
+          "french": "French",
+          "greek": "Greek",
+          "indian": "Indian",
+          "italian": "Italian",
+          "japanese": "Japanese",
+          "korean": "Korean",
+          "mexican": "Mexican",
+          "middle-eastern": "Middle eastern",
+          "new-zealand": "New Zealand",
+          "thai": "Thai"
+        },
+        "value_hint": {
+          "quick-easy": "Under 20 minutes, minimal prep",
+          "batch": "Prep in advance and save time throughout the week",
+          "chef-style": "20-40 minute bakes, roasts, and more",
+          "family-style": "Kid and adult friendly recipes"
+        },
+        "diet_hint": {
+          "flexitarian": "Primarily plant-based with the occasional inclusion of meat.",
+          "mostly-meat": "I mix it up. Meat, veg, and everything in between.",
+          "vegetarian": "Excludes meat and fish, focusing on plants, dairy, and eggs.",
+          "pescatarian": "Includes fish and seafood while excluding all other meat products.",
+          "vegan": "Excludes all animal products, focusing entirely on plant-based foods."
+        },
+        "protein_question": {
+          "pescatarian": "Which seafood do you enjoy?",
+          "vegetarian": "Which meat-free proteins do you enjoy?",
+          "vegan": "Which vegan proteins do you enjoy?",
+          "default": "Which proteins do you enjoy?"
+        },
+        "goals_hint": "Pick up to {max} that matter most to you.",
+        "meal_types_required": "At least one cooking style is required",
+        "exclude_notice": "Just a heads up: some recipes in your menu may still include these ingredients. Check each recipe before you order.",
+        "save_scope": "Changes apply to future automatic selections. Recipes you picked yourself for upcoming weeks stay as they are.",
+        "panel": {
+          "dietary_habits": "Dietary habits",
+          "goals": "Goals",
+          "cooking": "Cooking preferences"
+        },
+        "saved": "Food preferences saved.",
+        "save_failed": "Couldn't save your preferences: {error}",
+        "tell_us_more": "Tell us more",
+        "load_failed": "Couldn't load your food preferences: {error}",
+        "none": "No food profile available.",
+        "completion": "Profile {completed} of {total} complete",
+        "hero_title": "Meals matched to your taste",
+        "hero_body": "Your food profile helps HelloFresh pick your meals and sort the menu by what's most relevant to you. You'll always have access to the full menu.",
+        "your_diet": "Your diet",
+        "adults": "Adults",
+        "kids": "Kids (under 12)",
+        "household": "Household",
+        "none_option": "None",
+        "like": "Like",
+        "dislike": "Dislike",
+        "up_to_date": "Your preferences are up to date.",
+        "reload": "Reload",
+        "reset": "Reset",
+        "saving": "Saving…",
+        "save": "Save preferences",
+        "discard_confirm": "Discard unsaved changes and reload your food preferences?"
+      },
+      "video": {
+        "close": "Close video",
+        "error": "This clip could not be played here.",
+        "fallback": "Video not playing? Open it directly"
+      },
+      "editor": {
+        "title": "Title",
+        "logo": "Show HelloFresh logo",
+        "views": "Sections",
+        "default_view": "Open on",
+        "accent": "Accent colour",
+        "image_width": "Recipe image width (px)",
+        "config_entry_id": "HelloFresh account",
+        "accent_brand": "HelloFresh green",
+        "accent_theme": "Theme primary colour",
+        "help": {
+          "views": "Pick one section for a focused card without the tab bar.",
+          "default_view": "Leave empty to reopen the last section used.",
+          "config_entry_id": "Only needed with more than one HelloFresh account."
+        }
+      }
+    }
   }
 }

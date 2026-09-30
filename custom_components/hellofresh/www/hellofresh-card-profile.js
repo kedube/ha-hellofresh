@@ -23,91 +23,37 @@ const [L, UI] = await Promise.all([
   import(new URL(`./hellofresh-card-ui.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc } = L;
+const { esc, t, ht } = L;
 const { icon } = UI;
 
-export const FIELD_LABELS = {
-  exclusions: "Exclude",
-  primaryProteins: "Proteins",
-  flavors: "Flavors",
-  goals: "Personal",
-  nutritions: "Nutrition",
-  cuisines: "Cuisines",
-  dishTypes: "Dish types",
-  mealTypes: "Cooking styles",
-  dietaryPreferences: "Diet type",
+// The profile's fields, by the key their names have in the card's text (profile.field.<key>).
+export const FIELD_KEYS = {
+  exclusions: "exclusions",
+  primaryProteins: "primary_proteins",
+  flavors: "flavors",
+  goals: "goals",
+  nutritions: "nutritions",
+  cuisines: "cuisines",
+  dishTypes: "dish_types",
+  mealTypes: "meal_types",
+  dietaryPreferences: "dietary_preferences",
 };
 
-// Option labels from the website's own strings; anything else falls back to sentence case.
-export const VALUE_LABELS = {
-  "mostly-meat": "I eat everything",
-  "quick-easy": "Quick recipes",
-  batch: "Batch recipes",
-  "chef-style": "Chef-style recipes",
-  "family-style": "Family-style recipes",
-  bake: "Bakes",
-  bowl: "Bowls",
-  burger: "Burgers",
-  "main-plus-sides": "Main + sides",
-  pizza: "Pizzas",
-  salad: "Salads",
-  sandwich: "Sandwiches",
-  "soups-stews": "Soups or Stews",
-  "stir-fry": "Stir fries",
-  wrap: "Wraps",
-  noodle: "Noodles",
-  "glp1-support": "GLP-1 friendly",
-  "plant-based": "Plant based",
-  "make-cooking-easy": "Cook easier",
-  "plant-based-proteins": "Plant based proteins",
-  "mushroom-based-proteins": "Mushroom-based proteins",
-  "shrimp-prawns": "Shrimp/Prawns",
-  "meat-alternative": "Meat alternatives",
-  "brussel-sprouts": "Brussels sprouts",
-  "tree-nuts": "Tree nuts",
-  egg: "Eggs",
-  "classic-american": "Classic American",
-  "new-zealand": "New Zealand",
-  "middle-eastern": "Middle eastern",
-};
-
-const VALUE_DESCRIPTIONS = {
-  "quick-easy": "Under 20 minutes, minimal prep",
-  batch: "Prep in advance and save time throughout the week",
-  "chef-style": "20-40 minute bakes, roasts, and more",
-  "family-style": "Kid and adult friendly recipes",
-};
-
-const DIET_DESCRIPTIONS = {
-  flexitarian: "Primarily plant-based with the occasional inclusion of meat.",
-  "mostly-meat": "I mix it up. Meat, veg, and everything in between.",
-  vegetarian: "Excludes meat and fish, focusing on plants, dairy, and eggs.",
-  pescatarian: "Includes fish and seafood while excluding all other meat products.",
-  vegan: "Excludes all animal products, focusing entirely on plant-based foods.",
-};
-
-const PROTEIN_QUESTIONS = {
-  pescatarian: "Which seafood do you enjoy?",
-  vegetarian: "Which meat-free proteins do you enjoy?",
-  vegan: "Which vegan proteins do you enjoy?",
-};
-const DEFAULT_PROTEIN_QUESTION = "Which proteins do you enjoy?";
+// Option labels: the website's own words where it has them, and a name for every slug HelloFresh
+// is known to send (profile.value.<slug>), so they read in the card's language; a slug not seen
+// yet falls back to sentence case. Hover text for the cooking styles: profile.value_hint.<slug>.
+// Each diet's blurb and protein question: profile.diet_hint.<diet>, profile.protein_question.<diet>.
 
 const GOALS_MAX = 3;
-const GOALS_HINT = `Pick up to ${GOALS_MAX} that matter most to you.`;
-const MEAL_TYPES_REQUIRED_MESSAGE = "At least one cooking style is required";
-const EXCLUDE_NOTICE =
-  "Just a heads up: some recipes in your menu may still include these ingredients. Check each recipe before you order.";
-const SAVE_SCOPE_NOTE =
-  "Changes apply to future automatic selections. Recipes you picked yourself for upcoming weeks stay as they are.";
 
 const TASTE_LIST_FIELDS = ["exclusions", "nutritions", "mealTypes"];
 const TASTE_WEIGHTED_FIELDS = ["cuisines", "flavors", "dishTypes", "primaryProteins"];
 const TASTE_SINGLE_FIELDS = ["dietaryPreferences"];
 
+// Titles: profile.panel.<key>.
 const PANELS = [
   {
-    title: "Dietary habits",
+    key: "dietary_habits",
     icon: "mdi:room-service-outline",
     cards: [
       { section: "taste", field: "exclusions" },
@@ -116,7 +62,7 @@ const PANELS = [
     ],
   },
   {
-    title: "Goals",
+    key: "goals",
     icon: "mdi:target",
     cards: [
       { section: "goals", field: "goals" },
@@ -124,7 +70,7 @@ const PANELS = [
     ],
   },
   {
-    title: "Cooking preferences",
+    key: "cooking",
     icon: "mdi:silverware-fork-knife",
     cards: [
       { section: "taste", field: "cuisines" },
@@ -137,12 +83,20 @@ const PANELS = [
 const LIKE = 100;
 const DISLIKE = -100;
 
-// "low-calorie" -> "Low calorie"; the site's own convention for unlabelled options.
+// A field's or option's name; an option not named yet reads in sentence case ("low-calorie" ->
+// "Low calorie"), the site's own convention for unlabelled options.
 export function profileLabel(slug) {
-  if (FIELD_LABELS[slug]) return FIELD_LABELS[slug];
-  if (VALUE_LABELS[slug]) return VALUE_LABELS[slug];
+  if (FIELD_KEYS[slug]) return t(`profile.field.${FIELD_KEYS[slug]}`);
+  const key = `profile.value.${String(slug).toLowerCase()}`;
+  if (L.hasText(key)) return t(key);
   const words = String(slug).replace(/^QUANTITY_/, "").replace(/[_-]+/g, " ").trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Optional text keyed by an option or diet slug (a hint, a blurb, a question), or "".
+function optionalText(group, slug) {
+  const key = `profile.${group}.${String(slug || "").toLowerCase()}`;
+  return slug && L.hasText(key) ? t(key) : "";
 }
 
 // Semantic fingerprint for the dirty check: empty containers dropped, lists sorted (they're
@@ -222,9 +176,9 @@ export class ProfileEditor {
       this.saved = saved || this._clone(this.draft);
       this.draft = this._clone(this.saved);
       card.broadcastDataChanged();
-      card.toast("Food preferences saved.");
+      card.toast(t("profile.saved"));
     } catch (err) {
-      card.toast(`Couldn't save your preferences: ${(err && err.message) || err}`, true);
+      card.toast(t("profile.save_failed", { error: (err && err.message) || err }), true);
     } finally {
       this.busy = false;
       card.renderView();
@@ -328,7 +282,7 @@ export class ProfileEditor {
     const errors = [];
     const mealTypes = (this.options && this.options.taste && this.options.taste.mealTypes) || [];
     if (Array.isArray(mealTypes) && mealTypes.length && !this._list("taste", "mealTypes").length) {
-      errors.push(MEAL_TYPES_REQUIRED_MESSAGE);
+      errors.push(t("profile.meal_types_required"));
     }
     return errors;
   }
@@ -355,7 +309,7 @@ export class ProfileEditor {
   }
 
   _tell(path) {
-    return this._needs(path) ? `<span class="fp-tell">Tell us more</span>` : "";
+    return this._needs(path) ? `<span class="fp-tell">${ht("profile.tell_us_more")}</span>` : "";
   }
 
   _allowsNone(path) {
@@ -371,19 +325,18 @@ export class ProfileEditor {
       return `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
     if (this.error && !this.draft) {
-      return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}Couldn't load your food preferences: ${esc(this.error)}
-        <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="fp-refresh">Try again</button></div></div>`;
+      return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("profile.load_failed", { error: this.error })}
+        <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="fp-refresh">${ht("common.try_again")}</button></div></div>`;
     }
-    if (!this.options || !this.draft) return `<div class="hf-empty">No food profile available.</div>`;
+    if (!this.options || !this.draft) return `<div class="hf-empty">${ht("profile.none")}</div>`;
     const c = this.completion;
     const completion =
       c && c.total && c.completed < c.total
         ? `<div class="fp-completion"><div class="fp-bar"><span style="width:${Math.max(0, Math.min(100, Number(c.percent) || 0))}%"></span></div>
-            <span class="fp-bartext">Profile ${esc(c.completed)} of ${esc(c.total)} complete</span></div>`
+            <span class="fp-bartext">${ht("profile.completion", { completed: c.completed, total: c.total })}</span></div>`
         : "";
-    return `<div class="fp-hero"><h2 class="hf-h2">Meals matched to your taste</h2>
-        <p>Your food profile helps HelloFresh pick your meals and sort the menu by what's most relevant to you.
-          You'll always have access to the full menu.</p>${completion}</div>
+    return `<div class="fp-hero"><h2 class="hf-h2">${ht("profile.hero_title")}</h2>
+        <p>${ht("profile.hero_body")}</p>${completion}</div>
       <div class="fp-panels">
         <div class="fp-toppanels">${this._dietPanel()}${this._householdPanel()}</div>
         ${PANELS.map((p) => this._panel(p)).join("")}
@@ -398,9 +351,9 @@ export class ProfileEditor {
     const options = opts
       .map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(profileLabel(v))}</option>`)
       .join("");
-    const desc = DIET_DESCRIPTIONS[current] || "";
-    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon("mdi:sprout-outline")}Your diet${this._tell("taste.dietaryPreferences")}</h3>
-        <label class="hf-small hf-muted" for="fp-diet">Diet type</label>
+    const desc = optionalText("diet_hint", current);
+    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon("mdi:sprout-outline")}${ht("profile.your_diet")}${this._tell("taste.dietaryPreferences")}</h3>
+        <label class="hf-small hf-muted" for="fp-diet">${ht("profile.field.dietary_preferences")}</label>
         <select class="hf-select" id="fp-diet" data-focus-key="fp-diet" data-fp-diet ${this.busy ? "disabled" : ""}>${options}</select>
         ${desc ? `<p class="fp-dietdesc">${esc(desc)}</p>` : ""}</section>`;
   }
@@ -416,20 +369,20 @@ export class ProfileEditor {
       const max = Math.max(...opts);
       return `<div class="fp-hhrow"><span class="fp-hhlabel">${esc(label)}</span>
           <span class="hf-stepper" role="group" aria-label="${esc(label)}">
-            <button data-action="fp-step" data-field="${esc(field)}" data-delta="-1" data-focus-key="fp-step-${esc(field)}-dec" aria-label="Fewer" ${value <= min || this.busy ? "disabled" : ""}>${icon("mdi:minus")}</button>
+            <button data-action="fp-step" data-field="${esc(field)}" data-delta="-1" data-focus-key="fp-step-${esc(field)}-dec" aria-label="${ht("common.fewer")}" ${value <= min || this.busy ? "disabled" : ""}>${icon("mdi:minus")}</button>
             <span class="hf-qty">${value}</span>
-            <button data-action="fp-step" data-field="${esc(field)}" data-delta="1" data-focus-key="fp-step-${esc(field)}-inc" aria-label="More" ${value >= max || this.busy ? "disabled" : ""}>${icon("mdi:plus")}</button>
+            <button data-action="fp-step" data-field="${esc(field)}" data-delta="1" data-focus-key="fp-step-${esc(field)}-inc" aria-label="${ht("common.more")}" ${value >= max || this.busy ? "disabled" : ""}>${icon("mdi:plus")}</button>
           </span></div>`;
     };
-    const rows = stepper("adults", "Adults") + stepper("children", "Kids (under 12)");
+    const rows = stepper("adults", t("profile.adults")) + stepper("children", t("profile.kids"));
     if (!rows) return "";
-    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon("mdi:account-group-outline")}Household${this._tell("household.totalPeople")}</h3>${rows}</section>`;
+    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon("mdi:account-group-outline")}${ht("profile.household")}${this._tell("household.totalPeople")}</h3>${rows}</section>`;
   }
 
   _panel(panel) {
     const cards = panel.cards.map((c) => this._subcard(c.section, c.field)).filter(Boolean).join("");
     if (!cards) return "";
-    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon(panel.icon)}${esc(panel.title)}</h3>
+    return `<section class="fp-panel"><h3 class="fp-paneltitle">${icon(panel.icon)}${ht(`profile.panel.${panel.key}`)}</h3>
         <div class="fp-subcards">${cards}</div></section>`;
   }
 
@@ -448,10 +401,10 @@ export class ProfileEditor {
 
   _notice(section, field) {
     if (section === "taste" && field === "exclusions" && this._list(section, field).length) {
-      return `<p class="fp-note">${esc(EXCLUDE_NOTICE)}</p>`;
+      return `<p class="fp-note">${ht("profile.exclude_notice")}</p>`;
     }
     if (section === "taste" && field === "mealTypes" && !this._list(section, field).length) {
-      return `<p class="fp-note error">${esc(MEAL_TYPES_REQUIRED_MESSAGE)}</p>`;
+      return `<p class="fp-note error">${ht("profile.meal_types_required")}</p>`;
     }
     return "";
   }
@@ -466,7 +419,7 @@ export class ProfileEditor {
 
   _preview(section, field) {
     const selected = this._selected(section, field);
-    if (!selected.length) return `<div class="fp-preview"><span class="fp-pill muted">None</span></div>`;
+    if (!selected.length) return `<div class="fp-preview"><span class="fp-pill muted">${ht("profile.none_option")}</span></div>`;
     const shown = selected.slice(0, 5);
     const extra = selected.length - shown.length;
     return `<div class="fp-preview">${shown.map((v) => `<span class="fp-pill">${esc(profileLabel(v))}</span>`).join("")}${
@@ -478,7 +431,7 @@ export class ProfileEditor {
     if (TASTE_WEIGHTED_FIELDS.includes(field)) {
       const question =
         field === "primaryProteins"
-          ? `<p class="fp-question">${esc(PROTEIN_QUESTIONS[this._list("taste", "dietaryPreferences")[0]] || DEFAULT_PROTEIN_QUESTION)}</p>`
+          ? `<p class="fp-question">${esc(optionalText("protein_question", this._list("taste", "dietaryPreferences")[0]) || t("profile.protein_question.default"))}</p>`
           : "";
       const map = (this.draft.taste && this.draft.taste[field]) || {};
       const tiles = values
@@ -490,9 +443,9 @@ export class ProfileEditor {
               <span class="fp-wname">${esc(profileLabel(slug))}</span>
               <div class="fp-seg">
                 <button class="fp-segbtn like${liked ? " on" : ""}" data-action="fp-weight" data-id="${esc(id)}" data-dir="like"
-                  data-focus-key="fp-w-like-${esc(id)}" aria-pressed="${liked}" ${this.busy ? "disabled" : ""}>${icon("mdi:heart")}Like</button>
+                  data-focus-key="fp-w-like-${esc(id)}" aria-pressed="${liked}" ${this.busy ? "disabled" : ""}>${icon("mdi:heart")}${ht("profile.like")}</button>
                 <button class="fp-segbtn dislike${disliked ? " on" : ""}" data-action="fp-weight" data-id="${esc(id)}" data-dir="dislike"
-                  data-focus-key="fp-w-dislike-${esc(id)}" aria-pressed="${disliked}" ${this.busy ? "disabled" : ""}>${icon("mdi:close")}Dislike</button>
+                  data-focus-key="fp-w-dislike-${esc(id)}" aria-pressed="${disliked}" ${this.busy ? "disabled" : ""}>${icon("mdi:close")}${ht("profile.dislike")}</button>
               </div></div>`;
         })
         .join("");
@@ -501,17 +454,18 @@ export class ProfileEditor {
     const selected = this._list(section, field);
     const max = this._listMax(section, field);
     const maxed = max != null && selected.length >= max;
-    const hint = max != null ? `<p class="fp-question">${esc(GOALS_HINT)}</p>` : "";
+    const hint = max != null ? `<p class="fp-question">${ht("profile.goals_hint", { max })}</p>` : "";
     const none = this._allowsNone(`${section}.${field}`)
       ? `<button class="hf-chip${selected.length === 0 ? " on" : ""}" data-action="fp-none" data-id="${esc(`${section}|${field}`)}"
-          data-focus-key="fp-none-${esc(`${section}|${field}`)}" aria-pressed="${selected.length === 0}" ${this.busy ? "disabled" : ""}>None</button>`
+          data-focus-key="fp-none-${esc(`${section}|${field}`)}" aria-pressed="${selected.length === 0}" ${this.busy ? "disabled" : ""}>${ht("profile.none_option")}</button>`
       : "";
     const chips = values
       .map((v) => {
         const on = selected.includes(v);
         const blocked = maxed && !on;
         const id = `${section}|${field}|${v}`;
-        const tip = VALUE_DESCRIPTIONS[v] ? ` title="${esc(VALUE_DESCRIPTIONS[v])}"` : "";
+        const hintText = optionalText("value_hint", v);
+        const tip = hintText ? ` title="${esc(hintText)}"` : "";
         return `<button class="hf-chip fp-chip${on ? " on" : ""}${blocked ? " blocked" : ""}" data-action="fp-list" data-id="${esc(id)}"
             data-focus-key="fp-list-${esc(id)}" aria-pressed="${on}"${tip}${blocked ? ' aria-disabled="true"' : ""} ${this.busy ? "disabled" : ""}>${esc(profileLabel(v))}</button>`;
       })
@@ -522,14 +476,14 @@ export class ProfileEditor {
   _footer() {
     const dirty = this.isDirty();
     const errors = this.validationErrors();
-    const note = errors.length ? errors[0] : dirty ? SAVE_SCOPE_NOTE : "Your preferences are up to date.";
+    const note = errors.length ? errors[0] : t(dirty ? "profile.save_scope" : "profile.up_to_date");
     // Pinned to the bottom of the screen only while there is something to save.
     return `<div class="fp-footer${dirty ? " sticky" : ""}">
         <span class="fp-footnote${errors.length ? " error" : ""}">${esc(note)}</span>
-        <button class="hf-btn ghost" data-action="fp-refresh" ${this.busy ? "disabled" : ""}>${icon("mdi:refresh")}Reload</button>
-        <button class="hf-btn" data-action="fp-reset" ${!dirty || this.busy ? "disabled" : ""}>Reset</button>
+        <button class="hf-btn ghost" data-action="fp-refresh" ${this.busy ? "disabled" : ""}>${icon("mdi:refresh")}${ht("profile.reload")}</button>
+        <button class="hf-btn" data-action="fp-reset" ${!dirty || this.busy ? "disabled" : ""}>${ht("profile.reset")}</button>
         <button class="hf-btn primary" data-action="fp-save" ${!dirty || errors.length || this.busy ? "disabled" : ""}>${
-          this.busy ? "Saving…" : "Save preferences"
+          ht(this.busy ? "profile.saving" : "profile.save")
         }</button>
       </div>`;
   }
@@ -576,7 +530,7 @@ export class ProfileEditor {
         this.draft = this._clone(this.saved);
         break;
       case "fp-refresh":
-        if (this.isDirty() && !window.confirm("Discard unsaved changes and reload your food preferences?")) return true;
+        if (this.isDirty() && !window.confirm(t("profile.discard_confirm"))) return true;
         this.fetch();
         return true;
       default:

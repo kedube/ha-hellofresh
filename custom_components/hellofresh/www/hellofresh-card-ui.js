@@ -11,7 +11,7 @@ const L = await import(
   new URL(`./hellofresh-card-logic.js?v=${encodeURIComponent(UI_VERSION)}`, import.meta.url).href
 );
 
-const { esc } = L;
+const { esc, t, ht, html } = L;
 
 // A Material Design icon through Home Assistant's own <ha-icon>. Names are literals from the
 // card source, never payload data.
@@ -28,12 +28,8 @@ export function pill(text, tone = "muted", iconName = null, title = "") {
 // The week's state as a coloured pill ("Editable", "Preselected", "On the way", …).
 export function statePill(week, state = L.weekState(week)) {
   const meta = L.STATE_META[state];
-  const label = L.stateLabel(week, state);
-  const title =
-    label === "Preselected"
-      ? "HelloFresh picked these meals for you — review and adjust before the deadline."
-      : "";
-  return pill(label, meta.tone, meta.icon, title);
+  const title = L.stateKey(week, state) === "preselected" ? t("state.preselected.hint") : "";
+  return pill(L.stateLabel(week, state), meta.tone, meta.icon, title);
 }
 
 // A live countdown the card refreshes once a minute without re-rendering (see the card's tick).
@@ -59,7 +55,7 @@ export function chosenMeals(week, selection) {
 }
 
 // A row of meal thumbnails ("+N" when more), or an empty-state line.
-export function thumbRow(meals, { max = 4, width = 120, empty = "No meals chosen yet", size = "" } = {}) {
+export function thumbRow(meals, { max = 4, width = 120, empty = t("meals.none_chosen"), size = "" } = {}) {
   if (!meals.length) return `<div class="hf-thumbs empty">${esc(empty)}</div>`;
   const shown = meals.slice(0, max);
   const extra = meals.length - shown.length;
@@ -81,20 +77,20 @@ export function trackingBlock(week, { historyOpen = false } = {}) {
   const step = L.trackingStep(week);
   if (step < 0) return "";
   const order = (week && week.order) || {};
-  const steps = L.TRACK_STEPS.map((label, i) => {
+  const steps = L.TRACK_STEPS.map((key, i) => {
     const cls = i < step || (i === step && step === L.TRACK_STEPS.length - 1) ? "done" : i === step ? "current" : "";
-    return `<div class="hf-step ${cls}"><div class="hf-stepbar"></div><div class="hf-steplabel">${esc(label)}</div></div>`;
+    return `<div class="hf-step ${cls}"><div class="hf-stepbar"></div><div class="hf-steplabel">${ht(`tracking.step.${key}`)}</div></div>`;
   }).join("");
 
   const parts = [];
   const arrived = L.fmtArrival(week.delivered_at);
-  if (arrived) parts.push(`<span>Delivered <strong>${esc(arrived)}</strong></span>`);
+  if (arrived) parts.push(`<span>${ht("tracking.delivered_at", { when: html(`<strong>${esc(arrived)}</strong>`) })}</span>`);
   else {
     const status = L.statusWithDetail(order.tracking_status || order.status || week.status, order.tracking_status_detail);
     if (status) parts.push(`<strong>${esc(status)}</strong>`);
   }
   if (!arrived && order.estimated_delivery) {
-    parts.push(`<span>Estimated ${esc(L.fmtDate(order.estimated_delivery))}</span>`);
+    parts.push(`<span>${ht("tracking.estimated", { date: L.fmtDate(order.estimated_delivery) })}</span>`);
   }
   if (order.carrier) parts.push(`<span>${esc(order.carrier)}</span>`);
   if (order.tracking_number) {
@@ -106,15 +102,15 @@ export function trackingBlock(week, { historyOpen = false } = {}) {
   if (events.length) {
     parts.push(
       `<button class="hf-link" data-action="toggle-history" data-week-id="${esc(week.week_id)}"
-        aria-expanded="${historyOpen}">${historyOpen ? "Hide history" : `History (${events.length})`}</button>`
+        aria-expanded="${historyOpen}">${historyOpen ? ht("tracking.hide_history") : ht("tracking.history", { count: events.length })}</button>`
     );
   }
   const history =
     historyOpen && events.length
-      ? `<ul class="hf-history" aria-label="Tracking history">${events
+      ? `<ul class="hf-history" aria-label="${ht("tracking.history_label")}">${events
           .map((event) => {
             const when = L.fmtArrival(event && event.time) || "—";
-            const what = L.sentenceCase((event && (event.detail || event.status)) || "");
+            const what = L.detailLabel((event && (event.detail || event.status)) || "");
             return `<li><span class="hf-when">${esc(when)}</span>${esc(what)}</li>`;
           })
           .join("")}</ul>`
@@ -126,12 +122,14 @@ export function trackingBlock(week, { historyOpen = false } = {}) {
       ? `<div class="hf-pod">${photos
           .map(
             (url, i) =>
-              `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Open delivery photo"><img src="${url}" alt="Delivery photo${photos.length > 1 ? ` ${i + 1}` : ""}" loading="lazy"></a>`
+              `<a href="${url}" target="_blank" rel="noopener noreferrer" title="${ht("tracking.open_photo")}"><img src="${url}" alt="${
+                photos.length > 1 ? ht("tracking.photo_n", { number: i + 1 }) : ht("tracking.photo")
+              }" loading="lazy"></a>`
           )
-          .join("")}${signed ? `<span>Signed by ${esc(signed)}</span>` : ""}</div>`
+          .join("")}${signed ? `<span>${ht("tracking.signed_by", { name: signed })}</span>` : ""}</div>`
       : "";
   return `<div class="hf-tracker">
-      <div class="hf-steps" aria-label="Delivery progress">${steps}</div>
+      <div class="hf-steps" aria-label="${ht("tracking.progress")}">${steps}</div>
       ${parts.length ? `<div class="hf-trackline">${parts.join('<span aria-hidden="true">·</span>')}</div>` : ""}
       ${history}${pod}
     </div>`;
@@ -143,21 +141,21 @@ export function orderCells(week, account) {
   const cells = [];
   if (order) {
     const status = order.tracking_status || order.status;
-    if (status) cells.push(["Status", esc(L.titleCase(status))]);
-    if (order.carrier) cells.push(["Carrier", esc(order.carrier)]);
+    if (status) cells.push([t("order.status"), esc(L.statusLabel(status))]);
+    if (order.carrier) cells.push([t("order.carrier"), esc(order.carrier)]);
     if (order.tracking_number) {
       const href = L.safeUrl(order.tracking_url);
       const num = esc(order.tracking_number);
-      cells.push(["Tracking", href ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>` : num]);
+      cells.push([t("order.tracking"), href ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>` : num]);
     }
     if (L.isDelivered(week)) {
       const when = week.delivered_at || week.delivery_date;
-      if (when) cells.push(["Delivered", esc(L.fmtDate(when))]);
+      if (when) cells.push([t("order.delivered"), esc(L.fmtDate(when))]);
     }
   }
   const total = L.boxTotal(week, account);
   if (total) cells.push([total.label, esc(L.fmtPrice(total.amount, total.currency))]);
-  if (order && order.order_id) cells.push(["Order", esc(order.order_id)]);
+  if (order && order.order_id) cells.push([t("order.order"), esc(order.order_id)]);
   return cells;
 }
 

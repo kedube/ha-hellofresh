@@ -29,6 +29,7 @@ ruff format --check .                         # formatting (enforced -- see note
 pytest -q                                     # Python test suite
 python .github/scripts/check_card_syntax.py   # every Lovelace card parses (needs node)
 node .github/scripts/check_card_logic.mjs     # card week-selection behaviour
+python .github/scripts/generate_card_strings.py --check   # the card's English module is current
 ```
 
 Formatting is enforced, so run `ruff format .` before committing rather than hand-aligning code.
@@ -62,8 +63,17 @@ change it in the logic module too (or document the difference in that test).
 - `custom_components/hellofresh/` contains the integration code.
 - `custom_components/hellofresh/www/` contains the Lovelace cards (plain ES modules, no build step):
   the unified `hellofresh-card.js` with its view, logic and style modules (`hellofresh-card-*.js`),
-  the seven classic cards, and the two modules they share (`hellofresh-shared.js`,
-  `hellofresh-recipe-detail.js`).
+  the seven classic cards, the two modules they share (`hellofresh-shared.js`,
+  `hellofresh-recipe-detail.js`), and the card's text layer (`hellofresh-i18n.js`, with the
+  generated `hellofresh-i18n-en.js`).
+- The HelloFresh card's words are translations like the rest of the integration's text: English in
+  `strings.json` under `config_panel.card` (copy it to `translations/en.json`; the two stay
+  identical), each language in `translations/<code>.json`. Home Assistant serves the card the
+  user's language. In the card, `t("group.key", { name })` gives plain text and `ht(…)` text safe
+  to put in HTML; a key with `one`/`other` forms is a plural, picked by the `count` value. After
+  changing card text, add the key to every language (`tests/test_translations.py` requires the
+  same keys everywhere) and run `python .github/scripts/generate_card_strings.py`, which rewrites
+  `www/hellofresh-i18n-en.js` (CI checks it's current).
 - `tests/` contains the pytest suite. `tests/test_repo_consistency.py` pins hand-edited metadata
   (HACS country list, translation completeness, `services.yaml`, card registration) that otherwise
   drifts out of step with the code.

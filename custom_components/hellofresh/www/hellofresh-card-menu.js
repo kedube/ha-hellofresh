@@ -25,8 +25,9 @@ const [L, UI] = await Promise.all([
   import(new URL(`./hellofresh-card-ui.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc } = L;
+const { esc, t, ht, html } = L;
 const { icon, pill } = UI;
+const strong = (text) => html(`<strong>${esc(text)}</strong>`);
 
 // Tiles rendered before a "Show more" button: a planning-catalog week carries ~350 meals, and
 // painting them all at once is what made the classic planner slow to open.
@@ -272,7 +273,7 @@ export class BoxStore {
     if (card.busy || !this.dirty(week)) return;
     if (!L.isWeekEditable(week)) {
       // The deadline passed while the box was being edited; HelloFresh would reject the write.
-      card.toast("Changes are closed for this week — its box ships as it was saved.", true);
+      card.toast(t("box.closed_toast"), true);
       return;
     }
     const mealsDirty = this.mealsDirty(week);
@@ -280,7 +281,7 @@ export class BoxStore {
     if (mealsDirty) {
       const count = L.mealsCount(this.displayMeals(week));
       if (count < L.MIN_MEALS) {
-        card.toast(`Choose at least ${L.MIN_MEALS} meals before saving (${count} selected).`, true);
+        card.toast(t("box.min_toast", { min: L.MIN_MEALS, selected: count }), true);
         return;
       }
     }
@@ -297,7 +298,7 @@ export class BoxStore {
       data = { week_id: week.week_id, quantities: L.buildMarketWrite(this.displayMarket(week)) };
     }
     if (card.sheetKind === "review") card.closeSheet();
-    card.setSaving("Saving your box…");
+    card.setSaving(t("box.saving"));
     card.renderView();
     // Let the banner paint before a fast service call and reload can pre-empt it.
     await nextFrame();
@@ -320,11 +321,11 @@ export class BoxStore {
     }
     card.setSaving(null);
     await card.reloadWeeks();
-    if (failed) card.toast(`Couldn't save your box: ${failed}`, true);
+    if (failed) card.toast(t("box.save_failed", { error: failed }), true);
     else if (downgraded) {
       this.downgradedWeek = week.week_id;
       card.renderView();
-    } else card.toast("Your box is saved.");
+    } else card.toast(t("box.saved"));
   }
 }
 
@@ -338,14 +339,14 @@ function renderWeekStrip(card, selected) {
     .map((w) => {
       const state = L.weekState(w);
       const meta = L.STATE_META[state];
-      const label = state === "needs" && L.isAutoPicked(w) ? "Review" : meta.short;
+      const label = state === "needs" && L.isAutoPicked(w) ? t("week.review") : meta.short;
       const isNext = next.upcoming && next.week === w;
       const dirty = card.box.dirty(w);
       return `<button class="hf-weekchip ${state}${L.isPastWeek(w) ? " past" : ""}" data-action="select-week"
           data-week-id="${esc(w.week_id)}" aria-pressed="${w === selected}"
           title="${esc(`${w.display_name || w.week_id} · ${L.stateLabel(w, state)}`)}">
-          ${isNext ? `<span class="hf-wcnow">Next</span>` : ""}
-          ${dirty ? `<span class="hf-wcdirty" title="Unsaved changes"></span>` : ""}
+          ${isNext ? `<span class="hf-wcnow">${ht("week.next")}</span>` : ""}
+          ${dirty ? `<span class="hf-wcdirty" title="${ht("box.unsaved_changes")}"></span>` : ""}
           <span class="hf-wcday">${esc(L.fmtWeekday(w.delivery_date))}</span>
           <span class="hf-wcdate">${esc(L.fmtDateShort(w.delivery_date))}</span>
           <span class="hf-wcstate"><span class="hf-wcdot ${state}"></span>${esc(label)}</span>
@@ -353,10 +354,10 @@ function renderWeekStrip(card, selected) {
     })
     .join("");
   return `<div class="hf-weekbar">
-      <button class="hf-iconbtn" data-action="week-step" data-step="-1" aria-label="Previous week"
+      <button class="hf-iconbtn" data-action="week-step" data-step="-1" aria-label="${ht("week.previous_week")}"
         ${index <= 0 ? "disabled" : ""}>${icon("mdi:chevron-left")}</button>
       <div class="hf-weekstrip" data-scroll-key="weekstrip">${chips}</div>
-      <button class="hf-iconbtn" data-action="week-step" data-step="1" aria-label="Next week"
+      <button class="hf-iconbtn" data-action="week-step" data-step="1" aria-label="${ht("week.next_week")}"
         ${index >= weeks.length - 1 ? "disabled" : ""}>${icon("mdi:chevron-right")}</button>
     </div>`;
 }
@@ -386,20 +387,22 @@ function renderWeekHead(card, week, kind) {
   const rel = L.relativeWeek(week);
   const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
   const pills = [UI.statePill(week, state)];
-  if (L.wasPreselected(week) && L.stateLabel(week, state) !== "Preselected") {
-    pills.push(pill("Preselected", "warn", null, "HelloFresh picked this week's meals."));
+  if (L.wasPreselected(week) && L.stateKey(week, state) !== "preselected") {
+    pills.push(pill(t("state.preselected.label"), "warn", null, t("week.preselected_title")));
   }
   if (L.isHolidayShifted(week)) {
-    pills.push(pill("Holiday schedule", "info", "mdi:calendar-star", week.holiday_message || ""));
+    pills.push(pill(t("week.holiday_schedule"), "info", "mdi:calendar-star", week.holiday_message || ""));
   }
   const benefit = L.weekBenefit(week);
-  if (benefit) pills.push(pill(benefit.label, "ok", "mdi:ticket-percent-outline", benefit.voucher_code ? `Voucher ${benefit.voucher_code}` : ""));
+  if (benefit) pills.push(pill(benefit.label, "ok", "mdi:ticket-percent-outline", benefit.voucher_code ? t("voucher.code", { code: benefit.voucher_code }) : ""));
   const sub = [rel, week.display_name, week.slot_label].filter(Boolean).map(esc).join(" · ");
 
   const deadlineLine =
     editable && deadline
-      ? `<div class="hf-weekdeadline${L.deadlineTone(deadline) === "urgent" ? " urgent" : ""}">${icon("mdi:timer-outline")}Make changes by
-          <strong>${esc(L.fmtDateTime(deadline))}</strong> · ${UI.countdownHtml(deadline)}</div>`
+      ? `<div class="hf-weekdeadline${L.deadlineTone(deadline) === "urgent" ? " urgent" : ""}">${icon("mdi:timer-outline")}${ht(
+          "week.make_changes_by",
+          { date: strong(L.fmtDateTime(deadline)) }
+        )} · ${UI.countdownHtml(deadline)}</div>`
       : "";
   const actions = [];
   const pantryId = card.pantryEntityFor(week);
@@ -407,16 +410,16 @@ function renderWeekHead(card, week, kind) {
     const s = card.entityState(pantryId);
     const count = s && Number(s.state);
     actions.push(`<button class="hf-btn sm" data-action="pantry" data-entity="${esc(pantryId)}">
-      ${icon("mdi:basket-outline")}Pantry${Number.isFinite(count) && count > 0 ? ` · ${count}` : ""}</button>`);
+      ${icon("mdi:basket-outline")}${ht("week.pantry")}${Number.isFinite(count) && count > 0 ? ` · ${count}` : ""}</button>`);
   }
   if (L.canReschedule(week)) {
     actions.push(`<button class="hf-btn sm" data-action="reschedule" ${card.busy ? "disabled" : ""}>
-      ${icon("mdi:calendar-edit")}Change day</button>`);
+      ${icon("mdi:calendar-edit")}${ht("week.change_day")}</button>`);
   }
   if (L.canSkip(week)) {
     const skipped = L.isSkipped(week);
     actions.push(`<button class="hf-btn sm${skipped ? " primary" : ""}" data-action="skip" ${card.busy ? "disabled" : ""}>
-      ${icon(skipped ? "mdi:restore" : "mdi:debug-step-over")}${skipped ? "Unskip week" : "Skip week"}</button>`);
+      ${icon(skipped ? "mdi:restore" : "mdi:debug-step-over")}${ht(skipped ? "week.unskip_week" : "week.skip_week")}</button>`);
   }
   return `<div class="hf-weekhead">
       <div class="hf-weektitle">
@@ -433,30 +436,30 @@ function renderWeekNotices(card, week, kind, view) {
   const out = [];
   if (card.box.downgradedWeek === week.week_id) {
     out.push(`<div class="hf-notice tone-warn" role="alert">${icon("mdi:alert-outline")}
-      <div class="hf-noticebody">HelloFresh <strong>downsized this box</strong> to fit your plan — fewer
-        items were saved than you picked. Check the saved box below.</div>
-      <button class="hf-iconbtn" data-action="dismiss-downgrade" aria-label="Dismiss">${icon("mdi:close")}</button></div>`);
+      <div class="hf-noticebody"><strong>${ht("box.downsized_title")}</strong> ${ht("box.downsized_body")}</div>
+      <button class="hf-iconbtn" data-action="dismiss-downgrade" aria-label="${ht("common.dismiss")}">${icon("mdi:close")}</button></div>`);
   }
   if (L.isSkipped(week)) {
     out.push(`<div class="hf-notice tone-muted">${icon("mdi:calendar-remove-outline")}
-      <div class="hf-noticebody"><strong>This week is skipped.</strong> Nothing ships and you won't be charged.
-        ${L.canSkip(week) ? "Unskip it to choose meals." : ""}</div>
-      ${L.canSkip(week) ? `<button class="hf-btn sm primary" data-action="skip" ${card.busy ? "disabled" : ""}>Unskip</button>` : ""}</div>`);
+      <div class="hf-noticebody"><strong>${ht("week.skipped_title")}</strong> ${ht("overview.skipped_body")}
+        ${L.canSkip(week) ? ht("week.unskip_to_choose") : ""}</div>
+      ${L.canSkip(week) ? `<button class="hf-btn sm primary" data-action="skip" ${card.busy ? "disabled" : ""}>${ht("week.unskip")}</button>` : ""}</div>`);
   } else if (kind === "menu" && L.isAutoPicked(week)) {
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     out.push(`<div class="hf-notice tone-warn">${icon("mdi:auto-fix")}
-      <div class="hf-noticebody"><strong>HelloFresh picked these meals for you.</strong> Keep them or swap any
-        ${deadline ? `before ${esc(L.fmtDateTime(deadline))}` : "before the deadline"}.</div></div>`);
+      <div class="hf-noticebody"><strong>${ht("week.autopicked_title")}</strong> ${
+        deadline ? ht("week.autopicked_before", { date: L.fmtDateTime(deadline) }) : ht("overview.autopicked_body")
+      }</div></div>`);
   } else if (!L.isWeekEditable(week) && !L.isPastWeek(week) && !L.isDelivered(week) && !L.isShipping(week)) {
     out.push(`<div class="hf-notice tone-muted">${icon("mdi:lock-outline")}
-      <div class="hf-noticebody">Changes are closed for this box — it ships as shown.</div></div>`);
+      <div class="hf-noticebody">${ht("week.closed")}</div></div>`);
   }
   const history = L.isHistoryWeek(week, card.menuGraceWeeks());
   if (L.trackingStep(week) >= 0 && !history) {
     const total = L.boxTotal(week, card.account);
     const extra = [];
     if (total) extra.push(`${esc(total.label)} <strong>${esc(L.fmtPrice(total.amount, total.currency))}</strong>`);
-    if (week.order && week.order.order_id) extra.push(`Order ${esc(week.order.order_id)}`);
+    if (week.order && week.order.order_id) extra.push(ht("delivery.order", { id: week.order.order_id }));
     out.push(`<div class="hf-panel flat">${UI.trackingBlock(week, { historyOpen: view._historyOpen === week.week_id })}
       ${extra.length ? `<div class="hf-trackline" style="margin-top:8px">${extra.join('<span aria-hidden="true">·</span>')}</div>` : ""}</div>`);
   } else if ((week.order || L.isPastWeek(week)) && !L.isWeekEditable(week) && !L.isSkipped(week)) {
@@ -476,9 +479,9 @@ function renderKindSwitch(card, week, kind) {
     `<button data-action="goto-kind" data-view="${key}" aria-pressed="${kind === key}">${icon(iconName)}${label}${
       count ? ` <span class="hf-muted">${count}</span>` : ""
     }</button>`;
-  return `<div class="hf-segment" role="group" aria-label="Meals or extras">${btn("menu", "Meals", "mdi:silverware-fork-knife", meals)}${btn(
+  return `<div class="hf-segment" role="group" aria-label="${ht("box.kind_label")}">${btn("menu", ht("box.meals"), "mdi:silverware-fork-knife", meals)}${btn(
     "market",
-    "Extras",
+    ht("box.extras"),
     "mdi:storefront-outline",
     extras
   )}</div>`;
@@ -488,7 +491,7 @@ function searchBox(key, value, placeholder) {
   return `<label class="hf-search"><span class="sr-only">${esc(placeholder)}</span>${icon("mdi:magnify")}
       <input type="search" data-focus-key="${key}" data-input="${key}" value="${esc(value)}"
         placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off">
-      ${value ? `<button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="Clear search">${icon("mdi:close")}</button>` : ""}
+      ${value ? `<button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="${ht("common.clear_search")}">${icon("mdi:close")}</button>` : ""}
     </label>`;
 }
 
@@ -629,7 +632,7 @@ export class MealsView {
   _activeFilters(week) {
     const f = this.f;
     const out = [];
-    for (const p of L.PROTEIN_FILTERS) if (f.protein.has(p)) out.push({ kind: "protein", value: p, label: p });
+    for (const p of L.PROTEIN_FILTERS) if (f.protein.has(p)) out.push({ kind: "protein", value: p, label: L.proteinLabel(p) });
     for (const d of L.DIET_FILTERS) if (f.diet.has(d.key)) out.push({ kind: "diet", value: d.key, label: d.label });
     const time = L.TIME_FILTERS.find((t) => t.key === f.time);
     if (time) out.push({ kind: "time", value: time.key, label: time.label });
@@ -702,7 +705,7 @@ export class MealsView {
     const placeholder = card.weeksPlaceholder();
     if (placeholder) return placeholder;
     if (!card.weeks.length) {
-      return `<div class="hf-empty">${icon("mdi:calendar-blank-outline")}No delivery weeks found.</div>`;
+      return `<div class="hf-empty">${icon("mdi:calendar-blank-outline")}${ht("menu.no_weeks")}</div>`;
     }
     const week = card.selectedWeek() || card.weeks[0];
     return `${renderWeekStrip(card, week)}${renderWeekHead(card, week, "menu")}${renderWeekNotices(
@@ -726,11 +729,11 @@ export class MealsView {
     this._units = new Map();
     if (!recipes.length) {
       const message = L.isSkipped(week)
-        ? "No meals this week."
+        ? ht("menu.no_meals_skipped")
         : L.isPastWeek(week)
-          ? "No meals were delivered this week."
-          : "This week's menu isn't published yet.";
-      return `<div class="hf-empty">${icon("mdi:silverware-clean")}${esc(message)}</div>`;
+          ? ht("menu.no_meals_delivered")
+          : ht("menu.not_published");
+      return `<div class="hf-empty">${icon("mdi:silverware-clean")}${message}</div>`;
     }
     const selection = box.displayMeals(week);
     const sel = (r) => L.tileSelected(selection, r);
@@ -759,44 +762,44 @@ export class MealsView {
     const active = applyFilters ? this._activeFilters(week) : [];
     const toolbar = `<div class="hf-toolbar">
         ${renderKindSwitch(card, week, "menu")}
-        ${searchBox("meal-search", this.query, history ? "Search delivered meals" : "Search this week's menu")}
+        ${searchBox("meal-search", this.query, t(history ? "menu.search_delivered" : "menu.search"))}
         ${history ? "" : `<button class="hf-chip${f.expanded ? " on" : ""}" data-action="toggle-filters" aria-expanded="${f.expanded}">
-            ${icon("mdi:tune-variant")}Filters${active.length ? ` · ${active.length}` : ""}</button>
+            ${icon("mdi:tune-variant")}${ht("menu.filters")}${active.length ? ` · ${active.length}` : ""}</button>
           <button class="hf-chip${f.selectedOnly ? " on" : ""}" data-action="toggle-selected-only" aria-pressed="${f.selectedOnly}">
-            ${icon("mdi:package-variant-closed")}In my box</button>`}
+            ${icon("mdi:package-variant-closed")}${ht("menu.in_my_box")}</button>`}
         <span class="hf-spacer"></span>
-        ${this._serverPending.size ? `<span class="hf-busynote" role="status">Filtering…</span>` : ""}
+        ${this._serverPending.size ? `<span class="hf-busynote" role="status">${ht("menu.filtering")}</span>` : ""}
       </div>`;
     const chips =
       active.length && !f.expanded
         ? `<div class="hf-activefilters">${active
             .map(
               (a) => `<button class="hf-chip on" data-action="remove-filter" data-kind="${esc(a.kind)}" data-value="${esc(a.value)}"
-                  title="Remove: ${esc(a.label)}">${esc(a.label)}${icon("mdi:close")}</button>`
+                  title="${ht("menu.remove_filter", { label: a.label })}">${esc(a.label)}${icon("mdi:close")}</button>`
             )
-            .join("")}<button class="hf-link hf-small" data-action="clear-filters">Clear all</button></div>`
+            .join("")}<button class="hf-link hf-small" data-action="clear-filters">${ht("menu.clear_all")}</button></div>`
         : "";
     const panel = applyFilters && f.expanded ? this._renderFilterPanel(week, active) : "";
 
     let grid;
     if (!visible.length) {
       const why = this.query
-        ? `No meals match “${esc(this.query.trim())}”.`
+        ? ht("menu.no_match_query", { query: this.query.trim() })
         : f.selectedOnly
-          ? "Nothing in your box yet — turn off “In my box” to browse the menu."
-          : "No meals match these filters.";
+          ? ht("menu.nothing_in_box", { in_my_box: t("menu.in_my_box") })
+          : ht("menu.no_match_filters");
       grid = `<div class="hf-empty">${icon("mdi:food-off-outline")}${why}</div>`;
     } else {
       const shown = visible.slice(0, this.limit);
       const narrowed = visible.length !== total;
       const note = narrowed
-        ? `<p class="hf-resultnote">${visible.length} of ${L.plural(total, "meal")}</p>`
+        ? `<p class="hf-resultnote">${ht("menu.result_count", { shown: visible.length, total: t("meals.count", { count: total }) })}</p>`
         : history
-          ? `<p class="hf-resultnote">Delivered this week</p>`
+          ? `<p class="hf-resultnote">${ht("menu.delivered_this_week")}</p>`
           : "";
       grid = `${note}<div class="hf-grid${card.busy ? " busy" : ""}">${shown.map((unit) => this._tile(unit, ctx)).join("")}</div>
         ${visible.length > shown.length ? `<div class="hf-more-row"><button class="hf-btn" data-action="more">
-          Show ${Math.min(PAGE_SIZE, visible.length - shown.length)} more · ${visible.length - shown.length} left</button></div>` : ""}`;
+          ${ht("menu.show_more", { count: Math.min(PAGE_SIZE, visible.length - shown.length), left: visible.length - shown.length })}</button></div>` : ""}`;
     }
     return `${toolbar}${chips}${panel}${grid}`;
   }
@@ -817,25 +820,25 @@ export class MealsView {
       const all = !L.menuSectionIds(week, f.section);
       rows.push(
         this._filterRow(
-          "Categories",
-          this._chip("f-section", "", "All", all) +
+          t("filters.categories"),
+          this._chip("f-section", "", ht("filters.all"), all) +
             sections.map((s) => this._chip("f-section", s.slug, esc(s.name), f.section === s.slug)).join("")
         )
       );
     }
     rows.push(
       this._filterRow(
-        "Main protein",
-        this._chip("f-protein-all", "", "All", f.protein.size === 0) +
+        t("filters.main_protein"),
+        this._chip("f-protein-all", "", ht("filters.all"), f.protein.size === 0) +
           L.PROTEIN_FILTERS.map((p) =>
-            this._chip("f-protein", p, `<span class="hf-dot" style="background:${L.PREFERENCE_COLORS[p]}"></span>${esc(p)}`, f.protein.has(p))
+            this._chip("f-protein", p, `<span class="hf-dot" style="background:${L.PREFERENCE_COLORS[p]}"></span>${esc(L.proteinLabel(p))}`, f.protein.has(p))
           ).join("")
       )
     );
     rows.push(
       this._filterRow(
-        "Dietary preference",
-        this._chip("f-diet-all", "", "All", f.diet.size === 0) +
+        t("filters.dietary"),
+        this._chip("f-diet-all", "", ht("filters.all"), f.diet.size === 0) +
           L.DIET_FILTERS.map((d) => this._chip("f-diet", d.key, esc(d.label), f.diet.has(d.key))).join("")
       )
     );
@@ -844,7 +847,7 @@ export class MealsView {
       rows.push(
         this._filterRow(
           group.name || group.slug,
-          this._chip("f-server-all", group.slug, "All", set.size === 0) +
+          this._chip("f-server-all", group.slug, ht("filters.all"), set.size === 0) +
             group.options
               .map((o) => this._chip("f-server", o.slug, esc(o.name), set.has(o.slug), ` data-group="${esc(group.slug)}"`))
               .join("")
@@ -853,21 +856,22 @@ export class MealsView {
     }
     rows.push(
       this._filterRow(
-        "Total cooking time",
-        this._chip("f-time", "", "Any", !f.time) + L.TIME_FILTERS.map((t) => this._chip("f-time", t.key, esc(t.label), f.time === t.key)).join("")
+        t("filters.cooking_time"),
+        this._chip("f-time", "", ht("filters.any"), !f.time) +
+          L.TIME_FILTERS.map((time) => this._chip("f-time", time.key, esc(time.label), f.time === time.key)).join("")
       )
     );
     rows.push(
       this._filterRow(
-        "Highlights",
-        this._chip("f-highlight", "", "All", !f.highlight) +
+        t("filters.highlights"),
+        this._chip("f-highlight", "", ht("filters.all"), !f.highlight) +
           L.HIGHLIGHT_FILTERS.map((h) =>
             this._chip("f-highlight", h.key, `${h.key === "favorite" ? icon("mdi:heart-outline") : ""}${esc(h.label)}`, f.highlight === h.key)
           ).join("")
       )
     );
     return `<div class="hf-filterpanel">${rows.join("")}
-      ${active.length ? `<div class="hf-actions" style="justify-content:flex-end;padding-top:8px"><button class="hf-btn sm ghost" data-action="clear-filters">Clear all filters</button></div>` : ""}</div>`;
+      ${active.length ? `<div class="hf-actions" style="justify-content:flex-end;padding-top:8px"><button class="hf-btn sm ghost" data-action="clear-filters">${ht("filters.clear_all")}</button></div>` : ""}</div>`;
   }
 
   _tileContext(week, { history = false, selection, sel }) {
@@ -891,9 +895,9 @@ export class MealsView {
     const custom = !L.isDefaultMeal(r);
     if (options > 0 && ctx.editable) {
       return `<button class="hf-optselect${custom ? " custom" : ""}" data-action="customize" data-key="${esc(String(L.selKey(r)))}"
-          aria-haspopup="dialog" aria-label="${esc(`Customize ${group.base.name}: ${L.optionLabel(r)}, ${L.plural(options, "option")}`)}">
-          ${icon("mdi:tune-variant")}<span class="hf-optlabel">${esc(custom ? L.optionLabel(r) : "Customize")}</span>
-          ${custom ? "" : `<span class="hf-optcount">${esc(L.plural(options, "option"))}</span>`}${icon("mdi:chevron-down")}</button>`;
+          aria-haspopup="dialog" aria-label="${ht("customize.aria", { dish: group.base.name, option: L.optionLabel(r), options: t("customize.options", { count: options }) })}">
+          ${icon("mdi:tune-variant")}<span class="hf-optlabel">${custom ? esc(L.optionLabel(r)) : ht("customize.title")}</span>
+          ${custom ? "" : `<span class="hf-optcount">${ht("customize.options", { count: options })}</span>`}${icon("mdi:chevron-down")}</button>`;
     }
     return r.variation_title ? `<div class="hf-tvariant">${esc(r.variation_title)}</div>` : "";
   }
@@ -908,53 +912,60 @@ export class MealsView {
     const video = L.safeMediaUrl(r.video_url);
     const meta = [];
     const mins = r.prep_time_minutes != null ? r.prep_time_minutes : r.total_time_minutes;
-    if (mins != null) meta.push(`<span>${icon("mdi:timer-outline")}${esc(mins)} min</span>`);
+    if (mins != null) meta.push(`<span>${icon("mdi:timer-outline")}${ht("time.duration.minutes", { minutes: mins })}</span>`);
     if (r.calories_kcal != null) meta.push(`<span>${icon("mdi:fire")}${esc(Math.round(r.calories_kcal))} kcal</span>`);
-    if (r.protein_g != null) meta.push(`<span>${esc(Math.round(r.protein_g))}g protein</span>`);
+    if (r.protein_g != null) meta.push(`<span>${ht("menu.protein_g", { grams: Math.round(r.protein_g) })}</span>`);
     const labels = L.tileChipLabels(r);
     const chips = [];
-    if (r.preference === "Veggie") chips.push(`<span class="hf-tchip veggie">Veggie</span>`);
+    if (r.preference === "Veggie") chips.push(`<span class="hf-tchip veggie">${esc(L.proteinLabel("Veggie"))}</span>`);
     for (const label of labels.slice(0, 2)) chips.push(`<span class="hf-tchip">${esc(label)}</span>`);
     if (labels.length > 2) chips.push(`<span class="hf-tchip" title="${esc(labels.slice(2).join(", "))}">+${labels.length - 2}</span>`);
     const hist = [];
-    if (r.delivered_count) hist.push(`Ordered ${r.delivered_count}×${r.last_delivered_week ? ` · last ${esc(r.last_delivered_week)}` : ""}`);
-    if (r.rating) hist.push(`You rated ${esc(r.rating)}/${esc(r.rating_scale || 5)}`);
+    if (r.delivered_count) {
+      hist.push(
+        r.last_delivered_week
+          ? ht("menu.ordered_last", { count: r.delivered_count, week: r.last_delivered_week })
+          : ht("menu.ordered", { count: r.delivered_count })
+      );
+    }
+    if (r.rating) hist.push(ht("menu.you_rated", { rating: r.rating, scale: r.rating_scale || 5 }));
 
     let control = "";
     if (ctx.editable && !selected) {
-      control = `<button class="hf-add" data-action="add" data-key="${key}" aria-label="Add ${esc(r.name)} to your box">${icon("mdi:plus")}Add</button>`;
+      control = `<button class="hf-add" data-action="add" data-key="${key}" aria-label="${ht("menu.add_aria", { name: r.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
     } else if (ctx.editable && selected) {
       // In the box: the servings stepper takes the whole footer (the price is in the box now).
-      control = `<span class="hf-stepper wide" role="group" aria-label="Servings of ${esc(r.name)}">
-          <button data-action="qty" data-delta="-1" data-key="${key}" aria-label="${qty === 1 ? "Remove meal" : "Fewer servings"}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
-          <span class="hf-qty">${qty} <span class="hf-unit">serving${qty === 1 ? "" : "s"}</span></span>
-          <button data-action="qty" data-delta="1" data-key="${key}" aria-label="More servings" ${qty >= L.MAX_MEAL_SERVINGS ? "disabled" : ""}>${icon("mdi:plus")}</button>
+      control = `<span class="hf-stepper wide" role="group" aria-label="${ht("menu.servings_of", { name: r.name })}">
+          <button data-action="qty" data-delta="-1" data-key="${key}" aria-label="${ht(qty === 1 ? "menu.remove_meal" : "menu.fewer_servings")}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
+          <span class="hf-qty">${qty} <span class="hf-unit">${ht("menu.serving_unit", { count: qty })}</span></span>
+          <button data-action="qty" data-delta="1" data-key="${key}" aria-label="${ht("menu.more_servings")}" ${qty >= L.MAX_MEAL_SERVINGS ? "disabled" : ""}>${icon("mdi:plus")}</button>
         </span>`;
     } else if (selected && !ctx.history) {
-      control = `<span class="hf-ordered">${icon("mdi:check")} In box${qty > 1 ? ` · ${qty}×` : ""}</span>`;
+      control = `<span class="hf-ordered">${icon("mdi:check")} ${ht("menu.in_box")}${qty > 1 ? ` · ${qty}×` : ""}</span>`;
     }
     const price =
       r.price != null && !(ctx.editable && selected)
-        ? `<span class="hf-tprice">${esc(L.fmtPerServing(r.price, r.currency || ctx.currency))}<span>/serving</span></span>`
+        ? `<span class="hf-tprice">${esc(L.fmtPerServing(r.price, r.currency || ctx.currency))}<span>${ht("menu.per_serving")}</span></span>`
         : "";
     const color = L.PREFERENCE_COLORS[r.preference] || "var(--hf-muted)";
     const topRight = [
-      r.is_favorite === true ? `<span class="hf-favdot" title="In your cookbook">${icon("mdi:heart")}</span>` : "",
-      selected && !ctx.history ? `<span class="hf-checkmark" title="In your box">${icon("mdi:check-bold")}</span>` : "",
+      r.is_favorite === true ? `<span class="hf-favdot" title="${ht("menu.in_cookbook")}">${icon("mdi:heart")}</span>` : "",
+      selected && !ctx.history ? `<span class="hf-checkmark" title="${ht("menu.in_your_box")}">${icon("mdi:check-bold")}</span>` : "",
       qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : "",
     ].join("");
+    const protein = L.PROTEIN_FILTERS.includes(r.preference) ? L.proteinLabel(r.preference) : r.preference || "";
     return `<div class="hf-tile${selected && !ctx.history ? " selected" : ""}${soldOut ? " soldout" : ""}"
-        role="button" tabindex="0" data-action="open-recipe" data-key="${key}" aria-label="Open recipe: ${esc(r.name)}">
+        role="button" tabindex="0" data-action="open-recipe" data-key="${key}" aria-label="${ht("recipe.open", { name: r.name })}">
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
-          ${soldOut ? `<div class="hf-soldout">Sold out</div>` : ""}
+          ${soldOut ? `<div class="hf-soldout">${ht("menu.sold_out")}</div>` : ""}
           <div class="hf-tl">${r.badge ? `<span class="hf-badge"${L.badgeStyle(r)}>${esc(r.badge)}</span>` : ""}</div>
           <div class="hf-tr">${topRight}</div>
-          <div class="hf-bl">${video ? `<button class="hf-play" data-action="play" data-key="${key}" aria-label="Play video for ${esc(r.name)}">${icon("mdi:play")}</button>` : ""}</div>
-          <div class="hf-br">${r.surcharge_label ? `<span class="hf-overlaypill" title="Premium surcharge per serving">${esc(L.fmtSurcharge(r.surcharge_label, ctx.currency))}</span>` : ""}</div>
+          <div class="hf-bl">${video ? `<button class="hf-play" data-action="play" data-key="${key}" aria-label="${ht("menu.play_video", { name: r.name })}">${icon("mdi:play")}</button>` : ""}</div>
+          <div class="hf-br">${r.surcharge_label ? `<span class="hf-overlaypill" title="${ht("menu.surcharge")}">${esc(L.fmtSurcharge(r.surcharge_label, ctx.currency))}</span>` : ""}</div>
         </div>
         <div class="hf-tbody">
-          <div class="hf-tname"><span class="hf-pdot" style="background:${color}" title="${esc(r.preference || "")}"></span><span>${esc(r.name)}</span></div>
+          <div class="hf-tname"><span class="hf-pdot" style="background:${color}" title="${esc(protein)}"></span><span>${esc(r.name)}</span></div>
           ${this._optionLine(r, group, ctx)}
           ${r.description ? `<div class="hf-tdesc">${esc(r.description)}</div>` : ""}
           ${meta.length ? `<div class="hf-tmeta">${meta.join("")}</div>` : ""}
@@ -1002,7 +1013,7 @@ export class MealsView {
     if (chip) {
       const dot = chip.querySelector(".hf-wcdirty");
       const dirty = card.box.dirty(week);
-      if (dirty && !dot) chip.insertAdjacentHTML("afterbegin", `<span class="hf-wcdirty" title="Unsaved changes"></span>`);
+      if (dirty && !dot) chip.insertAdjacentHTML("afterbegin", `<span class="hf-wcdirty" title="${ht("box.unsaved_changes")}"></span>`);
       else if (!dirty && dot) dot.remove();
     }
     const kind = root.querySelector(".hf-segment");
@@ -1038,7 +1049,7 @@ export class MealsView {
     this.card.openSheet({
       kind: "customize",
       narrow: true,
-      label: `Customize ${unit.group.base.name}`,
+      label: t("customize.label", { dish: unit.group.base.name }),
       render: () => this._renderCustomize(this.card.weekById(week.week_id) || week, unit, state),
       onClick: (_ev, el) => this._onCustomizeClick(week, unit, state, el),
     });
@@ -1058,12 +1069,12 @@ export class MealsView {
         const soldOut = m.is_sold_out === true && L.isWeekEditable(week);
         // Another tile already holds this option (two versions of the dish in one box).
         const taken = m !== current && L.tileSelected(selection, m);
-        const note = soldOut ? "Sold out" : taken ? "Already in your box" : "";
+        const note = soldOut ? t("menu.sold_out") : taken ? t("customize.taken") : "";
         const photo = L.isDefaultMeal(m) ? L.resizedImage(m.image_url, 160) : L.resizedImage(m.variation_image_url, 96);
         const price = m.surcharge_label
-          ? `<span class="hf-optprice">${esc(L.fmtSurcharge(m.surcharge_label, currency))}<span>/serving</span></span>`
-          : `<span class="hf-optprice included">Included</span>`;
-        const sub = m.name && m.name !== group.base.name ? m.name : L.isDefaultMeal(m) ? "As the recipe is written" : "";
+          ? `<span class="hf-optprice">${esc(L.fmtSurcharge(m.surcharge_label, currency))}<span>${ht("menu.per_serving")}</span></span>`
+          : `<span class="hf-optprice included">${ht("customize.included")}</span>`;
+        const sub = m.name && m.name !== group.base.name ? m.name : L.isDefaultMeal(m) ? t("customize.as_written") : "";
         return `<button class="hf-optrow${on ? " on" : ""}" aria-pressed="${on}" data-action="opt-pick" data-key="${esc(key)}"
             ${soldOut || taken || !editable ? "disabled" : ""}>
             <span class="hf-radio" aria-hidden="true"></span>
@@ -1079,14 +1090,14 @@ export class MealsView {
     const primary = !editable
       ? ""
       : inBox
-        ? `<button class="hf-btn primary" data-action="opt-apply" ${changed ? "" : "disabled"}>Update box</button>`
-        : `<button class="hf-btn primary" data-action="opt-apply">${icon("mdi:plus")}Add to box</button>`;
+        ? `<button class="hf-btn primary" data-action="opt-apply" ${changed ? "" : "disabled"}>${ht("customize.update")}</button>`
+        : `<button class="hf-btn primary" data-action="opt-apply">${icon("mdi:plus")}${ht("customize.add")}</button>`;
     return `
-      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Customize</h2>
-        <div class="hf-sheetsub">${esc(group.base.name)}${inBox ? " · in your box" : ""}</div></div>
-        <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
-      <div class="hf-sheetbody hf-optlist" role="group" aria-label="Ways to have this meal">${rows}</div>
-      <div class="hf-sheetfoot"><button class="hf-btn ghost" data-action="opt-recipe">${icon("mdi:book-open-page-variant-outline")}View recipe</button>
+      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("customize.title")}</h2>
+        <div class="hf-sheetsub">${esc(group.base.name)}${inBox ? ` · ${ht("customize.in_box")}` : ""}</div></div>
+        <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+      <div class="hf-sheetbody hf-optlist" role="group" aria-label="${ht("customize.ways")}">${rows}</div>
+      <div class="hf-sheetfoot"><button class="hf-btn ghost" data-action="opt-recipe">${icon("mdi:book-open-page-variant-outline")}${ht("customize.view_recipe")}</button>
         ${primary}</div>`;
   }
 
@@ -1278,7 +1289,7 @@ export class MarketView {
     const placeholder = card.weeksPlaceholder();
     if (placeholder) return placeholder;
     if (!card.weeks.length) {
-      return `<div class="hf-empty">${icon("mdi:storefront-outline")}No delivery weeks found.</div>`;
+      return `<div class="hf-empty">${icon("mdi:storefront-outline")}${ht("menu.no_weeks")}</div>`;
     }
     const week = card.selectedWeek() || card.weeks[0];
     return `${renderWeekStrip(card, week)}${renderWeekHead(card, week, "market")}${renderWeekNotices(
@@ -1307,13 +1318,13 @@ export class MarketView {
     const showSections = !past && !this.selectedOnly && sections.length >= 2;
     const toolbar = `<div class="hf-toolbar">
         ${renderKindSwitch(card, week, "market")}
-        ${all.length ? searchBox("market-search", this.query, "Search extras") : ""}
+        ${all.length ? searchBox("market-search", this.query, t("market.search")) : ""}
         ${past || !all.length ? "" : `<button class="hf-chip${this.selectedOnly ? " on" : ""}" data-action="toggle-selected-only"
-          aria-pressed="${this.selectedOnly}">${icon("mdi:package-variant-closed")}In my box</button>`}
+          aria-pressed="${this.selectedOnly}">${icon("mdi:package-variant-closed")}${ht("menu.in_my_box")}</button>`}
       </div>`;
     const sectionBar = showSections
       ? `<div class="hf-rail" data-scroll-key="market-sections" style="margin-bottom:14px">${[
-          `<button class="hf-chip${active.size === 0 ? " on" : ""}" data-action="section-all" aria-pressed="${active.size === 0}">All</button>`,
+          `<button class="hf-chip${active.size === 0 ? " on" : ""}" data-action="section-all" aria-pressed="${active.size === 0}">${ht("filters.all")}</button>`,
           ...sections.map(
             (slug) => `<button class="hf-chip${active.has(slug) ? " on" : ""}" data-action="section" data-value="${esc(slug)}"
                 aria-pressed="${active.has(slug)}">${esc(L.marketGroupLabel(slug))}</button>`
@@ -1321,8 +1332,8 @@ export class MarketView {
         ].join("")}</div>`
       : "";
     if (!all.length) {
-      const message = past ? "No extras were ordered this week." : "The Market for this week isn't open yet.";
-      return `${toolbar}<div class="hf-empty">${icon("mdi:storefront-outline")}${esc(message)}</div>`;
+      const message = ht(past ? "market.none_ordered" : "market.not_open");
+      return `${toolbar}<div class="hf-empty">${icon("mdi:storefront-outline")}${message}</div>`;
     }
     const groups = L.marketGroups(week, selection, {
       selectedOnly: past || this.selectedOnly,
@@ -1331,12 +1342,12 @@ export class MarketView {
     });
     if (!groups.length) {
       const why = this.query
-        ? `No extras match “${esc(this.query.trim())}”.`
+        ? ht("market.no_match_query", { query: this.query.trim() })
         : past
-          ? "No extras were ordered this week."
+          ? ht("market.none_ordered")
           : this.selectedOnly
-            ? "No extras in your box yet."
-            : "No extras match these categories.";
+            ? ht("market.none_in_box")
+            : ht("market.no_match_categories");
       return `${toolbar}${sectionBar}<div class="hf-empty">${icon("mdi:storefront-outline")}${why}</div>`;
     }
     const currency = L.marketCurrency(week);
@@ -1360,25 +1371,25 @@ export class MarketView {
     let control = "";
     if (editable && qty === 0) {
       control = `<button class="hf-add" data-action="market-qty" data-delta="1" data-id="${id}" ${soldOut ? "disabled" : ""}
-        aria-label="Add ${esc(item.name)}">${icon("mdi:plus")}Add</button>`;
+        aria-label="${ht("market.add_aria", { name: item.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
     } else if (editable) {
-      control = `<span class="hf-stepper wide" role="group" aria-label="Quantity of ${esc(item.name)}">
-          <button data-action="market-qty" data-delta="-1" data-id="${id}" aria-label="${qty === 1 ? "Remove" : "Fewer"}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
-          <span class="hf-qty">${qty} <span class="hf-unit">in box</span></span>
-          <button data-action="market-qty" data-delta="1" data-id="${id}" aria-label="More" ${qty >= cap || soldOut ? "disabled" : ""}>${icon("mdi:plus")}</button>
+      control = `<span class="hf-stepper wide" role="group" aria-label="${ht("market.quantity_of", { name: item.name })}">
+          <button data-action="market-qty" data-delta="-1" data-id="${id}" aria-label="${ht(qty === 1 ? "market.remove" : "common.fewer")}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
+          <span class="hf-qty">${qty} <span class="hf-unit">${ht("market.in_box_unit")}</span></span>
+          <button data-action="market-qty" data-delta="1" data-id="${id}" aria-label="${ht("common.more")}" ${qty >= cap || soldOut ? "disabled" : ""}>${icon("mdi:plus")}</button>
         </span>`;
     } else if (qty > 0) {
-      control = `<span class="hf-ordered">${icon("mdi:check")} ${past ? `${qty} ordered` : `In box${qty > 1 ? ` · ${qty}×` : ""}`}</span>`;
+      control = `<span class="hf-ordered">${icon("mdi:check")} ${past ? ht("market.ordered", { count: qty }) : `${ht("menu.in_box")}${qty > 1 ? ` · ${qty}×` : ""}`}</span>`;
     }
     const price =
       item.price != null && !(editable && qty > 0)
         ? `<span class="hf-tprice">${esc(L.fmtPrice(item.price, item.currency || currency))}</span>`
         : "";
     return `<div class="hf-tile${qty > 0 && !past ? " selected" : ""}${soldOut ? " soldout" : ""}" role="button" tabindex="0"
-        data-action="open-item" data-id="${id}" aria-label="Open: ${esc(item.name)}">
+        data-action="open-item" data-id="${id}" aria-label="${ht("market.open", { name: item.name })}">
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
-          ${soldOut ? `<div class="hf-soldout">Sold out</div>` : ""}
+          ${soldOut ? `<div class="hf-soldout">${ht("menu.sold_out")}</div>` : ""}
           <div class="hf-tr">${qty > 0 && !past ? `<span class="hf-checkmark">${icon("mdi:check-bold")}</span>` : ""}${qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : ""}</div>
         </div>
         <div class="hf-tbody">
@@ -1490,7 +1501,9 @@ function estimate(card, week) {
   }
   if (box.marketDirty(week)) return { status: "extras", extras: extrasCents / 100, currency };
   const total = L.boxTotal(week, card.account);
-  return total ? { status: "saved", amount: total.amount, currency: total.currency, label: total.label } : { status: "none" };
+  return total
+    ? { status: "saved", amount: total.amount, currency: total.currency, label: total.estimate ? total.label : t("box.box_total") }
+    : { status: "none" };
 }
 
 export function renderBoxBar(card, week) {
@@ -1510,44 +1523,44 @@ export function renderBoxBar(card, week) {
     slots.push(`<span class="hf-slot${i < count ? (i >= required && required ? " extra" : " filled") : ""}"></span>`);
   }
   const line = [
-    `<span>${required ? `${count} of ${required} meals` : L.plural(count, "meal")}</span>`,
-    servings !== count ? `<span class="hf-muted">${servings} servings</span>` : "",
-    extraCount ? `<span class="hf-muted">${L.plural(extraCount, "extra")}</span>` : "",
+    `<span>${required ? ht("box.selected_of_required", { selected: count, required }) : ht("meals.count", { count })}</span>`,
+    servings !== count ? `<span class="hf-muted">${ht("meals.servings", { count: servings })}</span>` : "",
+    extraCount ? `<span class="hf-muted">${ht("meals.extras", { count: extraCount })}</span>` : "",
   ].filter(Boolean).join("");
   let note;
   let noteCls = "";
   const closed = dirty && !editable;
   if (closed) {
-    note = "The deadline passed — these changes can't be saved";
+    note = t("box.deadline_passed");
     noteCls = " warn";
   } else if (count < L.MIN_MEALS && box.mealsDirty(week)) {
-    note = `Choose at least ${L.MIN_MEALS} meals to save`;
+    note = t("box.min_note", { min: L.MIN_MEALS });
     noteCls = " warn";
   } else if (required && count !== required && count > 0) {
-    note = `Box resized to ${count} meals for this week (plan: ${required}) — HelloFresh reprices it`;
+    note = t("box.resized_note", { selected: count, required });
     noteCls = " warn";
-  } else if (dirty) note = "Unsaved changes";
-  else note = "Saved · edit until the deadline";
+  } else if (dirty) note = t("box.unsaved_changes");
+  else note = t("box.saved_note");
   const est = estimate(card, week);
   let total = "";
   if (est.status === "ok") {
-    total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">Estimated total</span>`;
+    total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">${ht("box.estimated_total")}</span>`;
   } else if (est.status === "loading" || est.status === "pending") {
-    total = `<span class="hf-boxamountnote">Updating price…</span>`;
+    total = `<span class="hf-boxamountnote">${ht("box.updating_price")}</span>`;
   } else if (est.status === "extras") {
-    total = `<span class="hf-boxamount">+${esc(L.fmtPrice(est.extras, est.currency))}</span><span class="hf-boxamountnote">Extras</span>`;
+    total = `<span class="hf-boxamount">+${esc(L.fmtPrice(est.extras, est.currency))}</span><span class="hf-boxamountnote">${ht("box.extras")}</span>`;
   } else if (est.status === "saved") {
-    total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">${esc(est.label === "Total" ? "Box total" : est.label)}</span>`;
+    total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">${esc(est.label)}</span>`;
   }
   const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
   const actions = closed
-    ? `<button class="hf-btn" data-action="box-discard" ${card.busy ? "disabled" : ""}>Discard changes</button>`
+    ? `<button class="hf-btn" data-action="box-discard" ${card.busy ? "disabled" : ""}>${ht("box.discard_changes")}</button>`
     : dirty
-      ? `<button class="hf-btn ghost" data-action="box-discard" ${card.busy ? "disabled" : ""}>Discard</button>
-       <button class="hf-btn" data-action="box-review">Review</button>
-       <button class="hf-btn primary" data-action="box-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}Save box</button>`
-      : `<button class="hf-btn" data-action="box-review">${icon("mdi:package-variant-closed")}Your box</button>`;
-  return `<div class="hf-boxbarinner" role="region" aria-label="Your box">
+      ? `<button class="hf-btn ghost" data-action="box-discard" ${card.busy ? "disabled" : ""}>${ht("box.discard")}</button>
+       <button class="hf-btn" data-action="box-review">${ht("week.review")}</button>
+       <button class="hf-btn primary" data-action="box-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>`
+      : `<button class="hf-btn" data-action="box-review">${icon("mdi:package-variant-closed")}${ht("box.your_box")}</button>`;
+  return `<div class="hf-boxbarinner" role="region" aria-label="${ht("box.your_box")}">
       <div class="hf-boxslots" aria-hidden="true">${slots.join("")}</div>
       <div class="hf-boxsummary"><div class="hf-boxline">${line}</div><div class="hf-boxnote${noteCls}">${esc(note)}</div></div>
       ${total ? `<div class="hf-boxtotal">${total}</div>` : ""}
@@ -1585,17 +1598,17 @@ function renderReview(card, week) {
     const r = byKey.get(key);
     if (!r) continue;
     const was = saved.get(key);
-    const tag = was == null ? pill("New", "ok") : was !== qty ? pill(`Was ${was}`, "info") : "";
-    const price = r.price != null ? ` · ${esc(L.fmtPerServing(r.price, r.currency))}/serving` : "";
+    const tag = was == null ? pill(t("box.new"), "ok") : was !== qty ? pill(t("box.was", { count: was }), "info") : "";
+    const price = r.price != null ? ` · ${esc(L.fmtPerServing(r.price, r.currency))}${ht("menu.per_serving")}` : "";
     const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
-    mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${L.plural(qty, "serving")}${price}`, tag));
+    mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${ht("meals.servings", { count: qty })}${price}`, tag));
   }
   for (const [key] of saved) {
     if (meals.has(key)) continue;
     const r = byKey.get(key);
     if (r) {
       const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
-      mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}Removed`, pill("Removed", "danger"), true));
+      mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${ht("box.removed")}`, pill(t("box.removed"), "danger"), true));
     }
   }
   const market = box.displayMarket(week);
@@ -1607,14 +1620,14 @@ function renderReview(card, week) {
     const item = items.get(id);
     if (!item) continue;
     const was = savedMarket.get(id);
-    const tag = was == null ? pill("New", "ok") : was !== qty ? pill(`Was ${was}`, "info") : "";
+    const tag = was == null ? pill(t("box.new"), "ok") : was !== qty ? pill(t("box.was", { count: was }), "info") : "";
     const price = item.price != null ? ` · ${esc(L.fmtPrice(item.price * qty, item.currency || currency))}` : "";
     extraRows.push(lineItem(L.resizedImage(item.image_url, 160), item.name, `${qty} ×${price}`, tag));
   }
   for (const [id] of savedMarket) {
     if (market.has(id)) continue;
     const item = items.get(id);
-    if (item) extraRows.push(lineItem(L.resizedImage(item.image_url, 160), item.name, "Removed", pill("Removed", "danger"), true));
+    if (item) extraRows.push(lineItem(L.resizedImage(item.image_url, 160), item.name, ht("box.removed"), pill(t("box.removed"), "danger"), true));
   }
 
   const est = estimate(card, week);
@@ -1622,49 +1635,52 @@ function renderReview(card, week) {
   if (est.status === "ok") {
     const p = est.preview;
     const cur = est.currency;
-    if (p.sub_total != null) rows.push(["Meals", L.fmtPrice(p.sub_total, cur)]);
-    if (p.shipping_amount != null) rows.push(["Shipping", L.fmtPrice(p.shipping_amount, cur)]);
-    if (Number(p.discount_amount) > 0) rows.push([`Discount${p.coupon_code ? ` (${esc(p.coupon_code)})` : ""}`, `−${L.fmtPrice(p.discount_amount, cur)}`]);
-    if (Number(p.tax_amount) > 0) rows.push(["Tax", L.fmtPrice(p.tax_amount, cur)]);
-    if (est.extras > 0) rows.push(["Extras", L.fmtPrice(est.extras, cur)]);
-    rows.push(["Estimated total", L.fmtPrice(est.amount, cur), true]);
+    if (p.sub_total != null) rows.push([ht("box.meals"), L.fmtPrice(p.sub_total, cur)]);
+    if (p.shipping_amount != null) rows.push([ht("box.shipping"), L.fmtPrice(p.shipping_amount, cur)]);
+    if (Number(p.discount_amount) > 0) rows.push([`${ht("money.discount")}${p.coupon_code ? ` (${esc(p.coupon_code)})` : ""}`, `−${L.fmtPrice(p.discount_amount, cur)}`]);
+    if (Number(p.tax_amount) > 0) rows.push([ht("box.tax"), L.fmtPrice(p.tax_amount, cur)]);
+    if (est.extras > 0) rows.push([ht("box.extras"), L.fmtPrice(est.extras, cur)]);
+    rows.push([ht("box.estimated_total"), L.fmtPrice(est.amount, cur), true]);
   } else if (est.status === "saved") {
-    rows.push([est.label === "Total" ? "Box total" : est.label, L.fmtPrice(est.amount, est.currency), true]);
+    rows.push([esc(est.label), L.fmtPrice(est.amount, est.currency), true]);
   } else if (est.status === "extras") {
-    rows.push(["Extras (this change)", L.fmtPrice(est.extras, est.currency), true]);
+    rows.push([ht("box.extras_change"), L.fmtPrice(est.extras, est.currency), true]);
   } else if (est.status === "loading" || est.status === "pending") {
-    rows.push(["Estimated total", "Updating…", true]);
+    rows.push([ht("box.estimated_total"), t("box.updating"), true]);
   }
   const priceTable = rows.length
-    ? `<div><div class="hf-eyebrow" style="margin-bottom:8px">Price</div><div class="hf-pricetable">${rows
-        .map(([k, v, strong]) => `<div class="hf-prow${strong ? " total" : ""}"><span>${k}</span><span>${esc(v)}</span></div>`)
-        .join("")}</div>${est.status === "ok" ? `<p class="hf-small hf-muted" style="margin:8px 0 0">An estimate — HelloFresh calculates the final price when it charges the box.</p>` : ""}</div>`
+    ? `<div><div class="hf-eyebrow" style="margin-bottom:8px">${ht("box.price")}</div><div class="hf-pricetable">${rows
+        .map(([k, v, bold]) => `<div class="hf-prow${bold ? " total" : ""}"><span>${k}</span><span>${esc(v)}</span></div>`)
+        .join("")}</div>${est.status === "ok" ? `<p class="hf-small hf-muted" style="margin:8px 0 0">${ht("box.estimate_note")}</p>` : ""}</div>`
     : "";
   const count = L.mealsCount(meals);
   const required = Number(week.meals_required) || 0;
   const notes = [];
   if (box.mealsDirty(week) && count < L.MIN_MEALS) {
-    notes.push(`<div class="hf-notice tone-warn">${icon("mdi:alert-outline")}<div class="hf-noticebody">Choose at least ${L.MIN_MEALS} meals — HelloFresh has no smaller box.</div></div>`);
+    notes.push(`<div class="hf-notice tone-warn">${icon("mdi:alert-outline")}<div class="hf-noticebody">${ht("box.min_notice", { min: L.MIN_MEALS })}</div></div>`);
   } else if (required && count !== required && count > 0) {
-    notes.push(`<div class="hf-notice tone-info">${icon("mdi:resize")}<div class="hf-noticebody">This week's box is resized to <strong>${count} meals</strong> (your plan has ${required}). HelloFresh reprices it; your plan itself doesn't change.</div></div>`);
+    notes.push(`<div class="hf-notice tone-info">${icon("mdi:resize")}<div class="hf-noticebody">${ht("box.resized_notice", {
+      meals: strong(t("meals.count", { count })),
+      required,
+    })}</div></div>`);
   }
   const dirty = box.dirty(week);
   const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
   return `
-    <div class="hf-sheethead"><div class="hf-sheettitle"><h2>Your box</h2>
-      <div class="hf-sheetsub">${esc(L.fmtLongDate(week.delivery_date))} · ${esc(L.stateLabel(week))}${dirty ? " · unsaved changes" : ""}</div></div>
-      <button class="hf-iconbtn" data-close-sheet aria-label="Close">${icon("mdi:close")}</button></div>
+    <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("box.your_box")}</h2>
+      <div class="hf-sheetsub">${esc(L.fmtLongDate(week.delivery_date))} · ${esc(L.stateLabel(week))}${dirty ? ` · ${ht("box.unsaved_lower")}` : ""}</div></div>
+      <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
     <div class="hf-sheetbody">
       ${notes.join("")}
-      <div><div class="hf-eyebrow" style="margin-bottom:4px">Meals · ${count}</div>
-        ${mealRows.length ? `<div class="hf-lineitems">${mealRows.join("")}</div>` : `<div class="hf-muted hf-small">No meals chosen yet.</div>`}</div>
-      ${extraRows.length ? `<div><div class="hf-eyebrow" style="margin-bottom:4px">Extras · ${market.size}</div><div class="hf-lineitems">${extraRows.join("")}</div></div>` : ""}
+      <div><div class="hf-eyebrow" style="margin-bottom:4px">${ht("box.meals")} · ${count}</div>
+        ${mealRows.length ? `<div class="hf-lineitems">${mealRows.join("")}</div>` : `<div class="hf-muted hf-small">${ht("overview.no_meals")}</div>`}</div>
+      ${extraRows.length ? `<div><div class="hf-eyebrow" style="margin-bottom:4px">${ht("box.extras")} · ${market.size}</div><div class="hf-lineitems">${extraRows.join("")}</div></div>` : ""}
       ${priceTable}
     </div>
     <div class="hf-sheetfoot">
-      ${dirty ? `<button class="hf-btn ghost danger" data-action="review-discard">Discard changes</button><span class="hf-spacer"></span>` : ""}
-      <button class="hf-btn" data-close-sheet>${dirty ? "Keep editing" : "Close"}</button>
-      ${dirty ? `<button class="hf-btn primary" data-action="review-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}Save box</button>` : ""}
+      ${dirty ? `<button class="hf-btn ghost danger" data-action="review-discard">${ht("box.discard_changes")}</button><span class="hf-spacer"></span>` : ""}
+      <button class="hf-btn" data-close-sheet>${ht(dirty ? "box.keep_editing" : "common.close")}</button>
+      ${dirty ? `<button class="hf-btn primary" data-action="review-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>` : ""}
     </div>`;
 }
 
@@ -1672,7 +1688,7 @@ export function openReview(card, week) {
   card.box.schedulePreview(week);
   card.openSheet({
     kind: "review",
-    label: "Your box",
+    label: t("box.your_box"),
     render: () => renderReview(card, card.weekById(week.week_id) || week),
     onClick: (_ev, el) => {
       if (!el) return;

@@ -53,6 +53,7 @@ const { hass, calls, fx } = buildHass(location.origin, {
   scenario: params.get("scenario") || "default",
   latency: Number(params.get("latency") || 200),
   fail: params.get("fail") || "",
+  language: params.get("lang") || "en",
 });
 window.__hass = hass;
 window.__calls = calls;

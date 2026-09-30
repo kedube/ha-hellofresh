@@ -208,8 +208,8 @@ Choose the matching country during setup. All 16 markets HelloFresh currently op
 | Sweden | `se` | https://www.hellofresh.se | SEK | Untested |
 
 **Interface language.** The integration ships translations for German, Dutch, French, Danish,
-Norwegian (Bokmål) and Swedish alongside English; Home Assistant picks one from *your* profile
-language, not from the Country you choose above. Any string not yet translated falls back to
+Norwegian (Bokmål) and Swedish alongside English, for its setup, entities and the HelloFresh card
+alike; Home Assistant picks one from *your* profile language, not from the Country you choose above. Any string not yet translated falls back to
 English automatically. Product wording follows each regional HelloFresh site (Kochbox,
 Maaltijdbox, Box Repas, måltidskasse, matkasse), so entity names should read the way your own
 HelloFresh website does — corrections from native speakers are welcome.
@@ -342,8 +342,7 @@ type: custom:hellofresh-card
 ```
 
 Setting `views:` to one section gives a focused card, for example just Recipes on a kitchen tablet.
-[`dashboard/hellofresh.yaml`](dashboard/hellofresh.yaml) is a ready-made full-width dashboard with
-just this card. Every option and every tab is in [docs/dashboard.md](docs/dashboard.md#hellofresh-card).
+Every option and every tab is in [docs/dashboard.md](docs/dashboard.md#hellofresh-card).
 
 ### The classic cards (deprecated)
 
@@ -354,8 +353,7 @@ card picker, and while a dashboard still uses one, the **Repairs** screen lists 
 only where they're used, so nobody else downloads them with every dashboard. The HelloFresh card
 does everything they do:
 [Moving from the classic cards](docs/dashboard.md#moving-from-the-classic-cards) shows where each
-feature went. The multi-view [`dashboard/hellofresh-classic.yaml`](dashboard/hellofresh-classic.yaml)
-built from them goes away with them.
+feature went.
 
 ## Current Scope
 
@@ -472,7 +470,6 @@ It also includes:
 - GitHub Actions workflows for HACS validation, `hassfest`, `python -m pytest -q`, and the browser tests
 - issue templates for bug reports and feature requests
 - a [contributing guide](CONTRIBUTING.md)
-- a ready-to-use [example dashboard](dashboard/hellofresh.yaml) (see [The HelloFresh card](#the-hellofresh-card))
 - a full [entity reference](docs/entities.md) under `docs/`
 - a documented [quality-scale target](QUALITY_SCALE.md)
 

@@ -36,16 +36,26 @@ version heading and publishes it as the release's Highlights.
     and can use your theme's accent colour (`accent: theme`). A single entry in `views` gives a
     focused card, e.g. just Recipes.
 
-  The example dashboard, `dashboard/hellofresh.yaml`, is now this one card, full width — its
-  delivery-activity logbook view is replaced by the delivery details; the previous multi-view
-  layout lives on as `dashboard/hellofresh-classic.yaml`.
 - **New: HelloFresh in the sidebar.** The integration adds a **HelloFresh** entry to Home
   Assistant's sidebar that opens the HelloFresh card full screen, so there's no dashboard to
   build. On a phone it runs edge to edge, with the usual button to open the sidebar. With more
   than one account, each gets its own entry, named after its integration entry. It's on by
   default; the new **Show HelloFresh in the sidebar** option removes it.
+- **Removed: the example dashboards** (`dashboard/hellofresh.yaml` and the classic multi-view
+  layout). The sidebar entry replaces them, and on a dashboard of your own the card is one line
+  (see [Adding the card to a dashboard](docs/dashboard.md#adding-the-card-to-a-dashboard)). A
+  dashboard you already made from one keeps working; if it uses the deprecated classic cards,
+  **Repairs** says so. Its delivery-activity logbook view is replaced by each box's delivery
+  details.
+- **The HelloFresh card speaks your language.** Its text is now part of the integration's
+  translations and follows the language in your Home Assistant profile: Danish, Dutch, French,
+  German, Norwegian (Bokmål) and Swedish alongside English. Dates, times and prices follow the
+  profile too (its language, number format and 12/24-hour clock). The Norwegian builds on
+  @monsivar's translation of the classic cards (#10). A language without its own translation
+  shows the card in English; menus, recipes and delivery windows come from HelloFresh in your
+  account's own language, as before.
 - **Deprecated: the seven classic cards** (Meal planner, Market, Recipes, Food Profile, Schedule,
-  Subscription and Cost) and `dashboard/hellofresh-classic.yaml`. The HelloFresh card does
+  Subscription and Cost). The HelloFresh card does
   everything they do; they will be removed in a future release. They still work and still share
   filters and the selected week with the new card, but now say so: "(deprecated)" in the card
   picker, a **Deprecated** badge in the card's title linking to

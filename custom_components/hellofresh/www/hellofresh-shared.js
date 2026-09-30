@@ -36,6 +36,16 @@
  * ---------------------------------------------------------------------------------------------
  */
 
+// The card text layer (hellofresh-i18n.js): dates and prices below follow Home Assistant's
+// language and number format once the HelloFresh card has passed hass to it. Loaded with this
+// module's own ?v= stamp, so every importer shares one copy.
+const I18n = await import(
+  new URL(
+    `./hellofresh-i18n.js?v=${encodeURIComponent(new URL(import.meta.url).searchParams.get("v") || "unknown")}`,
+    import.meta.url
+  ).href
+);
+
 // ---- escaping / URL safety --------------------------------------------------------------
 
 // Escape a value for interpolation into card HTML. Every payload-derived `${…}` must go through
@@ -100,7 +110,8 @@ export function parseLocalDate(value) {
   return new Date(value);
 }
 
-// "today" / "yesterday" / "in 3 days" / "next week" — how far off a week's delivery is.
+// "today" / "tomorrow" / "in 3 days" / "next week" / "2 days ago" — how far off a week's
+// delivery is, in the language's own words (Intl.RelativeTimeFormat).
 export function relativeWeek(week) {
   if (!week || !week.delivery_date) return "";
   const today = new Date();
@@ -108,11 +119,15 @@ export function relativeWeek(week) {
   const d = parseLocalDate(week.delivery_date);
   d.setHours(0, 0, 0, 0);
   const days = Math.round((d - today) / 86400000);
-  if (days === 0) return "today";
-  if (days < 0) return days === -1 ? "yesterday" : `${-days} days ago`;
-  if (days < 7) return `in ${days} days`;
-  const weeks = Math.round(days / 7);
-  return weeks === 1 ? "next week" : `in ${weeks} weeks`;
+  if (Number.isNaN(days)) return "";
+  let format;
+  try {
+    format = new Intl.RelativeTimeFormat(I18n.dateLocale(), { numeric: "auto" });
+  } catch (_e) {
+    format = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  }
+  if (days < 7) return format.format(days, "day");
+  return format.format(Math.round(days / 7), "week");
 }
 
 // Format an ISO date for display. Guards Invalid Date explicitly: toLocaleDateString on one
@@ -123,7 +138,7 @@ export function fmtDate(iso, options) {
     const d = parseLocalDate(iso);
     if (Number.isNaN(d.getTime())) return "—";
     return d.toLocaleDateString(
-      undefined,
+      I18n.dateLocale(),
       options || { weekday: "short", month: "short", day: "numeric" }
     );
   } catch (_e) {
@@ -150,7 +165,7 @@ export function fmtPrice(amount, currency) {
   const num = Number(amount);
   if (!Number.isFinite(num)) return String(amount);
   try {
-    return num.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
+    return num.toLocaleString(I18n.numberLocale(), { style: "currency", currency: currency || "USD" });
   } catch (_e) {
     return `${num.toFixed(2)} ${currency || ""}`.trim();
   }
