@@ -29,7 +29,7 @@ version heading and publishes it as the release's Highlights.
     service, so a swap the menu leaves without a protein (a "2x Tofu" option) shows under Veggie
     as it does on the site.
   - The menu gains **search** and a **Favorites** highlight, meals can be edited in "In my box"
-    view, and large menus load 60 tiles at a time.
+    view, and large menus load 100 tiles at a time.
   - **Account** holds plan & billing — now including the recurring **box size** and **delivery
     day** controls, behind a confirmation — food preferences, spending, and integration status.
   - It adapts to its width (phone, sections column or full-width panel), follows HA's dark mode,

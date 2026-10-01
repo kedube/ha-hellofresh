@@ -31,7 +31,7 @@ const strong = (text) => html(`<strong>${esc(text)}</strong>`);
 
 // Tiles rendered before a "Show more" button: a planning-catalog week carries ~350 meals, and
 // painting them all at once is what made the classic planner slow to open.
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 100;
 
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
