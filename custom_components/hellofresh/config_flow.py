@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -13,7 +15,7 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
-from .api import HelloFreshAuthError, HelloFreshClient, HelloFreshError
+from .api import HelloFreshAuthError, HelloFreshBotBlockedError, HelloFreshClient, HelloFreshError
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
@@ -25,6 +27,7 @@ from .const import (
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
     CONF_ISSUED_AT,
+    CONF_LOG_AUTH_DIAGNOSTICS,
     CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_EXPIRES_IN,
@@ -35,6 +38,7 @@ from .const import (
     CONF_SHOW_SIDEBAR_PANEL,
     CONF_TOKEN,
     CONF_TOKEN_TYPE,
+    CONF_USE_CURL_CFFI_HEADERS,
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
@@ -44,10 +48,12 @@ from .const import (
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
+    DEFAULT_LOG_AUTH_DIAGNOSTICS,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DEFAULT_SHOW_SIDEBAR_PANEL,
+    DEFAULT_USE_CURL_CFFI_HEADERS,
     DOMAIN,
     MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
@@ -62,6 +68,7 @@ from .const import (
     TRACEY_COUNTRIES,
 )
 from .parsers import token_payload_to_entry_data
+from .tls_transport import async_close_shared_session
 
 
 def _entry_data_from_credentials(username: str, password: str, country: str) -> dict[str, object]:
@@ -88,6 +95,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry: config_entries.ConfigEntry | None = None
         self._reconfigure_entry: config_entries.ConfigEntry | None = None
         self._selected_country = DEFAULT_COUNTRY
+        self._initial_log_auth_diagnostics = DEFAULT_LOG_AUTH_DIAGNOSTICS
 
     async def async_step_user(self, user_input: dict[str, str] | None = None):
         """Present a menu choosing how to authenticate."""
@@ -96,13 +104,16 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             menu_options=["credentials", "token"],
         )
 
-    async def async_step_credentials(self, user_input: dict[str, str] | None = None):
+    async def async_step_credentials(self, user_input: dict[str, Any] | None = None):
         """Recommended path: collect country + HelloFresh credentials."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             country = user_input[CONF_COUNTRY]
             self._selected_country = country
+            self._initial_log_auth_diagnostics = user_input.get(
+                CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS
+            )
             result = await self._async_finish_user_auth(
                 username=user_input[CONF_USERNAME],
                 password=user_input[CONF_PASSWORD],
@@ -121,12 +132,16 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ),
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
+                    vol.Optional(
+                        CONF_LOG_AUTH_DIAGNOSTICS,
+                        default=self._initial_log_auth_diagnostics,
+                    ): cv.boolean,
                 }
             ),
             errors=errors,
         )
 
-    async def async_step_token(self, user_input: dict[str, str] | None = None):
+    async def async_step_token(self, user_input: dict[str, Any] | None = None):
         """Advanced path: provide an apiV2Auth token blob (or bare access token).
 
         Stores the parsed access/refresh tokens directly; no credentials are kept, so the
@@ -139,6 +154,9 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             country = user_input[CONF_COUNTRY]
             self._selected_country = country
+            self._initial_log_auth_diagnostics = user_input.get(
+                CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS
+            )
             token_data = token_payload_to_entry_data(user_input.get(CONF_TOKEN))
             if token_data is None:
                 errors["base"] = "invalid_token"
@@ -155,6 +173,10 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         sorted(COUNTRY_BASE_URLS)
                     ),
                     vol.Required(CONF_TOKEN): str,
+                    vol.Optional(
+                        CONF_LOG_AUTH_DIAGNOSTICS,
+                        default=self._initial_log_auth_diagnostics,
+                    ): cv.boolean,
                 }
             ),
             description_placeholders={
@@ -377,6 +399,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
             data=_entry_data_from_credentials(username, password, country),
+            options={CONF_LOG_AUTH_DIAGNOSTICS: self._initial_log_auth_diagnostics},
         )
 
     async def _async_finish_token_auth(
@@ -396,6 +419,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
             data={CONF_COUNTRY: country, **token_data},
+            options={CONF_LOG_AUTH_DIAGNOSTICS: self._initial_log_auth_diagnostics},
         )
 
     async def _async_finish_reauth(
@@ -438,22 +462,30 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         enable_public_menu_fallback: bool = DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     ) -> dict | None:
         """Log in with the supplied credentials and return account info, or None on error."""
-        session = async_get_clientsession(self.hass)
+        session = async_create_clientsession(self.hass, auto_cleanup=False)
         client = HelloFreshClient(
             session=session,
             country=country,
             username=username,
             password=password,
             enable_public_menu_fallback=enable_public_menu_fallback,
+            use_curl_cffi_headers=self._existing_header_option(),
+            log_auth_diagnostics=self._existing_auth_logging_option(),
         )
         try:
             return await client.async_validate_credentials()
         except HelloFreshAuthError:
             errors["base"] = "invalid_auth"
             return None
+        except HelloFreshBotBlockedError:
+            errors["base"] = "bot_blocked"
+            return None
         except HelloFreshError:
             errors["base"] = "cannot_connect"
             return None
+        finally:
+            await async_close_shared_session(session)
+            session.detach()
 
     async def _async_validate_token(
         self,
@@ -469,10 +501,12 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ``token_data`` in place, so callers persist the LIVE token pair — persisting the
         pre-rotation pair stored a dead refresh token and 401'd minutes after setup.
         """
-        session = async_get_clientsession(self.hass)
+        session = async_create_clientsession(self.hass, auto_cleanup=False)
         client = HelloFreshClient(
             session=session,
             country=country,
+            use_curl_cffi_headers=self._existing_header_option(),
+            log_auth_diagnostics=self._existing_auth_logging_option(),
             access_token=token_data.get(CONF_ACCESS_TOKEN),  # type: ignore[arg-type]
             refresh_token=token_data.get(CONF_REFRESH_TOKEN),  # type: ignore[arg-type]
             # Pass the pasted timing so a genuinely fresh token isn't rotated needlessly.
@@ -493,6 +527,23 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except HelloFreshError:
             errors["base"] = "cannot_connect"
             return None
+        finally:
+            await async_close_shared_session(session)
+            session.detach()
+
+    def _existing_header_option(self) -> bool:
+        """Use an existing entry's header setting during reauth and reconfigure."""
+        entry = getattr(self, "_reconfigure_entry", None) or getattr(self, "_reauth_entry", None)
+        if entry is None:
+            return DEFAULT_USE_CURL_CFFI_HEADERS
+        return entry.options.get(CONF_USE_CURL_CFFI_HEADERS, DEFAULT_USE_CURL_CFFI_HEADERS)
+
+    def _existing_auth_logging_option(self) -> bool:
+        """Use the selected diagnostics setting during setup, reauth, or reconfigure."""
+        entry = getattr(self, "_reconfigure_entry", None) or getattr(self, "_reauth_entry", None)
+        if entry is None:
+            return self._initial_log_auth_diagnostics
+        return entry.options.get(CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS)
 
     @staticmethod
     @callback
@@ -526,6 +577,12 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                 CONF_ENABLE_PREP_LISTS: user_input[CONF_ENABLE_PREP_LISTS],
                 CONF_SHOW_DATA_QUALITY_ISSUES: user_input[CONF_SHOW_DATA_QUALITY_ISSUES],
                 CONF_SHOW_SIDEBAR_PANEL: user_input[CONF_SHOW_SIDEBAR_PANEL],
+                CONF_USE_CURL_CFFI_HEADERS: user_input.get(
+                    CONF_USE_CURL_CFFI_HEADERS, DEFAULT_USE_CURL_CFFI_HEADERS
+                ),
+                CONF_LOG_AUTH_DIAGNOSTICS: user_input.get(
+                    CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS
+                ),
                 # NumberSelector yields a float; store a clean int (whole weeks/days).
                 CONF_HISTORY_WEEKS: int(user_input[CONF_HISTORY_WEEKS]),
                 CONF_MENU_GRACE_WEEKS: int(user_input[CONF_MENU_GRACE_WEEKS]),
@@ -643,6 +700,14 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                         CONF_SHOW_DATA_QUALITY_ISSUES,
                         DEFAULT_SHOW_DATA_QUALITY_ISSUES,
                     ),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_USE_CURL_CFFI_HEADERS,
+                    default=options.get(CONF_USE_CURL_CFFI_HEADERS, DEFAULT_USE_CURL_CFFI_HEADERS),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_LOG_AUTH_DIAGNOSTICS,
+                    default=options.get(CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS),
                 ): cv.boolean,
             }
         )

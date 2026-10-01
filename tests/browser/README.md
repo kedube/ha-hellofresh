@@ -12,7 +12,10 @@ npm run serve         # the harness on http://localhost:8765 to poke at by hand
 ```
 
 Chrome is found at its usual macOS or Linux location, or set `CHROME_PATH`. The fixtures build
-their weeks around today's date in the local time zone; CI pins `TZ=America/New_York`.
+their weeks around the page's date in the local time zone; CI pins `TZ=America/New_York`. The
+flows run on a fixed clock (Tuesday 2026-09-29, noon), because from Thursday to Monday the next
+box is past its meal deadline and the flows that edit it have nothing to click. The harness and
+screenshots use today's date unless given `now`.
 
 Harness URL parameters: `view` (overview, menu, market, recipes, account), `theme=dark`,
 `scenario` (`clean` without the expiring-card banner, `live` for a Netherlands delivery on the

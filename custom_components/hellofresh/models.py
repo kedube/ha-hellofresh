@@ -188,6 +188,14 @@ class HelloFreshAuthError(HelloFreshError):
     """Raised when authentication fails."""
 
 
+class HelloFreshBotBlockedError(HelloFreshError):
+    """Raised when HelloFresh's bot protection rejects a sign-in before it reaches the login API.
+
+    Transient like any HelloFreshError (never a credential rejection), but distinct so setup
+    can say so and point at the access-token path instead of a generic "could not connect".
+    """
+
+
 class HelloFreshNotImplementedError(HelloFreshError):
     """Raised when the underlying HelloFresh API call is not wired yet."""
 

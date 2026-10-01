@@ -93,21 +93,20 @@ Setup offers **two paths** (a menu in [config_flow.py](../custom_components/hell
 
 Either way, `async_setup_entry` requires an entry to carry **either** credentials **or** a token; a stale entry with neither triggers reauth. Token-only entries are intentional and are never forced to supply a password — reauth for them re-collects a token.
 
-Authenticated API calls send a full Chrome-on-Windows-11 header set (`_DEFAULT_HEADERS` + the shared `_BROWSER_CLIENT_HINTS`):
+Authenticated API calls send a full Chrome-on-Windows header set (`_DEFAULT_HEADERS` + the shared `_BROWSER_CLIENT_HINTS`):
 
 ```http
 Authorization: Bearer <access_token>
 Accept: application/json, text/plain, */*
 Accept-Language: en-US,en;q=0.9
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
 Priority: u=1, i
 Accept-Encoding: gzip, deflate, br, zstd
 Cache-Control: no-cache
 Pragma: no-cache
-sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
+sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"
 sec-ch-ua-mobile: ?0
 sec-ch-ua-platform: "Windows"
-sec-ch-ua-platform-version: "15.0.0"
 Sec-Fetch-Dest: empty
 Sec-Fetch-Mode: cors
 Sec-Fetch-Site: same-origin
@@ -117,11 +116,14 @@ Referer: <regional base URL>/
 
 The `<token_type>` from the auth object is used in place of `Bearer` when the server returns a different one.
 
-The integration presents as **Google Chrome on Windows 11** rather than a headless identifier — HelloFresh's bot protection challenges recognizable non-browser clients (see [Bot-protection handling](#bot-protection-waf-handling)). A real Chrome emits all of the above on every XHR, and the *absence* of the Client Hints / `Sec-Fetch-*` metadata is itself a fingerprint tell, so they are sent alongside the `User-Agent`. Notes on internal consistency (mismatched fields are exactly what fingerprinting looks for):
+The integration presents as **Google Chrome on Windows** rather than a headless identifier — HelloFresh's bot protection challenges recognizable non-browser clients (see [Bot-protection handling](#bot-protection-waf-handling)). A real Chrome emits all of the above on every XHR, and the *absence* of the Client Hints / `Sec-Fetch-*` metadata is itself a fingerprint tell, so they are sent alongside the `User-Agent`. Notes on internal consistency (mismatched fields are exactly what fingerprinting looks for):
 
-- **Windows 11 is invisible in the legacy UA string** — it still reports `Windows NT 10.0; Win64; x64`, the same as Windows 10, by design. The only header that distinguishes Windows 11 is the high-entropy `sec-ch-ua-platform-version` client hint (`"15.0.0"`; Windows 11 maps to `13.0.0`+, Windows 10 stays at `10.0.0` or below).
-- **The Chrome major version is a single source of truth** (`_CHROME_MAJOR_VERSION` in `token_manager.py`): both the `User-Agent` `Chrome/NNN` token and the `sec-ch-ua` brand versions derive from it, so they can never drift apart. Bump it periodically to track Chrome stable.
-- **`Accept-Encoding` is computed from the decoders actually installed** (`_browser_accept_encoding`): `br`/`zstd` are only advertised when their decoder is importable, because aiohttp would otherwise hand back undecodable bytes. A "Chrome" UA that omits `br` is itself a tell, so the integration's `manifest.json` pins `Brotli` to guarantee `br` is advertised in production. `zstd` is advertised only if a zstandard module is present.
+- **The standard UA client hints are low-entropy** (`sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`). Auth POSTs also send the observed `DPR` and `Viewport-Width` hints. The integration sent `sec-ch-ua-platform-version` up to 4.00; the captured `/gw` XHRs did not.
+- **The Chrome major version is the one curl_cffi impersonates.** `tls_transport.py` resolves curl_cffi's rolling `"chrome"` target at import (`chrome150` in 0.16.3), and `_CHROME_MAJOR_VERSION` in `token_manager.py` takes its number, so the TLS/HTTP-2 fingerprint, the `User-Agent` `Chrome/NNN` token and the `sec-ch-ua` brands always claim the same Chrome; a curl_cffi upgrade moves all three. Without curl_cffi it is `_FALLBACK_CHROME_MAJOR_VERSION`. (Up to 4.00 the headers were pinned to Chrome 138, while curl_cffi 0.16.3 impersonates Chrome 150.)
+- **The header source is a per-entry option.** By default, every auth and data request passes `default_headers=False` so curl_cffi cannot add `Upgrade-Insecure-Requests: 1` or `Sec-Fetch-User: ?1` beside `Sec-Fetch-Mode: cors`. That entry's pooled session pins Chrome's XHR header order with `CurlOpt.HTTPHEADER_ORDER`; the integration supplies the browser headers. The experimental option passes `default_headers=True` through a separate per-entry pool without an order override. It keeps API-required headers and overrides page navigation fetch metadata to XHR values, suppressing `Upgrade-Insecure-Requests` and `Sec-Fetch-User`. This applies to every region and to the access-token path.
+- **The `sec-ch-ua` brand list is computed per version** (`_sec_ch_ua`), with Chromium's GREASE algorithm: the "Not A Brand" spelling, its version and the order of the three brands all rotate with the major version, so a fixed string is right for one release only. Pinned by tests against real Chrome 120/124/131/153 headers and curl_cffi's chrome150.
+- **Encoding follows the transport.** curl_cffi requests pass `gzip, deflate, br, zstd` through libcurl's `accept_encoding` option, which also decodes the response. The aiohttp fallback uses `_browser_accept_encoding` and advertises only Python decoders present in Home Assistant. The integration pins `Brotli` so `br` remains available there.
+- **`Accept-Language` follows the account locale**, with a regional language and English fallback (for example `nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7` for Belgium), rather than claiming `en-US` in every country.
 - `Origin`/`Referer` point at the regional base URL so `Sec-Fetch-Site: same-origin` is consistent with an in-page XHR.
 
 > **These changes only address the application (HTTP) layer.** They do **not** change the TLS or HTTP/2 fingerprint. All HelloFresh regional properties sit behind **Cloudflare**, and `aiohttp` (Python + OpenSSL) produces a non-browser **JA3/JA4 TLS fingerprint** and HTTP/2 settings/header-order that do not match Chrome. A region with stricter Cloudflare Bot Management — observed on **`www.hellofresh.co.uk`**, which returns an HTML `403` to the integration while the US property accepts the identical headers — rejects the request on the TLS/transport fingerprint *before the headers are even evaluated*, so no header change can fix it. Defeating that requires a browser-impersonating TLS stack. The integration now does this for **both the auth POSTs and the authenticated data XHRs**: when `curl_cffi` is installed it routes those requests through a real Chrome TLS/HTTP2 fingerprint (see [TLS-impersonating transport](#tls-impersonating-transport) below), falling back to `aiohttp` when it is not.
@@ -156,12 +158,16 @@ All three auth POSTs (`_auth_headers`) present the same **Chrome-on-Windows-11 h
 
 ### Bot-protection (WAF) handling
 
-A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`) is treated as an edge bot-protection block, **not** an API credential rejection (`_looks_like_bot_block`):
+A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`), whose `cf-mitigated` header is `challenge`, or whose body reports Cloudflare error 1010/1020 is treated as an edge bot-protection block, **not** an API credential rejection:
 
 - on `/gw/login` and `/gw/refresh`, an HTML `401`/`403` raises a **transient `HelloFreshError`**, not `HelloFreshAuthError`
 - this keeps a block from surfacing to the user as "wrong password": the coordinator treats it as `UpdateFailed` / a skipped proactive refresh and retries on the next poll, rather than raising `ConfigEntryAuthFailed` and prompting for reauthentication
 - because the block raises `HelloFreshError` (not `HelloFreshAuthError`), the refresh-then-login fallback does **not** fire — the integration will not hammer the same WAF with a credential login, and the existing refresh token is preserved
-- a `401`/`403` with a JSON body is still a genuine credential/refresh-token rejection and raises `HelloFreshAuthError` as before
+- a `401`/`403` with a JSON body and no Cloudflare challenge/error marker is treated as a credential or refresh-token rejection and raises `HelloFreshAuthError`
+
+The per-entry **Log authentication diagnostics** option is on by default and can be changed on either initial setup form or later in Configure. When enabled, successful auth steps log their endpoint and HTTP status. Failed login, refresh, and app-token responses report `cf-mitigated=challenge` when present, a Cloudflare 10xx error code extracted from the response (1020 means firewall rule; 1010 means browser signature block), and a validated `cf-ray`/Ray ID. The added diagnostic fields never contain raw response bodies or arbitrary header values.
+
+When an auth or data request is blocked by bot protection, further API attempts on the same Home Assistant event loop pause for 5 minutes. Consecutive blocks double the pause up to 1 hour. Successful authentication after the pause resets the delay; ordinary data successes and other API errors do not clear the block streak.
 
 **Regional Cloudflare differences (why some regions block even with perfect headers).** Every HelloFresh property is fronted by **Cloudflare** (confirmed by `server: cloudflare` / `cf-ray` on all six regional properties). The bot-management *aggressiveness*, however, differs per region. The US property accepts the integration's requests; **`www.hellofresh.co.uk` returns an HTML `403`** to the same header set. Because Cloudflare evaluates the **TLS (JA3/JA4) and HTTP/2 fingerprint** of the connection *before* the application headers, and `aiohttp` (Python + OpenSSL) has a fingerprint no `User-Agent` can disguise, **no header change fixes a region tuned to block on transport fingerprint** — the request is rejected before the headers matter. Options if a region stays blocked:
 
@@ -184,7 +190,8 @@ Design notes:
 
 - **Graceful degradation.** Both entry points fall back to the `aiohttp` session when `curl_cffi` is not importable **or** if a `curl_cffi` call raises at the transport level, so a missing/broken optional dependency never makes things worse than the `aiohttp`-only baseline. `TokenManager` logs (at debug) which transport is active on startup.
 - **Uniform response.** The `aiohttp` path returns its native response; the `curl_cffi` path returns a small `AuthResponse` adapter exposing the same `status` / `headers` / awaitable `text()` / `json()` slice that callers and `_async_response_json` use, so the WAF/bot-block handling and JSON decoding are identical regardless of transport.
-- **Per-request curl session.** Each impersonated call opens and closes its own `curl_cffi` `AsyncSession`. This is simple and correct; if data-call volume makes that overhead matter, a single long-lived `AsyncSession` could be pooled on the client.
+- **Pooled curl sessions.** Impersonated calls reuse a `curl_cffi` `AsyncSession` per entry, event loop, and header mode. This isolates account cookies. The default mode sets `CurlOpt.HTTPHEADER_ORDER` for Chrome XHRs and passes `default_headers=False`. The optional curl_cffi mode uses the library's own browser headers and order with XHR fetch metadata overrides.
+- **curl decoding includes zstd.** The curl transport removes aiohttp's conservative `Accept-Encoding` header and sets libcurl's `accept_encoding="gzip, deflate, br, zstd"`; libcurl advertises and decodes those encodings. An aiohttp fallback retains the safe Python-decoder list.
 - **Impersonation target** is the rolling `"chrome"` alias rather than a pinned `chromeNNN`, so a `curl_cffi` upgrade that drops an old version token doesn't break the integration.
 - **Certificate verification stays on.** The `curl_cffi` request passes `verify=True` explicitly (`tls_transport.py`), so impersonating Chrome's *fingerprint* never silently disables TLS certificate validation — the connection is still authenticated against the CA store like the `aiohttp` path.
 
@@ -239,27 +246,35 @@ When a live (non-expired) refresh token is available, the access token is renewe
 | --- | --- | --- | --- |
 | Renew expired bearer token | `POST` | `/gw/refresh` | `{"refresh_token": "<refresh_token>"}` |
 
-The `/gw` auth POSTs (login, refresh, app-token) send the browser-like header set built by `_auth_headers()`:
+The `/gw/refresh` POST uses the header set built by `_auth_headers(refresh=True)` (example shown for a Belgian entry on the curl transport):
 
 ```http
-Accept: application/json, text/plain, */*
-Accept-Language: en-US,en;q=0.9
-Content-Type: application/json
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+Accept: */*
+Accept-Language: nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7
+Content-Type: text/plain;charset=UTF-8
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
 Priority: u=1, i
 Accept-Encoding: gzip, deflate, br, zstd
 Cache-Control: no-cache
 Pragma: no-cache
-sec-ch-ua: "Google Chrome";v="138", "Chromium";v="138", "Not)A;Brand";v="24"
+sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"
 sec-ch-ua-mobile: ?0
 sec-ch-ua-platform: "Windows"
-sec-ch-ua-platform-version: "15.0.0"
+DPR: 1
+Viewport-Width: 1280
 Sec-Fetch-Dest: empty
 Sec-Fetch-Mode: cors
 Sec-Fetch-Site: same-origin
 Origin: <base_url>
 Referer: <base_url>/login
+traceparent: 00-<32-hex trace id>-<16-hex span id>-01
+x-b3-traceid: <same trace id>
+x-b3-spanid: <same span id>
+x-b3-sampled: 1
+x-request-id: <new UUID per request>
 ```
+
+Login and app-token calls keep their existing `Accept` and `Content-Type` values. Every auth POST gets fresh tracing IDs. The curl_cffi header option still retains these API fields and tracing hints while letting curl_cffi supply its own browser metadata.
 
 Refresh-response handling (`_async_refresh_with_token`):
 

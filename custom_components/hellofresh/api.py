@@ -4,6 +4,7 @@ from .client import HelloFreshClient
 from .models import (
     HelloFreshAccountData,
     HelloFreshAuthError,
+    HelloFreshBotBlockedError,
     HelloFreshCapabilities,
     HelloFreshCatalogRecipe,
     HelloFreshDeliveryOption,
@@ -25,6 +26,7 @@ from .models import (
 __all__ = [
     "HelloFreshAccountData",
     "HelloFreshAuthError",
+    "HelloFreshBotBlockedError",
     "HelloFreshCapabilities",
     "HelloFreshCatalogRecipe",
     "HelloFreshClient",

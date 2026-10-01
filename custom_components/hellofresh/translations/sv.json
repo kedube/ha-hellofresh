@@ -15,7 +15,11 @@
         "data": {
           "country": "Land",
           "username": "E-post",
-          "password": "Lösenord"
+          "password": "Lösenord",
+          "log_auth_diagnostics": "Logga autentiseringsdiagnostik"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       },
       "token": {
@@ -23,7 +27,11 @@
         "description": "Avancerat reservalternativ när inloggning med e-post och lösenord är blockerad. Det fungerar i upp till cirka 60 dagar, tills token upphör att gälla — då blir du ombedd att ange en ny.\n\nSå här hittar du din `apiV2Auth`-token:\n1. Logga in på din HelloFresh-webbplats ({site_example}) i en webbläsare på dator, så att du når din kontosida.\n2. Öppna webbläsarens utvecklarverktyg: högerklicka på sidan och välj **Inspektera**, eller tryck **F12** (Windows) / **⌥⌘I** (Mac).\n3. Öppna cookie-vyn för din HelloFresh-webbplats:\n   - **Chrome / Edge:** fliken **Application** → expandera **Cookies** i vänsterpanelen → välj din HelloFresh-webbplats.\n   - **Firefox:** fliken **Lagring** → expandera **Cookies** → välj din HelloFresh-webbplats.\n   - **Safari:** aktivera Utvecklar-menyn (Inställningar → Avancerat → \"Visa funktioner för webbutvecklare\"), sedan fliken **Lagring** → **Cookies** → din HelloFresh-webbplats.\n4. Leta upp kakan med namnet **`apiV2Auth`** och kopiera hela dess **värde**.\n5. Klistra in det nedan. (En ren åtkomsttoken fungerar också, men ett fullständigt `apiV2Auth`-värde innehåller förnyelsetoken och ger den mest långvariga anslutningen.)\n\n**Land** är den HelloFresh-region ditt konto tillhör (till exempel US, GB, AU) — välj den som matchar webbplatsen du kopierade token från.",
         "data": {
           "country": "Land",
-          "token": "apiV2Auth-token"
+          "token": "apiV2Auth-token",
+          "log_auth_diagnostics": "Logga autentiseringsdiagnostik"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       },
       "reauth_confirm": {
@@ -61,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Det gick inte att ansluta",
+      "bot_blocked": "HelloFreshs bot-skydd blockerade den här inloggningen, så din e-post och ditt lösenord kontrollerades inte. Försök igen om några minuter. Om det fortsätter, lägg till HelloFresh med alternativet \"Åtkomsttoken (avancerat)\" i stället.",
       "invalid_auth": "Ogiltiga inloggningsuppgifter",
       "invalid_token": "Denna token kunde inte läsas eller avvisades"
     },
@@ -87,7 +96,9 @@
           "enable_public_menu_fallback": "Använd offentlig meny som reserv",
           "enable_favorites": "Visa favorithjärtan",
           "enable_prep_lists": "Skapa förberedelselistor",
-          "show_data_quality_issues": "Visa varningar om datakvalitet"
+          "show_data_quality_issues": "Visa varningar om datakvalitet",
+          "use_curl_cffi_headers": "Använd curl_cffis inbyggda headers (experimentellt)",
+          "log_auth_diagnostics": "Logga autentiseringsdiagnostik"
         },
         "data_description": {
           "scan_interval_minutes": "Hur ofta HelloFresh tillfrågas om konto- och leveransdata. Lägre = färskare data och fler förfrågningar; högre = skonsammare mot API:et. Intervall 5–1440 minuter; standard 180 (3 timmar). Inloggningstoken förnyas enligt sitt eget schema, så detta påverkar inte inloggningen.",
@@ -99,7 +110,9 @@
           "enable_public_menu_fallback": "Om de inloggade menydata inte kan läsas in hämtas den offentliga regionala menysidan så att receptnamn ändå visas. Låt detta vara påslaget om du inte enbart vill ha autentiserade data.",
           "enable_favorites": "Slå vid varje uppdatering upp vilka rätter som sparats som favoriter i din HelloFresh-kokbok, så att måltidsplanerarkortet kan visa ett favorithjärta. Kostar en extra förfrågan per uppdatering: HelloFresh har ingen \"visa mina favoriter\"-slutpunkt, så menyns recept måste skickas till en filterslutpunkt för att ta reda på vilka som är favoriter. Stäng av för att hoppa över det — tjänsterna för att lägga till och ta bort favoriter fungerar ändå.",
           "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan lådan kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
-          "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas."
+          "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas.",
+          "use_curl_cffi_headers": "Låt curl_cffi skicka Chrome-headers för inloggning, tokenförnyelse och dataanrop. Integrationen anger fortfarande API-headers och korrigerar fetch-metadata för ett XHR-anrop. Av (rekommenderas) skickar integrationens fullständiga, ordnade XHR-headers.",
+          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       }
     }

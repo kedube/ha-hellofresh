@@ -15,7 +15,11 @@
         "data": {
           "country": "Country",
           "username": "Email",
-          "password": "Password"
+          "password": "Password",
+          "log_auth_diagnostics": "Log authentication diagnostics"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "When enabled, log the HTTP result of login and token refresh, including any Cloudflare challenge flag, error code, and Ray ID. The added diagnostic fields contain no raw response body or credentials. On by default."
         }
       },
       "token": {
@@ -23,7 +27,11 @@
         "description": "Advanced backup option for when email and password sign-in is blocked. It works for up to ~60 days, until the token expires — then you'll be asked for a new one.\n\nTo get your `apiV2Auth` token:\n1. In a desktop browser, sign in at your HelloFresh website ({site_example}) so you reach your account page.\n2. Open the browser developer tools: right-click the page and choose **Inspect**, or press **F12** (Windows) / **⌥⌘I** (Mac).\n3. Open the cookies view for your HelloFresh site:\n   - **Chrome / Edge:** **Application** tab → in the left sidebar, expand **Cookies** → select your HelloFresh site.\n   - **Firefox:** **Storage** tab → expand **Cookies** → select your HelloFresh site.\n   - **Safari:** enable the Develop menu (Settings → Advanced → \"Show features for web developers\"), then **Storage** tab → **Cookies** → your HelloFresh site.\n4. Find the cookie named **`apiV2Auth`** and copy its entire **Value**.\n5. Paste it below. (A raw access token also works, but a full `apiV2Auth` value includes the refresh token for the longest-lasting connection.)\n\n**Country** is the HelloFresh region your account belongs to (for example US, GB, AU) — pick the one matching the website you copied the token from.",
         "data": {
           "country": "Country",
-          "token": "apiV2Auth token"
+          "token": "apiV2Auth token",
+          "log_auth_diagnostics": "Log authentication diagnostics"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "When enabled, log the HTTP result of login and token refresh, including any Cloudflare challenge flag, error code, and Ray ID. The added diagnostic fields contain no raw response body or credentials. On by default."
         }
       },
       "reauth_confirm": {
@@ -61,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Could not connect",
+      "bot_blocked": "HelloFresh's bot protection blocked this sign-in, so your email and password weren't checked. Try again in a few minutes. If it keeps happening, add HelloFresh with the \"Access token (advanced)\" option instead.",
       "invalid_auth": "Invalid authentication",
       "invalid_token": "That token could not be read or was rejected"
     },
@@ -87,7 +96,9 @@
           "enable_public_menu_fallback": "Use public menu fallback",
           "enable_favorites": "Show favorite hearts",
           "enable_prep_lists": "Create pantry prep lists",
-          "show_data_quality_issues": "Show data-quality repair warnings"
+          "show_data_quality_issues": "Show data-quality repair warnings",
+          "use_curl_cffi_headers": "Use curl_cffi's built-in headers (experimental)",
+          "log_auth_diagnostics": "Log authentication diagnostics"
         },
         "data_description": {
           "scan_interval_minutes": "How often to poll HelloFresh for account and delivery data. Lower = fresher data and more requests; higher = lighter on the API. Range 5–1440 minutes; default 180 (3 hours). The login token is refreshed on its own schedule, so this does not affect sign-in.",
@@ -99,7 +110,9 @@
           "enable_public_menu_fallback": "If the signed-in menu data can't be loaded, scrape the public regional menu page so recipe names still appear. Leave on unless you only want authenticated data.",
           "enable_favorites": "Look up which meals are bookmarked in your HelloFresh cookbook on each refresh, so the meal-planner card can show a favorite heart. Costs one extra request per refresh: HelloFresh has no \"list my favorites\" endpoint, so the menu's recipes must be sent to a filter endpoint to learn which are favorites. Turn off to skip it — the add/remove favorite services keep working either way.",
           "enable_prep_lists": "Create a to-do list for each of the next two deliveries, holding the ingredients your chosen meals need that HelloFresh does not ship — salt, oil, butter, eggs — so you can buy them before the box arrives. Turn off to remove both lists and skip the recipe lookups they need.",
-          "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing."
+          "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing.",
+          "use_curl_cffi_headers": "Let curl_cffi supply its Chrome headers for login, token refresh, and data requests. The integration still sets API headers and corrects the browser's fetch metadata to describe an XHR. Off (recommended) sends the integration's complete, ordered XHR headers.",
+          "log_auth_diagnostics": "When enabled, log the HTTP result of login and token refresh, including any Cloudflare challenge flag, error code, and Ray ID. The added diagnostic fields contain no raw response body or credentials. On by default."
         }
       }
     }

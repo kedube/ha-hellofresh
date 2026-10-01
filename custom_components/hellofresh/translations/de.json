@@ -15,7 +15,11 @@
         "data": {
           "country": "Land",
           "username": "E-Mail",
-          "password": "Passwort"
+          "password": "Passwort",
+          "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       },
       "token": {
@@ -23,7 +27,11 @@
         "description": "Fortgeschrittene Ausweichoption, wenn die Anmeldung mit E-Mail und Passwort blockiert ist. Sie funktioniert bis zu ~60 Tage, bis das Token abläuft — danach wirst du nach einem neuen gefragt.\n\nSo erhältst du dein `apiV2Auth`-Token:\n1. Melde dich in einem Desktop-Browser auf deiner HelloFresh-Website ({site_example}) an, sodass du deine Kontoseite erreichst.\n2. Öffne die Entwicklerwerkzeuge des Browsers: Rechtsklick auf die Seite und **Untersuchen** wählen oder **F12** (Windows) / **⌥⌘I** (Mac) drücken.\n3. Öffne die Cookie-Ansicht für deine HelloFresh-Website:\n   - **Chrome / Edge:** Tab **Anwendung** → in der linken Seitenleiste **Cookies** aufklappen → deine HelloFresh-Website auswählen.\n   - **Firefox:** Tab **Speicher** → **Cookies** aufklappen → deine HelloFresh-Website auswählen.\n   - **Safari:** Entwicklermenü aktivieren (Einstellungen → Erweitert → \"Funktionen für Webentwickler anzeigen\"), dann Tab **Speicher** → **Cookies** → deine HelloFresh-Website.\n4. Suche das Cookie mit dem Namen **`apiV2Auth`** und kopiere dessen vollständigen **Wert**.\n5. Füge ihn unten ein. (Ein reines Access-Token funktioniert auch, aber ein vollständiger `apiV2Auth`-Wert enthält das Refresh-Token für die langlebigste Verbindung.)\n\n**Land** ist die HelloFresh-Region, zu der dein Konto gehört (zum Beispiel US, GB, AU) — wähle die Region der Website, von der du das Token kopiert hast.",
         "data": {
           "country": "Land",
-          "token": "apiV2Auth-Token"
+          "token": "apiV2Auth-Token",
+          "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       },
       "reauth_confirm": {
@@ -61,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Verbindung fehlgeschlagen",
+      "bot_blocked": "Der Bot-Schutz von HelloFresh hat diese Anmeldung blockiert, deine E-Mail-Adresse und dein Passwort wurden also nicht geprüft. Versuche es in ein paar Minuten erneut. Wenn es weiterhin passiert, füge HelloFresh stattdessen mit der Option „Zugriffstoken (fortgeschritten)“ hinzu.",
       "invalid_auth": "Ungültige Anmeldedaten",
       "invalid_token": "Dieses Token konnte nicht gelesen werden oder wurde abgelehnt"
     },
@@ -87,7 +96,9 @@
           "enable_public_menu_fallback": "Öffentliches Menü als Fallback nutzen",
           "enable_favorites": "Favoriten-Herzen anzeigen",
           "enable_prep_lists": "Vorratslisten erstellen",
-          "show_data_quality_issues": "Warnungen zur Datenqualität anzeigen"
+          "show_data_quality_issues": "Warnungen zur Datenqualität anzeigen",
+          "use_curl_cffi_headers": "Integrierte Header von curl_cffi verwenden (experimentell)",
+          "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
         },
         "data_description": {
           "scan_interval_minutes": "Wie oft HelloFresh nach Konto- und Lieferdaten abgefragt wird. Niedriger = aktuellere Daten und mehr Anfragen; höher = schonender für die API. Bereich 5–1440 Minuten; Standard 180 (3 Stunden). Das Anmelde-Token wird nach einem eigenen Zeitplan erneuert, dies beeinflusst die Anmeldung also nicht.",
@@ -99,7 +110,9 @@
           "enable_public_menu_fallback": "Wenn die angemeldeten Menüdaten nicht geladen werden können, wird die öffentliche regionale Menüseite ausgelesen, damit Rezeptnamen weiterhin erscheinen. Lass dies aktiviert, außer du möchtest ausschließlich authentifizierte Daten.",
           "enable_favorites": "Bei jeder Aktualisierung nachschlagen, welche Gerichte in deinem HelloFresh-Kochbuch als Favoriten markiert sind, damit die Menüplaner-Karte ein Favoriten-Herz anzeigen kann. Kostet eine zusätzliche Anfrage pro Aktualisierung: HelloFresh bietet keinen Endpunkt \"meine Favoriten auflisten\", daher müssen die Rezepte des Menüs an einen Filter-Endpunkt gesendet werden, um die Favoriten zu ermitteln. Deaktiviere dies, um den Schritt zu überspringen — die Dienste zum Hinzufügen und Entfernen von Favoriten funktionieren in beiden Fällen weiter.",
           "enable_prep_lists": "Für jede der nächsten beiden Lieferungen eine Aufgabenliste mit den Zutaten erstellen, die deine gewählten Gerichte benötigen und die HelloFresh nicht mitliefert — Salz, Öl, Butter, Eier — damit du sie vor Ankunft der Box besorgen kannst. Deaktiviere dies, um beide Listen zu entfernen und die dafür nötigen Rezeptabfragen zu überspringen.",
-          "show_data_quality_issues": "Warnungen im Reparaturen-Bildschirm anzeigen, wenn HelloFresh-Daten eingeschränkt sind (Menü-Fallback aktiv, unbekannte Datenformate, Kontodaten nicht verfügbar, blockierte Schreibaktionen). Die Daten werden in beiden Fällen weiter geladen. Deaktiviere dies, um diese Warnungen zu unterdrücken und bereits angezeigte zu entfernen."
+          "show_data_quality_issues": "Warnungen im Reparaturen-Bildschirm anzeigen, wenn HelloFresh-Daten eingeschränkt sind (Menü-Fallback aktiv, unbekannte Datenformate, Kontodaten nicht verfügbar, blockierte Schreibaktionen). Die Daten werden in beiden Fällen weiter geladen. Deaktiviere dies, um diese Warnungen zu unterdrücken und bereits angezeigte zu entfernen.",
+          "use_curl_cffi_headers": "curl_cffi stellt Chrome-Header für Anmeldung, Token-Erneuerung und Datenabrufe bereit. Die Integration setzt weiterhin API-Header und korrigiert die Fetch-Metadaten für eine XHR-Anfrage. Deaktiviert (empfohlen) sendet die vollständigen, geordneten XHR-Header der Integration.",
+          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       }
     }

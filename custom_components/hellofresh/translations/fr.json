@@ -15,7 +15,11 @@
         "data": {
           "country": "Pays",
           "username": "E-mail",
-          "password": "Mot de passe"
+          "password": "Mot de passe",
+          "log_auth_diagnostics": "Journaliser le diagnostic de connexion"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       },
       "token": {
@@ -23,7 +27,11 @@
         "description": "Option de secours avancée lorsque la connexion par e-mail et mot de passe est bloquée. Elle fonctionne jusqu'à environ 60 jours, jusqu'à l'expiration du jeton — un nouveau vous sera alors demandé.\n\nPour obtenir votre jeton `apiV2Auth` :\n1. Dans un navigateur sur ordinateur, connectez-vous à votre site HelloFresh ({site_example}) jusqu'à votre page de compte.\n2. Ouvrez les outils de développement : clic droit sur la page puis **Inspecter**, ou touche **F12** (Windows) / **⌥⌘I** (Mac).\n3. Ouvrez la vue des cookies de votre site HelloFresh :\n   - **Chrome / Edge :** onglet **Application** → dans le panneau de gauche, développez **Cookies** → sélectionnez votre site HelloFresh.\n   - **Firefox :** onglet **Stockage** → développez **Cookies** → sélectionnez votre site HelloFresh.\n   - **Safari :** activez le menu Développement (Réglages → Avancés → \"Afficher les fonctionnalités pour les développeurs web\"), puis onglet **Stockage** → **Cookies** → votre site HelloFresh.\n4. Trouvez le cookie nommé **`apiV2Auth`** et copiez l'intégralité de sa **valeur**.\n5. Collez-la ci-dessous. (Un simple jeton d'accès fonctionne aussi, mais une valeur `apiV2Auth` complète inclut le jeton de rafraîchissement, pour la connexion la plus durable.)\n\n**Pays** est la région HelloFresh de votre compte (par exemple US, GB, AU) — choisissez celle du site depuis lequel vous avez copié le jeton.",
         "data": {
           "country": "Pays",
-          "token": "Jeton apiV2Auth"
+          "token": "Jeton apiV2Auth",
+          "log_auth_diagnostics": "Journaliser le diagnostic de connexion"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       },
       "reauth_confirm": {
@@ -61,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Connexion impossible",
+      "bot_blocked": "La protection anti-bots de HelloFresh a bloqué cette connexion : votre e-mail et votre mot de passe n'ont donc pas été vérifiés. Réessayez dans quelques minutes. Si cela persiste, ajoutez HelloFresh avec l'option « Jeton d'accès (avancé) » à la place.",
       "invalid_auth": "Identifiants invalides",
       "invalid_token": "Ce jeton n'a pas pu être lu ou a été refusé"
     },
@@ -87,7 +96,9 @@
           "enable_public_menu_fallback": "Utiliser le menu public en secours",
           "enable_favorites": "Afficher les cœurs favoris",
           "enable_prep_lists": "Créer des listes de préparation",
-          "show_data_quality_issues": "Afficher les avertissements de qualité des données"
+          "show_data_quality_issues": "Afficher les avertissements de qualité des données",
+          "use_curl_cffi_headers": "Utiliser les en-têtes intégrés de curl_cffi (expérimental)",
+          "log_auth_diagnostics": "Journaliser le diagnostic de connexion"
         },
         "data_description": {
           "scan_interval_minutes": "Fréquence d'interrogation de HelloFresh pour les données de compte et de livraison. Plus bas = données plus fraîches et plus de requêtes ; plus haut = plus léger pour l'API. Plage 5–1440 minutes ; par défaut 180 (3 heures). Le jeton de connexion est renouvelé selon son propre calendrier : ce réglage n'affecte donc pas la connexion.",
@@ -99,7 +110,9 @@
           "enable_public_menu_fallback": "Si les données de menu authentifiées ne peuvent pas être chargées, la page de menu publique régionale est lue pour que les noms de recettes apparaissent quand même. Laissez cette option activée, sauf si vous souhaitez uniquement des données authentifiées.",
           "enable_favorites": "Vérifier à chaque actualisation quelles recettes sont enregistrées dans votre carnet de recettes HelloFresh, afin que la carte du planificateur puisse afficher un cœur. Coûte une requête supplémentaire par actualisation : HelloFresh ne propose pas de point d'accès \"lister mes favoris\", les recettes du menu doivent donc être envoyées à un point d'accès de filtrage pour savoir lesquelles sont favorites. Désactivez pour ignorer cette étape — les services d'ajout et de suppression de favoris continuent de fonctionner dans tous les cas.",
           "enable_prep_lists": "Créer une liste de tâches pour chacune des deux prochaines livraisons, contenant les ingrédients dont vos repas choisis ont besoin mais que HelloFresh ne livre pas — sel, huile, beurre, œufs — afin de les acheter avant l'arrivée du colis. Désactivez pour supprimer les deux listes et ignorer les requêtes de recettes nécessaires.",
-          "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés."
+          "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés.",
+          "use_curl_cffi_headers": "Laisser curl_cffi fournir ses en-têtes Chrome pour la connexion, le renouvellement du jeton et les requêtes de données. L’intégration définit toujours les en-têtes API et corrige les métadonnées Fetch pour une requête XHR. Désactivé (recommandé) envoie les en-têtes XHR complets et ordonnés de l’intégration.",
+          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       }
     }

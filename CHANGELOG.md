@@ -6,10 +6,45 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+- **Backed off after bot-protection blocks.** Login, app-token, refresh, and data requests
+  now share an event-loop-wide cooldown starting at 5 minutes and doubling to a 1-hour
+  maximum after consecutive blocks. Successful authentication after the pause resets the delay.
+- **Added authentication diagnostics, enabled by default.** The per-entry option logs login and token
+  refresh HTTP results. Auth failure warnings can now include Cloudflare's challenge flag,
+  error 1020 (firewall rule) or 1010 (browser signature block), and a validated Ray ID,
+  without logging raw block pages.
+- **Matched the captured `/gw/refresh` request more closely.** Refresh now sends
+  `Accept: */*` and `Content-Type: text/plain;charset=UTF-8`; auth requests add viewport
+  hints and fresh, consistent tracing IDs. `Accept-Language` follows the account locale.
+  curl_cffi requests advertise and decode zstd through libcurl, while the aiohttp fallback
+  keeps its decoder-safe encoding list.
+- **Added a per-entry header-source option.** The default keeps the integration's ordered
+  Chrome XHR headers; the experimental alternative lets curl_cffi add its built-in Chrome
+  headers on login, refresh, and data calls while retaining API-required headers and
+  correcting navigation fetch metadata to XHR values.
+- **Isolated cookies and prevented duplicate writes.** Every entry now owns its aiohttp
+  and curl_cffi cookie jars. A failed curl request is surfaced without replaying it through
+  aiohttp, including POST and PATCH requests that may already have reached HelloFresh.
+- **Hardened authentication responses and logs.** Unexpected JSON shapes now raise a
+  controlled auth error; app-token timeouts stay nonfatal; auth logs retain only bounded
+  machine error codes and never server-controlled messages that may echo credentials.
+- **Stopped curl_cffi from adding page-navigation headers to API requests.** Login, refresh,
+  and data XHRs now send only the integration's browser headers by default, with Chrome's XHR
+  header order pinned explicitly. This removes the contradictory `Upgrade-Insecure-Requests`
+  and `Sec-Fetch-User` headers in the default mode, including the access-token path.
 - **Updated `curl_cffi` to 0.16.3** (from a 0.7.0 minimum), the library that gives the
-  integration its Chrome TLS fingerprint to get past HelloFresh's Cloudflare protection. Home
-  Assistant keeps an already-installed version that still meets the minimum, so raising it is
-  what moves existing installs onto the newer Chrome fingerprints and bundled curl 8.21.
+  integration its Chrome TLS fingerprint to get past HelloFresh's Cloudflare protection, and
+  **the request headers now claim the same Chrome as that fingerprint.** They had said Chrome
+  138 since June while curl_cffi 0.16.3 impersonates Chrome 150, and inconsistencies like that
+  are what bot protection scores against (issue #11). The User-Agent and `sec-ch-ua` now take
+  their version from curl_cffi, so later curl_cffi updates keep them in step; `sec-ch-ua` lists
+  its brands the way that Chrome version does; and `sec-ch-ua-platform-version`, which real
+  Chrome doesn't send on these requests, is gone. Home Assistant keeps an already-installed
+  `curl_cffi` that still meets the minimum, so raising it is what moves existing installs over.
+- **Setup says when HelloFresh's bot protection blocked the sign-in** (issue #11). It showed
+  "Could not connect"; it now explains that your email and password weren't checked, to try
+  again in a few minutes, and if it keeps happening to add HelloFresh with the **Access token
+  (advanced)** option instead. In all seven languages.
 
 ## 4.00 — 2026-10-01
 - **New: the HelloFresh card — your whole account in one card.** `custom:hellofresh-card` brings

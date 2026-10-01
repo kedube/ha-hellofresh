@@ -19,6 +19,7 @@ from .client_pricing import PricingClientMixin
 from .const import (
     COUNTRY_BASE_URLS,
     DEFAULT_COUNTRY,
+    DEFAULT_LOG_AUTH_DIAGNOSTICS,
     RECIPE_IMAGE_BASE,
     api_country_code,
     api_locale,
@@ -63,6 +64,7 @@ from .token_manager import (
     _TOKEN_MIN_REMAINING_BEFORE_REFRESH,  # noqa: F401 - re-exported for back-compat imports
     _TOKEN_REFRESH_AT_LIFETIME_FRACTION,  # noqa: F401 - re-exported for back-compat imports
     TokenManager,
+    _browser_accept_language,
     _looks_like_bot_block,  # noqa: F401 - re-exported for back-compat imports
     _response_content_type,  # noqa: F401 - re-exported for back-compat imports
     _token_fingerprint,  # noqa: F401 - re-exported (used by __init__.py and tests)
@@ -81,7 +83,7 @@ _AUTH_FAILURE_STATUSES = frozenset({401, 403})
 
 _DEFAULT_HEADERS = {
     "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": _browser_accept_language(api_locale(DEFAULT_COUNTRY)),
     "User-Agent": _BROWSER_USER_AGENT,
     "Priority": "u=1, i",
     **_BROWSER_FETCH_HEADERS,
@@ -122,9 +124,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         history_weeks: int | None = None,
         menu_grace_weeks: int | None = None,
         token_refresh_callback: Callable[[dict[str, Any]], None] | None = None,
+        use_curl_cffi_headers: bool = False,
+        log_auth_diagnostics: bool = DEFAULT_LOG_AUTH_DIAGNOSTICS,
     ) -> None:
         """Initialize the client."""
         self._session = session
+        self._use_curl_cffi_headers = use_curl_cffi_headers
         self._country = country
         # How many weeks of past history to fetch/browse. None -> the normalizer default.
         self._history_lookback_weeks = history_weeks
@@ -147,6 +152,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             username=username,
             password=password,
             token_refresh_callback=token_refresh_callback,
+            use_curl_cffi_headers=use_curl_cffi_headers,
+            log_auth_diagnostics=log_auth_diagnostics,
         )
         self._cached_subscriptions: list[HelloFreshSubscription] | None = None
         self._subscription_preferences: dict[str, str | None] = {}
@@ -4501,6 +4508,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
     async def _async_get_public_menu_data(self) -> dict[str, list[HelloFreshWeek] | list[str]]:
         """Fetch and parse the public HelloFresh menus page."""
+        self._tokens.raise_if_bot_blocked()
         # This is a top-level HTML page load, not a CORS XHR, so it gets the navigation
         # Accept/Sec-Fetch values a real browser sends for a document (overriding the XHR
         # defaults from _DEFAULT_HEADERS, which come first so these win on the shared keys).
@@ -4508,6 +4516,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             f"{self._base_url}/menus",
             headers={
                 **_DEFAULT_HEADERS,
+                "Accept-Language": _browser_accept_language(api_locale(self._country)),
                 "Accept": (
                     "text/html,application/xhtml+xml,application/xml;q=0.9,"
                     "image/avif,image/webp,image/apng,*/*;q=0.8"
@@ -4519,6 +4528,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 "Upgrade-Insecure-Requests": "1",
             },
         )
+        await self._tokens.async_raise_if_data_blocked(response)
         if response.status >= _HTTP_BAD_REQUEST:
             raise HelloFreshError(
                 f"Failed to fetch HelloFresh public menu page: HTTP {response.status}"
@@ -4815,6 +4825,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         page): they need no credentials, and sending the bearer token to page endpoints
         that never asked for it widens its exposure for nothing.
         """
+        self._tokens.raise_if_bot_blocked()
         token_used = None
         if authenticated:
             await self._tokens.async_ensure_fresh()
@@ -4824,23 +4835,34 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             # token this request actually USED. Reading it after the 401 arrives raced with a
             # concurrent rotation and could force a second, needless refresh-token burn.
             token_used = self._tokens.access_token
-        response = await async_request(
-            self._session,
-            method,
-            f"{self._base_url}{path}",
-            params=params,
-            json_payload=json_payload,
-            headers={
-                **_DEFAULT_HEADERS,
-                **_FEATURE_HEADERS,
-                # Origin/Referer match the regional host so "Sec-Fetch-Site: same-origin"
-                # (from _DEFAULT_HEADERS) is consistent with what a real in-page XHR sends.
-                "Origin": self._base_url,
-                "Referer": f"{self._base_url}/",
-                **({"Authorization": self._tokens.authorization_header()} if authenticated else {}),
-                **(extra_headers or {}),
-            },
-        )
+        try:
+            response = await async_request(
+                self._session,
+                method,
+                f"{self._base_url}{path}",
+                params=params,
+                json_payload=json_payload,
+                headers={
+                    **_DEFAULT_HEADERS,
+                    "Accept-Language": _browser_accept_language(self._locale_for_country()),
+                    **_FEATURE_HEADERS,
+                    # Origin/Referer match the regional host so Sec-Fetch-Site is consistent.
+                    "Origin": self._base_url,
+                    "Referer": f"{self._base_url}/",
+                    **(
+                        {"Authorization": self._tokens.authorization_header()}
+                        if authenticated
+                        else {}
+                    ),
+                    **(extra_headers or {}),
+                },
+                use_curl_cffi_headers=self._use_curl_cffi_headers,
+            )
+        except (ClientError, TimeoutError) as err:
+            raise HelloFreshError(
+                f"HelloFresh API request could not connect: {type(err).__name__}"
+            ) from err
+        await self._tokens.async_raise_if_data_blocked(response)
 
         if response.status in _AUTH_FAILURE_STATUSES and authenticated:
             if _allow_refresh_retry and self._tokens.can_obtain_token:

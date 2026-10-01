@@ -70,6 +70,9 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
     """Inject a fake ``curl_cffi.requests`` module whose AsyncSession.post is ``post``."""
 
     class _FakeAsyncSession:
+        def __init__(self, *, curl_options=None):
+            self.curl_options = curl_options
+
         async def __aenter__(self):
             return self
 
@@ -83,7 +86,9 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
             params=None,
             json=None,
             headers=None,
+            accept_encoding=None,
             impersonate=None,
+            default_headers=None,
             verify=None,
         ):
             return await post(
@@ -92,7 +97,10 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
                 params=params,
                 json=json,
                 headers=headers,
+                accept_encoding=accept_encoding,
                 impersonate=impersonate,
+                default_headers=default_headers,
+                curl_options=self.curl_options,
                 verify=verify,
             )
 
@@ -103,6 +111,9 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
     monkeypatch.setitem(sys.modules, "curl_cffi", curl_module)
     monkeypatch.setitem(sys.modules, "curl_cffi.requests", requests_module)
     monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", True)
+    monkeypatch.setattr(
+        tls_transport, "_CURL_OPT", SimpleNamespace(HTTPHEADER_ORDER="HTTPHEADER_ORDER")
+    )
     # AsyncSession is imported once at module load; the transport uses that cached class. Point
     # it at the injected fake for the duration of the test (monkeypatch restores it afterwards).
     monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _FakeAsyncSession)
@@ -133,7 +144,19 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     """When curl_cffi is present, the request goes through it with a Chrome impersonate target."""
     seen: dict = {}
 
-    async def fake_post(*, method, url, params, json, headers, impersonate, verify=None):
+    async def fake_post(
+        *,
+        method,
+        url,
+        params,
+        json,
+        headers,
+        accept_encoding,
+        impersonate,
+        default_headers,
+        curl_options,
+        verify=None,
+    ):
         seen.update(
             {
                 "method": method,
@@ -141,7 +164,10 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
                 "params": params,
                 "json": json,
                 "headers": headers,
+                "accept_encoding": accept_encoding,
                 "impersonate": impersonate,
+                "default_headers": default_headers,
+                "curl_options": curl_options,
                 "verify": verify,
             }
         )
@@ -169,6 +195,9 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     assert seen["method"] == "POST"
     assert seen["url"].endswith("/gw/login")
     assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
+    assert seen["default_headers"] is False
+    assert seen["accept_encoding"] == "gzip, deflate, br, zstd"
+    assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_XHR_HEADER_ORDER}
     # TLS cert verification is explicitly enabled on the credential-carrying auth POST.
     assert seen["verify"] is True
     assert seen["json"] == {"username": "a", "password": "b"}
@@ -217,8 +246,31 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
     """async_request routes data XHRs (any verb) through curl_cffi with the right method."""
     seen: dict = {}
 
-    async def fake_request(*, method, url, params, json, headers, impersonate, verify=None):
-        seen.update({"method": method, "url": url, "impersonate": impersonate, "verify": verify})
+    async def fake_request(
+        *,
+        method,
+        url,
+        params,
+        json,
+        headers,
+        accept_encoding,
+        impersonate,
+        default_headers,
+        curl_options,
+        verify=None,
+    ):
+        seen.update(
+            {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "impersonate": impersonate,
+                "default_headers": default_headers,
+                "accept_encoding": accept_encoding,
+                "curl_options": curl_options,
+                "verify": verify,
+            }
+        )
         return SimpleNamespace(
             status_code=200,
             headers={"Content-Type": "application/json"},
@@ -233,13 +285,17 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
             session,  # type: ignore[arg-type]
             "GET",
             "https://www.hellofresh.co.uk/gw/api/customers/me/subscriptions",
-            headers={"Authorization": "Bearer t"},
+            headers={"Authorization": "Bearer t", "Accept-Encoding": "gzip, deflate, br"},
         )
     )
 
     assert session.calls == []  # aiohttp not touched
     assert seen["method"] == "GET"
     assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
+    assert seen["default_headers"] is False
+    assert seen["accept_encoding"] == "gzip, deflate, br, zstd"
+    assert seen["headers"] == {"Authorization": "Bearer t"}
+    assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_XHR_HEADER_ORDER}
     assert isinstance(response, AuthResponse)
     assert _run(response.json(content_type=None)) == {"weeks": []}
 
@@ -255,12 +311,85 @@ def test_data_request_falls_back_to_session_request(monkeypatch) -> None:
             "PATCH",
             "https://www.hellofresh.com/gw/api/x",
             json_payload={"a": 1},
+            headers={"Accept-Encoding": "gzip, deflate, br"},
         )
     )
 
     assert len(session.calls) == 1
     assert session.calls[0]["method"] == "PATCH"
     assert session.calls[0]["json"] == {"a": 1}
+    assert session.calls[0]["headers"] == {"Accept-Encoding": "gzip, deflate, br"}
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+def test_curl_failure_does_not_replay_data_request(monkeypatch, method) -> None:
+    """A failed curl request may already have reached the server, including writes."""
+
+    async def fail(**_kwargs):
+        raise RuntimeError("request reached server before disconnect")
+
+    _install_fake_curl_cffi(monkeypatch, post=fail)
+    session = _FakeAiohttpSession()
+    with pytest.raises(ClientError, match="curl_cffi"):
+        _run(async_request(session, method, "https://www.hellofresh.com/gw/api/test"))
+    assert session.calls == []
+
+
+@pytest.mark.parametrize(("method", "auth_post"), [("GET", False), ("POST", True)])
+def test_curl_default_header_mode_keeps_only_api_headers(monkeypatch, method, auth_post) -> None:
+    """The optional curl mode supplies auth/API fields but leaves browser metadata to curl."""
+    seen: dict = {}
+
+    async def fake_request(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(status_code=200, headers={}, text='{"ok": true}')
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    session = _FakeAiohttpSession()
+    headers = {
+        "User-Agent": "integration UA",
+        "sec-ch-ua": '"Chromium";v="150"',
+        "Sec-Fetch-Mode": "cors",
+        "Upgrade-Insecure-Requests": "1",
+        "Accept": "application/json",
+        "Authorization": "Bearer token",
+        "Origin": "https://www.hellofresh.com",
+        "Referer": "https://www.hellofresh.com/",
+        "Content-Type": "application/json",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
+        "DPR": "1",
+        "Viewport-Width": "1280",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+        "X-Market-API-Version": "2",
+    }
+    request = async_auth_post if auth_post else async_request
+    args = (session, "https://www.hellofresh.com/gw/api/test")
+    if not auth_post:
+        args = (session, method, args[1])
+    _run(request(*args, headers=headers, use_curl_cffi_headers=True))
+
+    assert seen["default_headers"] is True
+    assert seen["accept_encoding"] == "gzip, deflate, br, zstd"
+    assert seen["curl_options"] is None
+    assert seen["headers"] == {
+        "Accept": "application/json",
+        "Authorization": "Bearer token",
+        "Origin": "https://www.hellofresh.com",
+        "Referer": "https://www.hellofresh.com/",
+        "Content-Type": "application/json",
+        "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
+        "DPR": "1",
+        "Viewport-Width": "1280",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+        "X-Market-API-Version": "2",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-User": None,
+        "Upgrade-Insecure-Requests": None,
+    }
+    assert session.calls == []
 
 
 # ---- pooled session ---------------------------------------------------------------------
@@ -279,7 +408,7 @@ class _CountingAsyncSession:
 
     instances = 0
 
-    def __init__(self) -> None:
+    def __init__(self, **_kwargs) -> None:
         type(self).instances += 1
         self.requests = 0
         self.closed = False
@@ -296,6 +425,9 @@ def _use_counting_session(monkeypatch):
     _CountingAsyncSession.instances = 0
     monkeypatch.setattr(tls_transport, "_HAS_CURL_CFFI", True)
     monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _CountingAsyncSession)
+    monkeypatch.setattr(
+        tls_transport, "_CURL_OPT", SimpleNamespace(HTTPHEADER_ORDER="HTTPHEADER_ORDER")
+    )
 
 
 def test_curl_session_is_reused_across_requests(monkeypatch) -> None:
@@ -314,13 +446,59 @@ def test_curl_session_is_reused_across_requests(monkeypatch) -> None:
                 "GET",
                 f"https://www.hellofresh.com/gw/api/thing/{index}",
             )
-        return tls_transport._shared_curl_session()
+        return tls_transport._shared_curl_session(owner=session)
 
     pooled = _run(_five_requests())
 
     assert _CountingAsyncSession.instances == 1  # not 5
     assert pooled.requests == 5
     assert session.calls == []  # aiohttp never touched
+
+
+def test_curl_sessions_are_isolated_by_owner(monkeypatch) -> None:
+    """Two accounts must not share a curl cookie jar even on the same event loop."""
+    _use_counting_session(monkeypatch)
+    first_owner = _FakeAiohttpSession()
+    second_owner = _FakeAiohttpSession()
+
+    async def _request_each():
+        await async_request(first_owner, "GET", "https://www.hellofresh.com/gw/api/one")
+        await async_request(second_owner, "GET", "https://www.hellofresh.com/gw/api/two")
+        first = tls_transport._shared_curl_session(owner=first_owner)
+        second = tls_transport._shared_curl_session(owner=second_owner)
+        await tls_transport.async_close_shared_session(first_owner)
+        return first, second
+
+    first, second = _run(_request_each())
+    assert first is not second
+    assert first.closed is True
+    assert second.closed is False
+    assert second.requests == 1
+
+
+def test_header_modes_use_separate_pooled_sessions_and_both_close(monkeypatch) -> None:
+    """One entry's pinned XHR order cannot leak into another entry's curl defaults."""
+    _use_counting_session(monkeypatch)
+    session = _FakeAiohttpSession()
+
+    async def _request_both_modes():
+        await async_request(session, "GET", "https://www.hellofresh.com/gw/api/one")
+        await async_request(
+            session,
+            "GET",
+            "https://www.hellofresh.com/gw/api/two",
+            use_curl_cffi_headers=True,
+        )
+        pooled = list(tls_transport._SHARED_SESSIONS.values())
+        await tls_transport.async_close_shared_session()
+        return pooled
+
+    pooled = _run(_request_both_modes())
+
+    assert _CountingAsyncSession.instances == 2
+    assert [item.requests for item in pooled] == [1, 1]
+    assert all(item.closed for item in pooled)
+    assert tls_transport._SHARED_SESSIONS == {}
 
 
 def test_close_shared_session_closes_and_drops_it(monkeypatch) -> None:
@@ -334,7 +512,7 @@ def test_close_shared_session_closes_and_drops_it(monkeypatch) -> None:
             "GET",
             "https://www.hellofresh.com/gw/api/thing",
         )
-        first = tls_transport._shared_curl_session()
+        first = tls_transport._shared_curl_session(owner=session)
         await tls_transport.async_close_shared_session()
         return first
 
@@ -377,3 +555,49 @@ def test_close_shared_session_survives_a_failing_close(monkeypatch) -> None:
     _run(_request_then_close())  # must not raise
 
     assert tls_transport._SHARED_SESSIONS == {}
+
+
+# ---- browser identity matches the impersonated Chrome --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("major", "expected"),
+    [
+        # Real Chrome 153's own header, from a HAR of hellofresh.com.
+        (153, '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"'),
+        # What curl_cffi 0.16.3 sends for its chrome150 target.
+        (150, '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"'),
+        # Earlier stable releases, as Chrome sent them.
+        (131, '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'),
+        (124, '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'),
+        (120, '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'),
+    ],
+)
+def test_sec_ch_ua_matches_what_chrome_sends(major, expected) -> None:
+    """The brand list rotates with Chrome's major version; a fixed string matches one release."""
+    from custom_components.hellofresh.token_manager import _sec_ch_ua  # noqa: PLC0415
+
+    assert _sec_ch_ua(major) == expected
+
+
+def test_browser_headers_claim_the_impersonated_chrome_version() -> None:
+    """User-Agent and Sec-CH-UA must claim the Chrome version the TLS fingerprint is.
+
+    curl_cffi 0.16.3 moved its "chrome" alias to Chrome 150 while the headers still said 138;
+    the version now comes from curl_cffi itself (or the fallback when it isn't installed).
+    """
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    impersonated = tls_transport.impersonated_chrome_major()
+    major = impersonated or token_manager._FALLBACK_CHROME_MAJOR_VERSION
+    assert major == token_manager._CHROME_MAJOR_VERSION
+    if impersonated is not None:
+        assert f"chrome{major}" == tls_transport._IMPERSONATE_TARGET
+    assert f"Chrome/{major}.0.0.0" in token_manager._BROWSER_USER_AGENT
+    assert token_manager._BROWSER_CLIENT_HINTS["sec-ch-ua"] == token_manager._sec_ch_ua(major)
+    # Real Chrome sends only the low-entropy hints on HelloFresh's /gw XHRs.
+    assert {k for k in token_manager._BROWSER_CLIENT_HINTS if k.startswith("sec-ch-ua")} == {
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+    }
