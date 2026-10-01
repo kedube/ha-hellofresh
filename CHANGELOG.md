@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.00 — 2026-10-01
 - **New: the HelloFresh card — your whole account in one card.** `custom:hellofresh-card` brings
   the seven classic cards together the way hellofresh.com is organised, with tabs for
   **Overview**, **Menu**, **Market**, **Recipes** and **Account**:
