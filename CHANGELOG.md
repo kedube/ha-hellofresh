@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.01 — 2026-10-01
 - **Backed off after bot-protection blocks.** Login, app-token, refresh, and data requests
   now share an event-loop-wide cooldown starting at 5 minutes and doubling to a 1-hour
   maximum after consecutive blocks. Successful authentication after the pause resets the delay.
