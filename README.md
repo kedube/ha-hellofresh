@@ -133,7 +133,8 @@ HelloFresh has no official API or OAuth app. Setup offers **two ways** to connec
 2. Choose **Email and password (recommended)**.
 3. Choose your **Country** (see [Supported regions](#supported-regions)).
 4. Enter the **email** and **password** you use to sign in to HelloFresh.
-5. Submit. Home Assistant signs in, validates the account, and stores the resulting tokens so it can refresh access on its own.
+5. **Log authentication diagnostics** is enabled by default on this form; leave it on to diagnose a blocked sign-in.
+6. Submit. Home Assistant signs in, validates the account, and stores the resulting tokens so it can refresh access on its own.
 
 > 🔒 **About your credentials.** Your email and password are stored in the Home Assistant config entry and used only to log in to HelloFresh's own login endpoint and to re-authenticate when the refresh token eventually expires. They are redacted from diagnostics exports. As with any third-party integration, the security of your credentials depends on the security of your Home Assistant installation.
 
@@ -144,13 +145,13 @@ Use this only when email/password sign-in is blocked. The setup dialog includes 
 1. Add the integration and choose **Access token (advanced)**, then your **Country**.
 2. In a desktop browser, sign in to your regional HelloFresh website so you reach your account page.
 3. Open developer tools (right-click → **Inspect**, or **F12**), open the cookies view (**Chrome/Edge:** Application → Cookies; **Firefox:** Storage → Cookies), select your HelloFresh site, and copy the **Value** of the **`apiV2Auth`** cookie.
-4. Paste it into the token field and submit. A full `apiV2Auth` value includes the refresh token for the longest-lasting connection; a bare access token also works but is shorter-lived.
+4. Paste it into the token field and submit. **Log authentication diagnostics** is enabled by default if token validation is blocked. A full `apiV2Auth` value includes the refresh token for the longest-lasting connection; a bare access token also works but is shorter-lived.
 
 > ⚠️ A token-only entry **cannot self-heal**: when the refresh token expires (~60 days) or HelloFresh rotates it, there are no stored credentials to log back in, so Home Assistant raises a reauthentication prompt asking for a new token. Prefer email/password whenever it works.
 
 ### Why bot protection can matter
 
-HelloFresh fronts its sites with Cloudflare. To pass that layer the integration presents as a real **Google Chrome on Windows 11** browser, including a genuine Chrome TLS/HTTP-2 fingerprint via the bundled `curl_cffi` dependency (installed automatically). Most regions accept this; a region with stricter bot-management rules may still block automated sign-in, which is what the access-token backup path is for.
+HelloFresh fronts its sites with Cloudflare. To pass that layer the integration presents as a real **Google Chrome on Windows** browser, including a genuine Chrome TLS/HTTP-2 fingerprint via the bundled `curl_cffi` dependency (installed automatically), with headers that claim the same Chrome version that fingerprint is. Most regions accept this; a region with stricter bot-management rules may still block automated sign-in, which is what the access-token backup path is for.
 
 ### Reauthentication
 
@@ -158,7 +159,7 @@ The integration renews the short-lived access token automatically using the long
 
 ### Options
 
-These settings are adjusted *after* setup, in the integration's **Configure** dialog — separate from the initial connect flow. To open it:
+These settings are adjusted in the integration's **Configure** dialog after setup. Authentication diagnostics can also be enabled during initial setup. To open Configure:
 
 1. Go to **Settings → Devices & Services**.
 2. On the **Integrations** tab, find the **HelloFresh** card (or click the badge below to jump straight there).
@@ -167,7 +168,7 @@ These settings are adjusted *after* setup, in the integration's **Configure** di
 
 [![Open your Home Assistant instance and show the HelloFresh integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=hellofresh)
 
-> 💡 **Configure vs. Add.** Use **Configure** (the button on an *existing* entry) to change these options. The **Add integration** flow is only for connecting a new account, and changes here take effect without re-entering your credentials.
+> 💡 **Configure vs. Add.** Use **Configure** (the button on an *existing* entry) to change these options. The **Add integration** flow connects a new account and offers the authentication diagnostics switch for that first attempt. Changes in Configure take effect without re-entering your credentials.
 
 The available options are:
 
@@ -176,6 +177,8 @@ The available options are:
 - **Delivery-day watch interval (minutes)** — while a box is due (its delivery day, or the day after until the carrier confirms it) or a shipment is on the road, only the delivery status and carrier tracking are re-checked this often, independently of the refresh interval, so an arrival shows within minutes. Default **15**; range **0–60** (**0** turns the watch off). On other days it makes no extra requests.
 - **Delivery tracking refresh interval (seconds)** — **Netherlands accounts only.** While live last-mile tracking is active, the unauthenticated Tracey endpoint (`c_hf_getTraceyData`) is queried this often for the phase, ETA, stops-before-you, and driver location. Default **300** seconds; range **60–3600**. This option is hidden for every other country.
 - **Use public menu fallback** — when authenticated menu data is unavailable, scrape the public regional menu page so recipe data still appears.
+- **Use curl_cffi's built-in headers (experimental)** — let curl_cffi supply Chrome headers for login, token refresh, and data calls. The integration still supplies API fields and corrects fetch metadata to describe an XHR. Default **off** sends the integration's complete, ordered Chrome-style XHR headers.
+- **Log authentication diagnostics** — when enabled, log the HTTP result of the login and token-refresh steps. Failed responses also show the Cloudflare challenge flag, error code, and Ray ID when available. Default **on**; the added diagnostic fields never include raw response bodies or credentials.
 - **Past delivery history (weeks)** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
 - **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the [Recipes card](docs/dashboard.md#recipes-card) keep working.
 - **Create pantry prep lists** — keep the two [prep-list to-do entities](docs/entities.md#prep-lists) that hold the ingredients your chosen meals need but HelloFresh doesn't ship (salt, oil, butter, eggs), one per upcoming delivery. Default **on**. Turning it off removes both lists and skips the recipe lookups behind them; everything else is unaffected. Changing it reloads the integration.
@@ -400,7 +403,9 @@ HelloFresh rejected the email/password. Double-check the credentials, confirm yo
 Home Assistant could not reach HelloFresh, or the response wasn't understood. Check Home Assistant's network access and try again; transient site errors usually clear on a retry.
 
 **The log shows "login BLOCKED by bot protection" (HTTP 403 with an HTML page).**
-HelloFresh's website fronts its login with Cloudflare bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration already presents a real Chrome TLS/HTTP-2 fingerprint (via the bundled `curl_cffi`) to get past this, and treats a block as temporary and retries on its next poll, so it usually clears on its own. If a region blocks email/password sign-in persistently, use the **access-token setup path** ([Setting up (access token)](#setting-up-access-token--advanced-backup)) as a backup — it bypasses the login step entirely by reusing a token from your own logged-in browser session. Confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear regardless.
+HelloFresh's website fronts its login with Cloudflare bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration already presents a real Chrome TLS/HTTP-2 fingerprint (via the bundled `curl_cffi`) to get past this. After a block it pauses API requests for 5 minutes, doubling the gap after each further block up to 1 hour; the pause is shared by entries on the same Home Assistant event loop and resets after successful authentication once the pause ends. If a region blocks email/password sign-in persistently, use the **access-token setup path** ([Setting up (access token)](#setting-up-access-token--advanced-backup)) as a backup — it bypasses the login step entirely by reusing a token from your own logged-in browser session. Confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear regardless.
+
+**Log authentication diagnostics** is on by default on the setup form and in the integration's [options](#options). It distinguishes a Cloudflare JavaScript challenge (`cf-mitigated=challenge`), error 1020 (firewall rule), or error 1010 (browser signature block). The warning also includes the Ray ID when Cloudflare provides one.
 
 **Recipe details are missing or a "menu fallback" Repairs issue appears.**
 The integration couldn't load structured menu data from the authenticated API and fell back to scraping the public menu page. Delivery tracking still works; recipe details may be less complete until the API payload is recognized again.

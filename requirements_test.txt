@@ -5,3 +5,6 @@ pytest-homeassistant-custom-component>=0.13.218
 # Home Assistant, but declared explicitly so the suite does not depend on a transitive pin.
 PyYAML>=6.0
 ruff>=0.8.0
+# The real library, so the suite checks the Chrome version the headers claim against the one
+# curl_cffi impersonates (tests/test_tls_transport.py). Keep in step with manifest.json.
+curl_cffi>=0.16.3

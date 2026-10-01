@@ -10,6 +10,13 @@ const results = [];
 const errors = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The fixtures build their weeks around the page's clock: the next box comes the next Monday, its
+// meal deadline the Thursday before at 02:59. From that Thursday until Monday the next box is
+// locked, as it would be for real, so the flows that edit it found nothing to click and only
+// passed from Tuesday to early Thursday. They all run on a fixed Tuesday instead; a flow can still
+// pass its own `now`.
+const FLOW_CLOCK = "2026-09-29T12:00:00";
+
 async function open(params = {}, viewport = [1400, 900], path = "/index.html") {
   const page = await browser.newPage();
   await page.setViewport({ width: viewport[0], height: viewport[1] });
@@ -19,7 +26,7 @@ async function open(params = {}, viewport = [1400, 900], path = "/index.html") {
     // The text layer warns once per key it can't find; a card string missing is a bug.
     if (/^warn/.test(msg.type()) && msg.text().includes("no card text for")) errors.push(`console: ${msg.text()}`);
   });
-  const qs = new URLSearchParams({ latency: "60", ...params });
+  const qs = new URLSearchParams({ latency: "60", now: FLOW_CLOCK, ...params });
   await page.goto(`http://localhost:${PORT}${path}?${qs}`, { waitUntil: "networkidle0" });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle0" });

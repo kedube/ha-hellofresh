@@ -8,12 +8,12 @@ import inspect
 import logging
 
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.typing import ConfigType
 import voluptuous as vol
 
@@ -48,6 +48,7 @@ from .const import (
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
     CONF_ISSUED_AT,
+    CONF_LOG_AUTH_DIAGNOSTICS,
     CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_EXPIRES_IN,
@@ -56,6 +57,7 @@ from .const import (
     CONF_SCAN_INTERVAL_MINUTES,
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_TOKEN_TYPE,
+    CONF_USE_CURL_CFFI_HEADERS,
     CONF_USERNAME,
     DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
@@ -63,9 +65,11 @@ from .const import (
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
+    DEFAULT_LOG_AUTH_DIAGNOSTICS,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
+    DEFAULT_USE_CURL_CFFI_HEADERS,
     DOMAIN,
     PLATFORMS,
     SERVICE_ADD_FAVORITE,
@@ -286,7 +290,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "to connect. Please reauthenticate to continue."
         )
 
-    session = async_get_clientsession(hass)
+    # Each account needs its own cookie jar on both the aiohttp and curl_cffi paths.
+    session = async_create_clientsession(hass)
 
     def _persist_refreshed_token(token_data: dict) -> None:
         """Write a refreshed/rotated token back to the config entry so it survives restarts.
@@ -353,6 +358,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
         ),
         enable_favorites=entry.options.get(CONF_ENABLE_FAVORITES, DEFAULT_ENABLE_FAVORITES),
+        use_curl_cffi_headers=entry.options.get(
+            CONF_USE_CURL_CFFI_HEADERS, DEFAULT_USE_CURL_CFFI_HEADERS
+        ),
+        log_auth_diagnostics=entry.options.get(
+            CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS
+        ),
         history_weeks=entry.options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
         menu_grace_weeks=entry.options.get(CONF_MENU_GRACE_WEEKS, DEFAULT_MENU_GRACE_WEEKS),
         token_refresh_callback=_persist_refreshed_token,
@@ -368,7 +379,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         ),
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await async_close_shared_session(session)
+        raise
     coordinator.async_start_token_refresh()
     coordinator.async_start_delivery_watch()
 
@@ -415,20 +430,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)
         if token_only is not None:
             token_only.discard(entry.entry_id)
-        # The pooled curl_cffi session is shared by every entry on this loop, so it may only
-        # be closed once the LAST one goes away — closing it while a sibling entry is still
-        # polling would kill that entry's in-flight requests. `entry` is still listed here
-        # (HA removes it after unload returns), so "last" means no OTHER loaded entry.
-        # Introspecting the entry list is best-effort: it must never turn a successful
-        # unload into a failed one, so a missing/stubbed registry just skips the close
-        # (the session is idle by then and is reused if the entry reloads).
-        entries = getattr(hass.config_entries, "async_entries", None)
-        siblings = list(entries(DOMAIN)) if callable(entries) else []
-        if not any(
-            other.entry_id != entry.entry_id and other.state is ConfigEntryState.LOADED
-            for other in siblings
-        ):
-            await async_close_shared_session()
+        # Curl cookies and pooled connections belong to this entry alone. Home Assistant
+        # closes the matching aiohttp session through its config-entry cleanup hook.
+        coordinator = getattr(entry, "runtime_data", None)
+        client = getattr(coordinator, "client", None)
+        if client is not None:
+            await async_close_shared_session(client._session)
     return unload_ok
 
 

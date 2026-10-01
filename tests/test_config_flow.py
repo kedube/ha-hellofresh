@@ -21,6 +21,7 @@ from custom_components.hellofresh.const import (
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_HISTORY_WEEKS,
+    CONF_LOG_AUTH_DIAGNOSTICS,
     CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
@@ -28,6 +29,7 @@ from custom_components.hellofresh.const import (
     CONF_SHOW_DATA_QUALITY_ISSUES,
     CONF_SHOW_SIDEBAR_PANEL,
     CONF_TOKEN,
+    CONF_USE_CURL_CFFI_HEADERS,
     CONF_USERNAME,
     DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
@@ -35,10 +37,12 @@ from custom_components.hellofresh.const import (
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
+    DEFAULT_LOG_AUTH_DIAGNOSTICS,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DEFAULT_SHOW_SIDEBAR_PANEL,
+    DEFAULT_USE_CURL_CFFI_HEADERS,
 )
 
 
@@ -54,9 +58,9 @@ def _make_flow() -> HelloFreshConfigFlow:
     flow.hass = SimpleNamespace()  # type: ignore[assignment]
     created: dict = {}
 
-    def async_create_entry(*, title, data, **_kwargs):
-        created.update({"title": title, "data": data})
-        return {"type": "create_entry", "title": title, "data": data}
+    def async_create_entry(*, title, data, options=None, **_kwargs):
+        created.update({"title": title, "data": data, "options": options})
+        return {"type": "create_entry", "title": title, "data": data, "options": options}
 
     def async_show_form(*, step_id, errors=None, data_schema=None, **_kwargs):
         result = {"type": "form", "step_id": step_id, "errors": errors or {}}
@@ -134,6 +138,8 @@ def _default_options_payload() -> dict:
         CONF_ENABLE_PREP_LISTS: DEFAULT_ENABLE_PREP_LISTS,
         CONF_SHOW_DATA_QUALITY_ISSUES: DEFAULT_SHOW_DATA_QUALITY_ISSUES,
         CONF_SHOW_SIDEBAR_PANEL: DEFAULT_SHOW_SIDEBAR_PANEL,
+        CONF_USE_CURL_CFFI_HEADERS: DEFAULT_USE_CURL_CFFI_HEADERS,
+        CONF_LOG_AUTH_DIAGNOSTICS: DEFAULT_LOG_AUTH_DIAGNOSTICS,
     }
 
 
@@ -152,6 +158,36 @@ def test_options_hide_delivery_tracking_interval_outside_netherlands() -> None:
     assert CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS not in _schema_keys(
         result["data_schema"]
     )
+
+
+def test_options_can_select_curl_cffi_browser_headers() -> None:
+    """The header source is a per-entry option, defaulting to integration XHR headers."""
+    flow = _make_options_flow("us")
+    form = _run(flow.async_step_init())
+    assert _schema_default(form["data_schema"], CONF_USE_CURL_CFFI_HEADERS) is False
+
+    result = _run(
+        flow.async_step_init({**_default_options_payload(), CONF_USE_CURL_CFFI_HEADERS: True})
+    )
+    assert result["data"][CONF_USE_CURL_CFFI_HEADERS] is True
+
+    saved = _make_options_flow("us", result["data"])
+    assert (
+        _schema_default(_run(saved.async_step_init())["data_schema"], CONF_USE_CURL_CFFI_HEADERS)
+        is True
+    )
+
+
+def test_options_can_disable_auth_diagnostics() -> None:
+    """Auth response diagnostics default on and can be disabled per entry."""
+    flow = _make_options_flow("us")
+    form = _run(flow.async_step_init())
+    assert _schema_default(form["data_schema"], CONF_LOG_AUTH_DIAGNOSTICS) is True
+
+    result = _run(
+        flow.async_step_init({**_default_options_payload(), CONF_LOG_AUTH_DIAGNOSTICS: False})
+    )
+    assert result["data"][CONF_LOG_AUTH_DIAGNOSTICS] is False
 
 
 def test_options_show_delivery_tracking_interval_for_netherlands() -> None:
@@ -198,11 +234,80 @@ def test_credentials_path_creates_entry_with_credentials_only() -> None:
     data = result["data"]
     assert data == {CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_COUNTRY: "us"}
     assert CONF_ACCESS_TOKEN not in data
+    assert result["options"] == {CONF_LOG_AUTH_DIAGNOSTICS: True}
+
+
+def test_credentials_setup_defaults_diagnostics_on_before_validation() -> None:
+    """An initial sign-in block is diagnosed before an entry exists."""
+    flow = _make_flow()
+    assert (
+        _schema_default(
+            _run(flow.async_step_credentials())["data_schema"], CONF_LOG_AUTH_DIAGNOSTICS
+        )
+        is True
+    )
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        assert flow._existing_auth_logging_option() is True
+        return {"account_id": "acct-1"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+    result = _run(
+        flow.async_step_credentials(
+            {
+                CONF_COUNTRY: "us",
+                CONF_USERNAME: "u@example.com",
+                CONF_PASSWORD: "pw",
+            }
+        )
+    )
+    assert result["options"] == {CONF_LOG_AUTH_DIAGNOSTICS: True}
+
+
+def test_credentials_bot_block_gets_its_own_error(monkeypatch) -> None:
+    """A Cloudflare block on login says so (and where to go next), not "could not connect"."""
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+    from custom_components.hellofresh.api import (  # noqa: PLC0415
+        HelloFreshBotBlockedError,
+        HelloFreshError,
+    )
+
+    raised: list[Exception] = []
+
+    class _Client:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        async def async_validate_credentials(self):
+            raise raised[-1]
+
+    monkeypatch.setattr(config_flow, "HelloFreshClient", _Client)
+    monkeypatch.setattr(
+        config_flow,
+        "async_create_clientsession",
+        lambda _hass, **_kwargs: type("Session", (), {"detach": lambda self: None})(),
+    )
+    flow = _make_flow()
+    user_input = {CONF_COUNTRY: "be", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+
+    raised.append(HelloFreshBotBlockedError("HelloFresh login blocked by bot protection: HTTP 403"))
+    result = _run(flow.async_step_credentials(user_input))
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "bot_blocked"}
+
+    result = _run(flow.async_step_credentials({**user_input, CONF_LOG_AUTH_DIAGNOSTICS: False}))
+    assert result["errors"] == {"base": "bot_blocked"}
+    assert _schema_default(result["data_schema"], CONF_LOG_AUTH_DIAGNOSTICS) is False
+
+    raised.append(HelloFreshError("timeout"))
+    result = _run(flow.async_step_credentials(user_input))
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 def test_token_path_parses_blob_and_stores_tokens_without_credentials() -> None:
     """The token step parses an apiV2Auth blob, validates, and stores tokens only."""
     flow = _make_flow()
+    assert _schema_default(_run(flow.async_step_token())["data_schema"], CONF_LOG_AUTH_DIAGNOSTICS)
 
     captured: dict = {}
 
@@ -234,6 +339,7 @@ def test_token_path_parses_blob_and_stores_tokens_without_credentials() -> None:
     assert CONF_PASSWORD not in data
     # The validated token_data is what was stored.
     assert captured["country"] == "uk"
+    assert result["options"] == {CONF_LOG_AUTH_DIAGNOSTICS: True}
 
 
 def test_token_path_accepts_bare_access_token() -> None:

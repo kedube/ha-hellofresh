@@ -15,7 +15,11 @@
         "data": {
           "country": "Land",
           "username": "E-post",
-          "password": "Passord"
+          "password": "Passord",
+          "log_auth_diagnostics": "Logg autentiseringsdiagnostikk"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Når dette er på, logges HTTP-resultatet for innlogging og tokenfornyelse samt eventuelt Cloudflare-utfordringsflagg, feilkode og Ray ID. De ekstra diagnosefeltene inneholder verken rått svarinnhold eller påloggingsopplysninger. På som standard."
         }
       },
       "token": {
@@ -23,7 +27,11 @@
         "description": "Avansert reserveløsning når innlogging med e-post og passord er blokkert. Den fungerer i opptil ca. 60 dager, til tokenet utløper — da blir du bedt om et nytt.\n\nSlik finner du `apiV2Auth`-tokenet ditt:\n1. Logg inn på HelloFresh-nettstedet ditt ({site_example}) i en nettleser på PC, slik at du kommer til kontosiden.\n2. Åpne utviklerverktøyene i nettleseren: høyreklikk på siden og velg **Undersøk**, eller trykk **F12** (Windows) / **⌥⌘I** (Mac).\n3. Åpne cookie-visningen for HelloFresh-nettstedet ditt:\n   - **Chrome / Edge:** fanen **Application** → utvid **Cookies** i venstre sidepanel → velg HelloFresh-nettstedet ditt.\n   - **Firefox:** fanen **Lagring** → utvid **Cookies** → velg HelloFresh-nettstedet ditt.\n   - **Safari:** slå på Utvikler-menyen (Innstillinger → Avansert → \"Vis funksjoner for nettutviklere\"), deretter fanen **Lagring** → **Cookies** → HelloFresh-nettstedet ditt.\n4. Finn informasjonskapselen med navnet **`apiV2Auth`**, og kopier hele **verdien**.\n5. Lim den inn nedenfor. (Et rent tilgangstoken fungerer også, men en komplett `apiV2Auth`-verdi inneholder fornyelsestokenet og gir den mest varige tilkoblingen.)\n\n**Land** er HelloFresh-regionen kontoen din tilhører (for eksempel US, GB, AU) — velg den som passer til nettstedet du kopierte tokenet fra.",
         "data": {
           "country": "Land",
-          "token": "apiV2Auth-token"
+          "token": "apiV2Auth-token",
+          "log_auth_diagnostics": "Logg autentiseringsdiagnostikk"
+        },
+        "data_description": {
+          "log_auth_diagnostics": "Når dette er på, logges HTTP-resultatet for innlogging og tokenfornyelse samt eventuelt Cloudflare-utfordringsflagg, feilkode og Ray ID. De ekstra diagnosefeltene inneholder verken rått svarinnhold eller påloggingsopplysninger. På som standard."
         }
       },
       "reauth_confirm": {
@@ -61,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Kunne ikke koble til",
+      "bot_blocked": "HelloFresh sin bot-beskyttelse blokkerte denne innloggingen, så e-posten og passordet ditt ble ikke sjekket. Prøv igjen om noen minutter. Hvis det fortsetter, legg til HelloFresh med alternativet «Tilgangstoken (avansert)» i stedet.",
       "invalid_auth": "Ugyldig innlogging",
       "invalid_token": "Dette tokenet kunne ikke leses eller ble avvist"
     },
@@ -87,7 +96,9 @@
           "enable_public_menu_fallback": "Bruk offentlig meny som reserve",
           "enable_favorites": "Vis favoritthjerter",
           "enable_prep_lists": "Opprett forberedelseslister",
-          "show_data_quality_issues": "Vis advarsler om datakvalitet"
+          "show_data_quality_issues": "Vis advarsler om datakvalitet",
+          "use_curl_cffi_headers": "Bruk curl_cffis innebygde headere (eksperimentelt)",
+          "log_auth_diagnostics": "Logg autentiseringsdiagnostikk"
         },
         "data_description": {
           "scan_interval_minutes": "Hvor ofte HelloFresh spørres om konto- og leveringsdata. Lavere = ferskere data og flere forespørsler; høyere = skånsommere for API-et. Område 5–1440 minutter; standard 180 (3 timer). Innloggingstokenet fornyes etter sin egen plan, så dette påvirker ikke innloggingen.",
@@ -99,7 +110,9 @@
           "enable_public_menu_fallback": "Hvis de innloggede menydataene ikke kan lastes, leses den offentlige regionale menysiden slik at oppskriftsnavn likevel vises. La den stå på med mindre du bare vil ha autentiserte data.",
           "enable_favorites": "Slå opp ved hver oppdatering hvilke retter som er lagret som favoritter i HelloFresh-kokeboken din, slik at måltidsplanlegger-kortet kan vise et favoritthjerte. Koster én ekstra forespørsel per oppdatering: HelloFresh har ingen \"vis favorittene mine\"-endepunkt, så menyens oppskrifter må sendes til et filterendepunkt for å finne favorittene. Slå av for å hoppe over det — tjenestene for å legge til og fjerne favoritter fungerer uansett.",
           "enable_prep_lists": "Opprett en oppgaveliste for hver av de neste to leveringene med ingrediensene de valgte rettene dine trenger, men som HelloFresh ikke sender med — salt, olje, smør, egg — slik at du kan kjøpe dem før kassen kommer. Slå av for å fjerne begge listene og hoppe over de nødvendige oppskriftsoppslagene.",
-          "show_data_quality_issues": "Vis advarsler i Reparasjoner-skjermen når HelloFresh-data er forringet (menyreserve aktiv, ukjente dataformater, kontodata utilgjengelige, blokkerte skrivehandlinger). Dataene lastes uansett. Slå av for å skjule disse advarslene og fjerne dem som allerede vises."
+          "show_data_quality_issues": "Vis advarsler i Reparasjoner-skjermen når HelloFresh-data er forringet (menyreserve aktiv, ukjente dataformater, kontodata utilgjengelige, blokkerte skrivehandlinger). Dataene lastes uansett. Slå av for å skjule disse advarslene og fjerne dem som allerede vises.",
+          "use_curl_cffi_headers": "La curl_cffi sende Chrome-headere for innlogging, tokenfornyelse og dataforespørsler. Integrasjonen setter fortsatt API-headere og retter fetch-metadata for en XHR-forespørsel. Av (anbefalt) sender integrasjonens fullstendige, ordnede XHR-headere.",
+          "log_auth_diagnostics": "Når dette er på, logges HTTP-resultatet for innlogging og tokenfornyelse samt eventuelt Cloudflare-utfordringsflagg, feilkode og Ray ID. De ekstra diagnosefeltene inneholder verken rått svarinnhold eller påloggingsopplysninger. På som standard."
         }
       }
     }

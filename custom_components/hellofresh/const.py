@@ -9,6 +9,12 @@ DOMAIN = "hellofresh"
 CONF_ACCESS_TOKEN = "access_token"
 CONF_COUNTRY = "country"
 CONF_ENABLE_PUBLIC_MENU_FALLBACK = "enable_public_menu_fallback"
+# Use curl_cffi's built-in Chrome headers on API requests instead of the integration's
+# complete XHR header set. Off by default: curl_cffi's defaults describe a page navigation.
+CONF_USE_CURL_CFFI_HEADERS = "use_curl_cffi_headers"
+DEFAULT_USE_CURL_CFFI_HEADERS = False
+CONF_LOG_AUTH_DIAGNOSTICS = "log_auth_diagnostics"
+DEFAULT_LOG_AUTH_DIAGNOSTICS = True
 CONF_EXPIRES_IN = "expires_in"
 CONF_ISSUED_AT = "issued_at"
 CONF_PASSWORD = "password"

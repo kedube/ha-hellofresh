@@ -13,6 +13,7 @@ import pytest
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
     HelloFreshAuthError,
+    HelloFreshBotBlockedError,
     HelloFreshCapabilities,
     HelloFreshClient,
     HelloFreshError,
@@ -6054,8 +6055,231 @@ def test_login_bot_block_raises_transient_error_not_auth_error() -> None:
         loop.run_until_complete(client._async_login(force=True))
 
     assert not isinstance(excinfo.value, HelloFreshAuthError)
+    # Its own subclass, so the config flow can say "blocked" instead of "could not connect".
+    assert isinstance(excinfo.value, HelloFreshBotBlockedError)
     assert "bot protection" in str(excinfo.value)
     assert posts[-1].endswith("/gw/login")
+
+
+@pytest.mark.parametrize("log_auth_diagnostics", [False, True])
+def test_login_cloudflare_warning_respects_diagnostics_option(
+    caplog, log_auth_diagnostics: bool
+) -> None:
+    """Only the opted-in warning includes bounded Cloudflare markers, never the body."""
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app-token"})
+            return _AuthFlowResponse(
+                403,
+                text="<html><span class='cf-error-code'>1020</span> private marker</html>",
+                headers={
+                    "CONTENT-TYPE": "text/html",
+                    "CF-MITIGATED": "challenge",
+                    "Cf-Ray": "8ac2aa51e94d72e0-YYZ",
+                },
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="private@example.com",
+        password="private-password",
+        log_auth_diagnostics=log_auth_diagnostics,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_login(force=True))
+
+    assert "HTTP 403" in caplog.text
+    assert ("cf-mitigated=challenge" in caplog.text) is log_auth_diagnostics
+    assert ("cf-error=1020 (firewall rule)" in caplog.text) is log_auth_diagnostics
+    assert ("ray-id=8ac2aa51e94d72e0-YYZ" in caplog.text) is log_auth_diagnostics
+    assert "private marker" not in caplog.text
+    assert "private@example.com" not in caplog.text
+    assert "private-password" not in caplog.text
+
+
+def test_refresh_logs_browser_signature_block_from_plain_text(caplog) -> None:
+    """Cloudflare error 1010 is classified even when a block page is not HTML."""
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            return _AuthFlowResponse(
+                403,
+                text="Error 1010. Ray ID: 8ac2aa51e94d72e0-YYZ. private marker",
+                headers={"content-type": "text/plain"},
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        refresh_token="refresh-token",
+        refresh_expires_in=5184000,
+        log_auth_diagnostics=True,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._tokens._async_refresh_with_token())
+
+    assert "cf-error=1010 (browser signature block)" in caplog.text
+    assert "ray-id=8ac2aa51e94d72e0-YYZ" in caplog.text
+    assert "cf-mitigated=none" in caplog.text
+    assert "private marker" not in caplog.text
+
+
+def test_cf_mitigated_header_marks_json_auth_response_as_challenge(caplog) -> None:
+    """The explicit challenge header wins even when the block body is JSON."""
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            return _AuthFlowResponse(
+                403,
+                text='{"error":"challenge"}',
+                headers={"cF-MiTiGaTeD": "challenge", "cf-ray": "bad-ray;private"},
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        refresh_token="refresh-token",
+        log_auth_diagnostics=True,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._tokens._async_refresh_with_token())
+
+    assert "cf-mitigated=challenge" in caplog.text
+    assert "ray-id=none" in caplog.text
+    assert "bad-ray;private" not in caplog.text
+
+
+def test_auth_diagnostics_logs_successful_steps_without_secrets(caplog) -> None:
+    """Opt-in logging shows the two login steps and their statuses."""
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "private-app-token"})
+            return _AuthFlowResponse(200, {"access_token": "private-user-token"})
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="private@example.com",
+        password="private-password",
+        log_auth_diagnostics=True,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING):
+        loop.run_until_complete(client._async_login(force=True))
+
+    assert "authentication diagnostic: /gw/auth/token returned HTTP 200" in caplog.text
+    assert "authentication diagnostic: /gw/login returned HTTP 200" in caplog.text
+    assert "private-app-token" not in caplog.text
+    assert "private-user-token" not in caplog.text
+    assert "private-password" not in caplog.text
+
+
+def test_auth_error_summary_does_not_log_reflected_credentials(caplog) -> None:
+    """Server-controlled auth messages must not expose credentials in HA logs."""
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app-token"})
+            return _AuthFlowResponse(
+                403,
+                text='{"error":"invalid_grant","message":"private@example.com",'
+                '"detail":"private-password"}',
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="private@example.com",
+        password="private-password",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshAuthError):
+        loop.run_until_complete(client._async_login(force=True))
+    assert "error=invalid_grant" in caplog.text
+    assert "private@example.com" not in caplog.text
+    assert "private-password" not in caplog.text
+
+
+@pytest.mark.parametrize("payload", [[], "unexpected", None])
+def test_auth_success_requires_json_object(payload) -> None:
+    """A malformed success response becomes a controlled authentication error."""
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app-token"})
+            response = _AuthFlowResponse(200)
+            response._payload = payload
+            return response
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshAuthError, match="JSON object"):
+        loop.run_until_complete(client._async_login(force=True))
+
+
+@pytest.mark.parametrize("blocked_step", ["/gw/auth/token", "/gw/login"])
+def test_html_200_auth_response_starts_backoff(blocked_step, caplog) -> None:
+    """A challenge page with HTTP 200 must not count as successful authentication."""
+    posts = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            posts.append(url)
+            if url.endswith(blocked_step):
+                return _AuthFlowResponse(
+                    200,
+                    text="<html>Cloudflare challenge</html>",
+                    headers={"content-type": "text/html"},
+                )
+            return _AuthFlowResponse(200, {"access_token": "app-token"})
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_login(force=True))
+    assert client._tokens._block_backoff.consecutive_blocks == 1
+    assert posts[-1].endswith(blocked_step)
+    assert f"authentication diagnostic: {blocked_step} returned HTTP 200" not in caplog.text
+
+
+def test_app_token_timeout_is_nonfatal() -> None:
+    """A transient app-token timeout does not prevent a working login request."""
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                raise TimeoutError("temporary timeout")
+            return _AuthFlowResponse(200, {"access_token": "user-token"})
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_login(force=True))
+    assert client._tokens.access_token == "user-token"
 
 
 def test_refresh_bot_block_does_not_fall_back_to_login() -> None:
@@ -6094,8 +6318,177 @@ def test_refresh_bot_block_does_not_fall_back_to_login() -> None:
         loop.run_until_complete(client._async_refresh_access_token(force=True))
 
     assert not isinstance(excinfo.value, HelloFreshAuthError)
+    assert isinstance(excinfo.value, HelloFreshBotBlockedError)
     assert posts == [posts[0]] and posts[0].endswith("/gw/refresh")  # no login fallback
     assert client._refresh_token == "R-live"  # refresh token preserved
+
+    with pytest.raises(HelloFreshBotBlockedError, match="retry in"):
+        loop.run_until_complete(client._tokens.async_force_refresh_if_unchanged("stale"))
+    assert len(posts) == 1  # a reactive 401 must not bypass the cooldown
+
+
+def test_bot_block_backoff_grows_and_is_shared_across_entries(monkeypatch) -> None:
+    """Blocked auth attempts pause all entries on one session until a full auth succeeds."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    clock = [1000.0]
+    monkeypatch.setattr(token_manager, "monotonic", lambda: clock[0])
+    posts: list[str] = []
+    login_results = [403, 403, 200, 403]
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            posts.append(url)
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app-token"})
+            status = login_results.pop(0)
+            if status == 403:
+                return _AuthFlowResponse(403, headers={"cf-mitigated": "challenge"})
+            return _AuthFlowResponse(200, {"access_token": "user-token"})
+
+    session = DummySession()
+    first = HelloFreshClient(session=session, username="first@example.com", password="pw")  # type: ignore[arg-type]
+    second = HelloFreshClient(session=session, username="second@example.com", password="pw")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(first._async_login(force=True))
+    assert len(posts) == 2
+    assert first._tokens._block_backoff.next_attempt_at == 1300
+    assert first._tokens._block_backoff.record_block() == 300
+    assert first._tokens._block_backoff.next_attempt_at == 1300
+
+    with pytest.raises(HelloFreshBotBlockedError, match="retry in 300 seconds"):
+        loop.run_until_complete(second._async_login(force=True))
+    assert len(posts) == 2
+
+    clock[0] = 1300
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(second._async_login(force=True))
+    assert len(posts) == 4
+    assert first._tokens._block_backoff.next_attempt_at == 1900
+
+    clock[0] = 1899
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(first._async_login(force=True))
+    assert len(posts) == 4
+
+    clock[0] = 1900
+    loop.run_until_complete(first._async_login(force=True))
+    assert len(posts) == 6
+    assert first._tokens._block_backoff.consecutive_blocks == 0
+
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(second._async_login(force=True))
+    assert len(posts) == 8
+    assert first._tokens._block_backoff.next_attempt_at == 2200
+
+
+def test_bot_block_backoff_caps_at_one_hour(monkeypatch) -> None:
+    """Repeated blocks cannot make the pause grow without bound."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    clock = [1000.0]
+    monkeypatch.setattr(token_manager, "monotonic", lambda: clock[0])
+    backoff = token_manager._AuthBlockBackoff()
+    for expected in (300, 600, 1200, 2400, 3600, 3600):
+        assert backoff.record_block() == expected
+        clock[0] += expected
+    assert backoff.consecutive_blocks == 5
+
+
+def test_backoff_is_shared_across_distinct_entry_sessions_on_one_loop() -> None:
+    """Cookie isolation must still preserve an IP-wide pause across HA entries."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    loop = asyncio.new_event_loop()
+
+    class DummySession:
+        def __init__(self):
+            self._loop = loop
+
+    first = token_manager._backoff_for_session(DummySession())  # type: ignore[arg-type]
+    second = token_manager._backoff_for_session(DummySession())  # type: ignore[arg-type]
+    assert first is second
+    loop.close()
+
+
+@pytest.mark.parametrize("status", [200, 403, 429])
+def test_app_token_block_stops_login_and_starts_backoff(monkeypatch, status: int) -> None:
+    """A blocked gateway priming request must not be followed by a login attempt."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(token_manager, "monotonic", lambda: 1000.0)
+    posts: list[str] = []
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            posts.append(url)
+            return _AuthFlowResponse(status, headers={"cf-mitigated": "challenge"})
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_login(force=True))
+
+    assert len(posts) == 1
+    assert posts[0].endswith("/gw/auth/token")
+    assert client._tokens._block_backoff.next_attempt_at == 1300
+
+
+def test_data_cloudflare_block_pauses_calls_without_refresh(monkeypatch) -> None:
+    """A blocked data call does not retry through auth or reissue on the next poll."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    clock = [1000.0]
+    monkeypatch.setattr(token_manager, "monotonic", lambda: clock[0])
+    requests: list[str] = []
+    blocked = [True]
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            requests.append(url)
+            if blocked[0]:
+                return _AuthFlowResponse(
+                    403,
+                    text="<html>Cloudflare challenge</html>",
+                    headers={"content-type": "text/html", "cf-mitigated": "challenge"},
+                )
+            return _AuthFlowResponse(200, {"ok": True})
+
+        async def post(self, url, params=None, json=None, headers=None):
+            raise AssertionError("a data challenge must not trigger token refresh")
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="user-token",
+        refresh_token="refresh-token",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_api_request("GET", "/api/example"))
+    with pytest.raises(HelloFreshBotBlockedError, match="retry in"):
+        loop.run_until_complete(client._async_api_request("GET", "/api/example"))
+    assert len(requests) == 1
+
+    clock[0] = 1300
+    blocked[0] = False
+    loop.run_until_complete(client._async_api_request("GET", "/api/example"))
+    assert len(requests) == 2
+    assert client._tokens._block_backoff.consecutive_blocks == 1
+    blocked[0] = True
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_api_request("GET", "/api/example"))
+    assert client._tokens._block_backoff.next_attempt_at == 1900
 
 
 def test_upcoming_deliveries_prefers_last_successful_endpoint() -> None:
@@ -6568,6 +6961,7 @@ def test_authenticated_requests_send_feature_headers() -> None:
     """Authenticated reads should carry the HAR-observed market/feature headers."""
     client = HelloFreshClient(
         session=_HeaderCapturingSession(),  # type: ignore[arg-type]
+        country="be",
         access_token="tok",
         token_issued_at=int(datetime.now(timezone.utc).timestamp()),
         token_expires_in=1800,
@@ -6581,6 +6975,7 @@ def test_authenticated_requests_send_feature_headers() -> None:
     assert sent["X-Food-Categorization"] == "v1"
     assert sent["x-sort-variations-by-quantity"] == "true"
     assert "Mozilla/5.0" in sent["User-Agent"]
+    assert sent["Accept-Language"].startswith("nl-BE,nl;q=0.9")
 
 
 class _HeaderCapturingSession:
@@ -7437,6 +7832,30 @@ def test_auth_query_sends_api_country_code_for_uk() -> None:
     )
     query = client._tokens._auth_query()
     assert query == {"country": "GB", "locale": "en-GB"}
+
+
+def test_refresh_headers_match_browser_and_regional_language() -> None:
+    """Refresh uses the observed fetch headers and fresh, consistent tracing IDs."""
+    client = HelloFreshClient(session=None, country="be")  # type: ignore[arg-type]
+    first = client._tokens._auth_headers(refresh=True)
+    second = client._tokens._auth_headers(refresh=True)
+
+    assert first["Accept"] == "*/*"
+    assert first["Content-Type"] == "text/plain;charset=UTF-8"
+    assert first["Accept-Language"].startswith("nl-BE,nl;q=0.9")
+    assert first["DPR"] == "1"
+    assert first["Viewport-Width"].isdigit()
+    _, trace_id, span_id, flags = first["traceparent"].split("-")
+    assert len(trace_id) == 32 and len(span_id) == 16 and flags == "01"
+    assert first["x-b3-traceid"] == trace_id
+    assert first["x-b3-spanid"] == span_id
+    assert first["x-b3-sampled"] == "1"
+    assert first["x-request-id"] != second["x-request-id"]
+    assert first["traceparent"] != second["traceparent"]
+
+    login = client._tokens._auth_headers()
+    assert login["Content-Type"] == "application/json"
+    assert login["Accept"] == "application/json, text/plain, */*"
 
 
 def _status_for(raw_subscription: dict) -> str | None:
