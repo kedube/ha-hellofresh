@@ -5,6 +5,12 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Updated `curl_cffi` to 0.16.3** (from a 0.7.0 minimum), the library that gives the
+  integration its Chrome TLS fingerprint to get past HelloFresh's Cloudflare protection. Home
+  Assistant keeps an already-installed version that still meets the minimum, so raising it is
+  what moves existing installs onto the newer Chrome fingerprints and bundled curl 8.21.
+
 ## 4.00 — 2026-10-01
 - **New: the HelloFresh card — your whole account in one card.** `custom:hellofresh-card` brings
   the seven classic cards together the way hellofresh.com is organised, with tabs for
