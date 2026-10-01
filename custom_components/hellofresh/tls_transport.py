@@ -1,4 +1,4 @@
-"""TLS-impersonating transport for ``/gw`` auth and data requests.
+"""TLS-impersonating transport for ``/gw`` auth and data requests and page loads.
 
 All HelloFresh properties sit behind Cloudflare. Some regions (observed: ``www.hellofresh.co.uk``)
 enable Cloudflare Bot Management rules that fingerprint the **TLS (JA3/JA4) and HTTP/2**
@@ -6,7 +6,7 @@ characteristics of the connection and reject non-browser clients *before* the HT
 are evaluated -- so no ``User-Agent`` or header tweak can get past them. ``aiohttp`` (Python +
 OpenSSL) has exactly such a non-browser fingerprint.
 
-This module routes auth and data calls
+This module routes auth and data calls and page loads
 through `curl_cffi <https://github.com/lexiforest/curl_cffi>`_ when it is installed, which
 performs the request with a real Chrome TLS/HTTP2 fingerprint (``impersonate="chrome"``). When
 ``curl_cffi`` is **not** available it transparently falls back to the shared ``aiohttp``
@@ -17,10 +17,11 @@ returns a small :class:`AuthResponse` adapter exposing the same slice of that in
 token manager uses (``status``, ``headers``, awaitable ``text()``/``json()``), so the existing
 WAF/bot-block handling in ``token_manager`` needs no branching.
 
-Both the auth POSTs and the authenticated data XHRs go through this path: Cloudflare
-fingerprints the TLS/HTTP2 connection, which is identical for both, so both need the
-impersonating transport. Sessions are pooled per entry (see ``_shared_curl_session``)
-so connections are reused across a poll instead of re-handshaking on every request.
+The auth POSTs, the authenticated data XHRs and the public-menu page load all go through this
+path: Cloudflare fingerprints the TLS/HTTP2 connection, which is identical for all of them, so
+all need the impersonating transport. Sessions are pooled per entry (see
+``_shared_curl_session``) so connections are reused across a poll instead of re-handshaking on
+every request.
 """
 
 from __future__ import annotations
@@ -67,29 +68,37 @@ if _HAS_CURL_CFFI:
         _ASYNC_SESSION_CLS = None
         _CURL_OPT = None
 
-# Chrome puts client hints before the usual XHR headers. curl_cffi's built-in header order is
-# for a page navigation, so list every header our auth and data XHRs may send, including the
-# optional account/feature headers. Names absent from a given request are simply skipped.
-_CHROME_XHR_HEADER_ORDER = ",".join(
+# Header orders captured from Chrome 154 itself, running the web app's fetch() calls (HTTP/2
+# order matches). Chrome's XHR order has three parts: content-length first, then the client
+# hints, User-Agent and the app's own headers in an order set by Blink's header hash map --
+# deterministic, but it changes with the exact set of headers -- then a fixed tail from
+# accept to cookie, with priority last on HTTP/2. curl takes one order per session, so:
+#
+# * the app-token and refresh POSTs come from the web app's fetch() client, and this order
+#   matches Chrome exactly for both;
+# * /gw/login comes from the sign-in page's axios client, which sets Accept itself, so Chrome
+#   places accept before content-type there; it gets its own order, also exact;
+# * the data calls vary (with or without x-requested-by, a body, x-nextjs-data); this order
+#   matches the most common one, a GET without x-requested-by, exactly, and gets the prefix and
+#   the fixed tail right for the rest.
+#
+# Names absent from a given request are skipped.
+_CHROME_AUTH_HEADER_ORDER = ",".join(
     (
+        "content-length",
+        "x-b3-spanid",
+        "x-request-id",
+        "sec-ch-ua-platform",
+        "viewport-width",
+        "x-b3-sampled",
         "sec-ch-ua",
         "sec-ch-ua-mobile",
-        "sec-ch-ua-platform",
-        "dpr",
-        "viewport-width",
-        "user-agent",
-        "accept",
-        "content-type",
-        "authorization",
-        "x-market-api-version",
-        "x-food-categorization",
-        "x-sort-variations-by-quantity",
-        "x-requested-by",
         "traceparent",
+        "dpr",
         "x-b3-traceid",
-        "x-b3-spanid",
-        "x-b3-sampled",
-        "x-request-id",
+        "user-agent",
+        "content-type",
+        "accept",
         "origin",
         "sec-fetch-site",
         "sec-fetch-mode",
@@ -97,11 +106,98 @@ _CHROME_XHR_HEADER_ORDER = ",".join(
         "referer",
         "accept-encoding",
         "accept-language",
-        "cache-control",
-        "pragma",
+        "cookie",
         "priority",
     )
 )
+_CHROME_LOGIN_HEADER_ORDER = ",".join(
+    (
+        "content-length",
+        "x-b3-spanid",
+        "sec-ch-ua-platform",
+        "viewport-width",
+        "x-b3-sampled",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "traceparent",
+        "dpr",
+        "x-b3-traceid",
+        "user-agent",
+        "accept",
+        "content-type",
+        "origin",
+        "sec-fetch-site",
+        "sec-fetch-mode",
+        "sec-fetch-dest",
+        "referer",
+        "accept-encoding",
+        "accept-language",
+        "cookie",
+        "priority",
+    )
+)
+_CHROME_XHR_HEADER_ORDER = ",".join(
+    (
+        "content-length",
+        "x-nextjs-data",
+        "x-b3-spanid",
+        "x-market-api-version",
+        "authorization",
+        "x-request-id",
+        "x-b3-sampled",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "traceparent",
+        "dpr",
+        "x-b3-traceid",
+        "x-food-categorization",
+        "sec-ch-ua-platform",
+        "x-sort-variations-by-quantity",
+        "content-type",
+        "user-agent",
+        "viewport-width",
+        "x-requested-by",
+        "accept",
+        "origin",
+        "sec-fetch-site",
+        "sec-fetch-mode",
+        "sec-fetch-dest",
+        "referer",
+        "accept-encoding",
+        "accept-language",
+        "cookie",
+        "priority",
+    )
+)
+
+# A top-level page load sends a different header set (Upgrade-Insecure-Requests,
+# Sec-Fetch-User, a document Accept) in a fixed order: curl_cffi's Chrome preset order, which
+# Chrome 154 matches, with the cookie header before priority.
+_CHROME_NAVIGATION_HEADER_ORDER = ",".join(
+    (
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "upgrade-insecure-requests",
+        "user-agent",
+        "accept",
+        "sec-fetch-site",
+        "sec-fetch-mode",
+        "sec-fetch-user",
+        "sec-fetch-dest",
+        "accept-encoding",
+        "accept-language",
+        "cookie",
+        "priority",
+    )
+)
+
+_HEADER_ORDERS = {
+    "xhr": _CHROME_XHR_HEADER_ORDER,
+    "auth": _CHROME_AUTH_HEADER_ORDER,
+    "login": _CHROME_LOGIN_HEADER_ORDER,
+    "navigation": _CHROME_NAVIGATION_HEADER_ORDER,
+}
 
 # The default-header mode leaves curl_cffi in charge of browser metadata, while retaining
 # headers needed by HelloFresh's API and by the caller's account-specific requests.
@@ -121,6 +217,9 @@ _API_HEADERS_WITH_CURL_DEFAULTS = frozenset(
 )
 
 _CURL_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
+
+# Methods curl_cffi always sends a (possibly empty) request body for.
+_CURL_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 # The Chrome major version the "chrome" alias resolves to in the installed curl_cffi, or None
 # without curl_cffi. A User-Agent claiming a different Chrome than the TLS/HTTP2 fingerprint is
@@ -187,6 +286,7 @@ async def async_request(
     json_payload: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     use_curl_cffi_headers: bool = False,
+    navigation: bool = False,
 ) -> ClientResponse | AuthResponse:
     """Send an HTTP request, preferring a Chrome-TLS-impersonating transport.
 
@@ -196,9 +296,10 @@ async def async_request(
     The returned object always exposes ``status``, ``headers`` and awaitable
     ``text()``/``json()`` -- the slice every caller uses -- regardless of which transport ran.
 
-    This backs both the ``/gw`` auth POSTs and the authenticated data XHRs: stricter-region
-    Cloudflare fingerprints the TLS/HTTP2 connection, which is identical for both, so both
-    need the same impersonating transport to get past it.
+    This backs the ``/gw`` auth POSTs, the authenticated data XHRs and the public-menu page
+    load: stricter-region Cloudflare fingerprints the TLS/HTTP2 connection, which is identical
+    for all of them, so all need the same impersonating transport to get past it.
+    ``navigation`` marks a top-level page load, sent with Chrome's navigation header order.
     """
     if not tls_impersonation_available():
         return await session.request(method, url, params=params, json=json_payload, headers=headers)
@@ -210,6 +311,7 @@ async def async_request(
             json_payload=json_payload,
             headers=headers,
             use_curl_cffi_headers=use_curl_cffi_headers,
+            kind="navigation" if navigation else "xhr",
             owner=session,
         )
     except Exception as err:
@@ -233,8 +335,12 @@ async def async_auth_post(
     json_payload: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     use_curl_cffi_headers: bool = False,
+    login: bool = False,
 ) -> ClientResponse | AuthResponse:
     """POST an auth request through the impersonating transport.
+
+    ``login`` marks the sign-in POST, which Chrome sends in a different header order than the
+    app-token and refresh POSTs (see ``_CHROME_LOGIN_HEADER_ORDER``).
 
     A curl_cffi failure mid-request must NOT retry on aiohttp: the auth POSTs are not
     idempotent (``/gw/refresh`` invalidates the refresh
@@ -254,6 +360,7 @@ async def async_auth_post(
             json_payload=json_payload,
             headers=headers,
             use_curl_cffi_headers=use_curl_cffi_headers,
+            kind="login" if login else "auth",
             owner=session,
         )
     except Exception as err:
@@ -270,27 +377,46 @@ async def async_auth_post(
 # cost ~67 ms extra per call when measured against the live host (~113 ms vs ~46 ms), which
 # across a ~35-request poll is ~2.4 s of pure handshake on the critical path.
 #
-# Keyed by the loop, header mode and owning aiohttp session. Each entry owns its HTTP
+# Keyed by the loop, header profile and owning aiohttp session. Each entry owns its HTTP
 # session, so cookies cannot flow between accounts while connections are reused within
 # one entry. Home Assistant can also tear down and recreate its loop (tests do).
-_SHARED_SESSIONS: dict[tuple[Any, bool, ClientSession | None], Any] = {}
+#
+# The header profile is the request kind -- "xhr" (data calls), "auth" (refresh, app token),
+# "login" or "navigation" (page loads), each with its pinned Chrome header order -- or "curl"
+# (curl_cffi's own Chrome preset and order, which serves every kind). Header order is a
+# per-session curl option, hence one session per profile; the sessions of one entry share a
+# cookie jar, as a browser's page and its XHRs do.
+_SHARED_SESSIONS: dict[tuple[Any, str, ClientSession | None], Any] = {}
 
 
 def _shared_curl_session(
-    use_curl_cffi_headers: bool = False, owner: ClientSession | None = None
+    use_curl_cffi_headers: bool = False,
+    owner: ClientSession | None = None,
+    *,
+    kind: str = "xhr",
 ) -> Any | None:
-    """Return the pooled curl_cffi session for this entry and event loop."""
+    """Return the pooled curl_cffi session for this entry, event loop and header profile."""
     if _ASYNC_SESSION_CLS is None:
         return None
     loop = asyncio.get_running_loop()
-    key = (loop, use_curl_cffi_headers, owner)
+    profile = "curl" if use_curl_cffi_headers else kind
+    key = (loop, profile, owner)
     session = _SHARED_SESSIONS.get(key)
     if session is None:
-        options = (
-            {}
-            if use_curl_cffi_headers
-            else {"curl_options": {_CURL_OPT.HTTPHEADER_ORDER: _CHROME_XHR_HEADER_ORDER}}
+        options: dict[str, Any] = {}
+        if profile != "curl":
+            options["curl_options"] = {_CURL_OPT.HTTPHEADER_ORDER: _HEADER_ORDERS[profile]}
+        sibling = next(
+            (
+                pooled
+                for (pooled_loop, _profile, pooled_owner), pooled in _SHARED_SESSIONS.items()
+                if pooled_loop is loop and pooled_owner is owner
+            ),
+            None,
         )
+        # curl_cffi adopts a plain CookieJar as-is (it copies a Cookies object instead).
+        if (jar := getattr(getattr(sibling, "cookies", None), "jar", None)) is not None:
+            options["cookies"] = jar
         session = _ASYNC_SESSION_CLS(**options)
         _SHARED_SESSIONS[key] = session
     return session
@@ -327,6 +453,7 @@ async def _curl_cffi_request(
     json_payload: dict[str, Any] | None,
     headers: dict[str, str] | None,
     use_curl_cffi_headers: bool = False,
+    kind: str = "xhr",
     owner: ClientSession | None = None,
 ) -> AuthResponse | None:
     """Perform the request through curl_cffi with Chrome impersonation.
@@ -335,7 +462,7 @@ async def _curl_cffi_request(
     back to aiohttp. The class is imported once at module load (off the event loop), and the
     session itself is pooled per entry (see ``_shared_curl_session``) so connections are reused.
     """
-    curl_session = _shared_curl_session(use_curl_cffi_headers, owner)
+    curl_session = _shared_curl_session(use_curl_cffi_headers, owner, kind=kind)
     if curl_session is None:
         return None
 
@@ -344,7 +471,12 @@ async def _curl_cffi_request(
     curl_headers = {
         name: value for name, value in (headers or {}).items() if name.lower() != "accept-encoding"
     }
-    if use_curl_cffi_headers:
+    if use_curl_cffi_headers and kind == "navigation":
+        # curl_cffi's Chrome preset already is a page navigation; only the locale is ours.
+        curl_headers = {
+            name: value for name, value in curl_headers.items() if name.lower() == "accept-language"
+        }
+    elif use_curl_cffi_headers:
         curl_headers = {
             name: value
             for name, value in curl_headers.items()
@@ -362,6 +494,14 @@ async def _curl_cffi_request(
                 "Upgrade-Insecure-Requests": None,
             }
         )
+    if (
+        json_payload is None
+        and method.upper() in _CURL_BODY_METHODS
+        and not any(name.lower() == "content-type" for name in curl_headers)
+    ):
+        # libcurl gives a bodiless POST "application/x-www-form-urlencoded"; a browser's
+        # fetch() without a body sends no Content-Type at all.
+        curl_headers["Content-Type"] = None
 
     response = await curl_session.request(
         method,

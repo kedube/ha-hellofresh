@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Verbinden mislukt",
       "bot_blocked": "De botbeveiliging van HelloFresh heeft deze aanmelding geblokkeerd, dus je e-mailadres en wachtwoord zijn niet gecontroleerd. Probeer het over een paar minuten opnieuw. Blijft het gebeuren, voeg HelloFresh dan toe met de optie \"Toegangstoken (geavanceerd)\".",
+      "bot_blocked_token": "De botbeveiliging van HelloFresh heeft dit verzoek geblokkeerd, dus je token is niet gecontroleerd. Probeer het over een paar minuten opnieuw.",
       "invalid_auth": "Ongeldige inloggegevens",
+      "email_not_registered": "HelloFresh heeft geen account met dit e-mailadres in het gekozen land. Controleer het adres en of het land overeenkomt met dat van je account.",
+      "wrong_password": "HelloFresh heeft dit wachtwoord niet geaccepteerd. Als je bij HelloFresh inlogt met Google, Apple of Facebook, heeft je account misschien geen wachtwoord; gebruik dan de optie \"Toegangstoken (geavanceerd)\".",
       "invalid_token": "Dit token kon niet worden gelezen of is geweigerd"
     },
     "abort": {

@@ -188,6 +188,14 @@ class HelloFreshAuthError(HelloFreshError):
     """Raised when authentication fails."""
 
 
+class HelloFreshLoginRejectedError(HelloFreshAuthError):
+    """Raised when /gw/login rejects the email/password (HTTP 401/403 from the login API).
+
+    Handled everywhere as the auth failure it is; setup also uses it to tell an unknown email
+    from a wrong password (see ``TokenManager.async_email_registered``).
+    """
+
+
 class HelloFreshBotBlockedError(HelloFreshError):
     """Raised when HelloFresh's bot protection rejects a sign-in before it reaches the login API.
 

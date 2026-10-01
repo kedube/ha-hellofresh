@@ -11,6 +11,8 @@ import json
 from types import SimpleNamespace
 from urllib.parse import quote
 
+import pytest
+
 from custom_components.hellofresh.config_flow import HelloFreshConfigFlow, HelloFreshOptionsFlow
 from custom_components.hellofresh.const import (
     CONF_ACCESS_TOKEN,
@@ -302,6 +304,173 @@ def test_credentials_bot_block_gets_its_own_error(monkeypatch) -> None:
     raised.append(HelloFreshError("timeout"))
     result = _run(flow.async_step_credentials(user_input))
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+_LOGIN_TOKENS = {
+    "access_token": "access-1",
+    "refresh_token": "refresh-1",
+    "issued_at": 1_790_000_000,
+    "expires_in": 1800,
+    "refresh_expires_in": 5184000,
+    "refresh_token_issued_at": 1_790_000_000,
+    "token_type": "Bearer",
+}
+
+
+def _stub_login_client(
+    monkeypatch, *, raises: Exception | None = None, registered: bool | None = None
+) -> list[str]:
+    """Replace the flow's client with one whose validation login reports ``_LOGIN_TOKENS``.
+
+    Returns the emails the flow asked ``async_email_registered`` about (answered ``registered``).
+    """
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+
+    email_checks: list[str] = []
+
+    class _Client:
+        def __init__(self, *, token_refresh_callback=None, **_kwargs) -> None:
+            self._token_refresh_callback = token_refresh_callback
+
+        async def async_validate_credentials(self):
+            if raises is not None:
+                raise raises
+            if self._token_refresh_callback is not None:
+                self._token_refresh_callback(dict(_LOGIN_TOKENS))
+            return {"account_id": "acct-1"}
+
+        async def async_email_registered(self, email):
+            email_checks.append(email)
+            return registered
+
+    monkeypatch.setattr(config_flow, "HelloFreshClient", _Client)
+    monkeypatch.setattr(
+        config_flow,
+        "async_create_clientsession",
+        lambda _hass, **_kwargs: type("Session", (), {"detach": lambda self: None})(),
+    )
+    return email_checks
+
+
+@pytest.mark.parametrize(
+    ("registered", "error"),
+    [(False, "email_not_registered"), (True, "wrong_password"), (None, "invalid_auth")],
+)
+def test_rejected_login_says_whether_the_email_or_the_password_is_wrong(
+    monkeypatch, registered, error
+) -> None:
+    """After a rejected login, HelloFresh's email check picks the message; no answer, generic."""
+    from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415
+
+    checks = _stub_login_client(
+        monkeypatch,
+        raises=HelloFreshLoginRejectedError("HelloFresh login failed: HTTP 401"),
+        registered=registered,
+    )
+    flow = _make_flow()
+
+    result = _run(
+        flow.async_step_credentials(
+            {CONF_COUNTRY: "be", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": error}
+    assert checks == ["u@example.com"]
+
+
+def test_other_auth_failures_skip_the_email_check(monkeypatch) -> None:
+    """Only a rejected email/password is explained; other auth failures stay generic."""
+    from custom_components.hellofresh.api import HelloFreshAuthError  # noqa: PLC0415
+
+    checks = _stub_login_client(
+        monkeypatch, raises=HelloFreshAuthError("login response did not include an access token")
+    )
+    flow = _make_flow()
+
+    result = _run(
+        flow.async_step_credentials(
+            {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert checks == []
+
+
+def test_reauth_explains_a_rejected_login_too(monkeypatch) -> None:
+    """The reauth form runs the same check: an unregistered email is named as such."""
+    from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415
+
+    checks = _stub_login_client(
+        monkeypatch, raises=HelloFreshLoginRejectedError("HTTP 401"), registered=False
+    )
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_USERNAME: "old@example.com"})
+
+    _run(flow.async_step_reauth({}))
+    result = _run(
+        flow.async_step_reauth_confirm({CONF_USERNAME: "new@example.com", CONF_PASSWORD: "pw"})
+    )
+
+    assert result["errors"] == {"base": "email_not_registered"}
+    assert checks == ["new@example.com"]
+    assert flow._updated == {}
+
+
+def test_credentials_entry_keeps_the_validation_login_tokens(monkeypatch) -> None:
+    """Setup starts from the token the validation login obtained, not a second login."""
+    _stub_login_client(monkeypatch)
+    flow = _make_flow()
+
+    result = _run(
+        flow.async_step_credentials(
+            {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == {
+        CONF_USERNAME: "u@example.com",
+        CONF_PASSWORD: "pw",
+        CONF_COUNTRY: "us",
+        **_LOGIN_TOKENS,
+    }
+
+
+def test_reauth_replaces_dead_tokens_with_the_validation_login_tokens(monkeypatch) -> None:
+    """A password reauth stores the fresh tokens, so the reload doesn't retry the dead ones."""
+    _stub_login_client(monkeypatch)
+    flow = _make_reconfigure_flow(
+        {
+            CONF_COUNTRY: "us",
+            CONF_USERNAME: "u@example.com",
+            CONF_ACCESS_TOKEN: "dead-access",
+            CONF_REFRESH_TOKEN: "dead-refresh",
+        }
+    )
+
+    _run(flow.async_step_reauth({}))
+    result = _run(
+        flow.async_step_reauth_confirm({CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"})
+    )
+
+    assert result["reason"] == "reauth_successful"
+    assert flow._updated["data_updates"][CONF_ACCESS_TOKEN] == "access-1"
+    assert flow._updated["data_updates"][CONF_REFRESH_TOKEN] == "refresh-1"
+
+
+def test_token_path_bot_block_gets_a_token_specific_error(monkeypatch) -> None:
+    """A Cloudflare block while checking a pasted token is not reported as "could not connect"."""
+    from custom_components.hellofresh.api import HelloFreshBotBlockedError  # noqa: PLC0415
+
+    _stub_login_client(monkeypatch, raises=HelloFreshBotBlockedError("blocked: HTTP 403"))
+    flow = _make_flow()
+
+    result = _run(flow.async_step_token({CONF_COUNTRY: "be", CONF_TOKEN: "just-a-token"}))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "bot_blocked_token"}
 
 
 def test_token_path_parses_blob_and_stores_tokens_without_credentials() -> None:

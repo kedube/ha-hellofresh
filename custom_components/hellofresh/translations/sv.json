@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Det gick inte att ansluta",
       "bot_blocked": "HelloFreshs bot-skydd blockerade den här inloggningen, så din e-post och ditt lösenord kontrollerades inte. Försök igen om några minuter. Om det fortsätter, lägg till HelloFresh med alternativet \"Åtkomsttoken (avancerat)\" i stället.",
+      "bot_blocked_token": "HelloFreshs bot-skydd blockerade den här begäran, så din token kontrollerades inte. Försök igen om några minuter.",
       "invalid_auth": "Ogiltiga inloggningsuppgifter",
+      "email_not_registered": "HelloFresh har inget konto med den här e-postadressen i det valda landet. Kontrollera adressen och att landet är det ditt konto hör till.",
+      "wrong_password": "HelloFresh godkände inte det här lösenordet. Om du loggar in på HelloFresh med Google, Apple eller Facebook har ditt konto kanske inget lösenord; använd alternativet \"Åtkomsttoken (avancerat)\" i stället.",
       "invalid_token": "Denna token kunde inte läsas eller avvisades"
     },
     "abort": {

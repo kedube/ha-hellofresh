@@ -88,43 +88,54 @@ The integration authenticates the same way the HelloFresh web app does: it logs 
 
 Setup offers **two paths** (a menu in [config_flow.py](../custom_components/hellofresh/config_flow.py)):
 
-1. **Credentials (recommended)** — store email + password; the runtime logs in and self-heals across token expiry/rotation indefinitely.
+1. **Credentials (recommended)** — store email + password; the runtime logs in and self-heals across token expiry/rotation indefinitely. The tokens from the login that validated the credentials are stored with them, so setup (and the reload after a reauth or reconfigure) starts from that token instead of logging in again seconds later.
 2. **Token (advanced backup)** — paste the website's `apiV2Auth` value (a JSON auth object, plain or URL-encoded) or a bare access token. No credentials are stored, so the entry works only until the refresh token expires (~60 days) or HelloFresh rotates/invalidates it, at which point a reauth prompt is raised. This path exists as a fallback for when the Cloudflare bot-protection bypass cannot complete a credential `/gw/login` (see [Bot-protection handling](#bot-protection-waf-handling)). The paste is parsed by `parsers.token_payload_to_entry_data` (URL-decoded if needed; missing timing backfilled from the access token's JWT `iat`/`exp`).
 
 Either way, `async_setup_entry` requires an entry to carry **either** credentials **or** a token; a stale entry with neither triggers reauth. Token-only entries are intentional and are never forced to supply a password — reauth for them re-collects a token.
 
-Authenticated API calls send a full Chrome-on-Windows header set (`_DEFAULT_HEADERS` + the shared `_BROWSER_CLIENT_HINTS`):
+Authenticated API calls send the headers Chrome sends for the web app's own `fetch()` to a `/gw` endpoint (`_api_request_headers`: `_DEFAULT_HEADERS`, the shared `_BROWSER_CLIENT_HINTS` and `_BROWSER_DEVICE_HINTS`, and fresh `_tracing_headers` per request):
 
 ```http
 Authorization: Bearer <access_token>
-Accept: application/json, text/plain, */*
+Accept: */*
 Accept-Language: en-US,en;q=0.9
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
 Priority: u=1, i
 Accept-Encoding: gzip, deflate, br, zstd
-Cache-Control: no-cache
-Pragma: no-cache
 sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"
 sec-ch-ua-mobile: ?0
 sec-ch-ua-platform: "Windows"
+DPR: 1
+Viewport-Width: 1280
+traceparent: 00-<trace id>-<span id>-01
+x-b3-traceid: <trace id>
+x-b3-spanid: <span id>
+x-b3-sampled: 1
+x-request-id: <uuid>
 Sec-Fetch-Dest: empty
 Sec-Fetch-Mode: cors
 Sec-Fetch-Site: same-origin
-Origin: <regional base URL>
+Origin: <regional base URL>          (not on GET, as in Chrome)
 Referer: <regional base URL>/
 ```
+
+Every header above is on every captured `/gw` call (HAR 57, a normal Chrome 153 session). Up to 4.01 the integration also sent `Cache-Control: no-cache` and `Pragma: no-cache`, `Origin` on GETs, and `Accept: application/json, text/plain, */*`, and sent the viewport hints and tracing ids only on the auth POSTs. The cache headers came from a capture taken with DevTools' "Disable cache" on (its static assets carried them too). The longer `Accept` is one micro-frontend's axios client; nearly every `/gw` call uses fetch's `*/*`.
+
+Public website requests are sent as the browser's own (`_website_request_headers`): a page (the build-id scrape, the catalog's HTML fallback, the public menu) as a top-level navigation, and a `/_next/data/` route as the Next.js router's `fetch()` with `x-nextjs-data: 1`. Neither carries the token, tracing ids, feature headers or `Origin`.
 
 The `<token_type>` from the auth object is used in place of `Bearer` when the server returns a different one.
 
 The integration presents as **Google Chrome on Windows** rather than a headless identifier — HelloFresh's bot protection challenges recognizable non-browser clients (see [Bot-protection handling](#bot-protection-waf-handling)). A real Chrome emits all of the above on every XHR, and the *absence* of the Client Hints / `Sec-Fetch-*` metadata is itself a fingerprint tell, so they are sent alongside the `User-Agent`. Notes on internal consistency (mismatched fields are exactly what fingerprinting looks for):
 
-- **The standard UA client hints are low-entropy** (`sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`). Auth POSTs also send the observed `DPR` and `Viewport-Width` hints. The integration sent `sec-ch-ua-platform-version` up to 4.00; the captured `/gw` XHRs did not.
+- **The standard UA client hints are low-entropy** (`sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`). Every `/gw` call also sends the observed `DPR` and `Viewport-Width` hints; page loads do not, as in the captures. The integration sent `sec-ch-ua-platform-version` up to 4.00; the captured `/gw` XHRs did not.
 - **The Chrome major version is the one curl_cffi impersonates.** `tls_transport.py` resolves curl_cffi's rolling `"chrome"` target at import (`chrome150` in 0.16.3), and `_CHROME_MAJOR_VERSION` in `token_manager.py` takes its number, so the TLS/HTTP-2 fingerprint, the `User-Agent` `Chrome/NNN` token and the `sec-ch-ua` brands always claim the same Chrome; a curl_cffi upgrade moves all three. Without curl_cffi it is `_FALLBACK_CHROME_MAJOR_VERSION`. (Up to 4.00 the headers were pinned to Chrome 138, while curl_cffi 0.16.3 impersonates Chrome 150.)
-- **The header source is a per-entry option.** By default, every auth and data request passes `default_headers=False` so curl_cffi cannot add `Upgrade-Insecure-Requests: 1` or `Sec-Fetch-User: ?1` beside `Sec-Fetch-Mode: cors`. That entry's pooled session pins Chrome's XHR header order with `CurlOpt.HTTPHEADER_ORDER`; the integration supplies the browser headers. The experimental option passes `default_headers=True` through a separate per-entry pool without an order override. It keeps API-required headers and overrides page navigation fetch metadata to XHR values, suppressing `Upgrade-Insecure-Requests` and `Sec-Fetch-User`. This applies to every region and to the access-token path.
+- **The header source is a per-entry option.** By default, every auth and data request passes `default_headers=False` so curl_cffi cannot add `Upgrade-Insecure-Requests: 1` or `Sec-Fetch-User: ?1` beside `Sec-Fetch-Mode: cors`. That entry's pooled sessions pin Chrome's header order with `CurlOpt.HTTPHEADER_ORDER` (see **Header order** below); the integration supplies the browser headers. The experimental option passes `default_headers=True` through a separate per-entry pool without an order override. It keeps API-required headers and overrides page navigation fetch metadata to XHR values, suppressing `Upgrade-Insecure-Requests` and `Sec-Fetch-User`. This applies to every region and to the access-token path.
 - **The `sec-ch-ua` brand list is computed per version** (`_sec_ch_ua`), with Chromium's GREASE algorithm: the "Not A Brand" spelling, its version and the order of the three brands all rotate with the major version, so a fixed string is right for one release only. Pinned by tests against real Chrome 120/124/131/153 headers and curl_cffi's chrome150.
 - **Encoding follows the transport.** curl_cffi requests pass `gzip, deflate, br, zstd` through libcurl's `accept_encoding` option, which also decodes the response. The aiohttp fallback uses `_browser_accept_encoding` and advertises only Python decoders present in Home Assistant. The integration pins `Brotli` so `br` remains available there.
 - **`Accept-Language` follows the account locale**, with a regional language and English fallback (for example `nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7` for Belgium), rather than claiming `en-US` in every country.
-- `Origin`/`Referer` point at the regional base URL so `Sec-Fetch-Site: same-origin` is consistent with an in-page XHR.
+- **Header order is Chrome's own, captured from Chrome 154** running the web app's `fetch()` calls (HAR exports sort HTTP/2 headers alphabetically, so they cannot show it). Chrome's `fetch()` order has three parts: `content-length` first; then the client hints, `User-Agent` and the app's headers in an order set by Blink's header hash map, which is deterministic but changes with the exact header set; then a fixed tail `accept, origin, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, accept-encoding, accept-language, cookie`, with `priority` last on HTTP/2. curl takes one order per session, so the app-token and refresh POSTs, the login POST, the data calls and page loads each get a session with their own order (`_CHROME_AUTH_HEADER_ORDER`, `_CHROME_LOGIN_HEADER_ORDER`, `_CHROME_XHR_HEADER_ORDER`, `_CHROME_NAVIGATION_HEADER_ORDER` in `tls_transport.py`). Login needs its own because the sign-in page's axios client sets `Accept` itself, which moves it from the fixed tail into the middle block, before `content-type`. Login, refresh, app token, the common data `GET` and page loads match Chrome exactly on the wire; other data calls get the prefix and the fixed tail right, with the middle block approximate. `tests/test_tls_transport.py` pins all of this against the captures. Up to 4.01 `content-length` and `cookie` went last and `accept` came before the app's headers.
+- **A bodiless POST sends no `Content-Type`**, like Chrome's `fetch()` (the `/gw/auth/token` call). libcurl would otherwise label it `application/x-www-form-urlencoded`.
+- `Origin` (on non-GET calls) and `Referer` point at the regional base URL so `Sec-Fetch-Site: same-origin` is consistent with an in-page XHR.
 
 > **These changes only address the application (HTTP) layer.** They do **not** change the TLS or HTTP/2 fingerprint. All HelloFresh regional properties sit behind **Cloudflare**, and `aiohttp` (Python + OpenSSL) produces a non-browser **JA3/JA4 TLS fingerprint** and HTTP/2 settings/header-order that do not match Chrome. A region with stricter Cloudflare Bot Management — observed on **`www.hellofresh.co.uk`**, which returns an HTML `403` to the integration while the US property accepts the identical headers — rejects the request on the TLS/transport fingerprint *before the headers are even evaluated*, so no header change can fix it. Defeating that requires a browser-impersonating TLS stack. The integration now does this for **both the auth POSTs and the authenticated data XHRs**: when `curl_cffi` is installed it routes those requests through a real Chrome TLS/HTTP2 fingerprint (see [TLS-impersonating transport](#tls-impersonating-transport) below), falling back to `aiohttp` when it is not.
 
@@ -154,7 +165,7 @@ Confirmed from UK traffic where the site posts `{"country":"GB"}` to `/gw/auth/e
 A subscription's own `locale` from the account payload overrides the default locale once
 loaded.
 
-All three auth POSTs (`_auth_headers`) present the same **Chrome-on-Windows-11 header set** — the current Chrome `User-Agent`, `Accept-Language`, `Priority`, the `sec-ch-ua*` Client Hints and `Sec-Fetch-*` metadata (shared `_BROWSER_CLIENT_HINTS`), and `Origin`/`Referer` derived from the regional base URL (the `Referer` is `<base>/login`, matching the login page the web app sends these from). HelloFresh fronts its endpoints with bot protection that fingerprints non-browser clients; a recognizable headless `User-Agent` is challenged with an HTML block page instead of a JSON API response. Presenting a full browser header set is a best-effort way past that layer and can break whenever the protection is retuned.
+All three auth POSTs (`_auth_headers`) present the same **Chrome-on-Windows-11 header set** — the current Chrome `User-Agent`, `Accept-Language`, `Priority`, the `sec-ch-ua*` Client Hints, viewport hints, tracing ids and `Sec-Fetch-*` metadata, and `Origin`/`Referer` derived from the regional base URL (the `Referer` is `<base>/login`, matching the login page the web app sends these from). They differ as the web app's two HTTP clients do (HAR 59 for login and the app token, HAR 53 for refresh). The app token and refresh come from its `fetch()` client: `Accept: */*` and an `x-request-id`; refresh sends `Content-Type: text/plain;charset=UTF-8`, and the bodiless app-token POST no `Content-Type`. The sign-in page posts `/gw/login` with its axios client: `Accept: application/json, text/plain, */*`, `Content-Type: application/json`, and tracing ids without `x-request-id`. HelloFresh fronts its endpoints with bot protection that fingerprints non-browser clients; a recognizable headless `User-Agent` is challenged with an HTML block page instead of a JSON API response. Presenting a full browser header set is a best-effort way past that layer and can break whenever the protection is retuned.
 
 ### Bot-protection (WAF) handling
 
@@ -164,6 +175,8 @@ A `401`/`403` whose body is **HTML** (or whose `Content-Type` contains `html`), 
 - this keeps a block from surfacing to the user as "wrong password": the coordinator treats it as `UpdateFailed` / a skipped proactive refresh and retries on the next poll, rather than raising `ConfigEntryAuthFailed` and prompting for reauthentication
 - because the block raises `HelloFreshError` (not `HelloFreshAuthError`), the refresh-then-login fallback does **not** fire — the integration will not hammer the same WAF with a credential login, and the existing refresh token is preserved
 - a `401`/`403` with a JSON body and no Cloudflare challenge/error marker is treated as a credential or refresh-token rejection and raises `HelloFreshAuthError`
+
+Data calls are checked the same way before any token refresh, with one distinction. A `/gw` API call answering HTML is a block at any status. A public website page or Next.js route (the build-id scrape, the catalog's `__NEXT_DATA__` fallback, the public-menu page) is HTML by design, so there only a `401`/`403`/`429` or a `cf-mitigated: challenge` header counts. Up to 4.01 every HTML response counted, so loading All Recipes or the public-menu fallback paused all requests.
 
 The per-entry **Log authentication diagnostics** option is on by default and can be changed on either initial setup form or later in Configure. When enabled, successful auth steps log their endpoint and HTTP status. Failed login, refresh, and app-token responses report `cf-mitigated=challenge` when present, a Cloudflare 10xx error code extracted from the response (1020 means firewall rule; 1010 means browser signature block), and a validated `cf-ray`/Ray ID. The added diagnostic fields never contain raw response bodies or arbitrary header values.
 
@@ -177,20 +190,20 @@ When an auth or data request is blocked by bot protection, further API attempts 
 
 ### TLS-impersonating transport
 
-[tls_transport.py](../custom_components/hellofresh/tls_transport.py) routes **both** the three `/gw` auth POSTs (`/gw/auth/token`, `/gw/login`, `/gw/refresh`) **and the authenticated data XHRs** (every call through `_async_api_request` / `_async_api_get` — subscriptions, deliveries, menus, billing, cart pricing, meal-selection, etc.) through [`curl_cffi`](https://github.com/lexiforest/curl_cffi) with `impersonate="chrome"`, which performs the TLS handshake and HTTP/2 framing with a **real Chrome fingerprint** — the part `aiohttp` cannot fake and the part stricter-region Cloudflare blocks on. `curl_cffi` is pinned in [manifest.json](../custom_components/hellofresh/manifest.json) so Home Assistant installs it.
+[tls_transport.py](../custom_components/hellofresh/tls_transport.py) routes **both** the three `/gw` auth POSTs (`/gw/auth/token`, `/gw/login`, `/gw/refresh`) **and the authenticated data XHRs** (every call through `_async_api_request` / `_async_api_get` — subscriptions, deliveries, menus, billing, cart pricing, meal-selection, etc.) **and the public-menu page load** through [`curl_cffi`](https://github.com/lexiforest/curl_cffi) with `impersonate="chrome"`, which performs the TLS handshake and HTTP/2 framing with a **real Chrome fingerprint** — the part `aiohttp` cannot fake and the part stricter-region Cloudflare blocks on. `curl_cffi` is pinned in [manifest.json](../custom_components/hellofresh/manifest.json) so Home Assistant installs it.
 
 The data calls need the same impersonation as the auth calls: Cloudflare fingerprints the **connection**, which is identical whether the request is a login POST or a menu GET, so a region tuned to block the transport would otherwise let login through (now impersonated) but still 403 the very next data poll.
 
 Two entry points share one curl_cffi core:
 
-- `async_request(session, method, url, …)` — the general path, used by `_async_api_request` for any verb (GET/POST/PATCH/…). Its aiohttp fallback uses `session.request`.
+- `async_request(session, method, url, …)` — the general path, used by `_async_api_request` for any verb (GET/POST/PATCH/…) and, with `navigation=True`, by the public-menu page load. Its aiohttp fallback uses `session.request`.
 - `async_auth_post(session, url, …)` — a POST convenience for the auth calls. Its aiohttp fallback uses `session.post`, exactly preserving the original auth-POST behavior.
 
 Design notes:
 
-- **Graceful degradation.** Both entry points fall back to the `aiohttp` session when `curl_cffi` is not importable **or** if a `curl_cffi` call raises at the transport level, so a missing/broken optional dependency never makes things worse than the `aiohttp`-only baseline. `TokenManager` logs (at debug) which transport is active on startup.
+- **Graceful degradation.** Both entry points fall back to the `aiohttp` session when `curl_cffi` is not importable. A `curl_cffi` call that fails mid-request raises `aiohttp.ClientError` instead of being replayed through `aiohttp`: it may already have reached HelloFresh, and a resent auth POST would spend the refresh token twice. `TokenManager` logs (at debug) which transport is active on startup.
 - **Uniform response.** The `aiohttp` path returns its native response; the `curl_cffi` path returns a small `AuthResponse` adapter exposing the same `status` / `headers` / awaitable `text()` / `json()` slice that callers and `_async_response_json` use, so the WAF/bot-block handling and JSON decoding are identical regardless of transport.
-- **Pooled curl sessions.** Impersonated calls reuse a `curl_cffi` `AsyncSession` per entry, event loop, and header mode. This isolates account cookies. The default mode sets `CurlOpt.HTTPHEADER_ORDER` for Chrome XHRs and passes `default_headers=False`. The optional curl_cffi mode uses the library's own browser headers and order with XHR fetch metadata overrides.
+- **Pooled curl sessions.** Impersonated calls reuse a `curl_cffi` `AsyncSession` per entry, event loop, and header profile. The default mode passes `default_headers=False` and pins the header order with `CurlOpt.HTTPHEADER_ORDER`, which is a per-session option: data calls, auth POSTs and page loads each use their own session with the matching Chrome order (see **Header order** above). The optional curl_cffi mode uses the library's own browser headers and order: XHRs get fetch-metadata overrides, and page loads keep the preset as it is (it already is a navigation) apart from `Accept-Language`. An entry's sessions share one cookie jar, so the page load sends the cookies its XHRs received, while different accounts never share cookies.
 - **curl decoding includes zstd.** The curl transport removes aiohttp's conservative `Accept-Encoding` header and sets libcurl's `accept_encoding="gzip, deflate, br, zstd"`; libcurl advertises and decodes those encodings. An aiohttp fallback retains the safe Python-decoder list.
 - **Impersonation target** is the rolling `"chrome"` alias rather than a pinned `chromeNNN`, so a `curl_cffi` upgrade that drops an old version token doesn't break the integration.
 - **Certificate verification stays on.** The `curl_cffi` request passes `verify=True` explicitly (`tls_transport.py`), so impersonating Chrome's *fingerprint* never silently disables TLS certificate validation — the connection is still authenticated against the CA store like the `aiohttp` path.
@@ -207,8 +220,8 @@ A full login runs in two steps, mirroring the web app:
 Notes:
 
 - The `client_id` is `senf` (the web app's `NEXT_PUBLIC_GW_CLIENT_ID`), defined as `GW_CLIENT_ID` in [const.py](../custom_components/hellofresh/const.py).
-- Step 1's response is **not retained** — the app token only primes the gateway. The request is best-effort: any failure is logged and ignored. The web app has been observed reaching `/gw/login` **without** a preceding `/gw/auth/token` call and **without** an `Authorization` header, so step 1 appears optional; it is kept as harmless defensive priming.
-- Step 2 is confirmed against live traffic: `POST /gw/login?country=<CC>&locale=<locale>` with body exactly `{"username", "password"}`, no `Authorization` header. It returns the auth object below. A `401`/`403` raises `HelloFreshAuthError` (bad credentials); any other `>= 400` raises `HelloFreshError`. (The login *response* body is redacted in transit logs, but its field shape is the same auth object returned by `/gw/refresh`.)
+- Step 1's response is **not retained** — the app token only primes the gateway. The request is best-effort: any failure is logged and ignored. The web app has been observed reaching `/gw/login` **without** a preceding `/gw/auth/token` call and **without** an `Authorization` header, so step 1 appears optional; it is kept as harmless defensive priming. In HAR 59 the app token was fetched on the page before sign-in (`?client_id=senf&grant_type=client_credentials`, in that order), and the sign-in page then posted `{"email", "country"}` to `/gw/auth/email/status` (answer: `{"registered"}`) about 0.2 s before `/gw/login`. The integration does not make that call before signing in, so a successful sign-in sends nothing extra. Setup, reauth and reconfigure make it only after `/gw/login` rejects the credentials (`HelloFreshLoginRejectedError`, a `HelloFreshAuthError`), through `TokenManager.async_email_registered` with the sign-in page's headers and header order: `registered: false` shows `email_not_registered` (no account with that email in the selected country, which also catches a wrong country choice), `registered: true` shows `wrong_password` (which notes that accounts using HelloFresh's Google, Apple or Facebook sign-in may have no password), and no clear answer — an error, a timeout, an unexpected body — keeps the generic `invalid_auth`. A bot-protection block on the check starts the usual cooldown, but the form still reports the login rejection.
+- Step 2 is confirmed against live traffic (most recently HAR 59, Chrome 154): `POST /gw/login?country=<CC>&locale=<locale>` with body exactly `{"username", "password"}`, no `Authorization` header. It returns the auth object below. A `401`/`403` raises `HelloFreshAuthError` (bad credentials); any other `>= 400` raises `HelloFreshError`. (The login *response* body is redacted in transit logs, but its field shape is the same auth object returned by `/gw/refresh`.)
 
 ### Auth object
 
@@ -298,17 +311,17 @@ Access tokens are short-lived (≈30 min) while the data poll interval can be ho
 
 1. **Proactive refresh decision** ([client.py](../custom_components/hellofresh/client.py), `_token_expiring_soon`): the token is considered "due for refresh" once it has passed **half its lifetime**, or is within `_TOKEN_MIN_REMAINING_BEFORE_REFRESH` (300 s) of expiry, whichever comes first. The half-life window is intentionally wide so a periodically-firing timer reliably lands inside it before expiry. (Missing expiry metadata is treated as "refresh now.")
 2. **Dedicated refresh timer** ([coordinator.py](../custom_components/hellofresh/coordinator.py), `async_start_token_refresh`): an `async_track_time_interval` timer, independent of the data poll, calls `client.async_ensure_token_fresh()`. Its cadence is derived from the token lifetime (`TOKEN_REFRESH_LIFETIME_FRACTION = 0.25`, i.e. a quarter of the lifetime), clamped to 2–10 minutes. A quarter-lifetime tick guarantees at least one firing inside the back-half refresh window.
-3. **Reactive retry** ([client.py](../custom_components/hellofresh/client.py), `_async_api_request`): after a single `401`/`403` on an authenticated call, the client forces one refresh and retries the request once. The forced refresh happens under `_token_refresh_lock` and re-checks whether the access token already changed first, so when many concurrent requests `401` together only the first rotates the refresh token (HelloFresh invalidates a refresh token on use, so a second rotation would burn the token the first waiter just obtained).
+3. **Reactive retry** ([client.py](../custom_components/hellofresh/client.py), `_async_api_request`): after a `401` on an authenticated call — or a `403` while the access token is at or near expiry — the client forces one refresh and retries the request once. A `403` on a token with comfortable life left means the call is not allowed, not that the token expired, so it raises `HelloFreshError` without refreshing. The forced refresh happens under `_token_refresh_lock` and re-checks whether the access token already changed first, so when many concurrent requests `401` together only the first rotates the refresh token (HelloFresh invalidates a refresh token on use, so a second rotation would burn the token the first waiter just obtained).
 
 > **Why both a wide window and a sub-lifetime tick?** An earlier version refreshed only within 5 min of expiry on a 20-min timer; the timer stepped over that narrow window and the token died for ~10 min each cycle. Refreshing at half-life with a quarter-lifetime tick removes that gap. See the regression test `test_token_refresh_timer_never_lets_token_expire`.
 
-A concurrency lock (`_token_refresh_lock`) ensures only one refresh runs at a time; both the proactive and reactive paths re-check expiry inside the lock so simultaneous callers don't refresh twice.
+A concurrency lock (`_token_refresh_lock`) ensures only one refresh runs at a time; both the proactive and reactive paths re-check expiry inside the lock so simultaneous callers don't refresh twice. A *failed* attempt is shared the same way: for `_REFRESH_FAILURE_REUSE_SECONDS` (60 s) every queued caller gets that failure instead of repeating the refresh-then-login chain, so a poll's concurrent requests cannot turn one rejected refresh into a burst of password logins. Bot blocks are paced by their own backoff instead.
 
 **Persisting refreshed tokens without a reload:** when a token is refreshed, the new token cache is written back to the config entry so it survives a restart. Because the live client already holds the new token in memory, the integration flags this as a token-only update (`TOKEN_ONLY_UPDATE_KEY` in [\_\_init\_\_.py](../custom_components/hellofresh/__init__.py)) so the config-entry update listener skips the otherwise-costly full integration reload. The user's email and password live in `entry.data` and are owned by the runtime login/refresh flow; options store only user preferences (scan interval, public-menu fallback toggle, and the past-history window — `history_weeks`). Changing the `history_weeks` option triggers a full integration reload (it is consumed when the client is constructed), whereas a token-only update deliberately skips the reload.
 
 **Refresh-token expiry:** `_refresh_token_expired` compares `refresh_token_issued_at + refresh_expires_in` against now (anchored to when the *refresh token* was issued — login or the last rotation — not the access token's issue time). When the refresh token has expired, the client skips `/gw/refresh` and goes straight to a credential login. Only if that login also fails (or no credentials are stored) does it raise `HelloFreshAuthError`, which the coordinator turns into a Home Assistant reauthentication prompt.
 
-**Recovering a partially-valid token after a reboot:** a proactive (half-life) refresh that fails with `HelloFreshAuthError` is tolerated when the current access token has not yet hard-expired (`_access_token_still_valid`) — e.g. just after a reboot when the stored access token still has life but the refresh token was already rotated in a prior session. The integration logs a warning and keeps using the existing token; the reactive 401 path surfaces a genuine expiry later.
+**Recovering a partially-valid token after a reboot:** a proactive (half-life) refresh that fails — rejected (`HelloFreshAuthError`) or transient (a `5xx`, timeout or connection error) — is tolerated when the current access token has not yet hard-expired (`_access_token_still_valid`), e.g. just after a reboot when the stored access token still has life but the refresh token was already rotated in a prior session. The integration logs a warning and keeps using the existing token; the next timer tick retries, and the reactive 401 path surfaces a genuine expiry later. A bot block is not tolerated this way: its backoff pauses every request.
 
 The logged-in web app sends these feature/versioning headers on its authenticated account and menu XHRs, and the integration now sends them on **every** authenticated request (`_FEATURE_HEADERS`):
 
@@ -1140,11 +1153,16 @@ fallback is enabled. It exposes no personal data — no selections, dates, or sh
 | --- | --- | --- |
 | Fetch public menu HTML | `GET` | `/menus` |
 
-This is HTML, not JSON. Because it is a **top-level document load** rather than a CORS XHR, the
-request overrides the shared XHR headers with the navigation values a real browser sends for a page
-(`Accept: text/html,…`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`,
-`Sec-Fetch-Site: none`, `Sec-Fetch-User: ?1`, `Upgrade-Insecure-Requests: 1`) while keeping the
-same `User-Agent` and Client Hints.
+This is HTML, not JSON. Because it is a **top-level document load** rather than a CORS XHR, it
+sends Chrome 150's navigation header set (`_NAVIGATION_HEADERS`, from curl_cffi's Chrome preset):
+`Accept: text/html,…,application/signed-exchange;v=b3;q=0.7`, `Sec-Fetch-Dest: document`,
+`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: none`, `Sec-Fetch-User: ?1`,
+`Upgrade-Insecure-Requests: 1` and `Priority: u=0, i`, with the same `User-Agent` and Client Hints
+as the API calls and no `Origin`, `Referer` or cache headers. It goes through the
+Chrome-impersonating transport in Chrome's navigation header order (`async_request(…,
+navigation=True)`). Up to 4.01 it was the one request still sent on `aiohttp`'s fingerprint, which a
+strict Cloudflare region answers with a `403`, and that block also paused the entry's auth and data
+calls.
 
 Parsing is intentionally shallow:
 
@@ -1976,13 +1994,14 @@ The client uses three main exception types:
 | Exception | Meaning |
 | --- | --- |
 | `HelloFreshError` | generic request, parsing, or payload problem |
-| `HelloFreshAuthError` | rejected login/refresh, `401/403` response, or no way to obtain a token |
+| `HelloFreshAuthError` | rejected login/refresh, `401` (or `403` on an expiring token) after a refresh-and-retry, or no way to obtain a token |
 | `HelloFreshNotImplementedError` | write flow could not be safely mapped to a working endpoint |
 
 HTTP behavior:
 
-- `401` and `403` on an authenticated call trigger one refresh-and-retry (which may renew via `/gw/refresh` or fall back to a credential login); if the retry still fails — or there is neither a usable refresh token nor stored credentials — the cached subscriptions are cleared and `HelloFreshAuthError` is raised
+- `401`, and `403` while the access token is at or near expiry, on an authenticated call trigger one refresh-and-retry (which may renew via `/gw/refresh` or fall back to a credential login); if the retry still fails — or there is neither a usable refresh token nor stored credentials — the cached subscriptions are cleared and `HelloFreshAuthError` is raised
 - a `401`/`403` on `/gw/login` (bad credentials) or on `/gw/refresh` (dead/rotated refresh token) raises `HelloFreshAuthError`
+- a `403` on a token with comfortable life left raises `HelloFreshError`: the endpoint is not allowed for this account, which a refresh cannot fix
 - any other `4xx` or `5xx` raises `HelloFreshError`
 - malformed JSON raises `HelloFreshError` (the decode path catches `aiohttp.ClientError` and `ValueError`/`JSONDecodeError`, not bare `Exception`)
 - malformed JSON on a `/gw/login` or `/gw/refresh` response, or one missing an `access_token`, raises `HelloFreshAuthError` (not `HelloFreshError`), so the coordinator surfaces it as an auth failure rather than a soft account-data warning
