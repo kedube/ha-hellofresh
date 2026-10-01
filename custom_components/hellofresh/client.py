@@ -59,6 +59,7 @@ from .parsers import (
 from .tls_transport import AuthResponse, async_request
 from .token_manager import (
     _BROWSER_CLIENT_HINTS,
+    _BROWSER_DEVICE_HINTS,
     _BROWSER_FETCH_HEADERS,
     _BROWSER_USER_AGENT,
     _TOKEN_MIN_REMAINING_BEFORE_REFRESH,  # noqa: F401 - re-exported for back-compat imports
@@ -68,6 +69,7 @@ from .token_manager import (
     _looks_like_bot_block,  # noqa: F401 - re-exported for back-compat imports
     _response_content_type,  # noqa: F401 - re-exported for back-compat imports
     _token_fingerprint,  # noqa: F401 - re-exported (used by __init__.py and tests)
+    _tracing_headers,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,20 +77,46 @@ _LOGGER = logging.getLogger(__name__)
 
 # HTTP status thresholds used when interpreting HelloFresh responses.
 _HTTP_BAD_REQUEST = 400
-_AUTH_FAILURE_STATUSES = frozenset({401, 403})
+_HTTP_UNAUTHORIZED = 401
+_HTTP_FORBIDDEN = 403
 
 # Upper bound on the cart-price response cache. Only a handful of weeks are priced at once,
 # but the cache key includes the (changing) week id and meal selection, so without a cap it
 # would grow slowly forever over the lifetime of a long-running client. FIFO-evicted.
 
+# Browser headers of a same-origin fetch() XHR. Accept is fetch's default, which nearly every
+# /gw call in the captures used (one micro-frontend's axios client aside).
 _DEFAULT_HEADERS = {
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "*/*",
     "Accept-Language": _browser_accept_language(api_locale(DEFAULT_COUNTRY)),
     "User-Agent": _BROWSER_USER_AGENT,
     "Priority": "u=1, i",
     **_BROWSER_FETCH_HEADERS,
     **_BROWSER_CLIENT_HINTS,
+    **_BROWSER_DEVICE_HINTS,
 }
+
+# A top-level page load, with the values Chrome sends for one (curl_cffi's chrome150 preset,
+# matched by Chrome 154): typed-URL fetch metadata with no Origin or Referer, the document
+# Accept and the highest priority. A normal page load sends no cache headers.
+_NAVIGATION_HEADERS = {
+    **_BROWSER_CLIENT_HINTS,
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": _BROWSER_USER_AGENT,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,"
+        "image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    ),
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1",
+    "Sec-Fetch-Dest": "document",
+    "Accept-Encoding": _BROWSER_FETCH_HEADERS["Accept-Encoding"],
+    "Priority": "u=0, i",
+}
+
+# Next.js data routes: the router fetches them as XHRs, unlike the pages they belong to.
+_NEXT_DATA_PREFIX = "/_next/data/"
 
 # Feature/versioning headers the logged-in web app sends on its authenticated account and
 # menu XHRs (observed in HAR captures). They pin the API/categorization variant the server
@@ -232,6 +260,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         """Validate configured bearer token against a real account endpoint."""
         subscription = await self._async_get_primary_subscription()
         return subscription.as_dict()
+
+    async def async_email_registered(self, email: str) -> bool | None:
+        """Return whether HelloFresh has an account for this email in this country, if known."""
+        return await self._tokens.async_email_registered(email)
 
     async def async_ensure_token_fresh(self) -> None:
         """Proactively refresh the access token when it is near expiry.
@@ -4509,26 +4541,23 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     async def _async_get_public_menu_data(self) -> dict[str, list[HelloFreshWeek] | list[str]]:
         """Fetch and parse the public HelloFresh menus page."""
         self._tokens.raise_if_bot_blocked()
-        # This is a top-level HTML page load, not a CORS XHR, so it gets the navigation
-        # Accept/Sec-Fetch values a real browser sends for a document (overriding the XHR
-        # defaults from _DEFAULT_HEADERS, which come first so these win on the shared keys).
-        response = await self._session.get(
-            f"{self._base_url}/menus",
-            headers={
-                **_DEFAULT_HEADERS,
-                "Accept-Language": _browser_accept_language(api_locale(self._country)),
-                "Accept": (
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                    "image/avif,image/webp,image/apng,*/*;q=0.8"
-                ),
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1",
-            },
-        )
-        await self._tokens.async_raise_if_data_blocked(response)
+        # A top-level HTML page load, not a CORS XHR. It goes through the same Chrome TLS
+        # impersonation as the API calls: on aiohttp's fingerprint a strict region answered
+        # Cloudflare's 403, which also paused the entry's auth and data requests.
+        try:
+            response = await async_request(
+                self._session,
+                "GET",
+                f"{self._base_url}/menus",
+                headers=self._website_request_headers("/menus"),
+                use_curl_cffi_headers=self._use_curl_cffi_headers,
+                navigation=True,
+            )
+        except (ClientError, TimeoutError) as err:
+            raise HelloFreshError(
+                f"HelloFresh public menu page could not connect: {type(err).__name__}"
+            ) from err
+        await self._tokens.async_raise_if_data_blocked(response, public_page=True)
         if response.status >= _HTTP_BAD_REQUEST:
             raise HelloFreshError(
                 f"Failed to fetch HelloFresh public menu page: HTTP {response.status}"
@@ -4821,9 +4850,11 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         Cloudflare regions block on that fingerprint, not on the headers. Falls back to the
         shared aiohttp session when curl_cffi is unavailable.
 
-        ``authenticated=False`` is for the PUBLIC website pages (catalog browse, build-id
-        page): they need no credentials, and sending the bearer token to page endpoints
-        that never asked for it widens its exposure for nothing.
+        ``authenticated=False`` is for the PUBLIC website (catalog pages, the build-id page,
+        Next.js data routes): they need no credentials, and sending the bearer token to page
+        endpoints that never asked for it widens its exposure for nothing. They are sent as
+        the browser itself requests them, and the caller judges the response status: a data
+        route's 404 means a rotated build id to refresh, not a failure.
         """
         self._tokens.raise_if_bot_blocked()
         token_used = None
@@ -4835,6 +4866,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             # token this request actually USED. Reading it after the 401 arrives raced with a
             # concurrent rotation and could force a second, needless refresh-token burn.
             token_used = self._tokens.access_token
+            headers = self._api_request_headers(method, extra_headers)
+        else:
+            headers = self._website_request_headers(path, extra_headers)
         try:
             response = await async_request(
                 self._session,
@@ -4842,29 +4876,25 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 f"{self._base_url}{path}",
                 params=params,
                 json_payload=json_payload,
-                headers={
-                    **_DEFAULT_HEADERS,
-                    "Accept-Language": _browser_accept_language(self._locale_for_country()),
-                    **_FEATURE_HEADERS,
-                    # Origin/Referer match the regional host so Sec-Fetch-Site is consistent.
-                    "Origin": self._base_url,
-                    "Referer": f"{self._base_url}/",
-                    **(
-                        {"Authorization": self._tokens.authorization_header()}
-                        if authenticated
-                        else {}
-                    ),
-                    **(extra_headers or {}),
-                },
+                headers=headers,
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
+                navigation=not authenticated and not path.startswith(_NEXT_DATA_PREFIX),
             )
         except (ClientError, TimeoutError) as err:
             raise HelloFreshError(
                 f"HelloFresh API request could not connect: {type(err).__name__}"
             ) from err
-        await self._tokens.async_raise_if_data_blocked(response)
+        await self._tokens.async_raise_if_data_blocked(response, public_page=not authenticated)
+        if not authenticated:
+            return response
 
-        if response.status in _AUTH_FAILURE_STATUSES and authenticated:
+        # 401 means the token was rejected. 403 means it was accepted but this call is not
+        # allowed -- unless the token is at or near expiry, which a gateway may also report as
+        # 403. Treating every 403 as expiry spent a refresh-token rotation and then started
+        # reauth for an endpoint the account simply may not use.
+        if response.status == _HTTP_UNAUTHORIZED or (
+            response.status == _HTTP_FORBIDDEN and not self._tokens.access_token_valid()
+        ):
             if _allow_refresh_retry and self._tokens.can_obtain_token:
                 # Force a refresh under the manager's lock. The manager re-checks whether
                 # another concurrent waiter already rotated the token, so only the first
@@ -4900,6 +4930,42 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             )
 
         return response
+
+    def _api_request_headers(
+        self, method: str, extra_headers: dict[str, str] | None
+    ) -> dict[str, str]:
+        """Return the headers of the web app's own fetch() call to a /gw endpoint."""
+        return {
+            **_DEFAULT_HEADERS,
+            "Accept-Language": _browser_accept_language(self._locale_for_country()),
+            # The web app's API client tags every /gw call with fresh tracing ids.
+            **_tracing_headers(),
+            **_FEATURE_HEADERS,
+            # Chrome sends Origin on a same-origin fetch() only when it is not a GET or HEAD.
+            **({} if method.upper() in ("GET", "HEAD") else {"Origin": self._base_url}),
+            "Referer": f"{self._base_url}/",
+            "Authorization": self._tokens.authorization_header(),
+            **(extra_headers or {}),
+        }
+
+    def _website_request_headers(
+        self, path: str, extra_headers: dict[str, str] | None = None
+    ) -> dict[str, str]:
+        """Return the headers the browser sends for a public page or Next.js data route.
+
+        A page is a top-level navigation. A data route is the Next.js router's own fetch(),
+        marked with ``x-nextjs-data`` and carrying none of the /gw API client's headers.
+        """
+        accept_language = _browser_accept_language(self._locale_for_country())
+        if path.startswith(_NEXT_DATA_PREFIX):
+            return {
+                **_DEFAULT_HEADERS,
+                "Accept-Language": accept_language,
+                "Referer": f"{self._base_url}/",
+                "x-nextjs-data": "1",
+                **(extra_headers or {}),
+            }
+        return {**_NAVIGATION_HEADERS, "Accept-Language": accept_language, **(extra_headers or {})}
 
     # ------------------------------------------------------------------
     # Token delegation

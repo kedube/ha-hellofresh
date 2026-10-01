@@ -343,7 +343,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = HelloFreshClient(
         session=session,
         country=entry.data[CONF_COUNTRY],
-        # No access token on a freshly-configured entry — the client logs in on first use.
+        # A credential entry starts with the token its validation login obtained; an entry
+        # created before that was stored has none, and the client logs in on first use.
         access_token=entry.data.get(CONF_ACCESS_TOKEN),
         refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
         token_issued_at=entry.data.get(CONF_ISSUED_AT),

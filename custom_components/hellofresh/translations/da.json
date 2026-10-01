@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Kunne ikke oprette forbindelse",
       "bot_blocked": "HelloFreshs bot-beskyttelse blokerede dette login, så din e-mail og adgangskode blev ikke kontrolleret. Prøv igen om et par minutter. Hvis det bliver ved, så tilføj HelloFresh med valgmuligheden \"Adgangstoken (avanceret)\" i stedet.",
+      "bot_blocked_token": "HelloFreshs bot-beskyttelse blokerede denne forespørgsel, så dit token blev ikke kontrolleret. Prøv igen om et par minutter.",
       "invalid_auth": "Ugyldige loginoplysninger",
+      "email_not_registered": "HelloFresh har ingen konto med denne e-mailadresse i det valgte land. Kontrollér adressen, og at landet er det, din konto er oprettet i.",
+      "wrong_password": "HelloFresh godkendte ikke denne adgangskode. Hvis du logger ind på HelloFresh med Google, Apple eller Facebook, har din konto måske ingen adgangskode; brug valgmuligheden \"Adgangstoken (avanceret)\" i stedet.",
       "invalid_token": "Dette token kunne ikke læses eller blev afvist"
     },
     "abort": {

@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Could not connect",
       "bot_blocked": "HelloFresh's bot protection blocked this sign-in, so your email and password weren't checked. Try again in a few minutes. If it keeps happening, add HelloFresh with the \"Access token (advanced)\" option instead.",
+      "bot_blocked_token": "HelloFresh's bot protection blocked this request, so your token wasn't checked. Try again in a few minutes.",
       "invalid_auth": "Invalid authentication",
+      "email_not_registered": "HelloFresh has no account with this email address in the selected country. Check the address and that the country is the one your account is in.",
+      "wrong_password": "HelloFresh didn't accept this password. If you sign in to HelloFresh with Google, Apple or Facebook, your account may have no password; use the \"Access token (advanced)\" option instead.",
       "invalid_token": "That token could not be read or was rejected"
     },
     "abort": {

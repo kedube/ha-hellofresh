@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Connexion impossible",
       "bot_blocked": "La protection anti-bots de HelloFresh a bloqué cette connexion : votre e-mail et votre mot de passe n'ont donc pas été vérifiés. Réessayez dans quelques minutes. Si cela persiste, ajoutez HelloFresh avec l'option « Jeton d'accès (avancé) » à la place.",
+      "bot_blocked_token": "La protection anti-bots de HelloFresh a bloqué cette requête : votre jeton n'a donc pas été vérifié. Réessayez dans quelques minutes.",
       "invalid_auth": "Identifiants invalides",
+      "email_not_registered": "HelloFresh n'a aucun compte avec cette adresse e-mail dans le pays choisi. Vérifiez l'adresse et que le pays est bien celui de votre compte.",
+      "wrong_password": "HelloFresh n'a pas accepté ce mot de passe. Si vous vous connectez à HelloFresh avec Google, Apple ou Facebook, votre compte n'a peut-être pas de mot de passe ; utilisez plutôt l'option « Jeton d'accès (avancé) ».",
       "invalid_token": "Ce jeton n'a pas pu être lu ou a été refusé"
     },
     "abort": {

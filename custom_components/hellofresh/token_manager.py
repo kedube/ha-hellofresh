@@ -34,7 +34,12 @@ from .const import (
     api_country_code,
     api_locale,
 )
-from .models import HelloFreshAuthError, HelloFreshBotBlockedError, HelloFreshError
+from .models import (
+    HelloFreshAuthError,
+    HelloFreshBotBlockedError,
+    HelloFreshError,
+    HelloFreshLoginRejectedError,
+)
 from .parsers import coerce_int, decode_jwt_claims
 from .tls_transport import (
     AuthResponse,
@@ -154,6 +159,12 @@ def _backoff_for_session(session: ClientSession) -> _AuthBlockBackoff:
 _TOKEN_REFRESH_AT_LIFETIME_FRACTION = 0.5
 _TOKEN_MIN_REMAINING_BEFORE_REFRESH = 300  # always refresh within 5 min of expiry
 
+# How long a failed refresh/login is reused instead of retried. A poll fans out dozens of
+# concurrent requests that all queue on the refresh lock; without this, each one repeated the
+# failed attempt in turn -- with stored credentials, a burst of password logins. Shorter than
+# the 2-10 min refresh timer, so every timer tick still makes a real attempt.
+_REFRESH_FAILURE_REUSE_SECONDS = 60
+
 # A browser-like User-Agent. HelloFresh fronts its endpoints with bot protection that
 # fingerprints non-browser clients; a recognizable headless UA (e.g. "HomeAssistant-...")
 # gets challenged with an HTML block page instead of a JSON API response. Presenting a
@@ -236,13 +247,37 @@ def _browser_accept_encoding() -> str:
     return ", ".join(encodings)
 
 
-# Cache-busting + safe fallback encoding headers. Accept-Encoding is computed once at import
-# from the Python decoders available to aiohttp (see above).
+# Safe fallback encoding header, computed once at import from the Python decoders available to
+# aiohttp (see above). No Cache-Control/Pragma: the captures that showed them had DevTools'
+# "Disable cache" on (static assets carried them too); Chrome's normal XHRs send neither.
 _BROWSER_FETCH_HEADERS = {
     "Accept-Encoding": _browser_accept_encoding(),
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
 }
+
+# The viewport client hints Chrome sends on every same-origin XHR once the site has asked for
+# them (HelloFresh's pages do). A common Windows desktop, matching the User-Agent.
+_BROWSER_DEVICE_HINTS = {
+    "DPR": "1",
+    "Viewport-Width": "1280",
+}
+
+
+def _tracing_headers(*, request_id: bool = True) -> dict[str, str]:
+    """Return fresh distributed-tracing headers, as the web app's API client sets per request.
+
+    The sign-in page's own HTTP client sends no ``x-request-id`` (HAR 59).
+    """
+    trace_id = secrets.token_hex(16)
+    span_id = secrets.token_hex(8)
+    headers = {
+        "traceparent": f"00-{trace_id}-{span_id}-01",
+        "x-b3-traceid": trace_id,
+        "x-b3-spanid": span_id,
+        "x-b3-sampled": "1",
+    }
+    if request_id:
+        headers["x-request-id"] = str(uuid4())
+    return headers
 
 
 def _token_fingerprint(token: str | None) -> str:
@@ -385,6 +420,10 @@ class TokenManager:
         self._base_url = COUNTRY_BASE_URLS.get(country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY])
         self._token_refresh_callback = token_refresh_callback
         self._refresh_lock = asyncio.Lock()
+        # The last failed refresh/login and when it may be retried (see
+        # _async_refresh_or_reuse_failure).
+        self._refresh_failure: HelloFreshError | None = None
+        self._refresh_failure_until = 0.0
         self._block_backoff = _backoff_for_session(session)
         # Auth POSTs use a Chrome-TLS-impersonating transport when curl_cffi is installed,
         # which is what gets past Cloudflare bot-management on stricter regions (e.g. UK).
@@ -414,16 +453,27 @@ class TokenManager:
         """Return the ``Authorization`` header value for an authenticated request."""
         return f"{self._token_type} {self._access_token}"
 
+    def access_token_valid(self) -> bool:
+        """Return True while the current access token has comfortable life left."""
+        return self._access_token_still_valid()
+
     def raise_if_bot_blocked(self) -> None:
         """Pause new API calls while this HTTP session is cooling down from a block."""
         self._block_backoff.raise_if_blocked()
 
-    async def async_raise_if_data_blocked(self, response: ClientResponse | AuthResponse) -> None:
-        """Record a Cloudflare block before a data 401/403 can trigger token refresh."""
+    async def async_raise_if_data_blocked(
+        self, response: ClientResponse | AuthResponse, *, public_page: bool = False
+    ) -> None:
+        """Record a Cloudflare block before a data 401/403 can trigger token refresh.
+
+        ``public_page`` marks a website page or Next.js route, which is HTML by design: only a
+        blocking status or an explicit challenge marker counts there. Treating every HTML
+        response as a block made each build-id scrape and public-menu load pause all requests.
+        """
         if (
             response.status not in {401, 403, 429}
             and not _has_cf_challenge(response)
-            and "html" not in (_response_content_type(response) or "").lower()
+            and (public_page or "html" not in (_response_content_type(response) or "").lower())
         ):
             return
         try:
@@ -483,16 +533,23 @@ class TokenManager:
             async with self._refresh_lock:
                 # Re-check inside the lock -- another waiter may have already refreshed.
                 if not self._access_token:
-                    await self._async_refresh_access_token(force=True)
+                    await self._async_refresh_or_reuse_failure(force=True)
                 elif self._token_expiring_soon():
+                    if self._refresh_recently_failed() and self._access_token_still_valid():
+                        # A waiter ahead of this one just failed; the next timer tick retries.
+                        return
                     # Proactive (half-life) refresh. If it fails but the current access
                     # token is still genuinely valid -- e.g. right after a reboot, when the
                     # stored token has life left but the refresh token was already rotated
-                    # in a prior session -- keep using the existing token rather than failing
-                    # the whole setup. The reactive 401 path surfaces a real expiry later.
+                    # in a prior session, or /gw/refresh briefly answered 5xx -- keep using
+                    # the existing token rather than failing the request. The reactive 401
+                    # path surfaces a real expiry later. A bot block still propagates: its
+                    # backoff pauses every request, not just this refresh.
                     try:
-                        await self._async_refresh_access_token(force=False)
-                    except HelloFreshAuthError:
+                        await self._async_refresh_or_reuse_failure(force=False)
+                    except HelloFreshBotBlockedError:
+                        raise
+                    except HelloFreshError:
                         if self._access_token_still_valid():
                             _LOGGER.warning(
                                 "HelloFresh proactive token refresh failed; continuing with "
@@ -512,7 +569,31 @@ class TokenManager:
         """
         async with self._refresh_lock:
             if self._access_token == token_before:
-                await self._async_refresh_access_token(force=True)
+                await self._async_refresh_or_reuse_failure(force=True)
+
+    def _refresh_recently_failed(self) -> bool:
+        """Return True while the last failed refresh/login is still being reused."""
+        return self._refresh_failure is not None and monotonic() < self._refresh_failure_until
+
+    async def _async_refresh_or_reuse_failure(self, force: bool) -> None:
+        """Refresh under the held lock, or re-raise a refresh that failed moments ago.
+
+        The "did another waiter already refresh?" checks only catch a *successful* refresh.
+        After a failed one every queued waiter still saw the old token and repeated the
+        whole refresh-then-login chain, so one poll could send a burst of password logins.
+        """
+        failure = self._refresh_failure
+        if failure is not None and monotonic() < self._refresh_failure_until:
+            raise failure
+        try:
+            await self._async_refresh_access_token(force=force)
+        except HelloFreshBotBlockedError:
+            raise  # the bot-block backoff already paces these
+        except HelloFreshError as err:
+            self._refresh_failure = err
+            self._refresh_failure_until = monotonic() + _REFRESH_FAILURE_REUSE_SECONDS
+            raise
+        self._refresh_failure = None
 
     # ------------------------------------------------------------------
     # Expiry math
@@ -584,31 +665,29 @@ class TokenManager:
         """Return the ``country``/``locale`` query the /gw auth endpoints expect."""
         return {"country": api_country_code(self._country), "locale": api_locale(self._country)}
 
-    def _auth_headers(self, *, refresh: bool = False) -> dict[str, str]:
+    def _auth_headers(self, *, content_type: str | None, login: bool = False) -> dict[str, str]:
         """Return browser-like headers for the /gw auth POSTs.
 
         Includes ``Origin``/``Referer`` derived from the regional base URL so the request
         resembles the web app's XHR and is less likely to trip bot protection.
+        ``content_type`` is None for a POST without a body, which a browser sends without one.
+
+        The app token and refresh come from the web app's fetch() client: ``Accept: */*`` and
+        an ``x-request-id``. The sign-in page posts ``/gw/login`` with its own axios client,
+        which sets the axios ``Accept`` and no ``x-request-id`` (HAR 59).
         """
-        trace_id = secrets.token_hex(16)
-        span_id = secrets.token_hex(8)
         return {
-            "Accept": "*/*" if refresh else "application/json, text/plain, */*",
+            "Accept": "application/json, text/plain, */*" if login else "*/*",
             "Accept-Language": _browser_accept_language(api_locale(self._country)),
-            "Content-Type": "text/plain;charset=UTF-8" if refresh else "application/json",
+            **({"Content-Type": content_type} if content_type else {}),
             "User-Agent": _AUTH_USER_AGENT,
             "Origin": self._base_url,
             "Referer": f"{self._base_url}/login",
             "Priority": "u=1, i",
             **_BROWSER_FETCH_HEADERS,
             **_BROWSER_CLIENT_HINTS,
-            "DPR": "1",
-            "Viewport-Width": "1280",
-            "traceparent": f"00-{trace_id}-{span_id}-01",
-            "x-b3-traceid": trace_id,
-            "x-b3-spanid": span_id,
-            "x-b3-sampled": "1",
-            "x-request-id": str(uuid4()),
+            **_BROWSER_DEVICE_HINTS,
+            **_tracing_headers(request_id=not login),
         }
 
     def _auth_log_details(self, response: ClientResponse | AuthResponse, body: str) -> str:
@@ -661,7 +740,7 @@ class TokenManager:
                 f"{self._base_url}/gw/refresh",
                 params=self._auth_query(),
                 json_payload={"refresh_token": self._refresh_token},
-                headers=self._auth_headers(refresh=True),
+                headers=self._auth_headers(content_type="text/plain;charset=UTF-8"),
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
             )
         except (ClientError, TimeoutError) as err:
@@ -714,8 +793,7 @@ class TokenManager:
             # work until it expires, at which point the reactive 401-retry path surfaces a
             # proper auth failure. Raising HelloFreshError (not Auth) avoids a spurious login.
             _LOGGER.warning(
-                "HelloFresh token refresh failed (transient); will retry on next poll: "
-                "HTTP %s (%s)%s",
+                "HelloFresh token refresh failed (transient); will retry: HTTP %s (%s)%s",
                 response.status,
                 _safe_auth_error_summary(error_body),
                 self._auth_log_details(response, error_body),
@@ -751,8 +829,9 @@ class TokenManager:
                 f"{self._base_url}/gw/login",
                 params=self._auth_query(),
                 json_payload={"username": self._username, "password": self._password},
-                headers=self._auth_headers(),
+                headers=self._auth_headers(content_type="application/json", login=True),
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
+                login=True,
             )
         except (ClientError, TimeoutError) as err:
             # Transient network failure — not a credential rejection. See the refresh path.
@@ -791,7 +870,9 @@ class TokenManager:
                     _safe_auth_error_summary(error_body),
                     self._auth_log_details(response, error_body),
                 )
-                raise HelloFreshAuthError(f"HelloFresh login failed: HTTP {response.status}")
+                raise HelloFreshLoginRejectedError(
+                    f"HelloFresh login failed: HTTP {response.status}"
+                )
             if self._log_auth_diagnostics:
                 _LOGGER.warning(
                     "HelloFresh login failed HTTP %s%s",
@@ -808,6 +889,50 @@ class TokenManager:
         self._log_auth_success("/gw/login", response.status)
         self._block_backoff.reset_after_success()
 
+    async def async_email_registered(self, email: str) -> bool | None:
+        """Ask HelloFresh whether an email has an account in this country, best-effort.
+
+        The sign-in page posts ``{"email", "country"}`` to ``/gw/auth/email/status`` before
+        ``/gw/login`` to pick its form, and gets ``{"registered": bool}`` (HAR 59). Setup asks
+        only after a login was rejected, to tell an unknown email (or the wrong country) from
+        a wrong password. None means no answer; any failure leaves the caller with its generic
+        error. A bot-protection block still starts the usual cooldown.
+        """
+        try:
+            self._block_backoff.raise_if_blocked()
+        except HelloFreshBotBlockedError:
+            return None
+        try:
+            response = await async_auth_post(
+                self._session,
+                f"{self._base_url}/gw/auth/email/status",
+                json_payload={"email": email.strip(), "country": api_country_code(self._country)},
+                headers=self._auth_headers(content_type="application/json", login=True),
+                use_curl_cffi_headers=self._use_curl_cffi_headers,
+                login=True,
+            )
+            body = await response.text()
+        except (ClientError, TimeoutError, UnicodeDecodeError):
+            return None
+        if _looks_like_auth_block(response, body):
+            delay = self._block_backoff.record_block()
+            _LOGGER.warning(
+                "HelloFresh email check BLOCKED by bot protection (HTTP %s); requests paused "
+                "for %s seconds%s",
+                response.status,
+                delay,
+                self._auth_log_details(response, body),
+            )
+            return None
+        if response.status >= _HTTP_BAD_REQUEST:
+            return None
+        try:
+            registered = json.loads(body).get("registered")
+        except (ValueError, AttributeError):
+            return None
+        _LOGGER.debug("HelloFresh email check answered registered=%s", registered)
+        return registered if isinstance(registered, bool) else None
+
     async def _async_fetch_app_token(self) -> None:
         """Fetch the anonymous app token the web app obtains before login.
 
@@ -821,8 +946,9 @@ class TokenManager:
             response = await async_auth_post(
                 self._session,
                 f"{self._base_url}/gw/auth/token",
-                params={"grant_type": "client_credentials", "client_id": GW_CLIENT_ID},
-                headers=self._auth_headers(),
+                # In the web app's order (HAR 59).
+                params={"client_id": GW_CLIENT_ID, "grant_type": "client_credentials"},
+                headers=self._auth_headers(content_type=None),
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
             )
         except (ClientError, TimeoutError) as err:  # pragma: no cover - defensive

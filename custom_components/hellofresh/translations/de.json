@@ -70,7 +70,10 @@
     "error": {
       "cannot_connect": "Verbindung fehlgeschlagen",
       "bot_blocked": "Der Bot-Schutz von HelloFresh hat diese Anmeldung blockiert, deine E-Mail-Adresse und dein Passwort wurden also nicht geprüft. Versuche es in ein paar Minuten erneut. Wenn es weiterhin passiert, füge HelloFresh stattdessen mit der Option „Zugriffstoken (fortgeschritten)“ hinzu.",
+      "bot_blocked_token": "Der Bot-Schutz von HelloFresh hat diese Anfrage blockiert, dein Token wurde also nicht geprüft. Versuche es in ein paar Minuten erneut.",
       "invalid_auth": "Ungültige Anmeldedaten",
+      "email_not_registered": "HelloFresh hat kein Konto mit dieser E-Mail-Adresse im gewählten Land. Prüfe die Adresse und ob das Land dem deines Kontos entspricht.",
+      "wrong_password": "HelloFresh hat dieses Passwort nicht akzeptiert. Wenn du dich bei HelloFresh mit Google, Apple oder Facebook anmeldest, hat dein Konto vielleicht kein Passwort; nutze stattdessen die Option „Zugriffstoken (fortgeschritten)“.",
       "invalid_token": "Dieses Token konnte nicht gelesen werden oder wurde abgelehnt"
     },
     "abort": {

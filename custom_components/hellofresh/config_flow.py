@@ -15,7 +15,13 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
-from .api import HelloFreshAuthError, HelloFreshBotBlockedError, HelloFreshClient, HelloFreshError
+from .api import (
+    HelloFreshAuthError,
+    HelloFreshBotBlockedError,
+    HelloFreshClient,
+    HelloFreshError,
+    HelloFreshLoginRejectedError,
+)
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
@@ -71,17 +77,24 @@ from .parsers import token_payload_to_entry_data
 from .tls_transport import async_close_shared_session
 
 
-def _entry_data_from_credentials(username: str, password: str, country: str) -> dict[str, object]:
+def _entry_data_from_credentials(
+    username: str,
+    password: str,
+    country: str,
+    tokens: dict[str, object] | None = None,
+) -> dict[str, object]:
     """Map validated credentials to persisted config-entry data.
 
-    The live token cache (access/refresh tokens, timing) is populated at runtime by the
-    client's login/refresh flow and written back via the token-refresh callback; only the
-    credentials and country are stored here.
+    ``tokens`` is the auth object the validation login just obtained. Storing it lets setup
+    start with that token instead of a second /gw/login seconds later, and on reauth it
+    replaces the dead tokens that would otherwise be tried once more first. The client keeps
+    the token cache current at runtime via the token-refresh callback.
     """
     return {
         CONF_USERNAME: username,
         CONF_PASSWORD: password,
         CONF_COUNTRY: country,
+        **(tokens or {}),
     }
 
 
@@ -216,6 +229,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             country = user_input[CONF_COUNTRY]
             self._selected_country = country
+            tokens: dict[str, object] = {}
             account = await self._async_validate(
                 user_input[CONF_USERNAME],
                 user_input[CONF_PASSWORD],
@@ -225,6 +239,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
                     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
                 ),
+                tokens=tokens,
             )
             if account is not None:
                 await self._async_guard_same_account(country, account)
@@ -232,7 +247,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates=_entry_data_from_credentials(
-                        user_input[CONF_USERNAME], user_input[CONF_PASSWORD], country
+                        user_input[CONF_USERNAME], user_input[CONF_PASSWORD], country, tokens
                     ),
                     title=f"HelloFresh ({country.upper()})",
                     reason="reconfigure_successful",
@@ -389,7 +404,8 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str],
     ):
         """Validate credentials and create a config entry."""
-        account = await self._async_validate(username, password, country, errors)
+        tokens: dict[str, object] = {}
+        account = await self._async_validate(username, password, country, errors, tokens=tokens)
         if account is None:
             return None
 
@@ -398,7 +414,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
-            data=_entry_data_from_credentials(username, password, country),
+            data=_entry_data_from_credentials(username, password, country, tokens),
             options={CONF_LOG_AUTH_DIAGNOSTICS: self._initial_log_auth_diagnostics},
         )
 
@@ -433,6 +449,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="invalid_auth")
 
         country = self._selected_country
+        tokens: dict[str, object] = {}
         account = await self._async_validate(
             username,
             password,
@@ -442,6 +459,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_ENABLE_PUBLIC_MENU_FALLBACK,
                 DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
             ),
+            tokens=tokens,
         )
         if account is None:
             return None
@@ -449,7 +467,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Credentials live in entry.data only; never write them into options.
         return self.async_update_reload_and_abort(
             self._reauth_entry,
-            data_updates=_entry_data_from_credentials(username, password, country),
+            data_updates=_entry_data_from_credentials(username, password, country, tokens),
             reason="reauth_successful",
         )
 
@@ -460,8 +478,13 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         country: str,
         errors: dict[str, str],
         enable_public_menu_fallback: bool = DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
+        tokens: dict[str, object] | None = None,
     ) -> dict | None:
-        """Log in with the supplied credentials and return account info, or None on error."""
+        """Log in with the supplied credentials and return account info, or None on error.
+
+        The auth object the login obtains is written into ``tokens`` in place, so the caller
+        can persist it with the credentials.
+        """
         session = async_create_clientsession(self.hass, auto_cleanup=False)
         client = HelloFreshClient(
             session=session,
@@ -471,9 +494,19 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             enable_public_menu_fallback=enable_public_menu_fallback,
             use_curl_cffi_headers=self._existing_header_option(),
             log_auth_diagnostics=self._existing_auth_logging_option(),
+            token_refresh_callback=tokens.update if tokens is not None else None,
         )
         try:
             return await client.async_validate_credentials()
+        except HelloFreshLoginRejectedError:
+            # Tell an unknown email (or the wrong country) from a wrong password when HelloFresh
+            # answers; asked only now, so a successful sign-in sends no extra request.
+            registered = await client.async_email_registered(username)
+            if registered is None:
+                errors["base"] = "invalid_auth"
+            else:
+                errors["base"] = "wrong_password" if registered else "email_not_registered"
+            return None
         except HelloFreshAuthError:
             errors["base"] = "invalid_auth"
             return None
@@ -523,6 +556,9 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await client.async_validate_credentials()
         except HelloFreshAuthError:
             errors["base"] = "invalid_token"
+            return None
+        except HelloFreshBotBlockedError:
+            errors["base"] = "bot_blocked_token"
             return None
         except HelloFreshError:
             errors["base"] = "cannot_connect"

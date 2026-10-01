@@ -5911,6 +5911,115 @@ class _AuthFlowResponse:
         return self._text if self._text is not None else str(self._payload)
 
 
+def test_rejected_login_raises_a_login_rejected_auth_error() -> None:
+    """A 401 from /gw/login is still an auth error, distinguishable as a credential rejection."""
+    from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app"})
+            return _AuthFlowResponse(401, text='{"error":"invalid_grant"}', headers=_JSON_HEADERS)
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="wrong",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshLoginRejectedError):
+        loop.run_until_complete(client._async_login(force=True))
+    assert issubclass(HelloFreshLoginRejectedError, HelloFreshAuthError)
+
+
+def test_email_check_sends_what_the_sign_in_page_sends() -> None:
+    """POST {email, country} to /gw/auth/email/status with the sign-in page's headers (HAR 59)."""
+    posts: list[dict] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            posts.append({"url": url, "params": params, "json": json, "headers": headers})
+            return _AuthFlowResponse(200, text='{"registered":false}', headers=_JSON_HEADERS)
+
+    client = HelloFreshClient(session=DummySession(), country="uk")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    assert loop.run_until_complete(client.async_email_registered(" u@example.com ")) is False
+
+    (post,) = posts
+    assert post["url"] == "https://www.hellofresh.co.uk/gw/auth/email/status"
+    assert post["params"] is None
+    assert post["json"] == {"email": "u@example.com", "country": "GB"}
+    assert post["headers"]["Accept"] == "application/json, text/plain, */*"
+    assert post["headers"]["Content-Type"] == "application/json"
+    assert post["headers"]["Referer"] == "https://www.hellofresh.co.uk/login"
+    assert "x-request-id" not in post["headers"]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("registered", True),
+        ("not_a_bool", None),
+        ("server_error", None),
+        ("connection_error", None),
+        ("not_json", None),
+    ],
+)
+def test_email_check_answers_only_when_hellofresh_does(outcome: str, expected) -> None:
+    """Anything but a clear yes/no is "no answer", so setup falls back to its generic error."""
+    from aiohttp import ClientError  # noqa: PLC0415
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if outcome == "connection_error":
+                raise ClientError("reset")
+            return {
+                "registered": _AuthFlowResponse(
+                    200, text='{"registered":true}', headers=_JSON_HEADERS
+                ),
+                "not_a_bool": _AuthFlowResponse(
+                    200, text='{"registered":"yes"}', headers=_JSON_HEADERS
+                ),
+                "server_error": _AuthFlowResponse(503, text='{"error":"x"}', headers=_JSON_HEADERS),
+                "not_json": _AuthFlowResponse(
+                    200, text="ok", headers={"Content-Type": "text/plain"}
+                ),
+            }[outcome]
+
+    client = HelloFreshClient(session=DummySession())  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    assert loop.run_until_complete(client.async_email_registered("u@example.com")) is expected
+    client._tokens.raise_if_bot_blocked()  # none of these is a block
+
+
+def test_email_check_respects_and_records_bot_blocks(monkeypatch) -> None:
+    """A blocked check starts the cooldown; during a cooldown no check is sent at all."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(token_manager, "monotonic", lambda: 1000.0)
+    posts: list[str] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            posts.append(url)
+            return _AuthFlowResponse(
+                403, text=_BOT_BLOCK_HTML, headers={"Content-Type": "text/html"}
+            )
+
+    client = HelloFreshClient(session=DummySession())  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    assert loop.run_until_complete(client.async_email_registered("u@example.com")) is None
+    assert client._tokens._block_backoff.next_attempt_at == 1300
+    assert loop.run_until_complete(client.async_email_registered("u@example.com")) is None
+    assert len(posts) == 1
+
+
 def test_login_runs_app_token_then_login_when_no_refresh_token() -> None:
     """With credentials but no refresh token, the client logs in via /gw/auth/token + /gw/login."""
     posts: list[dict] = []
@@ -6489,6 +6598,469 @@ def test_data_cloudflare_block_pauses_calls_without_refresh(monkeypatch) -> None
     with pytest.raises(HelloFreshBotBlockedError):
         loop.run_until_complete(client._async_api_request("GET", "/api/example"))
     assert client._tokens._block_backoff.next_attempt_at == 1900
+
+
+_JSON_HEADERS = {"Content-Type": "application/json"}
+
+
+def test_public_html_pages_do_not_trip_the_bot_backoff() -> None:
+    """A website page is HTML by design; loading one must not pause every request.
+
+    Regression (4.01): every HTML response counted as a Cloudflare block, so the build-id
+    scrape behind All Recipes and the public-menu fallback paused auth and data for every
+    account, for 5 minutes doubling to an hour.
+    """
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(
+                200,
+                text='<!doctype html><html><script>{"buildId":"build-7"}</script></html>',
+                headers={"Content-Type": "text/html; charset=utf-8"},
+            )
+
+    client = HelloFreshClient(session=DummySession(), access_token="t")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    assert loop.run_until_complete(client._async_get_build_id()) == "build-7"
+    loop.run_until_complete(client._async_get_public_menu_data())
+    # The page parse runs in a worker thread; join it so no thread outlives the test.
+    loop.run_until_complete(loop.shutdown_default_executor())
+    client._tokens.raise_if_bot_blocked()  # no cooldown was started
+    assert client._tokens._block_backoff.consecutive_blocks == 0
+
+
+@pytest.mark.parametrize("curl_headers", [False, True])
+def test_public_menu_page_loads_as_a_chrome_navigation(monkeypatch, curl_headers: bool) -> None:
+    """The public menu goes through the Chrome-impersonating transport as a page load.
+
+    It used to be the one request sent on aiohttp's fingerprint, which a strict Cloudflare
+    region answers with a 403 -- and that block then paused the entry's auth and data calls.
+    """
+    from custom_components.hellofresh import client as client_mod  # noqa: PLC0415
+
+    calls: list[dict] = []
+
+    async def fake_async_request(session, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _AuthFlowResponse(
+            200, text="<!doctype html><html></html>", headers={"Content-Type": "text/html"}
+        )
+
+    monkeypatch.setattr(client_mod, "async_request", fake_async_request)
+    client = HelloFreshClient(
+        session=object(),  # type: ignore[arg-type]
+        country="be",
+        access_token="t",
+        use_curl_cffi_headers=curl_headers,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_get_public_menu_data())
+    loop.run_until_complete(loop.shutdown_default_executor())
+
+    (call,) = calls
+    assert call["method"] == "GET"
+    assert call["url"] == "https://www.hellofresh.be/menus"
+    assert call["navigation"] is True
+    assert call["use_curl_cffi_headers"] is curl_headers
+    headers = {name.lower(): value for name, value in call["headers"].items()}
+    assert headers["sec-fetch-mode"] == "navigate"
+    assert headers["sec-fetch-site"] == "none"
+    assert headers["sec-fetch-user"] == "?1"
+    assert headers["sec-fetch-dest"] == "document"
+    assert headers["upgrade-insecure-requests"] == "1"
+    assert headers["priority"] == "u=0, i"
+    assert headers["accept"].startswith("text/html,")
+    assert headers["accept-language"].startswith("nl-BE,")
+    # A typed-URL page load carries no credentials, origin, referer or cache directives.
+    for absent in ("authorization", "origin", "referer", "cache-control", "pragma"):
+        assert absent not in headers
+
+
+def test_data_requests_send_the_web_apps_fetch_headers() -> None:
+    """Every /gw call carries what Chrome sends for the web app's fetch(), and nothing else.
+
+    Captured Chrome sends Accept */*, the viewport hints and fresh tracing ids on every /gw
+    call, Origin only when the method is not GET, and no cache headers outside a DevTools
+    "Disable cache" session.
+    """
+    sent: list[tuple[str, dict]] = []
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            sent.append((method, {name.lower(): value for name, value in headers.items()}))
+            return _AuthFlowResponse(200, {"ok": True})
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        country="be",
+        access_token="t",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_api_request("GET", "/gw/example"))
+    loop.run_until_complete(client._async_api_request("GET", "/gw/example"))
+    loop.run_until_complete(client._async_api_request("POST", "/gw/example", json_payload={"a": 1}))
+
+    (_, first), (_, second), (_, post) = sent
+    for headers in (first, post):
+        assert headers["accept"] == "*/*"
+        assert headers["authorization"] == "Bearer t"
+        assert headers["dpr"] == "1" and headers["viewport-width"] == "1280"
+        assert headers["sec-fetch-mode"] == "cors" and headers["priority"] == "u=1, i"
+        assert headers["accept-language"].startswith("nl-BE,")
+        assert not {"cache-control", "pragma"} & set(headers)
+    assert "origin" not in first
+    assert post["origin"] == "https://www.hellofresh.be"
+    assert first["traceparent"] != second["traceparent"]
+    assert first["x-request-id"] != second["x-request-id"]
+    assert first["traceparent"].split("-")[1] == first["x-b3-traceid"]
+
+
+def test_website_requests_look_like_the_browsers_own() -> None:
+    """A page loads as a navigation; a Next.js data route as the router's fetch().
+
+    Neither carries the /gw API client's headers: no token, no tracing ids, no feature
+    headers, no Origin.
+    """
+    sent: dict[str, dict] = {}
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            sent[url.split("hellofresh.be", 1)[1]] = {
+                name.lower(): value for name, value in headers.items()
+            }
+            return _AuthFlowResponse(200, {"ok": True}, headers={"Content-Type": "text/html"})
+
+    client = HelloFreshClient(session=DummySession(), country="be", access_token="t")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_api_request("GET", "/recipes", authenticated=False))
+    loop.run_until_complete(
+        client._async_api_request("GET", "/_next/data/build/recipes.json", authenticated=False)
+    )
+
+    page, data = sent["/recipes"], sent["/_next/data/build/recipes.json"]
+    assert page["sec-fetch-mode"] == "navigate" and page["priority"] == "u=0, i"
+    assert data["x-nextjs-data"] == "1"
+    assert data["accept"] == "*/*" and data["sec-fetch-mode"] == "cors"
+    for headers in (page, data):
+        for absent in ("authorization", "traceparent", "x-request-id", "x-market-api-version"):
+            assert absent not in headers
+        assert "origin" not in headers
+
+
+def test_catalog_refreshes_a_rotated_build_id_through_the_real_request_path() -> None:
+    """A data route's 404 reaches the caller, so a rotated build id is re-scraped.
+
+    The request path used to raise on every 404, so the refresh-and-retry never ran outside
+    tests that stubbed it: each catalog call went 404, then the page HTML, until a restart.
+    """
+    requested: list[str] = []
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            path = url.split("hellofresh.com", 1)[1]
+            requested.append(path)
+            if path == "/recipes":
+                return _AuthFlowResponse(
+                    200,
+                    text='<html>{"buildId":"fresh-build"}</html>',
+                    headers={"Content-Type": "text/html"},
+                )
+            if path.startswith("/_next/data/stale-build/"):
+                return _AuthFlowResponse(
+                    404, text="<html>Not found</html>", headers={"Content-Type": "text/html"}
+                )
+            return _AuthFlowResponse(200, {"pageProps": {"ok": True}})
+
+    client = HelloFreshClient(session=DummySession(), access_token="t")  # type: ignore[arg-type]
+    client._build_id = "stale-build"
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    payload = loop.run_until_complete(client._async_get_catalog_json("recipes.json"))
+
+    assert payload == {"pageProps": {"ok": True}}
+    assert client._build_id == "fresh-build"
+    assert requested == [
+        "/_next/data/stale-build/recipes.json",
+        "/recipes",
+        "/_next/data/fresh-build/recipes.json",
+    ]
+    client._tokens.raise_if_bot_blocked()  # the 404 page was not taken for a block
+
+
+def test_public_menu_connection_error_leaves_the_poll_running(monkeypatch) -> None:
+    """A dropped connection on the page load is a normal fallback failure, not a crash."""
+    from aiohttp import ClientError  # noqa: PLC0415
+
+    from custom_components.hellofresh import client as client_mod  # noqa: PLC0415
+
+    async def failing_async_request(session, method, url, **kwargs):
+        raise ClientError("curl_cffi GET request failed: Timeout")
+
+    monkeypatch.setattr(client_mod, "async_request", failing_async_request)
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshError, match="could not connect"):
+        loop.run_until_complete(client._async_get_public_menu_data())
+    assert (
+        loop.run_until_complete(client._async_load_public_menu_fallback(HelloFreshAccountData()))
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "response_headers"),
+    [
+        (403, {"Content-Type": "text/html"}),
+        (200, {"Content-Type": "text/html", "cf-mitigated": "challenge"}),
+    ],
+)
+def test_public_page_cloudflare_block_still_trips_the_backoff(status, response_headers) -> None:
+    """A blocking status or an explicit challenge marker on a website page is still a block."""
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(status, text=_BOT_BLOCK_HTML, headers=response_headers)
+
+    client = HelloFreshClient(session=DummySession(), access_token="t")  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_api_request("GET", "/recipes", authenticated=False))
+    assert client._tokens._block_backoff.consecutive_blocks == 1
+
+
+@pytest.mark.parametrize("failure", ["http_503", "transport_error"])
+def test_proactive_refresh_transient_failure_keeps_using_the_valid_token(failure: str) -> None:
+    """A 5xx or network error on /gw/refresh must not fail a request the current token can serve."""
+    from aiohttp import ClientError  # noqa: PLC0415
+
+    posts: list[str] = []
+    sent_auth: list[str] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            posts.append(url)
+            if failure == "transport_error":
+                raise ClientError("connection reset")
+            return _AuthFlowResponse(503, text='{"error":"unavailable"}', headers=_JSON_HEADERS)
+
+        async def request(self, method, url, params=None, json=None, headers=None):
+            sent_auth.append(headers["Authorization"])
+            return _AuthFlowResponse(200, {"ok": True})
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="still-valid",
+        refresh_token="R",
+        token_issued_at=now - 1000,  # past half-life, 800 s left
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    response = loop.run_until_complete(client._async_api_request("GET", "/gw/example"))
+
+    assert response.status == 200
+    assert sent_auth == ["Bearer still-valid"]
+    assert len(posts) == 1 and posts[0].endswith("/gw/refresh")
+    assert client._refresh_token == "R"
+
+
+def test_proactive_refresh_bot_block_still_pauses_requests() -> None:
+    """A blocked refresh is not papered over by the still-valid token: the block pauses all calls."""
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(
+                403, text=_BOT_BLOCK_HTML, headers={"Content-Type": "text/html"}
+            )
+
+        async def request(self, method, url, params=None, json=None, headers=None):
+            raise AssertionError("a blocked refresh must not be followed by a data call")
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="still-valid",
+        refresh_token="R",
+        token_issued_at=now - 1000,
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshBotBlockedError):
+        loop.run_until_complete(client._async_api_request("GET", "/gw/example"))
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_posts"),
+    [
+        ("refresh_unavailable", ["refresh"]),
+        ("refresh_and_login_rejected", ["refresh", "auth/token", "login"]),
+    ],
+)
+def test_failed_proactive_refresh_is_not_repeated_by_queued_requests(
+    monkeypatch, scenario: str, expected_posts: list[str]
+) -> None:
+    """One failed refresh per poll, not one per concurrent request.
+
+    Every request queued on the refresh lock used to repeat a failed attempt; with stored
+    credentials a single poll sent a burst of password logins.
+    """
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    clock = [1000.0]
+    monkeypatch.setattr(token_manager, "monotonic", lambda: clock[0])
+    posts: list[str] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            await asyncio.sleep(0)  # real lock contention
+            posts.append(url.rsplit("/gw/", 1)[-1])
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app"})
+            if scenario == "refresh_unavailable":
+                return _AuthFlowResponse(503, text='{"error":"unavailable"}', headers=_JSON_HEADERS)
+            return _AuthFlowResponse(401, text='{"error":"invalid_grant"}', headers=_JSON_HEADERS)
+
+        async def request(self, method, url, params=None, json=None, headers=None):
+            await asyncio.sleep(0)
+            return _AuthFlowResponse(200, {"ok": True})
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="still-valid",
+        refresh_token="R",
+        token_issued_at=now - 1000,
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def poll():
+        return await asyncio.gather(
+            *(client._async_api_request("GET", f"/gw/x{i}") for i in range(6))
+        )
+
+    responses = loop.run_until_complete(poll())
+    assert [r.status for r in responses] == [200] * 6
+    assert posts == expected_posts
+
+    # Once the reuse window has passed, the next request makes a real attempt again.
+    clock[0] += 61
+    loop.run_until_complete(client._async_api_request("GET", "/gw/again"))
+    assert posts == expected_posts * 2
+
+
+def test_failed_reactive_refresh_is_not_repeated_by_concurrent_401s(monkeypatch) -> None:
+    """Concurrent 401s share one failed refresh-and-login rather than each running their own."""
+    from custom_components.hellofresh import token_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(token_manager, "monotonic", lambda: 1000.0)
+    posts: list[str] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            await asyncio.sleep(0)
+            posts.append(url.rsplit("/gw/", 1)[-1])
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app"})
+            return _AuthFlowResponse(401, text='{"error":"invalid_grant"}', headers=_JSON_HEADERS)
+
+        async def request(self, method, url, params=None, json=None, headers=None):
+            await asyncio.sleep(0)
+            return _AuthFlowResponse(401, text='{"error":"invalid_token"}', headers=_JSON_HEADERS)
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="revoked",
+        refresh_token="R",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+        username="user@example.com",
+        password="wrong",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def poll():
+        return await asyncio.gather(
+            *(client._async_api_request("GET", f"/gw/x{i}") for i in range(6)),
+            return_exceptions=True,
+        )
+
+    results = loop.run_until_complete(poll())
+    assert all(isinstance(result, HelloFreshAuthError) for result in results)
+    assert posts == ["refresh", "auth/token", "login"]
+
+
+def test_data_403_with_a_valid_token_is_not_an_auth_failure() -> None:
+    """403 means "not allowed", not "token expired": no refresh-token rotation and no reauth."""
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(403, text='{"error":"forbidden"}', headers=_JSON_HEADERS)
+
+        async def post(self, url, params=None, json=None, headers=None):
+            raise AssertionError("a 403 on a valid token must not spend a refresh")
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="valid",
+        refresh_token="R",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshError, match="HTTP 403") as excinfo:
+        loop.run_until_complete(client._async_api_request("GET", "/gw/benefit-pass/v1/pricing"))
+    assert not isinstance(excinfo.value, HelloFreshAuthError)
+    assert client._refresh_token == "R"
+
+
+def test_data_403_with_an_expired_token_is_still_an_auth_failure() -> None:
+    """A 403 on an expired token that cannot be renewed still asks for reauthentication."""
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(403, text='{"error":"forbidden"}', headers=_JSON_HEADERS)
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="expired",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()) - 3600,
+        token_expires_in=1800,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pytest.raises(HelloFreshAuthError):
+        loop.run_until_complete(client._async_api_request("GET", "/gw/example"))
 
 
 def test_upcoming_deliveries_prefers_last_successful_endpoint() -> None:
@@ -7837,8 +8409,8 @@ def test_auth_query_sends_api_country_code_for_uk() -> None:
 def test_refresh_headers_match_browser_and_regional_language() -> None:
     """Refresh uses the observed fetch headers and fresh, consistent tracing IDs."""
     client = HelloFreshClient(session=None, country="be")  # type: ignore[arg-type]
-    first = client._tokens._auth_headers(refresh=True)
-    second = client._tokens._auth_headers(refresh=True)
+    first = client._tokens._auth_headers(content_type="text/plain;charset=UTF-8")
+    second = client._tokens._auth_headers(content_type="text/plain;charset=UTF-8")
 
     assert first["Accept"] == "*/*"
     assert first["Content-Type"] == "text/plain;charset=UTF-8"
@@ -7853,9 +8425,20 @@ def test_refresh_headers_match_browser_and_regional_language() -> None:
     assert first["x-request-id"] != second["x-request-id"]
     assert first["traceparent"] != second["traceparent"]
 
-    login = client._tokens._auth_headers()
+    # HAR 59: the sign-in page posts /gw/login with its axios client (axios Accept, JSON, no
+    # x-request-id); the app token comes from the fetch() client (*/*, x-request-id) and has
+    # no body, so like a browser it sends no Content-Type. No request sends the cache headers
+    # that only DevTools "Disable cache" captures showed.
+    login = client._tokens._auth_headers(content_type="application/json", login=True)
+    app_token = client._tokens._auth_headers(content_type=None)
     assert login["Content-Type"] == "application/json"
     assert login["Accept"] == "application/json, text/plain, */*"
+    assert "x-request-id" not in login and login["traceparent"].startswith("00-")
+    assert app_token["Accept"] == "*/*"
+    assert "x-request-id" in app_token
+    assert "Content-Type" not in app_token
+    for headers in (first, login, app_token):
+        assert not {"Cache-Control", "Pragma"} & set(headers)
 
 
 def _status_for(raw_subscription: dict) -> str | None:

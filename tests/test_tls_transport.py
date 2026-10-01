@@ -197,7 +197,8 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     assert seen["impersonate"] == tls_transport._IMPERSONATE_TARGET
     assert seen["default_headers"] is False
     assert seen["accept_encoding"] == "gzip, deflate, br, zstd"
-    assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_XHR_HEADER_ORDER}
+    # Auth POSTs get their own pooled session, pinned to Chrome's order for the auth calls.
+    assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_AUTH_HEADER_ORDER}
     # TLS cert verification is explicitly enabled on the credential-carrying auth POST.
     assert seen["verify"] is True
     assert seen["json"] == {"username": "a", "password": "b"}
@@ -390,6 +391,141 @@ def test_curl_default_header_mode_keeps_only_api_headers(monkeypatch, method, au
         "Upgrade-Insecure-Requests": None,
     }
     assert session.calls == []
+
+
+_NAVIGATION_REQUEST_HEADERS = {
+    "sec-ch-ua": '"Chromium";v="150"',
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": "integration UA",
+    "Accept": "text/html,*/*;q=0.8",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1",
+    "Sec-Fetch-Dest": "document",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Priority": "u=0, i",
+}
+
+
+def test_navigation_is_sent_in_chrome_navigation_order_from_its_own_pool(monkeypatch) -> None:
+    """A page load keeps its navigation headers and gets the navigation order, not the XHR one."""
+    seen: list[dict] = []
+
+    async def fake_request(**kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(status_code=200, headers={}, text="<html></html>")
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    session = _FakeAiohttpSession()
+
+    async def _page_then_xhr():
+        await async_request(
+            session,
+            "GET",
+            "https://www.hellofresh.be/menus",
+            headers=_NAVIGATION_REQUEST_HEADERS,
+            navigation=True,
+        )
+        await async_request(session, "GET", "https://www.hellofresh.be/gw/api/test")
+        return len(tls_transport._SHARED_SESSIONS)
+
+    assert _run(_page_then_xhr()) == 2
+    page, xhr = seen
+    assert page["curl_options"] == {
+        "HTTPHEADER_ORDER": tls_transport._CHROME_NAVIGATION_HEADER_ORDER
+    }
+    assert page["default_headers"] is False
+    assert page["accept_encoding"] == "gzip, deflate, br, zstd"
+    assert page["headers"] == {
+        name: value
+        for name, value in _NAVIGATION_REQUEST_HEADERS.items()
+        if name != "Accept-Encoding"
+    }
+    assert xhr["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_XHR_HEADER_ORDER}
+    assert session.calls == []
+
+
+@pytest.mark.parametrize(
+    ("method", "json_payload", "suppressed"),
+    [("POST", None, True), ("PUT", None, True), ("POST", {"a": 1}, False), ("DELETE", None, False)],
+)
+def test_bodiless_post_sends_no_content_type(monkeypatch, method, json_payload, suppressed) -> None:
+    """libcurl labels an empty POST as a form; Chrome's bodiless fetch() has no Content-Type."""
+    seen: dict = {}
+
+    async def fake_request(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(status_code=200, headers={}, text="{}")
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    _run(
+        async_request(
+            _FakeAiohttpSession(),  # type: ignore[arg-type]
+            method,
+            "https://www.hellofresh.com/gw/auth/token",
+            json_payload=json_payload,
+            headers={"Accept": "*/*"},
+        )
+    )
+
+    assert ("Content-Type" in seen["headers"]) is suppressed
+    if suppressed:
+        assert seen["headers"]["Content-Type"] is None
+
+
+def test_curl_default_mode_navigation_keeps_the_presets_navigation_headers(monkeypatch) -> None:
+    """curl_cffi's Chrome preset already is a page load: only the locale is added to it."""
+    seen: dict = {}
+
+    async def fake_request(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(status_code=200, headers={}, text="<html></html>")
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    session = _FakeAiohttpSession()
+
+    async def _page_load():
+        await async_request(
+            session,
+            "GET",
+            "https://www.hellofresh.be/menus",
+            headers=_NAVIGATION_REQUEST_HEADERS,
+            use_curl_cffi_headers=True,
+            navigation=True,
+        )
+        # The curl-defaults pool serves every kind of request.
+        return tls_transport._shared_curl_session(
+            True, session, kind="navigation"
+        ) is tls_transport._shared_curl_session(True, session, kind="auth")
+
+    assert _run(_page_load()) is True
+    assert seen["default_headers"] is True
+    assert seen["curl_options"] is None
+    assert seen["headers"] == {"Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7"}
+
+
+def test_an_entrys_pooled_sessions_share_one_cookie_jar() -> None:
+    """The page load sends the cookies its XHRs received, as a browser does; accounts don't mix."""
+    if tls_transport._ASYNC_SESSION_CLS is None:
+        pytest.skip("curl_cffi is not installed")
+    owner = _FakeAiohttpSession()
+    other_owner = _FakeAiohttpSession()
+
+    async def _sessions():
+        xhr = tls_transport._shared_curl_session(owner=owner)
+        page = tls_transport._shared_curl_session(owner=owner, kind="navigation")
+        auth = tls_transport._shared_curl_session(owner=owner, kind="auth")
+        other = tls_transport._shared_curl_session(owner=other_owner, kind="navigation")
+        result = (xhr.cookies.jar, page.cookies.jar, auth.cookies.jar, other.cookies.jar)
+        await tls_transport.async_close_shared_session()
+        return result
+
+    xhr_jar, page_jar, auth_jar, other_jar = _run(_sessions())
+    assert page_jar is xhr_jar
+    assert auth_jar is xhr_jar
+    assert other_jar is not xhr_jar
+    assert tls_transport._SHARED_SESSIONS == {}
 
 
 # ---- pooled session ---------------------------------------------------------------------
@@ -601,3 +737,161 @@ def test_browser_headers_claim_the_impersonated_chrome_version() -> None:
         "sec-ch-ua-mobile",
         "sec-ch-ua-platform",
     }
+
+
+# ---- header order ------------------------------------------------------------------------
+
+# Header order Chrome 154 sent for each request shape the integration imitates, captured by
+# running the web app's fetch() calls (and a page load) in Chrome against a local server that
+# asked for DPR/Viewport-Width and set a cookie. HTTP/2 keeps this order and adds priority
+# last. The middle block follows Blink's header hash map, so it changes with the header set.
+_CHROME_154_CAPTURES = {
+    # The sign-in page's axios client sets Accept itself, which moves it before content-type.
+    "login": "content-length, x-b3-spanid, sec-ch-ua-platform, viewport-width, x-b3-sampled, "
+    "sec-ch-ua, sec-ch-ua-mobile, traceparent, dpr, x-b3-traceid, user-agent, accept, "
+    "content-type, origin, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, "
+    "accept-encoding, accept-language, cookie",
+    "refresh": "content-length, x-b3-spanid, x-request-id, sec-ch-ua-platform, viewport-width, "
+    "x-b3-sampled, sec-ch-ua, sec-ch-ua-mobile, traceparent, dpr, x-b3-traceid, user-agent, "
+    "content-type, accept, origin, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, "
+    "accept-encoding, accept-language, cookie",
+    "app_token": "content-length, x-b3-spanid, x-request-id, sec-ch-ua-platform, viewport-width, "
+    "x-b3-sampled, sec-ch-ua, sec-ch-ua-mobile, traceparent, dpr, x-b3-traceid, user-agent, "
+    "accept, origin, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, accept-encoding, "
+    "accept-language, cookie",
+    "data_get": "x-b3-spanid, x-market-api-version, authorization, x-request-id, x-b3-sampled, "
+    "sec-ch-ua, sec-ch-ua-mobile, traceparent, dpr, x-b3-traceid, x-food-categorization, "
+    "sec-ch-ua-platform, x-sort-variations-by-quantity, user-agent, viewport-width, accept, "
+    "sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, accept-encoding, accept-language, "
+    "cookie",
+    "data_get_requested_by": "x-b3-spanid, x-market-api-version, authorization, x-request-id, "
+    "viewport-width, sec-ch-ua, sec-ch-ua-mobile, traceparent, sec-ch-ua-platform, "
+    "x-sort-variations-by-quantity, x-b3-sampled, dpr, x-b3-traceid, x-food-categorization, "
+    "user-agent, x-requested-by, accept, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, "
+    "accept-encoding, accept-language, cookie",
+    "data_post": "content-length, x-b3-spanid, x-market-api-version, authorization, x-request-id, "
+    "sec-ch-ua, sec-ch-ua-mobile, traceparent, sec-ch-ua-platform, x-sort-variations-by-quantity, "
+    "content-type, viewport-width, x-b3-sampled, dpr, x-b3-traceid, x-food-categorization, "
+    "user-agent, accept, origin, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, "
+    "accept-encoding, accept-language, cookie",
+    "next_data": "x-nextjs-data, sec-ch-ua-platform, dpr, viewport-width, user-agent, sec-ch-ua, "
+    "sec-ch-ua-mobile, accept, sec-fetch-site, sec-fetch-mode, sec-fetch-dest, referer, "
+    "accept-encoding, accept-language, cookie",
+    "navigation": "sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, upgrade-insecure-requests, "
+    "user-agent, accept, sec-fetch-site, sec-fetch-mode, sec-fetch-user, sec-fetch-dest, "
+    "accept-encoding, accept-language, cookie",
+}
+_CHROME_FIXED_TAIL = [
+    "accept",
+    "origin",
+    "sec-fetch-site",
+    "sec-fetch-mode",
+    "sec-fetch-dest",
+    "referer",
+    "accept-encoding",
+    "accept-language",
+    "cookie",
+    "priority",
+]
+
+
+def _as_sent(order: str, capture: str) -> list[str]:
+    """Return the captured headers in the order a pinned curl order would send them."""
+    names = [*capture.split(", "), "priority"]
+    return [name for name in order.split(",") if name in names]
+
+
+@pytest.mark.parametrize(
+    ("shape", "order_name"),
+    [
+        ("login", "_CHROME_LOGIN_HEADER_ORDER"),
+        ("refresh", "_CHROME_AUTH_HEADER_ORDER"),
+        ("app_token", "_CHROME_AUTH_HEADER_ORDER"),
+        ("data_get", "_CHROME_XHR_HEADER_ORDER"),
+        ("navigation", "_CHROME_NAVIGATION_HEADER_ORDER"),
+    ],
+)
+def test_pinned_header_order_reproduces_chrome_exactly(shape: str, order_name: str) -> None:
+    """The auth calls, the common data GET and the page load go out in Chrome's exact order."""
+    capture = _CHROME_154_CAPTURES[shape]
+    assert _as_sent(getattr(tls_transport, order_name), capture) == [
+        *capture.split(", "),
+        "priority",
+    ]
+
+
+@pytest.mark.parametrize("shape", ["data_get_requested_by", "data_post", "next_data"])
+def test_xhr_order_keeps_chromes_fixed_prefix_and_tail(shape: str) -> None:
+    """Data calls whose middle block differs still get content-length first and Chrome's tail."""
+    capture = [*_CHROME_154_CAPTURES[shape].split(", "), "priority"]
+    sent = _as_sent(tls_transport._CHROME_XHR_HEADER_ORDER, _CHROME_154_CAPTURES[shape])
+    assert sorted(sent) == sorted(capture)
+    assert (sent[0] == "content-length") == (capture[0] == "content-length")
+    assert [n for n in sent if n in _CHROME_FIXED_TAIL] == [
+        n for n in capture if n in _CHROME_FIXED_TAIL
+    ]
+    assert sent[-len([n for n in capture if n in _CHROME_FIXED_TAIL]) :] == [
+        n for n in capture if n in _CHROME_FIXED_TAIL
+    ]
+
+
+def test_every_header_the_integration_sends_has_a_pinned_position() -> None:
+    """A header missing from the order list would be appended after priority, unlike Chrome."""
+    from custom_components.hellofresh.client import HelloFreshClient  # noqa: PLC0415
+
+    client = HelloFreshClient(session=object(), country="be", access_token="t")  # type: ignore[arg-type]
+    wire_added = {"content-length", "content-type", "cookie", "accept-encoding"}
+    kinds = {
+        "_CHROME_AUTH_HEADER_ORDER": [
+            client._tokens._auth_headers(content_type="text/plain;charset=UTF-8"),
+            client._tokens._auth_headers(content_type=None),
+        ],
+        "_CHROME_LOGIN_HEADER_ORDER": [
+            client._tokens._auth_headers(content_type="application/json", login=True),
+        ],
+        "_CHROME_XHR_HEADER_ORDER": [
+            client._api_request_headers("POST", {"x-requested-by": "gateway"}),
+            client._website_request_headers("/_next/data/build/recipes.json"),
+        ],
+        "_CHROME_NAVIGATION_HEADER_ORDER": [client._website_request_headers("/recipes")],
+    }
+    for order_name, header_sets in kinds.items():
+        pinned = set(getattr(tls_transport, order_name).split(","))
+        for headers in header_sets:
+            sent = {name.lower() for name in headers}
+            assert sent - pinned == set(), order_name
+        if order_name != "_CHROME_NAVIGATION_HEADER_ORDER":
+            assert wire_added <= pinned, order_name
+
+
+def test_login_and_app_token_each_use_their_pinned_chrome_order(monkeypatch) -> None:
+    """The sign-in POST and the app-token POST go out from sessions pinned to their own order."""
+    from custom_components.hellofresh.token_manager import TokenManager  # noqa: PLC0415
+
+    seen: list[dict] = []
+
+    async def fake_request(**kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            text='{"access_token": "a", "refresh_token": "r", "expires_in": 1800}',
+        )
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    tokens = TokenManager(
+        session=_FakeAiohttpSession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    _run(tokens._async_login(force=True))
+
+    app_token, login = seen
+    assert app_token["url"].endswith("/gw/auth/token")
+    assert list(app_token["params"]) == ["client_id", "grant_type"]  # the web app's order
+    assert app_token["curl_options"] == {
+        "HTTPHEADER_ORDER": tls_transport._CHROME_AUTH_HEADER_ORDER
+    }
+    assert login["url"].endswith("/gw/login")
+    assert login["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_LOGIN_HEADER_ORDER}
+    assert login["headers"]["Accept"] == "application/json, text/plain, */*"

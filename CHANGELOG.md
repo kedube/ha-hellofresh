@@ -5,6 +5,58 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Fixed the integration pausing itself as if it were bot-blocked.** 4.01 treated every
+  HTML response as a Cloudflare block, including the website pages it loads on purpose. Opening
+  All Recipes, or a poll that fell back to the public menu, logged "BLOCKED by bot protection
+  (HTTP 200)" and paused every request — token renewal included — for all accounts, for 5
+  minutes and up to an hour. Website pages now count as blocked only on a blocking status or
+  Cloudflare's explicit challenge marker.
+- **A brief token-renewal failure no longer fails the update.** When `/gw/refresh` answered
+  with a server error or the connection dropped, the update failed even though the current
+  access token still had time left. It now keeps using that token and retries renewal on the
+  next timer tick.
+- **One failed sign-in is no longer repeated by every pending request.** An update sends many
+  requests at once; after a failed renewal each of them retried it in turn, which with a changed
+  password meant a burst of password logins in a single update — the pattern that triggers rate
+  limits and account lockouts. The failure is now shared for 60 seconds.
+- **Setup signs in once.** Adding the integration, reauthenticating or reconfiguring with an
+  email and password now keeps the tokens from the login that checked them, instead of logging
+  in again seconds later (reauth also no longer retries the old, dead token first). A bot-protection
+  block while checking a pasted token now says so, rather than "could not connect".
+- **The public menu page now loads with Chrome's TLS fingerprint too.** It was the last request
+  still sent from Python's own network stack, which a strict Cloudflare region rejects — and that
+  block then paused the account's sign-in and data requests as well. It now loads the way Chrome
+  loads a page: the same fingerprint as every other request, Chrome's page-load headers in
+  Chrome's order, and the cookies the integration's other requests received.
+- **Requests now carry exactly the headers Chrome sends for them, in Chrome's order.** Checked
+  against a normal Chrome session's recording and against Chrome 154 itself:
+  - The cache-busting `Cache-Control`/`Pragma` headers are gone; they came from a recording
+    made with the browser's cache disabled, which a normal visit never sends.
+  - `Origin` is only sent on requests that change something, never on reads.
+  - Requests accept the same response types the website's own calls do: any type (`*/*`) for
+    data and token renewal, and the sign-in page's own value for signing in, confirmed
+    from a fresh recording of a real sign-in.
+  - Every data request now carries the screen-size and request-tracing headers the website
+    sends, which only sign-in requests had before.
+  - Recipe pages and the catalog load like pages and the website's own data requests, not like
+    API calls carrying your sign-in token.
+  - Header order is copied from Chrome: sign-in, the most common data request and page loads
+    match it exactly; other requests match its fixed beginning and end.
+  - The sign-in priming request no longer claims to send a form.
+
+  As a side effect, a recipe catalog address that went stale after a HelloFresh website update is
+  now refreshed instead of falling back to the slower page every time until a restart.
+- **Setup now says whether the email or the password was wrong.** When HelloFresh rejects a
+  sign-in, setup (and reauthentication) asks HelloFresh whether the email has an account in the
+  chosen country, the same check its own sign-in page makes, and says which it is. A wrong
+  country choice now shows up as "no account with this email in the selected country". The
+  wrong-password message also mentions that accounts using Google, Apple or Facebook sign-in may
+  have no password. The check runs only after a rejected sign-in, never on a successful one.
+- **A "not allowed" response no longer asks you to reauthenticate.** HTTP 403 on a token with
+  time left means that request isn't permitted for the account, not that the sign-in expired. It
+  used to spend a token renewal and then raise a reauthentication prompt.
+
 ## 4.01 — 2026-10-01
 - **Backed off after bot-protection blocks.** Login, app-token, refresh, and data requests
   now share an event-loop-wide cooldown starting at 5 minutes and doubling to a 1-hour
