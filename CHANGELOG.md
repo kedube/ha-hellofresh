@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.02 — 2026-10-01
 - **Fixed the integration pausing itself as if it were bot-blocked.** 4.01 treated every
   HTML response as a Cloudflare block, including the website pages it loads on purpose. Opening
   All Recipes, or a poll that fell back to the public menu, logged "BLOCKED by bot protection
