@@ -115,16 +115,16 @@ title: Recipes
 
 ![Live tracking on delivery day in the Netherlands: a Live badge, "On the way to you", a three-step progress bar, arrival at 6:18 PM in 38 minutes, 3 stops before yours, the driver's name, the delivery window, the driver's message, and a Live map link](../images/card-live.png)
 
-- **Live tracking (the Netherlands)** — where HelloFresh delivers with its own vans, the
-  integration follows its live tracker (the same one behind `hftrack.nl`, as
-  [sensors](entities.md#live-delivery-tracking-netherlands)), and the box on the road shows it in
+- **Live tracking (the Netherlands, Germany)** — where HelloFresh delivers with its own vans,
+  the integration follows its live tracker (the same one behind `hftrack.nl` and
+  `status.hellofresh.de`, as [sensors](entities.md#live-delivery-tracking-netherlands-germany)), and the box on the road shows it in
   place of the carrier's tracker: the phase as a three-step bar (packed, on the way, delivered;
   "Running late" when HelloFresh says so), the arrival time to the minute with a countdown, how many
   stops the driver makes before yours ("You're next"), the driver's first name, the delivery
   window, HelloFresh's message, and a link to its live map. It updates whenever the sensors do —
   every 5 minutes while a delivery is live by default (the **Delivery tracking refresh interval**
   [option](../README.md#options)). The box's delivery details show it too. Carriers elsewhere
-  don't offer this, so outside the Netherlands it never appears.
+  don't offer this, so outside the Netherlands and Germany it never appears.
 - **Needs your picks** — every other editable week still waiting on you, each a tap away, with its
   own countdown.
 - **Before it arrives** — the pantry staples the next box doesn't include (the integration's

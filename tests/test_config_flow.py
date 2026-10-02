@@ -203,6 +203,13 @@ def test_options_show_delivery_tracking_interval_for_netherlands() -> None:
     )
 
 
+def test_options_show_delivery_tracking_interval_for_germany() -> None:
+    """German entries get the same live-tracking cadence option (issue #12)."""
+    flow = _make_options_flow("de")
+    result = _run(flow.async_step_init())
+    assert CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS in _schema_keys(result["data_schema"])
+
+
 def test_options_persist_delivery_tracking_interval_only_for_netherlands() -> None:
     """Crafted submissions for other countries cannot store the NL-only option."""
     nl_flow = _make_options_flow("nl")
