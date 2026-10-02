@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.03 — 2026-10-02
 - **Live delivery tracking now works in Germany** ([#12](https://github.com/kedube/ha-hellofresh/issues/12)).
   German boxes link to HelloFresh's own live tracker (`status.hellofresh.de`), the same one the
   Netherlands uses, so German accounts now get the live phase, ETA, stops-before-you and driver
