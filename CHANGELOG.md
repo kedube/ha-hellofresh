@@ -5,6 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Live delivery tracking now works in Germany** ([#12](https://github.com/kedube/ha-hellofresh/issues/12)).
+  German boxes link to HelloFresh's own live tracker (`status.hellofresh.de`), the same one the
+  Netherlands uses, so German accounts now get the live phase, ETA, stops-before-you and driver
+  sensors, the live view in the HelloFresh card, and the delivery tracking refresh interval option.
+- **The tracked shipment estimate no longer stays Unknown in the Netherlands and Germany.** It
+  only read the carrier's estimate, which boxes delivered by HelloFresh's own vans don't have. It
+  now falls back to the day of the live tracker's ETA while a delivery is live.
+
 ## 4.02 — 2026-10-01
 - **Fixed the integration pausing itself as if it were bot-blocked.** 4.01 treated every
   HTML response as a Cloudflare block, including the website pages it loads on purpose. Opening

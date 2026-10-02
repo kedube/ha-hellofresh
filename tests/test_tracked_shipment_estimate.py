@@ -17,13 +17,21 @@ Two things make this field worth its own entity, and both are asserted here:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+
+from homeassistant.util import dt as dt_util
 
 from custom_components.hellofresh.client import HelloFreshClient
 from custom_components.hellofresh.models import HelloFreshAccountData, HelloFreshOrder
 from custom_components.hellofresh.parsers import extract_scm_tracking_details
-from custom_components.hellofresh.sensor import SENSORS
-from custom_components.hellofresh.sensor_helpers import sensor_native_value
+from custom_components.hellofresh.sensor import SENSORS, HelloFreshSensor
+from custom_components.hellofresh.sensor_helpers import (
+    sensor_native_value,
+    tracked_shipment_estimate,
+)
+from custom_components.hellofresh.tracey import TraceyData
 
 # Verbatim from capture 41 (trimmed to the fields the parser reads).
 CAPTURED_BOX = {
@@ -266,3 +274,90 @@ def test_date_sensors_are_not_re_localized_by_home_assistant() -> None:
     value = sensor_native_value("tracked_shipment_estimate", data, "https://x")
     assert isinstance(value, date) and not isinstance(value, datetime)
     assert value.isoformat() == "2026-08-24"
+
+
+# --- live-tracker fallback (own-fleet markets, issue #12) ------------------------------
+
+_DE_LINK = "https://status.hellofresh.de/1234567890"
+
+
+def _live(eta: datetime | None, *, tracking_url: str = _DE_LINK, active: bool = True):
+    return TraceyData(
+        active=active, token_present=True, phase="ON_THE_WAY", eta=eta, tracking_url=tracking_url
+    )
+
+
+def _de_data() -> HelloFreshAccountData:
+    """A German order: its link is the live tracker's, so no SCM lookup ever fills an estimate."""
+    order = _order(tracking_url=_DE_LINK, tracking_number="1234567890_internal-A")
+    return HelloFreshAccountData(orders=[order]).finalize()
+
+
+def test_without_a_carrier_estimate_the_live_eta_supplies_the_day() -> None:
+    eta = datetime(2026, 9, 29, 14, 26, tzinfo=UTC)
+    assert tracked_shipment_estimate(_de_data(), _live(eta)) == date(2026, 9, 29)
+
+
+def test_live_eta_day_is_read_in_home_assistant_time() -> None:
+    """Unlike the carrier's midnight-UTC date, the ETA is a real instant: take the local day.
+
+    22:30 UTC on Sep 29 is 00:30 on Sep 30 in Berlin, the day the box actually arrives.
+    """
+    from zoneinfo import ZoneInfo
+
+    previous = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(ZoneInfo("Europe/Berlin"))
+    try:
+        eta = datetime(2026, 9, 29, 22, 30, tzinfo=UTC)
+        assert tracked_shipment_estimate(_de_data(), _live(eta)) == date(2026, 9, 30)
+    finally:
+        dt_util.set_default_time_zone(previous)
+
+
+def test_carrier_estimate_wins_over_the_live_eta() -> None:
+    order = _apply(CAPTURED_BOX)
+    order.tracking_url = _DE_LINK
+    data = HelloFreshAccountData(orders=[order]).finalize()
+    live = _live(datetime(2026, 8, 18, 12, 0, tzinfo=UTC))
+    assert tracked_shipment_estimate(data, live) == date(2026, 8, 17)
+
+
+def test_live_eta_counts_only_while_live_for_this_order() -> None:
+    eta = datetime(2026, 9, 29, 14, 26, tzinfo=UTC)
+    data = _de_data()
+    assert tracked_shipment_estimate(data, None) is None
+    assert tracked_shipment_estimate(data, _live(eta, active=False)) is None
+    assert tracked_shipment_estimate(data, _live(None)) is None
+    other_box = _live(eta, tracking_url="https://status.hellofresh.de/999")
+    assert tracked_shipment_estimate(data, other_box) is None
+
+
+def test_estimate_sensor_reads_and_follows_the_live_tracker() -> None:
+    """The entity uses the live snapshot, and listens to the tracker's own (faster) updates."""
+    tracey_listeners: list = []
+
+    def add_tracey_listener(callback, context=None):
+        tracey_listeners.append(callback)
+        return lambda: None
+
+    tracey = SimpleNamespace(
+        data=_live(datetime(2026, 9, 29, 14, 26, tzinfo=UTC)),
+        async_add_listener=add_tracey_listener,
+    )
+    coordinator = SimpleNamespace(
+        data=_de_data(),
+        tracey=tracey,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh (DE)"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.de"),
+        async_add_listener=lambda callback, context=None: lambda: None,
+    )
+    description = next(d for d in SENSORS if d.key == "tracked_shipment_estimate")
+    sensor = HelloFreshSensor(coordinator, description)
+    assert sensor.native_value == date(2026, 9, 29)
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(sensor.async_added_to_hass())
+    finally:
+        loop.close()
+    assert tracey_listeners == [sensor._handle_coordinator_update]

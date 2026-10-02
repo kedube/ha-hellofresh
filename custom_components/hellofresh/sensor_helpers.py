@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
 from .models import HelloFreshAccountData
 from .parsers import iso_week_label
+
+if TYPE_CHECKING:
+    from .tracey import TraceyData
 
 # Home Assistant rejects entity states longer than 255 characters.
 MAX_STATE_LENGTH = 255
@@ -102,6 +105,28 @@ def _estimated_delivery_date(data: HelloFreshAccountData) -> date | None:
     if estimated.tzinfo is not None:
         estimated = estimated.astimezone(UTC)
     return estimated.date()
+
+
+def tracked_shipment_estimate(
+    data: HelloFreshAccountData, tracey_data: TraceyData | None
+) -> date | None:
+    """Return the estimated delivery day: the carrier's estimate, else the live tracker's ETA.
+
+    The carrier's estimate only exists for orders whose link is ``…/delivery-tracking/<uuid>``
+    (the SCM lookup). Own-fleet markets (TRACEY_COUNTRIES) link to the live tracker instead,
+    so there the day comes from its ETA. That ETA is a real instant, not a midnight-UTC date,
+    so its day is read in Home Assistant's timezone. Only a live snapshot of this same order's
+    link counts.
+    """
+    estimate = _estimated_delivery_date(data)
+    if estimate is not None or tracey_data is None:
+        return estimate
+    if not tracey_data.active or tracey_data.eta is None:
+        return None
+    order = data.tracked_order
+    if order is None or not order.tracking_url or tracey_data.tracking_url != order.tracking_url:
+        return None
+    return dt_util.as_local(tracey_data.eta).date()
 
 
 def _tracked_order_value(attr: str) -> Callable[[HelloFreshAccountData], Any]:

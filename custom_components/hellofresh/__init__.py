@@ -834,8 +834,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def async_get_delivery_tracking(service_call: ServiceCall) -> ServiceResponse:
         """Return the live last-mile tracking snapshot.
 
-        Read-only. Only meaningful for accounts in TRACEY_COUNTRIES (currently the
-        Netherlands): elsewhere the response is ``{"available": false}``. When available,
+        Read-only. Only meaningful for accounts in TRACEY_COUNTRIES (the Netherlands and
+        Germany): elsewhere the response is ``{"available": false}``. When available,
         this triggers a live fetch of the Tracey endpoint (throttled to one request a
         minute); the sensors poll it on the configured live-tracking cadence.
         """

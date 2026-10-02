@@ -521,7 +521,7 @@ export const CARD_STYLES = `
   .hf-pantryitem.done .hf-pantrytext { text-decoration: line-through; color: var(--hf-muted); }
   .hf-pantryitem .hf-pantryamt { font-size: 0.86em; color: var(--hf-muted); white-space: nowrap; }
 
-  /* ---- live tracking (the Netherlands) -------------------------------------------------- */
+  /* ---- live tracking (the Netherlands, Germany) ---------------------------------------- */
   .hf-live {
     display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: var(--hf-radius);
     border: 1px solid color-mix(in srgb, var(--hf-accent) 35%, var(--hf-border));

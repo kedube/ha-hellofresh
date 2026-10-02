@@ -1,10 +1,10 @@
 """Live last-mile delivery tracking via HelloFresh's Tracey API.
 
-In markets where HelloFresh runs its own delivery fleet (currently the Netherlands —
-tracked in issue #6), the customer tracking page (``hftrack.nl``) is backed by an
-unauthenticated Google Cloud Function that reports the live delivery state: the phase
-(packed / departed / on the way / delivered), the driver's name and GPS position, how many
-stops remain before this customer, and a minute-precision ETA. None of that exists in the
+In markets where HelloFresh runs its own delivery fleet (the Netherlands, issue #6, and
+Germany, issue #12), the customer tracking page (``hftrack.nl``, ``status.hellofresh.de``)
+is backed by an unauthenticated Google Cloud Function that reports the live delivery state:
+the phase (packed / departed / on the way / delivered), the driver's name and GPS position,
+how many stops remain before this customer, and a minute-precision ETA. None of that exists in the
 core ``/gw`` API — carriers there expose only coarse shipment status.
 
 The endpoint is keyed by the per-delivery token that is the last path segment of the
@@ -30,20 +30,19 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_COUNTRY,
     CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DOMAIN,
     MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
+    TRACEY_SITES,
 )
 from .token_manager import _BROWSER_USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
 TRACEY_ENDPOINT = "https://europe-west1-hellofresh-prod.cloudfunctions.net/c_hf_getTraceyData"
-# The tracking site whose frontend calls the cloud function; sent as Origin/Referer so the
-# request matches what the endpoint normally sees. NL-specific, like the endpoint itself.
-TRACEY_SITE = "https://www.hftrack.nl"
 
 # Phases observed in the community capture (issue #6). DELAYED counts as active — the
 # delivery still exists and the endpoint keeps updating it.
@@ -53,7 +52,7 @@ TERMINAL_PHASES = DELIVERED_PHASES | {"CANCELLED"}
 INVALID_PHASE = "INVALID_LINK"
 
 # Poll fast while a delivery is live (driver GPS / ETA / stop count change by the minute),
-# slow when there is nothing to watch. The active tick is configurable for Netherlands
+# slow when there is nothing to watch. The active tick is configurable for TRACEY_COUNTRIES
 # accounts; the idle tick still runs so a delivery that starts between main-coordinator
 # polls is picked up within half an hour.
 DEFAULT_ACTIVE_UPDATE_INTERVAL = timedelta(
@@ -71,9 +70,10 @@ MIN_SERVICE_FETCH_INTERVAL_SECONDS = 60
 def tracey_token(tracking_url: str | None) -> str | None:
     """Return the Tracey token — the last path segment of the order's tracking URL.
 
-    The community capture derives it exactly this way (``tracking_url.split('/')[-1]``).
-    Guards against URLs with query strings, trailing slashes, and non-hftrack carriers'
-    URLs whose last segment is clearly not a bare token.
+    The community capture derives it exactly this way (``tracking_url.split('/')[-1]``); in
+    Germany that segment is the shipment's tracking number (``status.hellofresh.de/<n>``).
+    Guards against URLs with query strings, trailing slashes, and other carriers' URLs whose
+    last segment is clearly not a bare token.
     """
     if not tracking_url or not isinstance(tracking_url, str):
         return None
@@ -246,6 +246,11 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         )
         return timedelta(seconds=seconds)
 
+    @property
+    def tracking_site(self) -> str:
+        """The account's tracking site, whose page normally makes the cloud-function call."""
+        return TRACEY_SITES.get(self.config_entry.data.get(CONF_COUNTRY), TRACEY_SITES["nl"])
+
     def _current_tracking_url(self) -> str | None:
         """Return the tracked order's tracking URL from the latest account data."""
         data = getattr(self._main_coordinator, "data", None)
@@ -272,8 +277,8 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
                 params={"token": token, "screenWidth": "500"},
                 headers={
                     "Accept": "application/json, text/plain, */*",
-                    "Origin": TRACEY_SITE,
-                    "Referer": f"{TRACEY_SITE}/",
+                    "Origin": self.tracking_site,
+                    "Referer": f"{self.tracking_site}/",
                     "User-Agent": _BROWSER_USER_AGENT,
                 },
                 timeout=aiohttp.ClientTimeout(total=15),

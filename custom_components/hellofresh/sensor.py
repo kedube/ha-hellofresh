@@ -23,6 +23,7 @@ from .sensor_helpers import (
     token_days_remaining,
     token_minutes_remaining,
     token_seconds_remaining,
+    tracked_shipment_estimate,
 )
 from .tracey import HelloFreshTraceyCoordinator
 
@@ -310,7 +311,7 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
 
 # Live last-mile tracking sensors, backed by the separate Tracey coordinator. Created ONLY
 # for accounts in TRACEY_COUNTRIES (the coordinator is None elsewhere — the underlying
-# hftrack.nl data does not exist outside HelloFresh's own-fleet markets). All report
+# live-tracker data does not exist outside HelloFresh's own-fleet markets). All report
 # Unknown outside an active delivery window rather than carrying stale values.
 TRACEY_SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -373,9 +374,21 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
         self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
 
+    async def async_added_to_hass(self) -> None:
+        """Also follow the live tracker for the estimate, which falls back to its ETA."""
+        await super().async_added_to_hass()
+        tracey = getattr(self.coordinator, "tracey", None)
+        if self.entity_description.key == "tracked_shipment_estimate" and tracey is not None:
+            self.async_on_remove(tracey.async_add_listener(self._handle_coordinator_update))
+
     @property
     def native_value(self):
         """Return the sensor value."""
+        if self.entity_description.key == "tracked_shipment_estimate":
+            tracey = getattr(self.coordinator, "tracey", None)
+            return tracked_shipment_estimate(
+                self.coordinator.data, tracey.data if tracey is not None else None
+            )
         if self.entity_description.key == "access_token_minutes_remaining":
             return token_minutes_remaining(self.coordinator.client.token_expires_at)
         if self.entity_description.key == "refresh_token_days_remaining":

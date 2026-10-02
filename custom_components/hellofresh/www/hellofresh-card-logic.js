@@ -720,9 +720,10 @@ export function deliveryPhotos(week) {
     .slice(0, 3);
 }
 
-// ---- live tracking (the Netherlands) ------------------------------------------------------
-// Where HelloFresh drives its own vans (the integration's TRACEY_COUNTRIES, today only the
-// Netherlands) its tracking page, hftrack.nl, is backed by a live tracker. The integration
+// ---- live tracking (the Netherlands, Germany) --------------------------------------------
+// Where HelloFresh drives its own vans (the integration's TRACEY_COUNTRIES, today the
+// Netherlands and Germany) its tracking page (hftrack.nl, status.hellofresh.de) is backed by
+// a live tracker. The integration
 // polls it into sensors: the phase sensor carries the whole snapshot as attributes, the ETA
 // sensor the arrival time. Phases are HelloFresh's own; `step` indexes LIVE_STEPS.
 // Steps read live.step.<key>; phases live.phase.<phase>.

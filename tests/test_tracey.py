@@ -1,4 +1,4 @@
-"""Tests for the Tracey live delivery tracking module (NL-only sensors, issue #6).
+"""Tests for the Tracey live delivery tracking module (NL and DE sensors, issues #6 and #12).
 
 The Tracey endpoint is unauthenticated and region-specific, and no maintainer account can
 exercise it live (it only exists for HelloFresh's own-fleet markets), so these tests pin the
@@ -162,7 +162,9 @@ class _FakeSession:
         return _FakeResponse(self._payload, self._status)
 
 
-def _bare_coordinator(session, tracking_url: str | None) -> HelloFreshTraceyCoordinator:
+def _bare_coordinator(
+    session, tracking_url: str | None, *, country: str = "nl"
+) -> HelloFreshTraceyCoordinator:
     """Build a coordinator without hass: only the attributes _async_update_data reads.
 
     ``update_interval`` is a plain property (setter touches no hass machinery), so the
@@ -177,7 +179,7 @@ def _bare_coordinator(session, tracking_url: str | None) -> HelloFreshTraceyCoor
         )
     )
     coordinator.config_entry = SimpleNamespace(
-        entry_id="test-entry", title="HelloFresh (NL)", options={}
+        entry_id="test-entry", title="HelloFresh (NL)", options={}, data={"country": country}
     )
     coordinator._last_fetch_monotonic = None
     coordinator._update_interval_seconds = None
@@ -215,6 +217,25 @@ def test_coordinator_live_delivery_polls_fast() -> None:
     request = session.requests[0]
     assert request["params"]["token"] == "abc123"
     assert request["headers"]["Origin"] == "https://www.hftrack.nl"
+
+
+def test_coordinator_german_delivery_uses_the_tracking_number_and_german_site() -> None:
+    """German links are ``status.hellofresh.de/<tracking number>``; that number is the token.
+
+    Confirmed by a user in issue #12: the German tracking page calls the same cloud function
+    with the link's last segment as ``token``. The request names the German page as its
+    Origin/Referer, as the browser would.
+    """
+    session = _FakeSession(LIVE_PAYLOAD)
+    coordinator = _bare_coordinator(
+        session, "https://status.hellofresh.de/1234567890", country="de"
+    )
+    data = _run(coordinator._async_update_data())
+    assert data.active is True
+    request = session.requests[0]
+    assert request["params"]["token"] == "1234567890"
+    assert request["headers"]["Origin"] == "https://status.hellofresh.de"
+    assert request["headers"]["Referer"] == "https://status.hellofresh.de/"
 
 
 def test_coordinator_live_delivery_uses_configured_seconds_interval() -> None:
@@ -277,13 +298,14 @@ def test_coordinator_falls_back_to_next_order_link() -> None:
 # ---- country gating --------------------------------------------------------------------
 
 
-def test_tracey_is_netherlands_only_for_now() -> None:
+def test_tracey_countries_are_the_confirmed_markets() -> None:
     """The gate is deliberate: only markets with a confirmed Tracey deployment.
 
-    Belgium/Luxembourg likely qualify (own-fleet markets) but are unverified — widen the
-    set only with a confirmation from a user there, per the discussion on issue #6.
+    The Netherlands (issue #6) and Germany (issue #12) are confirmed. Belgium/Luxembourg
+    likely qualify (own-fleet markets) but are unverified — widen the set only with a
+    confirmation from a user there.
     """
-    assert frozenset({"nl"}) == TRACEY_COUNTRIES
+    assert frozenset({"nl", "de"}) == TRACEY_COUNTRIES
 
 
 # ---- sensors ---------------------------------------------------------------------------

@@ -100,7 +100,7 @@ export class OverviewView {
         ${ht("overview.unsaved")}</div>
         <button class="hf-btn sm primary" data-action="goto" data-view="menu" data-week-id="${esc(week.week_id)}">${ht("overview.finish")}</button></div>`);
     }
-    // The live tracker (Netherlands) is the finer view of the same journey, so it stands in for
+    // The live tracker (Netherlands, Germany) is the finer view of the same journey, so it stands in for
     // the carrier's tracker rather than stacking a second progress bar under it.
     const live = this._live(week, { hero: true });
     const tracking = live || UI.trackingBlock(week, { historyOpen: this.historyOpen === week.week_id });
@@ -169,7 +169,7 @@ export class OverviewView {
       </section>`;
   }
 
-  // The live delivery in the Netherlands (HelloFresh's own vans): phase, ETA, stops left before
+  // The live delivery in the Netherlands or Germany (HelloFresh's own vans): phase, ETA, stops left before
   // yours, the driver, HelloFresh's message and a link to its live map. It belongs to the week
   // whose order carries the tracked link; the next box also shows it when no week does (the link
   // can reach the tracker before the order data catches up).

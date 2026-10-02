@@ -106,7 +106,7 @@
         "data_description": {
           "scan_interval_minutes": "Hvor ofte HelloFresh spørres om konto- og leveringsdata. Lavere = ferskere data og flere forespørsler; høyere = skånsommere for API-et. Område 5–1440 minutter; standard 180 (3 timer). Innloggingstokenet fornyes etter sin egen plan, så dette påvirker ikke innloggingen.",
           "delivery_watch_interval_minutes": "Mens en kasse er ventet (leveringsdagen eller dagen etter, til transportøren bekrefter den) eller en forsendelse er underveis, sjekkes bare leveringsstatus og pakkesporing så ofte, uavhengig av oppdateringsintervallet, slik at leveringen vises innen få minutter. Område 0–60; standard 15. 0 slår overvåkingen av. Andre dager sendes ingen ekstra forespørsler.",
-          "delivery_tracking_refresh_interval_seconds": "Kun Nederland. Mens live sisteledds-sporing er aktiv, spørres HelloFreshs uautoriserte Tracey-endepunkt så ofte om fase, ETA, antall stopp og sjåførens posisjon. Område 60–3600 sekunder; standard 300.",
+          "delivery_tracking_refresh_interval_seconds": "Kun Nederland og Tyskland. Mens live sisteledds-sporing er aktiv, spørres HelloFreshs uautoriserte Tracey-endepunkt så ofte om fase, ETA, antall stopp og sjåførens posisjon. Område 60–3600 sekunder; standard 300.",
           "history_weeks": "Hvor mange uker med tidligere leveringer som lastes inn, slik at du kan bla i dem i kortene. Lavere = mindre data per oppdatering; øk for å se lenger tilbake (rundt 56 for et helt år). Område 1–104 uker; standard 26 (rundt 6 måneder). Endring laster integrasjonen på nytt.",
           "menu_grace_weeks": "Hvor mange uker etter leveringsdatoen en uke beholder hele menyen sin i måltidsplanlegger-kortet (de leverte rettene dine forblir uthevet); eldre uker viser bare det som ble levert. Område 0–3 uker; standard 2 (de siste matkassene kan fortsatt bla gjennom). 0 slår det av. HelloFresh publiserer ikke lenger menyen for eldre uker, så uker utover dette viser bare de leverte rettene. Endring laster integrasjonen på nytt.",
           "show_sidebar_panel": "Legger til et HelloFresh-punkt i sidepanelet i Home Assistant som åpner HelloFresh-kortet i fullskjerm, så du slipper å bygge et dashbord. Med flere kontoer får hver sitt eget punkt. Slå av for å fjerne det; du kan fortsatt legge til kortet på et hvilket som helst dashbord.",
@@ -697,7 +697,7 @@
     },
     "get_delivery_tracking": {
       "name": "Hent leveringssporing",
-      "description": "Returnerer sanntidsbildet av leveringssporingen (fase, sjåførens navn og GPS-posisjon, stopp før deg, ankomsttid på minuttet) fra HelloFreshs egen leveringsflåte-sporer. Bare tilgjengelig i land der HelloFresh leverer med egen flåte (for øyeblikket Nederland); andre steder melder svaret at det er utilgjengelig. Skrivebeskyttet; returnerer et svar.",
+      "description": "Returnerer sanntidsbildet av leveringssporingen (fase, sjåførens navn og GPS-posisjon, stopp før deg, ankomsttid på minuttet) fra HelloFreshs egen leveringsflåte-sporer. Bare tilgjengelig i land der HelloFresh leverer med egen flåte (for øyeblikket Nederland og Tyskland); andre steder melder svaret at det er utilgjengelig. Skrivebeskyttet; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",

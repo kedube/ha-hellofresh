@@ -553,7 +553,7 @@ class HelloFreshCard extends HTMLElement {
       refreshToken: find("refresh_token_days_remaining", "sensor"),
       writeActions: find("write_actions_available", "binary_sensor"),
       payloadShape: find("payload_shape_changed", "binary_sensor"),
-      // Live tracking, only for accounts where HelloFresh drives its own vans (the Netherlands).
+      // Live tracking, only for accounts where HelloFresh drives its own vans (the Netherlands, Germany).
       trackingPhase: find("delivery_tracking_phase", "sensor"),
       trackingEta: find("delivery_tracking_eta", "sensor"),
     };
@@ -601,7 +601,7 @@ class HelloFreshCard extends HTMLElement {
     }
   }
 
-  // The live delivery (Netherlands), from the tracking sensors; null when nothing is on the road.
+  // The live delivery (Netherlands, Germany), from the tracking sensors; null when nothing is on the road.
   liveTracking() {
     const ids = this.entities();
     return L.liveTracking(this.entityState(ids.trackingPhase), this.entityState(ids.trackingEta));
