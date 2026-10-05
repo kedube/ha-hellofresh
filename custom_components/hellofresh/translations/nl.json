@@ -19,7 +19,7 @@
           "log_auth_diagnostics": "Authenticatiediagnostiek loggen"
         },
         "data_description": {
-          "log_auth_diagnostics": "Log indien ingeschakeld het HTTP-resultaat van aanmelden en tokenvernieuwing, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
+          "log_auth_diagnostics": "Log indien ingeschakeld mislukte aanmeldingen en tokenvernieuwingen, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. Geslaagde stappen worden alleen op debugniveau gelogd. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
         }
       },
       "token": {
@@ -31,7 +31,7 @@
           "log_auth_diagnostics": "Authenticatiediagnostiek loggen"
         },
         "data_description": {
-          "log_auth_diagnostics": "Log indien ingeschakeld het HTTP-resultaat van aanmelden en tokenvernieuwing, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
+          "log_auth_diagnostics": "Log indien ingeschakeld mislukte aanmeldingen en tokenvernieuwingen, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. Geslaagde stappen worden alleen op debugniveau gelogd. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
         }
       },
       "reauth_confirm": {
@@ -115,7 +115,7 @@
           "enable_prep_lists": "Voor elk van de volgende twee leveringen een takenlijst maken met de ingrediënten die je gekozen maaltijden nodig hebben maar die HelloFresh niet meelevert — zout, olie, boter, eieren — zodat je ze kunt kopen voordat de box aankomt. Zet dit uit om beide lijsten te verwijderen en de benodigde receptopvragingen over te slaan.",
           "show_data_quality_issues": "Waarschuwingen tonen in het scherm Reparaties wanneer HelloFresh-gegevens beperkt zijn (menuterugval actief, onbekende gegevensformaten, accountgegevens niet beschikbaar, geblokkeerde schrijfacties). De gegevens blijven hoe dan ook laden. Zet dit uit om deze waarschuwingen te onderdrukken en al getoonde waarschuwingen te wissen.",
           "use_curl_cffi_headers": "Laat curl_cffi Chrome-headers leveren voor aanmelden, tokenvernieuwing en gegevensverzoeken. De integratie stelt nog steeds API-headers in en corrigeert de fetch-metadata voor een XHR. Uit (aanbevolen) verstuurt de volledige, geordende XHR-headers van de integratie.",
-          "log_auth_diagnostics": "Log indien ingeschakeld het HTTP-resultaat van aanmelden en tokenvernieuwing, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
+          "log_auth_diagnostics": "Log indien ingeschakeld mislukte aanmeldingen en tokenvernieuwingen, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. Geslaagde stappen worden alleen op debugniveau gelogd. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
         }
       }
     }

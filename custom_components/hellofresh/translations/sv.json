@@ -19,7 +19,7 @@
           "log_auth_diagnostics": "Logga autentiseringsdiagnostik"
         },
         "data_description": {
-          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
+          "log_auth_diagnostics": "När detta är aktiverat loggas misslyckade inloggningar och tokenförnyelser samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. Lyckade steg loggas endast på debugnivå. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       },
       "token": {
@@ -31,7 +31,7 @@
           "log_auth_diagnostics": "Logga autentiseringsdiagnostik"
         },
         "data_description": {
-          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
+          "log_auth_diagnostics": "När detta är aktiverat loggas misslyckade inloggningar och tokenförnyelser samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. Lyckade steg loggas endast på debugnivå. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       },
       "reauth_confirm": {
@@ -115,7 +115,7 @@
           "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan lådan kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
           "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas.",
           "use_curl_cffi_headers": "Låt curl_cffi skicka Chrome-headers för inloggning, tokenförnyelse och dataanrop. Integrationen anger fortfarande API-headers och korrigerar fetch-metadata för ett XHR-anrop. Av (rekommenderas) skickar integrationens fullständiga, ordnade XHR-headers.",
-          "log_auth_diagnostics": "När detta är aktiverat loggas HTTP-resultatet för inloggning och tokenförnyelse samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
+          "log_auth_diagnostics": "När detta är aktiverat loggas misslyckade inloggningar och tokenförnyelser samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. Lyckade steg loggas endast på debugnivå. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
         }
       }
     }

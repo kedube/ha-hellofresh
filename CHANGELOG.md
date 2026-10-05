@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Successful sign-ins and token renewals no longer show up as warnings** ([#13](https://github.com/kedube/ha-hellofresh/issues/13)).
+  With **Log authentication diagnostics** on (the default), every token renewal logged
+  "HelloFresh authentication diagnostic: /gw/refresh returned HTTP 200" as a warning, several
+  times an hour. Successful steps are now logged only at debug level. The option still adds
+  Cloudflare details to failed sign-ins and renewals.
+
 ## 4.03 — 2026-10-02
 - **Live delivery tracking now works in Germany** ([#12](https://github.com/kedube/ha-hellofresh/issues/12)).
   German boxes link to HelloFresh's own live tracker (`status.hellofresh.de`), the same one the

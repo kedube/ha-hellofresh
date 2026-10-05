@@ -695,9 +695,13 @@ class TokenManager:
         return _cloudflare_diagnostics(response, body) if self._log_auth_diagnostics else ""
 
     def _log_auth_success(self, endpoint: str, status: int) -> None:
-        """Record successful auth steps when the diagnostics option is enabled."""
-        if self._log_auth_diagnostics and status < _HTTP_BAD_REQUEST:
-            _LOGGER.warning(
+        """Record a successful auth step at debug level.
+
+        Never a warning: the token refresh timer succeeds every few minutes, and with the
+        diagnostics option on by default that flooded the HA log with HTTP 200 lines (#13).
+        """
+        if status < _HTTP_BAD_REQUEST:
+            _LOGGER.debug(
                 "HelloFresh authentication diagnostic: %s returned HTTP %s", endpoint, status
             )
 

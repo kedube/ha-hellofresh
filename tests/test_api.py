@@ -6265,7 +6265,7 @@ def test_cf_mitigated_header_marks_json_auth_response_as_challenge(caplog) -> No
 
 
 def test_auth_diagnostics_logs_successful_steps_without_secrets(caplog) -> None:
-    """Opt-in logging shows the two login steps and their statuses."""
+    """Successful login steps are logged at debug only, never as warnings (#13)."""
 
     class DummySession:
         async def post(self, url: str, params=None, json=None, headers=None):
@@ -6281,11 +6281,14 @@ def test_auth_diagnostics_logs_successful_steps_without_secrets(caplog) -> None:
     )
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         loop.run_until_complete(client._async_login(force=True))
 
     assert "authentication diagnostic: /gw/auth/token returned HTTP 200" in caplog.text
     assert "authentication diagnostic: /gw/login returned HTTP 200" in caplog.text
+    assert not [
+        r for r in caplog.records if r.levelno >= logging.WARNING and "diagnostic" in r.message
+    ]
     assert "private-app-token" not in caplog.text
     assert "private-user-token" not in caplog.text
     assert "private-password" not in caplog.text
@@ -6364,7 +6367,7 @@ def test_html_200_auth_response_starts_backoff(blocked_step, caplog) -> None:
     )
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    with caplog.at_level(logging.WARNING), pytest.raises(HelloFreshBotBlockedError):
+    with caplog.at_level(logging.DEBUG), pytest.raises(HelloFreshBotBlockedError):
         loop.run_until_complete(client._async_login(force=True))
     assert client._tokens._block_backoff.consecutive_blocks == 1
     assert posts[-1].endswith(blocked_step)
