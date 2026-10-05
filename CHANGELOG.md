@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.04 — 2026-10-05
 - **Successful sign-ins and token renewals no longer show up as warnings** ([#13](https://github.com/kedube/ha-hellofresh/issues/13)).
   With **Log authentication diagnostics** on (the default), every token renewal logged
   "HelloFresh authentication diagnostic: /gw/refresh returned HTTP 200" as a warning, several
