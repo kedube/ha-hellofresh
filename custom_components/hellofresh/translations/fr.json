@@ -19,7 +19,7 @@
           "log_auth_diagnostics": "Journaliser le diagnostic de connexion"
         },
         "data_description": {
-          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
+          "log_auth_diagnostics": "Si activé, journalise les échecs de connexion et de renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les étapes réussies ne sont journalisées qu’au niveau debug. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       },
       "token": {
@@ -31,7 +31,7 @@
           "log_auth_diagnostics": "Journaliser le diagnostic de connexion"
         },
         "data_description": {
-          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
+          "log_auth_diagnostics": "Si activé, journalise les échecs de connexion et de renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les étapes réussies ne sont journalisées qu’au niveau debug. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       },
       "reauth_confirm": {
@@ -115,7 +115,7 @@
           "enable_prep_lists": "Créer une liste de tâches pour chacune des deux prochaines livraisons, contenant les ingrédients dont vos repas choisis ont besoin mais que HelloFresh ne livre pas — sel, huile, beurre, œufs — afin de les acheter avant l'arrivée du colis. Désactivez pour supprimer les deux listes et ignorer les requêtes de recettes nécessaires.",
           "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés.",
           "use_curl_cffi_headers": "Laisser curl_cffi fournir ses en-têtes Chrome pour la connexion, le renouvellement du jeton et les requêtes de données. L’intégration définit toujours les en-têtes API et corrige les métadonnées Fetch pour une requête XHR. Désactivé (recommandé) envoie les en-têtes XHR complets et ordonnés de l’intégration.",
-          "log_auth_diagnostics": "Si activé, journalise le résultat HTTP de la connexion et du renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
+          "log_auth_diagnostics": "Si activé, journalise les échecs de connexion et de renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les étapes réussies ne sont journalisées qu’au niveau debug. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
         }
       }
     }

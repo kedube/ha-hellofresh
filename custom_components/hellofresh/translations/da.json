@@ -19,7 +19,7 @@
           "log_auth_diagnostics": "Log godkendelsesdiagnostik"
         },
         "data_description": {
-          "log_auth_diagnostics": "Når dette er slået til, logges HTTP-resultatet for login og tokenfornyelse samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
+          "log_auth_diagnostics": "Når dette er slået til, logges mislykkede login- og tokenfornyelsesforsøg samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. Vellykkede trin logges kun på debug-niveau. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
         }
       },
       "token": {
@@ -31,7 +31,7 @@
           "log_auth_diagnostics": "Log godkendelsesdiagnostik"
         },
         "data_description": {
-          "log_auth_diagnostics": "Når dette er slået til, logges HTTP-resultatet for login og tokenfornyelse samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
+          "log_auth_diagnostics": "Når dette er slået til, logges mislykkede login- og tokenfornyelsesforsøg samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. Vellykkede trin logges kun på debug-niveau. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
         }
       },
       "reauth_confirm": {
@@ -115,7 +115,7 @@
           "enable_prep_lists": "Opret en opgaveliste for hver af de næste to leveringer med de ingredienser, dine valgte retter kræver, men som HelloFresh ikke sender med — salt, olie, smør, æg — så du kan købe dem, inden kassen lander. Slå fra for at fjerne begge lister og springe de nødvendige opskriftsopslag over.",
           "show_data_quality_issues": "Vis advarsler på Reparationer-skærmen, når HelloFresh-data er forringede (menureserve aktiv, ukendte dataformater, kontodata utilgængelige, blokerede skrivehandlinger). Data indlæses fortsat uanset hvad. Slå fra for at skjule disse advarsler og fjerne dem, der allerede vises.",
           "use_curl_cffi_headers": "Lad curl_cffi levere Chrome-headere til login, tokenfornyelse og dataanmodninger. Integrationen angiver stadig API-headere og retter fetch-metadata til en XHR-anmodning. Slå fra (anbefalet) for at sende integrationens fulde, ordnede XHR-headere.",
-          "log_auth_diagnostics": "Når dette er slået til, logges HTTP-resultatet for login og tokenfornyelse samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
+          "log_auth_diagnostics": "Når dette er slået til, logges mislykkede login- og tokenfornyelsesforsøg samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. Vellykkede trin logges kun på debug-niveau. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
         }
       }
     }

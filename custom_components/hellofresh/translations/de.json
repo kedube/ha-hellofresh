@@ -19,7 +19,7 @@
           "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
         },
         "data_description": {
-          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
+          "log_auth_diagnostics": "Wenn aktiviert, werden fehlgeschlagene Anmeldungen und Token-Erneuerungen samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Erfolgreiche Schritte werden nur auf Debug-Ebene protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       },
       "token": {
@@ -31,7 +31,7 @@
           "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
         },
         "data_description": {
-          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
+          "log_auth_diagnostics": "Wenn aktiviert, werden fehlgeschlagene Anmeldungen und Token-Erneuerungen samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Erfolgreiche Schritte werden nur auf Debug-Ebene protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       },
       "reauth_confirm": {
@@ -115,7 +115,7 @@
           "enable_prep_lists": "Für jede der nächsten beiden Lieferungen eine Aufgabenliste mit den Zutaten erstellen, die deine gewählten Gerichte benötigen und die HelloFresh nicht mitliefert — Salz, Öl, Butter, Eier — damit du sie vor Ankunft der Box besorgen kannst. Deaktiviere dies, um beide Listen zu entfernen und die dafür nötigen Rezeptabfragen zu überspringen.",
           "show_data_quality_issues": "Warnungen im Reparaturen-Bildschirm anzeigen, wenn HelloFresh-Daten eingeschränkt sind (Menü-Fallback aktiv, unbekannte Datenformate, Kontodaten nicht verfügbar, blockierte Schreibaktionen). Die Daten werden in beiden Fällen weiter geladen. Deaktiviere dies, um diese Warnungen zu unterdrücken und bereits angezeigte zu entfernen.",
           "use_curl_cffi_headers": "curl_cffi stellt Chrome-Header für Anmeldung, Token-Erneuerung und Datenabrufe bereit. Die Integration setzt weiterhin API-Header und korrigiert die Fetch-Metadaten für eine XHR-Anfrage. Deaktiviert (empfohlen) sendet die vollständigen, geordneten XHR-Header der Integration.",
-          "log_auth_diagnostics": "Wenn aktiviert, werden die HTTP-Ergebnisse von Anmeldung und Token-Erneuerung samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
+          "log_auth_diagnostics": "Wenn aktiviert, werden fehlgeschlagene Anmeldungen und Token-Erneuerungen samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Erfolgreiche Schritte werden nur auf Debug-Ebene protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
         }
       }
     }
