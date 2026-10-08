@@ -137,9 +137,9 @@
       "title": "Les actions d'écriture HelloFresh ne sont pas confirmées pour {entry_title}",
       "description": "Vous avez tenté une action HelloFresh qui modifie les données du compte pour **{entry_title}**, comme choisir des repas ou sauter une semaine. L'intégration a essayé les points d'accès d'écriture connus pour votre compte, mais aucun n'a accepté la requête : l'action a donc été bloquée plutôt que de continuer à deviner."
     },
-    "deprecated_classic_cards": {
-      "title": "Les cartes HelloFresh classiques vont disparaître",
-      "description": "Vos tableaux de bord {dashboards} utilisent encore {cards}. Ces cartes sont obsolètes et seront supprimées dans une prochaine version. La carte HelloFresh fait tout ce qu'elles font : ouvrez **HelloFresh** dans la barre latérale, ou ajoutez `custom:hellofresh-card` à un tableau de bord, puis retirez les cartes classiques. **En savoir plus** indique où se trouve désormais chaque fonction."
+    "removed_classic_cards": {
+      "title": "Des tableaux de bord utilisent encore des cartes HelloFresh supprimées",
+      "description": "Vos tableaux de bord {dashboards} utilisent encore {cards}. Ces cartes classiques ont été supprimées de l'intégration et affichent désormais une erreur. La carte HelloFresh fait tout ce qu'elles faisaient : ouvrez **HelloFresh** dans la barre latérale, ou remplacez-les par `custom:hellofresh-card` sur votre tableau de bord. **En savoir plus** indique où se trouve désormais chaque fonction. Cet avis disparaît de lui-même dès qu'aucun tableau de bord ne les utilise plus."
     }
   },
   "entity": {

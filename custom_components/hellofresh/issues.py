@@ -14,8 +14,10 @@ ISSUE_ACCOUNT_DATA_UNAVAILABLE = "account_data_unavailable"
 ISSUE_ACCOUNT_MENU_FALLBACK = "account_menu_fallback"
 ISSUE_PAYLOAD_SHAPE_CHANGED = "payload_shape_changed"
 ISSUE_WRITE_ACTIONS_UNAVAILABLE = "write_actions_unavailable"
-# Not per entry: dashboards belong to the whole Home Assistant, not to one account.
-ISSUE_DEPRECATED_CLASSIC_CARDS = "deprecated_classic_cards"
+# Not per entry: dashboards belong to the whole Home Assistant, not to one account. Not the
+# deprecation notice's id ("deprecated_classic_cards") either, so it shows even to those who
+# dismissed that one.
+ISSUE_REMOVED_CLASSIC_CARDS = "removed_classic_cards"
 CLASSIC_CARDS_MIGRATION_URL = (
     "https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md"
     "#moving-from-the-classic-cards"
@@ -151,26 +153,27 @@ def async_delete_write_actions_issue(hass, entry_id: str) -> None:
     ir.async_delete_issue(hass, DOMAIN, _issue_id(ISSUE_WRITE_ACTIONS_UNAVAILABLE, entry_id))
 
 
-def async_update_classic_cards_issue(hass, in_use: dict[str, list[str]]) -> None:
-    """Raise, refresh or clear the notice that dashboards still use the classic cards.
+def async_update_removed_cards_issue(hass, in_use: dict[str, list[str]]) -> None:
+    """Raise, refresh or clear the notice that dashboards still use a removed classic card.
 
-    ``in_use`` maps each deprecated card type still on a dashboard to the dashboards using it
-    (frontend.async_classic_cards_in_use). The notice names both and links to the migration
-    notes; it goes away by itself once no dashboard uses a classic card.
+    ``in_use`` maps each removed card type still on a dashboard to the dashboards using it
+    (frontend.async_removed_cards_in_use). Those cards now show "Custom element doesn't exist",
+    so the notice names both and links to where each feature went; it goes away by itself once
+    no dashboard uses one.
     """
     if not in_use:
-        ir.async_delete_issue(hass, DOMAIN, ISSUE_DEPRECATED_CLASSIC_CARDS)
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_REMOVED_CLASSIC_CARDS)
         return
     dashboards = sorted({name for names in in_use.values() for name in names})
     ir.async_create_issue(
         hass,
         DOMAIN,
-        ISSUE_DEPRECATED_CLASSIC_CARDS,
+        ISSUE_REMOVED_CLASSIC_CARDS,
         is_fixable=False,
         is_persistent=False,
-        severity=ir.IssueSeverity.WARNING,
+        severity=ir.IssueSeverity.ERROR,
         learn_more_url=CLASSIC_CARDS_MIGRATION_URL,
-        translation_key=ISSUE_DEPRECATED_CLASSIC_CARDS,
+        translation_key=ISSUE_REMOVED_CLASSIC_CARDS,
         translation_placeholders={
             "cards": ", ".join(f"`{card_type}`" for card_type in sorted(in_use)),
             "dashboards": ", ".join(dashboards),

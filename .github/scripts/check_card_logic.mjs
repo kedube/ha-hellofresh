@@ -1,70 +1,34 @@
 /**
- * Behavioural tests for the Lovelace cards' week-selection logic.
+ * Behavioural tests for the HelloFresh card's week-selection logic.
  *
- * `_browsableWeeks` decides which weeks a card lets you browse. It is pure (weeks in -> weeks
+ * `browsableWeeks` decides which weeks the card lets you browse. It is pure (weeks in -> weeks
  * out) and therefore directly testable, which matters because every past-week browsing bug this
  * integration has had lived precisely here:
  *
- *   - the Market card dropped past weeks that carried no market catalog, so history collapsed to
- *     whatever the menu endpoint still served (~2 weeks) while My Menu spanned the full
- *     configured window;
- *   - a later attempt "fixed" it in a way that made the two cards disagree differently.
+ *   - the classic Market card dropped past weeks that carried no market catalog, so history
+ *     collapsed to whatever the menu endpoint still served (~2 weeks) while My Menu spanned the
+ *     full configured window;
+ *   - a later attempt "fixed" it in a way that made the two classic cards disagree differently.
  *
- * The load-bearing invariant is that **the Market and My Menu cards agree on which past weeks
- * exist**. A user browsing history should see the same weeks in both. So rather than assert each
- * card's behaviour separately, the key test runs both real implementations over identical input
- * and requires identical output.
+ * The load-bearing invariant is that **every past week in the configured window is browsable**,
+ * whatever data it carries: one week list serves the Menu, the Market and the Overview at once.
  *
- * The functions are extracted from the shipped card sources (not reimplemented) so these tests
- * cannot drift from what users actually run.
+ * The function is imported from the shipped module (not reimplemented), so these tests cannot
+ * drift from what users actually run.
  *
  * Run: node .github/scripts/check_card_logic.mjs
  */
 
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const CARD_DIR = "custom_components/hellofresh/www";
 
-/** Pull one method body out of a card source and turn it into a callable function. */
-function extractMethod(file, name) {
-  const src = fs.readFileSync(path.join(CARD_DIR, file), "utf8");
-  // Match from `name(args) {` to the closing brace at method indentation (two spaces).
-  const re = new RegExp(`\\n  ${name}\\(([^)]*)\\) \\{\\n([\\s\\S]*?)\\n  \\}`);
-  const match = src.match(re);
-  if (!match) throw new Error(`Could not extract ${name}() from ${file}`);
-  const [, args, body] = match;
-  // `this` inside the body resolves to the harness object supplied by the caller.
-  return new Function(
-    "helpers",
-    `return function (${args}) {\n${body.replace(/\bthis\./g, "helpers.")}\n};`
-  )(helpers);
-}
-
-// Minimal stand-ins for the card helpers `_browsableWeeks` calls. These mirror the real
-// implementations in hellofresh-shared.js.
-const helpers = {
-  _parseLocalDate(value) {
-    const [y, m, d] = String(value).split("-").map(Number);
-    return new Date(y, m - 1, d);
-  },
-  _weekSortKey(week) {
-    const ms = week && week.delivery_date ? helpers._parseLocalDate(week.delivery_date).getTime() : NaN;
-    return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
-  },
-};
-
-const marketBrowsable = extractMethod("hellofresh-market-card.js", "_browsableWeeks");
-const plannerBrowsable = extractMethod("hellofresh-meal-planner-card.js", "_browsableWeeks");
-
-// The unified card keeps its week logic in a real ES module, so it is imported rather than
-// lifted with a regex. Its one week list serves the menu, the Market AND the schedule.
-const unified = await import(
+const logic = await import(
   `${pathToFileURL(path.resolve(CARD_DIR, "hellofresh-card-logic.js")).href}?v=ci`
 );
-const unifiedBrowsable = (weeks) => unified.browsableWeeks(weeks);
+const browsable = (weeks) => logic.browsableWeeks(weeks).map((w) => w.week_id);
 
 /** Build a week `weeksFromToday` in the past (negative) or future (positive). */
 function week(id, weeksFromToday, { market = 0, recipes = 0 } = {}) {
@@ -83,29 +47,19 @@ function week(id, weeksFromToday, { market = 0, recipes = 0 } = {}) {
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-test("Market and My Menu agree on past weeks (the core regression)", () => {
+test("every past week is browsable, Market data or not (the core regression)", () => {
   // 12 past weeks; only 3 had Market purchases, mirroring a real account where add-ons are
-  // occasional. The Market card must NOT hide the other 9 -- that is the bug users reported as
+  // occasional, and some no longer carry a menu. Hiding any of them is the bug users reported as
   // "past weeks only shows 2 days, 9 days, 65 days ago".
   const weeks = [];
   for (let i = 12; i >= 1; i--) {
-    weeks.push(week(`W-${i}`, -i, { market: [1, 2, 9].includes(i) ? 2 : 0, recipes: 3 }));
+    weeks.push(week(`W-${i}`, -i, { market: [1, 2, 9].includes(i) ? 2 : 0, recipes: i % 4 ? 3 : 0 }));
   }
-  const marketIds = marketBrowsable(weeks).map((w) => w.week_id);
-  const plannerIds = plannerBrowsable(weeks).map((w) => w.week_id);
-
-  assert.deepEqual(
-    marketIds,
-    plannerIds,
-    "Market and My Menu must expose the same past weeks; they disagreed:\n" +
-      `  market : ${marketIds.join(" ")}\n  planner: ${plannerIds.join(" ")}`
-  );
-  assert.equal(marketIds.length, 12, "all 12 past weeks should be browsable");
+  assert.deepEqual(browsable(weeks), weeks.map((w) => w.week_id), "all 12 past weeks should be browsable");
 });
 
-test("a past week with no market items is still browsable", () => {
-  const weeks = [week("past", -3, { market: 0, recipes: 3 })];
-  assert.equal(marketBrowsable(weeks).length, 1, "empty past week must not vanish from the strip");
+test("a past week with no data at all is still browsable", () => {
+  assert.deepEqual(browsable([week("past", -3)]), ["past"], "an empty past week must not vanish from the strip");
 });
 
 test("future weeks stop at the first gap in published data", () => {
@@ -117,8 +71,7 @@ test("future weeks stop at the first gap in published data", () => {
     week("f3", 3, { market: 0, recipes: 0 }), // gap
     week("f4", 4, { market: 5, recipes: 5 }), // published but behind the gap
   ];
-  assert.deepEqual(marketBrowsable(weeks).map((w) => w.week_id), ["f1", "f2"]);
-  assert.deepEqual(plannerBrowsable(weeks).map((w) => w.week_id), ["f1", "f2"]);
+  assert.deepEqual(browsable(weeks), ["f1", "f2"]);
 });
 
 test("weeks are returned in chronological order", () => {
@@ -127,45 +80,27 @@ test("weeks are returned in chronological order", () => {
     week("a", -2, { market: 2, recipes: 2 }),
     week("b", 0, { market: 2, recipes: 2 }),
   ];
-  assert.deepEqual(marketBrowsable(weeks).map((w) => w.week_id), ["a", "b", "c"]);
+  assert.deepEqual(browsable(weeks), ["a", "b", "c"]);
 });
 
-test("today's week follows the future rule, and both cards agree", () => {
+test("today's week follows the future rule", () => {
   // `isFuture` is `delivery_date >= today`, so the CURRENT week takes the future branch. That is
   // deliberate: today's box is still live and editable, and one with no data yet simply is not
-  // published, so it is withheld rather than shown empty. What matters is that both cards make
-  // the same call -- a disagreement here would desync the shared week cursor between them.
-  const empty = [week("today", 0, { market: 0, recipes: 0 })];
-  assert.equal(marketBrowsable(empty).length, 0, "unpublished current week is withheld");
-  assert.equal(plannerBrowsable(empty).length, marketBrowsable(empty).length, "cards must agree");
-
-  // Once it carries data it becomes browsable in both.
-  const published = [week("today", 0, { market: 4, recipes: 4 })];
-  assert.equal(marketBrowsable(published).length, 1);
-  assert.equal(plannerBrowsable(published).length, 1);
+  // published, so it is withheld rather than shown empty.
+  assert.deepEqual(browsable([week("today", 0)]), [], "unpublished current week is withheld");
+  // Once it carries data it becomes browsable.
+  assert.deepEqual(browsable([week("today", 0, { market: 4, recipes: 4 })]), ["today"]);
 });
 
 test("empty and missing input never throws", () => {
   for (const value of [[], null, undefined]) {
-    assert.deepEqual(marketBrowsable(value), []);
-    assert.deepEqual(plannerBrowsable(value), []);
-    assert.deepEqual(unifiedBrowsable(value), []);
+    assert.deepEqual(browsable(value), []);
   }
 });
 
-test("the unified card exposes the same past weeks as the classic cards", () => {
-  const weeks = [];
-  for (let i = 12; i >= 1; i--) {
-    weeks.push(week(`W-${i}`, -i, { market: [1, 2, 9].includes(i) ? 2 : 0, recipes: i % 4 ? 3 : 0 }));
-  }
-  const ids = (list) => list.map((w) => w.week_id);
-  assert.deepEqual(ids(unifiedBrowsable(weeks)), ids(plannerBrowsable(weeks)));
-  assert.deepEqual(ids(unifiedBrowsable(weeks)), ids(marketBrowsable(weeks)));
-});
-
-test("the unified card keeps skipped future weeks, and still stops at the first gap", () => {
-  // One list now drives the schedule too, and a skipped week has no menu by design — hiding
-  // it would leave nothing to tap Unskip on (the classic Schedule card's rule).
+test("skipped future weeks stay listed, and the list still stops at the first gap", () => {
+  // A skipped week has no menu by design — hiding it would leave nothing to tap Unskip on (the
+  // classic Schedule card's rule). Market data alone also makes a future week published.
   const skipped = { ...week("f2", 2), is_skipped: true };
   const weeks = [
     week("f1", 1, { market: 2, recipes: 2 }),
@@ -174,7 +109,7 @@ test("the unified card keeps skipped future weeks, and still stops at the first 
     week("f4", 4), // gap
     week("f5", 5, { market: 2, recipes: 2 }), // behind the gap
   ];
-  assert.deepEqual(unifiedBrowsable(weeks).map((w) => w.week_id), ["f1", "f2", "f3"]);
+  assert.deepEqual(browsable(weeks), ["f1", "f2", "f3"]);
 });
 
 let failed = 0;

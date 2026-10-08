@@ -35,7 +35,7 @@
  */
 
 // The card text layer (hellofresh-i18n.js), loaded with this module's own ?v= stamp: the sheet
-// reads in the HelloFresh card's language, and in English for the classic cards.
+// reads in the HelloFresh card's language.
 const I18n = await import(
   new URL(
     `./hellofresh-i18n.js?v=${encodeURIComponent(new URL(import.meta.url).searchParams.get("v") || "unknown")}`,

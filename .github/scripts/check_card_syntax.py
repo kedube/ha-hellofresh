@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Syntax-check every Lovelace card in ``custom_components/hellofresh/www``.
+"""Syntax-check every Lovelace card module in ``custom_components/hellofresh/www``.
 
-The cards are ~8k lines of hand-written JavaScript that nothing else in CI looks at, so a
-stray typo used to ship and surface only as a blank panel in a user's dashboard. This is the
+The card is ~10k lines of hand-written JavaScript, so a stray typo used to ship and surface only
+as a blank panel in a user's dashboard. This is the
 cheapest possible guard: it does not lint style or run the cards, it only proves each file
 PARSES as an ES module.
 

@@ -1,12 +1,12 @@
-"""Frontend resource registration for the HelloFresh Lovelace cards.
+"""Frontend resource registration for the HelloFresh Lovelace card.
 
-The integration ships hand-written Lovelace cards — the unified ``www/hellofresh-card.js`` and
-the classic per-feature cards (meal planner, Market, …) — that read their data on demand from
-the integration's response-returning services such as ``hellofresh.get_weeks``. To make them
-usable without the user manually adding a resource, the integration:
+The integration ships a hand-written Lovelace card, ``www/hellofresh-card.js``, that reads its
+data on demand from the integration's response-returning services such as
+``hellofresh.get_weeks``. To make it usable without the user manually adding a resource, the
+integration:
 
   1. serves the file from a stable URL via a static path, and
-  2. registers that URL as a Lovelace module resource (storage mode) / appends it to the
+  2. registers that URL as a Lovelace module resource (storage mode) / logs it for the
      YAML-mode resource list, once per Home Assistant start.
 
 Registration is best-effort: a failure here never blocks integration setup, since the
@@ -16,14 +16,14 @@ It also puts a **HelloFresh** entry in the sidebar: a custom panel (``www/hellof
 that shows the HelloFresh card full screen, one per account whose "Show HelloFresh in the
 sidebar" option is on, so the whole experience needs no dashboard at all.
 
-The seven classic single-purpose cards are deprecated. Their resources are registered only while
-a dashboard still uses one — everyone else stops downloading them on every dashboard load — and
-while one does, a Repairs notice says which, and where. Saving a dashboard re-checks.
+The seven classic single-purpose cards it replaced are gone. Their leftover resources are
+deleted, so browsers stop requesting files that no longer exist, and while a dashboard still uses
+one, a Repairs notice says which, and where. Saving a dashboard re-checks.
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterator
+from collections.abc import Iterator
 import json
 import logging
 from pathlib import Path
@@ -36,28 +36,21 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.debounce import Debouncer
 
 from .const import CONF_SHOW_SIDEBAR_PANEL, DEFAULT_SHOW_SIDEBAR_PANEL, DOMAIN
-from .issues import async_update_classic_cards_issue
+from .issues import async_update_removed_cards_issue
 
 _LOGGER = logging.getLogger(__name__)
 
-# All cards share the integration release version (manifest.json, bumped by the release
-# workflow) as their cache-busting ?v= query, so every release automatically invalidates
-# stale card JS without per-card manual bumps. The manifest is tiny and colocated, so a
-# read at import keeps the URL constants module-level.
+# The card uses the integration release version (manifest.json, bumped by the release workflow)
+# as its cache-busting ?v= query, so every release automatically invalidates stale card JS
+# without manual bumps. The manifest is tiny and colocated, so a read at import keeps the URL
+# constants module-level.
 INTEGRATION_VERSION: str = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]
 
-CARD_FILENAME = "hellofresh-meal-planner-card.js"
-# The unified card (Overview / Menu / Market / Recipes / Account in one). Its view and logic
+# The HelloFresh card (Overview / Menu / Market / Recipes / Account in one). Its view and logic
 # modules (hellofresh-card-*.js) are imports of this file, not resources of their own.
 UNIFIED_CARD_FILENAME = "hellofresh-card.js"
-MARKET_CARD_FILENAME = "hellofresh-market-card.js"
-FOOD_PROFILE_CARD_FILENAME = "hellofresh-food-profile-card.js"
-SCHEDULE_CARD_FILENAME = "hellofresh-schedule-card.js"
-SUBSCRIPTION_CARD_FILENAME = "hellofresh-subscription-card.js"
-COST_CARD_FILENAME = "hellofresh-cost-card.js"
-RECIPES_CARD_FILENAME = "hellofresh-recipes-card.js"
 # The integration's www/ directory is served at /hellofresh/, so every asset in it
 # (the card JS, the logo PNG, …) gets a stable URL without per-file registration.
 WWW_URL_BASE = f"/{DOMAIN}"
@@ -71,35 +64,32 @@ _CARDS = tuple(
         f"{WWW_URL_BASE}/{filename}",
         f"{WWW_URL_BASE}/{filename}?v={INTEGRATION_VERSION}",
     )
-    for filename in (
-        UNIFIED_CARD_FILENAME,
-        CARD_FILENAME,
-        MARKET_CARD_FILENAME,
-        FOOD_PROFILE_CARD_FILENAME,
-        SCHEDULE_CARD_FILENAME,
-        SUBSCRIPTION_CARD_FILENAME,
-        COST_CARD_FILENAME,
-        RECIPES_CARD_FILENAME,
-    )
+    for filename in (UNIFIED_CARD_FILENAME,)
 )
 
-# The classic single-purpose cards (deprecated): registered only while a dashboard uses one.
-CLASSIC_CARD_FILENAMES = (
-    CARD_FILENAME,
-    MARKET_CARD_FILENAME,
-    FOOD_PROFILE_CARD_FILENAME,
-    SCHEDULE_CARD_FILENAME,
-    SUBSCRIPTION_CARD_FILENAME,
-    COST_CARD_FILENAME,
-    RECIPES_CARD_FILENAME,
+# The classic single-purpose cards, deprecated in 4.00 and since removed. Only cleaned up after:
+# their resources are deleted and dashboards still using one get a Repairs notice.
+REMOVED_CARD_TYPES = tuple(
+    f"custom:hellofresh-{name}-card"
+    for name in (
+        "meal-planner",
+        "market",
+        "recipes",
+        "food-profile",
+        "schedule",
+        "subscription",
+        "cost",
+    )
 )
-# "custom:hellofresh-schedule-card" -> "hellofresh-schedule-card.js"
-CLASSIC_CARD_TYPES = {f"custom:{name.removesuffix('.js')}": name for name in CLASSIC_CARD_FILENAMES}
+# "custom:hellofresh-schedule-card" -> "/hellofresh/hellofresh-schedule-card.js"
+_REMOVED_CARD_URL_PATHS = tuple(
+    f"{WWW_URL_BASE}/{card_type.removeprefix('custom:')}.js" for card_type in REMOVED_CARD_TYPES
+)
 # Lovelace fires this when a dashboard's config is saved.
 EVENT_LOVELACE_UPDATED = "lovelace_updated"
 
 _REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
-_CLASSIC_IN_USE_KEY = f"{DOMAIN}_classic_cards_in_use"
+_REMOVED_IN_USE_KEY = f"{DOMAIN}_removed_cards_in_use"
 
 # The sidebar panel: a web component hosting the HelloFresh card full screen. It lives BESIDE,
 # not under, the static /hellofresh/ path: a panel at /hellofresh would send a page reload
@@ -115,7 +105,7 @@ _PANEL_ENTRIES_KEY = f"{DOMAIN}_panel_entries"
 _PANELS_KEY = f"{DOMAIN}_panels"
 
 
-async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
+async def async_register_card(hass: HomeAssistant) -> None:
     """Serve the integration's www/ assets and register the card (idempotent)."""
     if hass.data.get(_REGISTERED_KEY):
         return
@@ -143,12 +133,16 @@ async def async_register_meal_planner_card(hass: HomeAssistant) -> None:
         hass.data[_REGISTERED_KEY] = False
         return
 
-    await _async_sync_classic_cards(hass)
+    if hass.data.get("lovelace") is None:
+        _LOGGER.debug("Lovelace not set up; skipping card registration")
+    else:
+        await _async_register_lovelace_resources(hass)
+        await _async_check_removed_cards(hass)
     _async_listen_for_dashboard_saves(hass)
 
 
-async def async_classic_cards_in_use(hass: HomeAssistant) -> dict[str, list[str]]:
-    """Which deprecated classic cards the dashboards use: card type -> dashboard names.
+async def async_removed_cards_in_use(hass: HomeAssistant) -> dict[str, list[str]]:
+    """Which removed classic cards the dashboards still use: card type -> dashboard names.
 
     Reads every dashboard's config (storage and YAML), walking nested cards (stacks, grids,
     conditionals). A dashboard with no config of its own (the auto-generated default) or one
@@ -164,51 +158,47 @@ async def async_classic_cards_in_use(hass: HomeAssistant) -> dict[str, list[str]
             continue
         meta = getattr(dashboard, "config", None) or {}
         name = str(meta.get("title") or ("Overview" if url_path is None else url_path))
-        for card_type in _classic_card_types(config):
+        for card_type in _removed_card_types(config):
             found.setdefault(card_type, set()).add(name)
     return {card_type: sorted(names) for card_type, names in sorted(found.items())}
 
 
-def _classic_card_types(node: Any) -> Iterator[str]:
-    """Every classic card type in a dashboard config, however deeply nested."""
+def _removed_card_types(node: Any) -> Iterator[str]:
+    """Every removed card type in a dashboard config, however deeply nested."""
     if isinstance(node, dict):
         card_type = node.get("type")
-        if isinstance(card_type, str) and card_type in CLASSIC_CARD_TYPES:
+        if isinstance(card_type, str) and card_type in REMOVED_CARD_TYPES:
             yield card_type
         for value in node.values():
-            yield from _classic_card_types(value)
+            yield from _removed_card_types(value)
     elif isinstance(node, list):
         for value in node:
-            yield from _classic_card_types(value)
+            yield from _removed_card_types(value)
 
 
-async def _async_sync_classic_cards(hass: HomeAssistant) -> None:
-    """Register the HelloFresh card and the classic cards in use, and update the notice."""
+async def _async_check_removed_cards(hass: HomeAssistant) -> None:
+    """Raise, refresh or clear the notice about dashboards still using a removed card."""
     if hass.data.get("lovelace") is None:
-        _LOGGER.debug("Lovelace not set up; skipping card registration")
         return
-    in_use = await async_classic_cards_in_use(hass)
-    hass.data[_CLASSIC_IN_USE_KEY] = in_use
-    await _async_register_lovelace_resources(
-        hass, {CLASSIC_CARD_TYPES[card_type] for card_type in in_use}
-    )
+    in_use = await async_removed_cards_in_use(hass)
+    hass.data[_REMOVED_IN_USE_KEY] = in_use
     try:
-        async_update_classic_cards_issue(hass, in_use)
+        async_update_removed_cards_issue(hass, in_use)
     except Exception:  # noqa: BLE001 - the notice is best-effort, like the rest of this module
-        _LOGGER.debug("Could not update the classic-cards notice", exc_info=True)
+        _LOGGER.debug("Could not update the removed-cards notice", exc_info=True)
 
 
 @callback
 def _async_listen_for_dashboard_saves(hass: HomeAssistant) -> None:
-    """Re-check the classic cards whenever a dashboard is saved (a couple of seconds later)."""
+    """Re-check for removed cards whenever a dashboard is saved (a couple of seconds later)."""
     bus = getattr(hass, "bus", None)
     if bus is None:
         return
 
-    async def _resync() -> None:
-        await _async_sync_classic_cards(hass)
+    async def _recheck() -> None:
+        await _async_check_removed_cards(hass)
 
-    debouncer = Debouncer(hass, _LOGGER, cooldown=2, immediate=False, function=_resync)
+    debouncer = Debouncer(hass, _LOGGER, cooldown=2, immediate=False, function=_recheck)
 
     @callback
     def _on_dashboard_saved(_event: Event) -> None:
@@ -217,21 +207,14 @@ def _async_listen_for_dashboard_saves(hass: HomeAssistant) -> None:
     bus.async_listen(EVENT_LOVELACE_UPDATED, _on_dashboard_saved)
 
 
-async def _async_register_lovelace_resources(
-    hass: HomeAssistant, classic_in_use: Collection[str] = ()
-) -> None:
-    """Bring the Lovelace resource list in line with the cards that should load.
+async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
+    """Bring the Lovelace resource list in line with the card that should load.
 
-    The HelloFresh card always; a classic card only when its file name is in
-    ``classic_in_use`` — an unused one's resource is removed, so it no longer downloads on
-    every dashboard. In YAML-mode Lovelace the resources are user-managed, so we can only log
-    guidance. In storage mode each resource goes through the resources collection.
+    The HelloFresh card is registered, or its stale ``?v=`` updated. A resource a removed
+    classic card left behind is deleted: its file is gone, so every dashboard load would request
+    a 404. In YAML-mode Lovelace the resources are user-managed, so we can only log guidance.
+    In storage mode each resource goes through the resources collection.
     """
-    wanted = [
-        card
-        for card in _CARDS
-        if card[0] not in CLASSIC_CARD_FILENAMES or card[0] in classic_in_use
-    ]
     lovelace = hass.data.get("lovelace")
     resources = getattr(lovelace, "resources", None)
     if resources is None:
@@ -246,34 +229,38 @@ async def _async_register_lovelace_resources(
         _LOGGER.debug("Could not load Lovelace resources; cards must be added manually")
         return
 
-    # YAML-mode resource stores don't support mutation (no store attribute).
-    if getattr(resources, "store", None) is None:
-        urls = ", ".join(resource_url for _, _, resource_url in wanted)
-        _LOGGER.info(
-            "HelloFresh cards are served at %s. Add them under Settings > Dashboards > "
-            "Resources (or your YAML `resources:`) as JavaScript modules.",
-            urls,
-        )
-        return
-
     existing = [
         (str(item.get("url", "")), item.get("id"))
         for item in resources.async_items()
         if isinstance(item, dict)
     ]
-    for filename, url_path, _resource_url in _CARDS:
-        if (filename, url_path, _resource_url) in wanted:
-            continue
-        # A classic card no dashboard uses: drop our resource so it stops loading everywhere.
-        for url, item_id in existing:
-            if not url.startswith(url_path):
-                continue
-            try:
-                await resources.async_delete_item(item_id)
-                _LOGGER.info("Removed unused (deprecated) HelloFresh card resource %s", url)
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("HelloFresh could not remove card resource %s", url)
-    for _filename, url_path, resource_url in wanted:
+    leftovers = [
+        (url, item_id) for url, item_id in existing if url.startswith(_REMOVED_CARD_URL_PATHS)
+    ]
+
+    # YAML-mode resource stores don't support mutation (no store attribute).
+    if getattr(resources, "store", None) is None:
+        urls = ", ".join(resource_url for _, _, resource_url in _CARDS)
+        _LOGGER.info(
+            "The HelloFresh card is served at %s. Add it under Settings > Dashboards > "
+            "Resources (or your YAML `resources:`) as a JavaScript module.",
+            urls,
+        )
+        if leftovers:
+            _LOGGER.warning(
+                "Remove %s from your YAML `resources:`: the HelloFresh classic cards were "
+                "removed, so these files no longer exist",
+                ", ".join(url for url, _ in leftovers),
+            )
+        return
+
+    for url, item_id in leftovers:
+        try:
+            await resources.async_delete_item(item_id)
+            _LOGGER.info("Removed the resource of a removed HelloFresh card: %s", url)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("HelloFresh could not remove card resource %s", url)
+    for _filename, url_path, resource_url in _CARDS:
         matches = [(url, item_id) for url, item_id in existing if url.startswith(url_path)]
         # Migrate EVERY stale entry for this card, not just the first, and even when the
         # current URL is already present. Duplicate entries (e.g. a manually-added one from
@@ -428,5 +415,5 @@ def async_get_frontend_diagnostics(hass: HomeAssistant) -> dict[str, object]:
         },
         "registered_resources": registered,
         "sidebar_panels": sorted(hass.data.get(_PANELS_KEY, {})),
-        "classic_cards_in_use": hass.data.get(_CLASSIC_IN_USE_KEY, {}),
+        "removed_cards_in_use": hass.data.get(_REMOVED_IN_USE_KEY, {}),
     }

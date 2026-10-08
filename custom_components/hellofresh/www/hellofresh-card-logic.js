@@ -4,17 +4,16 @@
  * Everything the unified `custom:hellofresh-card` decides that does not touch the DOM: which
  * delivery weeks exist and what state each is in, how a week's menu is filtered and ordered,
  * what a pending box edit writes, and how money, dates and statuses read. It is kept DOM-free
- * so it runs directly under Node (tests/test_unified_card_logic.py), including parity checks
- * against the classic cards whose behaviour it carries forward.
+ * so it runs directly under Node (tests/test_unified_card_logic.py).
  *
- * Most of this is the classic cards' logic moved, not rewritten. Where the unified card
- * deliberately differs, the function says so:
+ * Most of this is the logic of the classic single-purpose cards (since removed) moved, not
+ * rewritten. Where the unified card deliberately differed from them, the function says so:
  *
  *   * `browsableWeeks` is the schedule card's rule (skipped future weeks stay visible so they
  *     can be unskipped) widened to count Market data, because one week list now serves the
  *     menu, the Market and the schedule at once.
  *   * A PAUSED week is treated as skipped everywhere (the schedule card's reading) — the
- *     classic planner still offered meal edits on one.
+ *     classic planner offered meal edits on one.
  *   * `weekState` adds a "shipping" state between locked and delivered.
  *
  * Imported with the card's own ?v= cache-bust, and it pulls the shared helper module the
@@ -61,7 +60,7 @@ export const MAX_MEAL_SERVINGS = 4;
 // Market add-on stepper cap when an item doesn't carry its own max_quantity.
 export const MAX_MARKET_QTY = 12;
 
-// ---- filter catalogs (identical to the classic meal planner card) -----------------------
+// ---- filter catalogs (carried over from the classic meal planner card) -----------------
 
 // Protein -> accent colour for the dot on each tile. Mirrors HelloFresh's own grouping.
 export const PREFERENCE_COLORS = {
@@ -107,7 +106,7 @@ function labelled(group, entries) {
 
 // The website's "Dietary preference" group. `tags` lists every spelling seen in real menu
 // payloads (HelloFresh renames these between seasons); whole-string matching is what keeps
-// "Contains Gluten" off the gluten-free aliases. See the classic planner for the history.
+// "Contains Gluten" off the gluten-free aliases.
 export const DIET_FILTERS = labelled("diet", [
   { key: "vegetarian", tags: ["vegetarian", "veggie", "vegan"] },
   {
@@ -163,9 +162,9 @@ export const MARKET_BRANDS = {
   petstable: "The Pets Table",
 };
 
-// View preferences share the classic cards' localStorage keys and formats, so switching to the
-// unified card keeps the filters someone already set up (and the two stay in step if both are
-// on a dashboard). Unified-card-only preferences live under "hellofresh-card:".
+// View preferences keep the classic cards' localStorage keys and formats, so the filters someone
+// set up there carried over to this card; renaming one would reset it. Unified-card-only
+// preferences live under "hellofresh-card:".
 export const STORAGE_KEYS = {
   showSelectedOnly: "hellofresh-meal-planner:show-selected-only",
   protein: "hellofresh-meal-planner:protein-filter",

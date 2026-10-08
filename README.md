@@ -86,7 +86,7 @@ your own automations.
 | Document | Contents |
 |---|---|
 | [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
-| [docs/dashboard.md](docs/dashboard.md) | The HelloFresh card, tab by tab: the sidebar entry, options, screenshots, and moving from the deprecated classic cards |
+| [docs/dashboard.md](docs/dashboard.md) | The HelloFresh card, tab by tab: the sidebar entry, options, screenshots, and moving from the classic cards |
 | [docs/services.md](docs/services.md) | All 26 services: parameters and responses |
 
 
@@ -180,7 +180,7 @@ The available options are:
 - **Use curl_cffi's built-in headers (experimental)** — let curl_cffi supply Chrome headers for login, token refresh, and data calls. The integration still supplies API fields and corrects fetch metadata to describe an XHR. Default **off** sends the integration's complete, ordered Chrome-style XHR headers.
 - **Log authentication diagnostics** — when enabled, log failed login and token-refresh steps, with the Cloudflare challenge flag, error code, and Ray ID when available. Successful steps are logged only at debug level, so a healthy connection adds nothing to the log. Default **on**; the added diagnostic fields never include raw response bodies or credentials.
 - **Past delivery history (weeks)** — how many weeks of past deliveries to fetch and make browsable in the cards. Default is **26** (about 6 months); allowed range is **1–104**. Lower it to reduce how much data is pulled each refresh if you don't need a long history; raise it to browse further back (use **~56** for a full year, so the box from ~12 months ago is included). Changing it reloads the integration.
-- **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the [Recipes card](docs/dashboard.md#recipes-card) keep working.
+- **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the card's [Recipes](docs/dashboard.md#recipes) keep working.
 - **Create pantry prep lists** — keep the two [prep-list to-do entities](docs/entities.md#prep-lists) that hold the ingredients your chosen meals need but HelloFresh doesn't ship (salt, oil, butter, eggs), one per upcoming delivery. Default **on**. Turning it off removes both lists and skips the recipe lookups behind them; everything else is unaffected. Changing it reloads the integration.
 - **Full menu history (weeks)** — how long a delivered week keeps its full browsable menu (with your meals highlighted) before collapsing to delivered-meals-only. Default **2**, range **0–3** (**0** disables it). HelloFresh stops publishing menus for older weeks, so weeks beyond that fall back automatically regardless. Changing it reloads the integration.
 - **Show data-quality repair warnings** — raise issues on Home Assistant's **Repairs** screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Default **on**; data keeps loading either way, so turn it off to suppress these warnings (and clear any already showing) if you'd rather not see them.
@@ -347,14 +347,12 @@ type: custom:hellofresh-card
 Setting `views:` to one section gives a focused card, for example just Recipes on a kitchen tablet.
 Every option and every tab is in [docs/dashboard.md](docs/dashboard.md#hellofresh-card).
 
-### The classic cards (deprecated)
+### The classic cards (removed)
 
 The seven single-purpose cards the HelloFresh card grew out of — Meal planner, Market, Recipes,
-Food Profile, Schedule, Subscription and Cost — still ship and still work, but they're
-**deprecated and will be removed in a future release**. Each now says so in its title and in the
-card picker, and while a dashboard still uses one, the **Repairs** screen lists them. They also load
-only where they're used, so nobody else downloads them with every dashboard. The HelloFresh card
-does everything they do:
+Food Profile, Schedule, Subscription and Cost — were deprecated in 4.00 and have been removed. A
+dashboard that still has one shows an error in its place, and the **Repairs** screen lists the
+cards and dashboards until they're replaced. The HelloFresh card does everything they did:
 [Moving from the classic cards](docs/dashboard.md#moving-from-the-classic-cards) shows where each
 feature went.
 
@@ -416,10 +414,8 @@ For weeks that already shipped, the selection is taken from your **delivery hist
 **A "payload shape changed" Repairs issue appears.**
 HelloFresh returned account data the integration couldn't fully parse — usually a sign the website changed. Attaching a [diagnostics export](#diagnostics) to a GitHub issue is the most helpful thing you can do here.
 
-**A classic card shows "Custom element doesn't exist" after I added it.**
-The deprecated classic cards load only while a dashboard uses them, and the integration notices a
-new one when the dashboard is saved. Save the dashboard, then refresh the browser. Better still,
-use the HelloFresh card, which does everything they do.
+**A HelloFresh card shows "Custom element doesn't exist".**
+If it's one of the classic cards (`custom:hellofresh-schedule-card`, `custom:hellofresh-meal-planner-card`, …), it has been removed: replace it with `type: custom:hellofresh-card`, or use **HelloFresh** in the sidebar ([where each feature went](docs/dashboard.md#moving-from-the-classic-cards)). If it's the HelloFresh card itself, restart Home Assistant and refresh the browser, as below.
 
 **A card looks outdated or is missing features after an update.**
 Every card is versioned with the integration's release version: the card's resource URL carries a `?v=<version>` cache-bust that is stamped from `manifest.json`, and the registered URL is updated automatically on the first Home Assistant restart after an upgrade. If a card still looks stale, restart Home Assistant, then hard-refresh the browser (Ctrl/Cmd+Shift+R) or clear the app cache in the mobile companion app. To confirm which card build the browser actually loaded, open the browser console (F12) — each card logs a startup banner such as `HELLOFRESH-CARD v4.00`, and that version should match the integration version shown under **Settings → Devices & services → HelloFresh**. You can also compare the `frontend` block in a [diagnostics export](#diagnostics), which lists the resource URLs this release expects next to the URLs actually registered.

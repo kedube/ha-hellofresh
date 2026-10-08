@@ -1,6 +1,6 @@
-"""Behavioural tests for the recipes card's image URL rewriting.
+"""Behavioural tests for the cards' image URL rewriting (``resizedImage``).
 
-These run the real ``resizedImage`` from the card source under Node, rather than asserting on
+These run the real ``resizedImage`` from the shipped source under Node, rather than asserting on
 the source text, because the bug they cover was semantic: the function handled two URL shapes
 and HelloFresh's actual catalog host uses a third. The result was either a 404 (wrong path) or
 a 1.7 MB hero JPEG per tile (no transform applied) -- neither visible to a source-level grep.
@@ -26,22 +26,16 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 S3 = "/hellofresh_s3/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
 
-# Files that still define their own `resizedImage`. The canonical copy now lives in
-# hellofresh-shared.js; a card that imports it from there has no local definition and is not
-# listed (importing it is verified in tests/test_card_shared_module.py instead).
-#
-# The Market and Meal planner cards are the two exposing an `image_width` option, and both once
-# carried a one-line stub that only handled `/q_auto/` — so `image_width` silently did nothing on
-# the `hellofresh_s3` URLs the real API emits, and each tile pulled the full-size hero JPEG.
-# Every remaining copy is held to the same behaviour here so a divergence fails loudly.
+# Files that define their own `resizedImage`: the canonical copy in hellofresh-shared.js, and the
+# recipe sheet's. The classic Market and Meal planner cards (since removed) once carried a one-line
+# stub that only handled `/q_auto/` — so `image_width` silently did nothing on the `hellofresh_s3`
+# URLs the real API emits, and each tile pulled the full-size hero JPEG. Every copy is held to the
+# same behaviour here so a divergence fails loudly.
 CARDS_WITH_RESIZE = tuple(
     name
     for name in (
         "hellofresh-shared.js",
-        "hellofresh-recipes-card.js",
         "hellofresh-recipe-detail.js",
-        "hellofresh-market-card.js",
-        "hellofresh-meal-planner-card.js",
     )
     if re.search(
         r"^(?:export )?function resizedImage\(", (WWW / name).read_text(encoding="utf-8"), re.M
@@ -137,13 +131,13 @@ def test_absent_width_returns_the_url_unchanged() -> None:
 def test_every_card_actually_resizes_the_urls_the_api_emits(filename: str) -> None:
     """The reported class of bug: `image_width` silently doing nothing.
 
-    The stub these two cards carried only rewrote `/q_auto/`. Real HelloFresh image URLs are
+    The stub two classic cards carried only rewrote `/q_auto/`. Real HelloFresh image URLs are
     `hellofresh_s3` forms, which it left untouched — so the card requested the full-size asset
     while the option appeared to be honoured. Asserting the output *differs* from the input is
     the check that a no-op stub cannot pass.
     """
     url = f"https://img.hellofresh.com/f_auto,fl_lossy,h_300,q_auto,w_450{S3}"
-    (out,) = _resize([(url, 320)])
+    (out,) = _resize([(url, 320)], filename)
     assert out != url, f"{filename}: image_width had no effect on a real API image URL"
     assert "w_320" in out
     assert "w_450" not in out
@@ -153,8 +147,8 @@ def test_every_card_actually_resizes_the_urls_the_api_emits(filename: str) -> No
 def test_resize_copies_agree_across_cards(filename: str) -> None:
     """Every copy must produce byte-identical output for the same input.
 
-    Four hand-maintained copies of one transform is exactly how the stub survived; this pins
-    them together so the next edit to one has to be made to all.
+    Hand-maintained copies of one transform is exactly how the stub survived; this pins them
+    together so the next edit to one has to be made to all.
     """
     cases: list[tuple[str, int | None]] = [
         (f"https://img.hellofresh.com{S3}", 320),

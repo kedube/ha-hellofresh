@@ -512,11 +512,12 @@ class HelloFreshWeek:
     def is_editable(self) -> bool:
         """Return True while the customer can still change this week's meal selection.
 
-        Mirrors the meal-planner card's ``_isEditable`` exactly: the API must allow meal
-        swaps (``allowed_actions.mealSwap``), the week must not be skipped, and the
-        selection deadline (when known) must not have passed. Keeping the two in lockstep
-        is what guarantees the "Weeks preselected by HelloFresh" sensor and the card's
-        "still need a meal selection" banner agree.
+        The same rule as the HelloFresh card's ``isWeekEditable`` (``www/hellofresh-card-logic.js``,
+        which also counts a paused week as skipped): the API must allow meal swaps
+        (``allowed_actions.mealSwap``), the week must not be skipped, and the selection
+        deadline (when known) must not have passed. Keeping the two in lockstep is what
+        guarantees the "Weeks preselected by HelloFresh" sensor and the card's "Needs your
+        picks" list agree.
         """
         if self.is_skipped:
             return False

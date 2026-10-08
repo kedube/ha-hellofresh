@@ -1,29 +1,20 @@
 /*
  * HelloFresh shared card helpers
  * ------------------------------
- * Small, pure helpers plus the cross-card sync protocol, shared by every HelloFresh Lovelace
- * card. This module exists because hand-copying these into seven card files produced a steady
- * stream of bugs whose only symptom was that the cards quietly DISAGREED with each other:
- *
- *   * `resizedImage` was a one-line stub in two cards, so `image_width` silently did nothing and
- *     every tile downloaded the full-size hero JPEG.
- *   * `_titleCase` was missing `.toLowerCase()` in one card, so the same delivery read
- *     "DELIVERED" there and "Delivered" elsewhere.
- *   * `_isEditable` omitted the `allowed_actions.mealSwap` check in one card, offering edits on
- *     weeks HelloFresh had already locked.
- *   * A cross-card event was dispatched with an empty `detail`, so every listener dropped it on
- *     multi-account setups.
- *
- * None of those threw. Centralizing them turns "the copies drifted" from a silent runtime
- * behaviour difference into something that cannot happen.
+ * Small, pure helpers plus the cross-card sync protocol. The HelloFresh card reaches them through
+ * hellofresh-card-logic.js, which re-exports them. They started out as one copy of what had been
+ * hand-copied into the seven classic cards (since removed), where the copies drifted: an image
+ * resize that silently did nothing, "DELIVERED" in one card and "Delivered" in another, and a
+ * cross-card event dispatched with an empty `detail` that every listener dropped on multi-account
+ * setups. None of those threw. Keep one definition of each here.
  *
  * ---------------------------------------------------------------------------------------------
- * IMPORTANT — how host cards must import this
+ * IMPORTANT — how to import this
  *
- * Cards load it with a *dynamic* import so the integration's `?v=` cache-bust propagates here
+ * Importers load it with a *dynamic* import so the integration's `?v=` cache-bust propagates here
  * (a static "./hellofresh-shared.js" specifier is never version-stamped by Lovelace, so a
  * browser would keep serving a stale copy after an upgrade), and they `await` that import at
- * MODULE TOP LEVEL, before the card class is defined:
+ * MODULE TOP LEVEL, before anything that renders is defined:
  *
  *     const { esc, fmtPrice } = await import(
  *       new URL(`./hellofresh-shared.js?v=${CARD_VERSION}`, import.meta.url).href
@@ -171,32 +162,6 @@ export function fmtPrice(amount, currency) {
   }
 }
 
-// ---- week state -------------------------------------------------------------------------
-
-// Whether HelloFresh will still accept a change to this week.
-//
-// Must match `HelloFreshWeek.is_editable` in models.py, whose docstring states the backend and
-// the cards are kept in lockstep. Absent `allowed_actions` reads as LOCKED (the safe direction):
-// a delivered week carries none, and defaulting to editable offered ± steppers and a save the
-// server would reject.
-export function isEditable(week) {
-  if (!week) return false;
-  const actions = week.allowed_actions || {};
-  if (actions.mealSwap === false) return false;
-  if (week.is_skipped) return false;
-  const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : null;
-  if (deadline && deadline < Date.now()) return false;
-  return Boolean(actions.mealSwap);
-}
-
-// A week whose delivery date is before today. Undated weeks are NOT past (they are unscheduled).
-export function isPast(week) {
-  if (!week || !week.delivery_date) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return parseLocalDate(week.delivery_date).getTime() < today.getTime();
-}
-
 // ---- cross-card sync protocol -----------------------------------------------------------
 //
 // Two window events plus a localStorage key let the cards follow each other's week selection and
@@ -272,49 +237,4 @@ export function refetchIntervalMs(contract) {
     if (Number.isFinite(watch) && watch >= 1 && watch < mins) mins = watch;
   }
   return mins * 60000;
-}
-
-// ---- deprecation (the classic cards) ------------------------------------------------------------
-// The seven single-purpose cards are replaced by the HelloFresh card (custom:hellofresh-card),
-// which does everything they do, and go away in a future release. Each marks its title with
-// this badge (styled inline: every card has its own shadow CSS), linking to how to switch, and
-// says so once in the console.
-
-export const CLASSIC_CARD_DEPRECATION_URL =
-  "https://github.com/kedube/ha-hellofresh/blob/main/docs/dashboard.md#moving-from-the-classic-cards";
-
-const DEPRECATED_BADGE_STYLE = [
-  "display:inline-flex",
-  "align-items:center",
-  "height:18px",
-  "margin-left:8px",
-  "padding:0 8px",
-  "border-radius:9px",
-  "vertical-align:middle",
-  "font-size:10px",
-  "font-weight:700",
-  "letter-spacing:0.06em",
-  "text-transform:uppercase",
-  "text-decoration:none",
-  "white-space:nowrap",
-  "color:var(--primary-text-color)",
-  "background:color-mix(in srgb, var(--warning-color, #ffa600) 22%, transparent)",
-  "border:1px solid color-mix(in srgb, var(--warning-color, #ffa600) 55%, transparent)",
-].join(";");
-
-export function deprecatedBadge() {
-  return `<a href="${CLASSIC_CARD_DEPRECATION_URL}" target="_blank" rel="noreferrer" style="${DEPRECATED_BADGE_STYLE}"
-    title="Replaced by the HelloFresh card, which does all this and more. This card goes away in a future release — tap for how to switch.">Deprecated</a>`;
-}
-
-const deprecationWarned = new Set();
-
-export function warnDeprecated(type) {
-  if (deprecationWarned.has(type)) return;
-  deprecationWarned.add(type);
-  // eslint-disable-next-line no-console
-  console.warn(
-    `hellofresh: custom:${type} is deprecated and goes away in a future release. The HelloFresh card ` +
-      `(custom:hellofresh-card) does everything it does: ${CLASSIC_CARD_DEPRECATION_URL}`
-  );
 }

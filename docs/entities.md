@@ -175,7 +175,7 @@ in the box — salt, oil, butter, eggs — for the meals you have selected on yo
 deliveries, so you can have them on hand before each box lands instead of discovering them
 mid-recipe. The [HelloFresh card](dashboard.md#hellofresh-card) shows them as a checklist with the
 box they belong to; or add each to a **To-do list** card, one per week side by side, as the old
-[*Missing Ingredients* view](dashboard.md#missing-ingredients-view) did.
+example dashboard's *Missing Ingredients* view did.
 
 > **Optional.** Both entities are created by default, and the **Create pantry prep lists**
 > option in the integration's **Configure** dialog turns them off. Disabling it removes both
