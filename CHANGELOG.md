@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.05 — 2026-10-08
 - **Removed: the seven classic cards** (Meal planner, Market, Recipes, Food Profile, Schedule,
   Subscription and Cost), deprecated in 4.00. The HelloFresh card does everything they did: open
   **HelloFresh** in the sidebar, or put `type: custom:hellofresh-card` on a dashboard.
