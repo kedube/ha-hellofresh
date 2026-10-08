@@ -369,9 +369,9 @@
       "title": "HelloFresh write actions are not verified for {entry_title}",
       "description": "You tried to use a HelloFresh action that changes account data for **{entry_title}**, such as selecting meals or skipping a week. The integration attempted the known best-effort write endpoints for your account, but none accepted the request, so the action was blocked instead of guessing further."
     },
-    "deprecated_classic_cards": {
-      "title": "HelloFresh's classic cards are going away",
-      "description": "Your dashboards {dashboards} still use {cards}. These cards are deprecated and will be removed in a future release. The HelloFresh card does everything they do: open **HelloFresh** in the sidebar, or put `custom:hellofresh-card` on a dashboard, then remove the classic cards. **Learn more** shows where each feature went."
+    "removed_classic_cards": {
+      "title": "Dashboards still use removed HelloFresh cards",
+      "description": "Your dashboards {dashboards} still use {cards}. These classic cards have been removed from the integration, so they now show an error instead. The HelloFresh card does everything they did: open **HelloFresh** in the sidebar, or replace them with `custom:hellofresh-card` on your dashboard. **Learn more** shows where each feature went. This notice clears itself once no dashboard uses them."
     }
   },
   "services": {

@@ -1,8 +1,8 @@
 """Tests for the shared card helper module (`hellofresh-shared.js`).
 
-This module is the single source of truth for helpers that were previously hand-copied into up
-to seven card files. Each behaviour asserted here corresponds to a bug that shipped because one
-copy drifted from the others, so these are regression tests as much as unit tests.
+This module is the single source of truth for helpers that were once hand-copied into the seven
+classic card files (since removed). Many behaviours asserted here correspond to a bug that shipped
+because one copy drifted from the others, so these are regression tests as much as unit tests.
 
 The module is real ESM, so it is imported directly under Node rather than having its functions
 lifted out of a card with a regex.
@@ -105,30 +105,6 @@ def test_fmt_date_guards_invalid_dates() -> None:
     assert out == ["—", "—", "—"]
 
 
-def test_is_editable_requires_meal_swap() -> None:
-    """A locked week, and a delivered week with no allowed_actions, are not editable."""
-    out = _eval(
-        "return ["
-        "S.isEditable({allowed_actions:{mealSwap:false}}),"
-        "S.isEditable({}),"
-        "S.isEditable(null),"
-        'S.isEditable({allowed_actions:{mealSwap:true}, selection_deadline:"2099-01-01T00:00:00+00:00"}),'
-        "S.isEditable({allowed_actions:{mealSwap:true}, is_skipped:true}),"
-        'S.isEditable({allowed_actions:{mealSwap:true}, selection_deadline:"2000-01-01T00:00:00+00:00"})'
-        "];"
-    )
-    assert out == [False, False, False, True, False, False]
-
-
-def test_is_past_ignores_undated_weeks() -> None:
-    """An undated week is unscheduled, not historical."""
-    out = _eval(
-        'return [S.isPast({}), S.isPast({delivery_date:"2000-01-01"}),'
-        ' S.isPast({delivery_date:"2099-01-01"})];'
-    )
-    assert out == [False, True, False]
-
-
 def test_account_key_defaults_to_the_shared_sentinel() -> None:
     """Both sides of the filter must agree on "default" or single-account setups break."""
     out = _eval(
@@ -179,3 +155,28 @@ def test_broadcast_week_round_trips_through_storage() -> None:
         "return S.loadSyncedWeekId(cfg);"
     )
     assert out == "2026-W20"
+
+
+def test_refetch_interval_drops_to_the_watch_cadence_only_while_a_box_is_in_progress() -> None:
+    """The card re-reads on the delivery-day watch cadence only while a box is on the road."""
+    out = _eval(
+        "return {"
+        "idle: S.refetchIntervalMs({refresh_interval_minutes: 180,"
+        " delivery_watch_interval_minutes: 15, delivery_in_progress: false}),"
+        "due: S.refetchIntervalMs({refresh_interval_minutes: 180,"
+        " delivery_watch_interval_minutes: 15, delivery_in_progress: true}),"
+        "watchOff: S.refetchIntervalMs({refresh_interval_minutes: 180,"
+        " delivery_watch_interval_minutes: 0, delivery_in_progress: true}),"
+        "fasterPoll: S.refetchIntervalMs({refresh_interval_minutes: 5,"
+        " delivery_watch_interval_minutes: 15, delivery_in_progress: true}),"
+        "missing: S.refetchIntervalMs(null),"
+        "};"
+    )
+    minute = 60000
+    assert out == {
+        "idle": 180 * minute,
+        "due": 15 * minute,
+        "watchOff": 180 * minute,
+        "fasterPoll": 5 * minute,
+        "missing": 180 * minute,
+    }

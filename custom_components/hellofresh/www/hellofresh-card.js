@@ -14,9 +14,9 @@
  * Menu and Market edit ONE pending box per week. The sticky box bar at the bottom shows what is
  * in it, a live price estimate, and saves meals and extras together in a single write.
  *
- * It replaces the seven classic cards, which still ship (deprecated, to be removed in a future
- * release) and share this card's filter preferences and week selection. Everything here reads
- * the same services they do; no new polling.
+ * It replaced the seven classic single-purpose cards (since removed) and kept their filter
+ * preferences and week selection. Everything here reads the integration's services on demand;
+ * it adds no polling of its own.
  *
  * Config:
  *   type: custom:hellofresh-card
@@ -58,8 +58,8 @@ const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { Accoun
     import(moduleUrl("hellofresh-card-account.js")),
   ]);
 
-// The shared recipe sheet (also used by the classic cards). Only needed once a recipe is
-// opened, so it loads in the background rather than blocking first paint.
+// The recipe sheet. Only needed once a recipe is opened, so it loads in the background rather
+// than blocking first paint.
 const detailModule = import(moduleUrl("hellofresh-recipe-detail.js"));
 
 const { esc, t, ht, html } = L;

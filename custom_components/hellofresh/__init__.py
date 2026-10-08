@@ -103,7 +103,7 @@ from .const import (
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .frontend import (
     async_add_entry_panel,
-    async_register_meal_planner_card,
+    async_register_card,
     async_remove_entry_panel,
 )
 from .intent import async_register_intents
@@ -257,7 +257,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         async_register_intents(hass)
         hass.data[INTENTS_REGISTERED_KEY] = True
     await _async_register_services(hass)
-    await async_register_meal_planner_card(hass)
+    await async_register_card(hass)
     return True
 
 

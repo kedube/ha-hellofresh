@@ -7,9 +7,7 @@
  * its frontend/get_translations command, filling any key a language lacks from English.
  *
  * English also ships as a module (hellofresh-i18n-en.js, generated from strings.json by
- * .github/scripts/generate_card_strings.py), so English never waits on Home Assistant, and the
- * modules the classic cards share with this card (the recipe sheet, the shared helpers) read
- * English without asking it anything.
+ * .github/scripts/generate_card_strings.py), so English never waits on Home Assistant.
  *
  *   t("menu.add")                        -> "Add"
  *   t("box.meals", { count: 3 })         -> "3 meals"   (a key with one/other forms is a plural,

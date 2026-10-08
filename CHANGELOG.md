@@ -5,6 +5,19 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Removed: the seven classic cards** (Meal planner, Market, Recipes, Food Profile, Schedule,
+  Subscription and Cost), deprecated in 4.00. The HelloFresh card does everything they did: open
+  **HelloFresh** in the sidebar, or put `type: custom:hellofresh-card` on a dashboard.
+  [Moving from the classic cards](docs/dashboard.md#moving-from-the-classic-cards) shows where each
+  feature went, and how to keep a single-purpose card (for example `views: [menu]`).
+  - A dashboard that still has a classic card now shows an error in its place. A **Repairs** notice
+    names the cards and the dashboards until they're replaced, even if you dismissed the
+    deprecation notice.
+  - The integration also deletes the classic cards' leftover dashboard resources, so browsers stop
+    requesting files that no longer exist. In YAML mode, the log names the ones to remove from
+    `resources:`.
+
 ## 4.04 — 2026-10-05
 - **Successful sign-ins and token renewals no longer show up as warnings** ([#13](https://github.com/kedube/ha-hellofresh/issues/13)).
   With **Log authentication diagnostics** on (the default), every token renewal logged

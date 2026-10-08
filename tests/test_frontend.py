@@ -11,23 +11,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.hellofresh import frontend as frontend_module
 from custom_components.hellofresh.frontend import (
     _CARDS,
-    CLASSIC_CARD_FILENAMES,
     INTEGRATION_VERSION,
-    SCHEDULE_CARD_FILENAME,
+    REMOVED_CARD_TYPES,
     UNIFIED_CARD_FILENAME,
+    _async_check_removed_cards,
     _async_register_lovelace_resources,
-    _async_sync_classic_cards,
-    async_classic_cards_in_use,
     async_get_frontend_diagnostics,
+    async_removed_cards_in_use,
 )
 
 UNIFIED_URL = next(url for name, _p, url in _CARDS if name == UNIFIED_CARD_FILENAME)
+# What a 4.x install registered for the classic cards (since removed).
+REMOVED_URLS = [
+    f"/hellofresh/{card_type.removeprefix('custom:')}.js?v=4.04" for card_type in REMOVED_CARD_TYPES
+]
 
 
 def _run(coro):
@@ -83,8 +87,6 @@ def test_resource_urls_stamped_with_manifest_version() -> None:
 
 
 def test_a_fresh_install_registers_only_the_hellofresh_card() -> None:
-    """The deprecated classic cards stay out of a Home Assistant whose dashboards don't use
-    them, so they aren't downloaded on every dashboard load."""
     resources = _FakeResources([])
     _run(_async_register_lovelace_resources(_make_hass(resources)))
 
@@ -93,28 +95,27 @@ def test_a_fresh_install_registers_only_the_hellofresh_card() -> None:
     assert all(item["res_type"] == "module" for item in resources.created)
 
 
-def test_a_classic_card_in_use_is_registered_too() -> None:
-    resources = _FakeResources([])
-    _run(_async_register_lovelace_resources(_make_hass(resources), {SCHEDULE_CARD_FILENAME}))
-
-    schedule_url = next(url for name, _p, url in _CARDS if name == SCHEDULE_CARD_FILENAME)
-    assert [item["url"] for item in resources.created] == [UNIFIED_URL, schedule_url]
-
-
-def test_unused_classic_resources_are_removed() -> None:
-    """An install from before the deprecation has all seven registered; the ones no dashboard
-    uses go, the one still in use and the HelloFresh card stay."""
-    resources = _FakeResources([resource_url for _f, _p, resource_url in _CARDS])
+def test_the_removed_cards_resources_are_deleted() -> None:
+    """Their files are gone, so a leftover resource would 404 on every dashboard load. Nothing
+    else is touched: not the HelloFresh card, not someone else's card of a similar name."""
+    others = [UNIFIED_URL, "/local/hellofresh-schedule-card.js"]
+    resources = _FakeResources(REMOVED_URLS + others)
     ids = {item["url"]: item["id"] for item in resources.async_items()}
-    _run(_async_register_lovelace_resources(_make_hass(resources), {SCHEDULE_CARD_FILENAME}))
+    _run(_async_register_lovelace_resources(_make_hass(resources)))
 
-    removed = {url for url, item_id in ids.items() if item_id in resources.deleted}
-    assert removed == {
-        url
-        for name, _p, url in _CARDS
-        if name in CLASSIC_CARD_FILENAMES and name != SCHEDULE_CARD_FILENAME
-    }
+    assert sorted(resources.deleted) == sorted(ids[url] for url in REMOVED_URLS)
     assert not resources.created and not resources.updated
+
+
+def test_yaml_mode_names_the_leftovers_without_changing_anything(caplog) -> None:
+    resources = _FakeResources([UNIFIED_URL, REMOVED_URLS[0]])
+    resources.store = None  # YAML mode: the user owns the list
+    with caplog.at_level(logging.INFO, logger=frontend_module.__name__):
+        _run(_async_register_lovelace_resources(_make_hass(resources)))
+
+    assert not resources.created and not resources.updated and not resources.deleted
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and REMOVED_URLS[0] in warnings[0]
 
 
 def test_stale_resource_updated_in_place() -> None:
@@ -124,15 +125,14 @@ def test_stale_resource_updated_in_place() -> None:
     _run(_async_register_lovelace_resources(_make_hass(resources)))
 
     assert ("item0", {"url": resource_url}) in resources.updated
-    # The stale card was updated in place; with no classic card in use nothing else is added.
+    # The stale card was updated in place, not added a second time.
     assert not resources.created
 
 
 def test_current_resources_left_untouched() -> None:
-    """Re-running registration on an up-to-date install whose dashboards use every card is a
-    no-op."""
+    """Re-running registration on an up-to-date install is a no-op."""
     resources = _FakeResources([resource_url for _f, _p, resource_url in _CARDS])
-    _run(_async_register_lovelace_resources(_make_hass(resources), set(CLASSIC_CARD_FILENAMES)))
+    _run(_async_register_lovelace_resources(_make_hass(resources)))
 
     assert not resources.created
     assert not resources.updated
@@ -156,7 +156,7 @@ def _lovelace_hass(dashboards, resources=None):
     return SimpleNamespace(data={"lovelace": lovelace})
 
 
-def test_the_scan_finds_nested_classic_cards_and_names_their_dashboards() -> None:
+def test_the_scan_finds_nested_removed_cards_and_names_their_dashboards() -> None:
     kitchen = {
         "views": [
             {
@@ -179,42 +179,71 @@ def test_the_scan_finds_nested_classic_cards_and_names_their_dashboards() -> Non
             "auto": _Dashboard(None, missing=True),  # auto-generated: nothing to read
         }
     )
-    assert _run(async_classic_cards_in_use(hass)) == {
+    assert _run(async_removed_cards_in_use(hass)) == {
         "custom:hellofresh-cost-card": ["Kitchen"],
         "custom:hellofresh-schedule-card": ["Kitchen", "Overview"],
     }
 
 
-def test_a_sync_registers_what_is_used_and_updates_the_notice(monkeypatch) -> None:
+def test_the_check_updates_the_notice(monkeypatch) -> None:
     notices: list = []
     monkeypatch.setattr(
         frontend_module,
-        "async_update_classic_cards_issue",
+        "async_update_removed_cards_issue",
         lambda hass, in_use: notices.append(in_use),
     )
-    resources = _FakeResources([])
     board = {"views": [{"cards": [{"type": "custom:hellofresh-schedule-card"}]}]}
-    hass = _lovelace_hass({"home": _Dashboard(board, title="Home")}, resources)
-    _run(_async_sync_classic_cards(hass))
+    hass = _lovelace_hass({"home": _Dashboard(board, title="Home")})
+    _run(_async_check_removed_cards(hass))
 
-    schedule_url = next(url for name, _p, url in _CARDS if name == SCHEDULE_CARD_FILENAME)
-    assert [item["url"] for item in resources.created] == [UNIFIED_URL, schedule_url]
     assert notices == [{"custom:hellofresh-schedule-card": ["Home"]}]
-    assert async_get_frontend_diagnostics(hass)["classic_cards_in_use"] == notices[0]
+    assert async_get_frontend_diagnostics(hass)["removed_cards_in_use"] == notices[0]
 
     # The dashboard moves to the HelloFresh card: the notice clears.
     board["views"][0]["cards"] = [{"type": "custom:hellofresh-card"}]
-    _run(_async_sync_classic_cards(hass))
+    _run(_async_check_removed_cards(hass))
     assert notices[-1] == {}
 
 
-def test_saving_a_dashboard_rechecks_the_classic_cards() -> None:
+def test_saving_a_dashboard_rechecks_for_removed_cards() -> None:
     listened: list = []
     hass = SimpleNamespace(
         data={},
         bus=SimpleNamespace(async_listen=lambda event, handler: listened.append(event)),
     )
     frontend_module._async_listen_for_dashboard_saves(hass)
+    assert listened == ["lovelace_updated"]
+
+
+def test_startup_cleans_up_registers_and_checks(monkeypatch) -> None:
+    """An upgraded install: the old resources go, the HelloFresh card is registered, the
+    dashboard still using a removed card is reported, and saves are listened for."""
+    notices: list = []
+    monkeypatch.setattr(
+        frontend_module,
+        "async_update_removed_cards_issue",
+        lambda hass, in_use: notices.append(in_use),
+    )
+    listened: list = []
+
+    async def async_add_executor_job(func, *args):
+        return func(*args)
+
+    async def async_register_static_paths(configs) -> None:
+        pass
+
+    resources = _FakeResources(REMOVED_URLS)
+    board = {"views": [{"cards": [{"type": "custom:hellofresh-market-card"}]}]}
+    hass = _lovelace_hass({"home": _Dashboard(board, title="Home")}, resources)
+    hass.async_add_executor_job = async_add_executor_job
+    hass.http = SimpleNamespace(async_register_static_paths=async_register_static_paths)
+    hass.bus = SimpleNamespace(async_listen=lambda event, handler: listened.append(event))
+
+    _run(frontend_module.async_register_card(hass))
+
+    assert len(resources.deleted) == len(REMOVED_URLS)
+    assert [item["url"] for item in resources.created] == [UNIFIED_URL]
+    assert notices == [{"custom:hellofresh-market-card": ["Home"]}]
     assert listened == ["lovelace_updated"]
 
 
@@ -245,8 +274,8 @@ def test_diagnostics_survives_missing_lovelace() -> None:
 def test_every_registered_card_file_is_shipped() -> None:
     """Each card in _CARDS must exist in www/.
 
-    Registration only guards on the meal-planner card's presence, so a card added to _CARDS
-    but missing from www/ would register a Lovelace resource pointing at a 404 with no error.
+    Registration only guards on the HelloFresh card's presence, so a card added to _CARDS but
+    missing from www/ would register a Lovelace resource pointing at a 404 with no error.
     """
     www_dir = Path(frontend_module.__file__).parent / "www"
     missing = [filename for filename, _p, _r in _CARDS if not (www_dir / filename).is_file()]
@@ -309,7 +338,7 @@ def test_card_file_check_runs_in_the_executor() -> None:
         http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
     )
 
-    _run(frontend_module.async_register_meal_planner_card(hass))
+    _run(frontend_module.async_register_card(hass))
 
     # The real www/ directory ships the card, so registration proceeds to serving it.
     assert executor_calls, "the file check must be handed to the executor"
@@ -335,7 +364,7 @@ def test_missing_card_file_aborts_registration() -> None:
         http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
     )
 
-    _run(frontend_module.async_register_meal_planner_card(hass))
+    _run(frontend_module.async_register_card(hass))
 
     assert executor_calls, "the file check must still go through the executor"
     assert not registered, "a missing card file must abort before serving assets"
@@ -358,8 +387,8 @@ def test_registration_is_idempotent() -> None:
         http=SimpleNamespace(async_register_static_paths=async_register_static_paths),
     )
 
-    _run(frontend_module.async_register_meal_planner_card(hass))
+    _run(frontend_module.async_register_card(hass))
     first = len(executor_calls)
-    _run(frontend_module.async_register_meal_planner_card(hass))
+    _run(frontend_module.async_register_card(hass))
 
     assert len(executor_calls) == first, "the guard must short-circuit a repeat call"

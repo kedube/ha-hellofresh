@@ -22,7 +22,6 @@ sensor: whole menus with photos, per-item prices, recipes, tracking scans.
   [Your box](#your-box-the-box-bar-and-saving) · [Recipes](#recipes) · [Account](#account)
 - [Phones, tablets and themes](#phones-tablets-and-themes) · [Stays current](#stays-current)
 - [Moving from the classic cards](#moving-from-the-classic-cards)
-- [Classic cards reference (deprecated)](#classic-cards-reference-deprecated)
 
 ## In the sidebar
 
@@ -329,10 +328,9 @@ food profile, spending, presets, delivery-day names) loads when you first open i
 ## Moving from the classic cards
 
 The HelloFresh card grew out of seven single-purpose cards — Meal planner, Market, Recipes, Food
-Profile, Schedule, Subscription and Cost. They still ship and still work, but they are
-**deprecated and will be removed in a future release**: each now carries a **Deprecated** badge in
-its title and "(deprecated)" in the card picker. Everything they do is in the HelloFresh card, and
-working together.
+Profile, Schedule, Subscription and Cost. They were deprecated in 4.00 and have since been
+removed: a dashboard that still has one shows an error in its place. Everything they did is in the
+HelloFresh card, and working together.
 
 To switch:
 
@@ -341,127 +339,36 @@ To switch:
 2. Remove the classic cards from your dashboards, or delete the dashboard you made from the old
    example dashboard (it was built from them).
 
-Your filters, "In my box" and the week you were on carry over: the HelloFresh card stores them under
-the same keys. Nothing changes on the integration side — entities, services and automations are
-untouched.
-
 While any dashboard still uses a classic card, Home Assistant's **Repairs** screen says which cards
-and which dashboards. The classic cards also load only while a dashboard uses them: the
-integration checks at startup and whenever a dashboard is saved, so once you've switched, they stop
-downloading with every dashboard and the notice clears itself.
+and which dashboards. The integration checks at startup and whenever a dashboard is saved, so the
+notice clears itself once they're gone. It also removes the classic cards' entries from your
+dashboard resources; in YAML mode, the log names the ones to delete from `resources:`.
+
+Your filters, "In my box" and the week you were on carried over: the HelloFresh card stores them
+under the same keys. Nothing changes on the integration side — entities, services and automations
+are untouched.
 
 | Classic | In the HelloFresh card |
 |---|---|
-| [Meal planner card](#meal-planner-card) | Menu (plus search, a Favorites highlight, editing in "In my box", and one tile per dish with a customization drawer in place of separate variant tiles and **Hide variants**) |
-| [Market card](#market-card) | Market, saving together with Menu |
-| [Recipes card](#recipes-card) | Recipes |
-| [Food Profile card](#food-profile-card) | Account › Food preferences |
-| [Schedule card](#schedule-card) | Overview: next box, tracking, Coming up (cards or calendar), Recent deliveries with delivery details; skip and change day on every week |
-| [Subscription card](#subscription-card) | Account › Plan & billing; the payment and holiday notices are banners on every section |
-| [Cost card](#cost-card) | Account › Spending |
-| [Missing Ingredients view](#missing-ingredients-view) | Overview › Before it arrives, and **Pantry** on each covered week |
+| Meal planner (`custom:hellofresh-meal-planner-card`) | [Menu](#menu) (plus search, a Favorites highlight, editing in "In my box", and one tile per dish with a customization drawer in place of separate variant tiles and **Hide variants**) |
+| Market (`custom:hellofresh-market-card`) | [Market](#market), saving together with Menu |
+| Recipes (`custom:hellofresh-recipes-card`) | [Recipes](#recipes) |
+| Food Profile (`custom:hellofresh-food-profile-card`) | [Account › Food preferences](#account) |
+| Schedule (`custom:hellofresh-schedule-card`) | [Overview](#overview): next box, tracking, Coming up (cards or calendar), Recent deliveries with delivery details; skip and change day on every week |
+| Subscription (`custom:hellofresh-subscription-card`) | [Account › Plan & billing](#account); the payment and holiday notices are banners on every section |
+| Cost (`custom:hellofresh-cost-card`) | [Account › Spending](#account) |
+| Missing Ingredients view (two to-do list cards) | [Overview › Before it arrives](#overview), and **Pantry** on each covered week. The [prep lists](entities.md#prep-lists) are still ordinary to-do entities for a **To-do list** card of your own. |
 | Plan controls (entities card) | Account › Plan settings |
 | Diagnostics view | Account › Integration status |
 | Delivery activity (logbook) | Each box's delivery details, with the carrier's own timestamps. The delivery-events entity still fires for automations. |
 
+**Keeping a single-purpose card.** Give the HelloFresh card one section and it drops its tab bar
+([focused cards](#adding-the-card-to-a-dashboard)): `views: [menu]` in place of the Meal planner,
+`[market]`, `[recipes]`, `[overview]` for the Schedule, and `[account]` for Food Profile,
+Subscription and Cost. `title`, `logo`, `image_width` and `config_entry_id` work as they did; the
+Recipes card's `collection` and `limit` are now `recipes_collection` and `recipes_limit`, and the
+Cost card's `chart_months` is `spending_months`.
+
 **Deliberate differences.** A *paused* week is treated as skipped everywhere (the classic planner
-still offered meal edits on one); the week list keeps skipped future weeks visible so they can be
+offered meal edits on one); the week list keeps skipped future weeks visible so they can be
 unskipped; and a shipped box has its own **On its way** state rather than reading as "Locked".
-
-## Classic cards reference (deprecated)
-
-For dashboards that still use them. Each card reads its data on demand from the same services as
-the HelloFresh card and shares its week selection and filter preferences, so the two kinds can sit
-on one dashboard while you move over. Every classic card accepts `title` (its header text),
-`config_entry_id` (only with more than one account), `logo` (`true`, or a URL) and, where it shows
-food, `image_width`.
-
-### Meal planner card
-
-`custom:hellofresh-meal-planner-card` — browse each week's menu and change the meal selection and
-servings on editable weeks, with the website's filter panel, the full recipe view, favourite hearts,
-sold-out ribbons, the week's order strip, and Skip / Unskip. Unlike the HelloFresh card it lists a
-dish's options as separate tiles (grouped together, with a **Hide variants** filter). Now:
-[Menu](#menu).
-
-```yaml
-type: custom:hellofresh-meal-planner-card
-```
-
-### Market card
-
-`custom:hellofresh-market-card` — Market add-ons per week, grouped by shelf, with quantity steppers
-saved through `hellofresh.select_market_items`; past weeks show what was ordered. Now:
-[Market](#market).
-
-```yaml
-type: custom:hellofresh-market-card
-```
-
-### Recipes card
-
-`custom:hellofresh-recipes-card` — the public recipe catalog with categories, search, the cookbook
-and favourite hearts. Now: [Recipes](#recipes).
-
-```yaml
-type: custom:hellofresh-recipes-card
-# collection: chicken-recipes   # category to open on
-# limit: 50                     # recipes per category (1–200)
-```
-
-### Food Profile card
-
-`custom:hellofresh-food-profile-card` — view and edit the preferences HelloFresh uses to pick your
-meals (`hellofresh.get_food_profile` / `set_food_profile`). Now:
-[Account › Food preferences](#account).
-
-```yaml
-type: custom:hellofresh-food-profile-card
-```
-
-### Schedule card
-
-`custom:hellofresh-schedule-card` — a next-box summary, a month calendar of delivery days, and a
-timeline of weeks with their status, tracking and Skip / Change day. Now: [Overview](#overview).
-
-```yaml
-type: custom:hellofresh-schedule-card
-# calendar: true     # month calendar; the timeline follows its month (default true)
-# max_weeks: 8       # upcoming rows with calendar: false
-# past_weeks: 4      # past rows with calendar: false (0 hides them)
-```
-
-### Subscription card
-
-`custom:hellofresh-subscription-card` — a condensed account overview (`hellofresh.get_account_summary`)
-with the holiday and payment-card notices and the meal presets reference. Now:
-[Account › Plan & billing](#account).
-
-```yaml
-type: custom:hellofresh-subscription-card
-```
-
-### Cost card
-
-`custom:hellofresh-cost-card` — lifetime spend from the full billing history (`hellofresh.get_spending`),
-a monthly chart, a by-month roll-up and recent boxes. Now: [Account › Spending](#account).
-
-```yaml
-type: custom:hellofresh-cost-card
-# chart: true        # monthly bar chart
-# chart_months: 12   # months in the chart (1–24)
-# months: 6          # months in the roll-up (0 hides it)
-# weeks: 6           # recent boxes listed (0 hides them)
-```
-
-### Missing Ingredients view
-
-The old example dashboard's view of two built-in **to-do list** cards, one per delivery week, over
-the [prep lists](entities.md#prep-lists) (`todo.<prefix>_prep_list` and
-`todo.<prefix>_prep_list_week_2`). The lists are ordinary to-do entities and aren't going anywhere;
-only this view is replaced, by [Overview › Before it arrives](#overview).
-
-```yaml
-- type: todo-list
-  entity: todo.hellofresh_us_prep_list
-```

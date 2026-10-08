@@ -36,36 +36,32 @@ Formatting is enforced, so run `ruff format .` before committing rather than han
 
 ### Why the card checks exist
 
-The Lovelace cards under `custom_components/hellofresh/www/` are several thousand lines of
-hand-written JavaScript that the Python test suite cannot reach. A past-week browsing regression
-once shipped precisely because nothing validated them. Two guards now cover that gap:
+The HelloFresh card under `custom_components/hellofresh/www/` is several thousand lines of
+hand-written JavaScript with no build step. A past-week browsing regression once shipped precisely
+because nothing validated it. Two guards now cover that gap:
 
-- **`check_card_syntax.py`** proves each card parses as an ES module, so a typo cannot reach users
-  as a blank dashboard panel. It blanks `import` lines before checking (preserving line numbers)
-  because `node --check` would otherwise fail resolving the shared modules.
-- **`check_card_logic.mjs`** extracts the cards' real `_browsableWeeks` from the shipped sources
-  and exercises it. The load-bearing assertion is that the **Market and meal-planner cards expose
-  the same past weeks** — they read the same `get_weeks` response and share a week cursor, so any
-  divergence is a bug. Add a case here when you change week filtering.
+- **`check_card_syntax.py`** proves each card module parses as an ES module, so a typo cannot reach
+  users as a blank dashboard panel. It blanks `import` lines before checking (preserving line
+  numbers) because `node --check` would otherwise fail resolving the shared modules.
+- **`check_card_logic.mjs`** imports the card's real `browsableWeeks` and exercises it. The
+  load-bearing assertion is that **every past week in the window stays browsable**, whatever data
+  it carries, because one week list serves the Menu, the Market and the Overview. Add a case here
+  when you change week filtering.
 
-Because the logic tests parse the card sources with a regex, renaming `_browsableWeeks` or
-reindenting it will break extraction — the script fails loudly rather than silently passing.
-
-The unified HelloFresh card (`hellofresh-card.js` and its `hellofresh-card-*.js` modules) keeps
-its decisions in a DOM-free module, `hellofresh-card-logic.js`, which the checks import directly.
-`tests/test_unified_card_logic.py` also runs the classic cards' own methods (lifted as above) side
-by side with it — filter tags, week states, skip rules, prices, month roll-ups — so the two can't
-quietly drift apart while both ship. When you change one of those behaviours in a classic card,
-change it in the logic module too (or document the difference in that test).
+The card (`hellofresh-card.js` and its `hellofresh-card-*.js` modules) keeps its decisions in a
+DOM-free module, `hellofresh-card-logic.js`, which the checks and
+`tests/test_unified_card_logic.py` import directly. That test also pins the decisions the card took
+over from the classic cards it replaced — filter tags, week states, skip rules, prices, month
+roll-ups — so change them there deliberately, not by accident.
 
 ## Project layout
 
 - `custom_components/hellofresh/` contains the integration code.
-- `custom_components/hellofresh/www/` contains the Lovelace cards (plain ES modules, no build step):
-  the unified `hellofresh-card.js` with its view, logic and style modules (`hellofresh-card-*.js`),
-  the seven classic cards, the two modules they share (`hellofresh-shared.js`,
-  `hellofresh-recipe-detail.js`), and the card's text layer (`hellofresh-i18n.js`, with the
-  generated `hellofresh-i18n-en.js`).
+- `custom_components/hellofresh/www/` contains the Lovelace card (plain ES modules, no build step):
+  `hellofresh-card.js` with its view, logic and style modules (`hellofresh-card-*.js`), the shared
+  helpers (`hellofresh-shared.js`), the recipe sheet (`hellofresh-recipe-detail.js`), the card's
+  text layer (`hellofresh-i18n.js`, with the generated `hellofresh-i18n-en.js`) and the sidebar
+  panel that hosts it (`hellofresh-panel.js`).
 - The HelloFresh card's words are translations like the rest of the integration's text: English in
   `strings.json` under `config_panel.card` (copy it to `translations/en.json`; the two stay
   identical), each language in `translations/<code>.json`. Home Assistant serves the card the
@@ -81,8 +77,8 @@ change it in the logic module too (or document the difference in that test).
 - `docs/` contains the user reference documentation split out of the README. Keep the README as the
   narrative landing page (install → configure → what you get → troubleshoot) and put detail here:
   - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch, button, the delivery calendar, and the prep-list to-do entities.
-  - [`docs/dashboard.md`](docs/dashboard.md) — the HelloFresh card and the seven classic cards. Options shared by every card live
-    in its **Common options** table, so per-card examples stay minimal; don't repeat them.
+  - [`docs/dashboard.md`](docs/dashboard.md) — the HelloFresh card, section by section, its options, and moving from the
+    classic cards it replaced.
   - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
   - [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md) — the endpoint and normalization reference.
     This one is for contributors rather than users: payload shapes, why each endpoint is called,

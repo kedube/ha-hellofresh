@@ -137,9 +137,9 @@
       "title": "HelloFresh-Schreibaktionen sind für {entry_title} nicht bestätigt",
       "description": "Du hast versucht, eine HelloFresh-Aktion zu nutzen, die Kontodaten für **{entry_title}** ändert, etwa Gerichte auswählen oder eine Woche überspringen. Die Integration hat die bekannten Schreib-Endpunkte für dein Konto versucht, aber keiner hat die Anfrage angenommen. Die Aktion wurde daher blockiert, statt weiter zu raten."
     },
-    "deprecated_classic_cards": {
-      "title": "Die klassischen HelloFresh-Karten werden entfernt",
-      "description": "Deine Dashboards {dashboards} verwenden noch {cards}. Diese Karten sind veraltet und werden in einer künftigen Version entfernt. Die HelloFresh-Karte kann alles, was sie können: Öffne **HelloFresh** in der Seitenleiste oder füge `custom:hellofresh-card` zu einem Dashboard hinzu und entferne dann die klassischen Karten. Unter **Mehr erfahren** steht, wo jede Funktion jetzt zu finden ist."
+    "removed_classic_cards": {
+      "title": "Dashboards verwenden noch entfernte HelloFresh-Karten",
+      "description": "Deine Dashboards {dashboards} verwenden noch {cards}. Diese klassischen Karten wurden aus der Integration entfernt und zeigen jetzt stattdessen einen Fehler. Die HelloFresh-Karte kann alles, was sie konnten: Öffne **HelloFresh** in der Seitenleiste oder ersetze sie auf deinem Dashboard durch `custom:hellofresh-card`. Unter **Mehr erfahren** steht, wo jede Funktion jetzt zu finden ist. Dieser Hinweis verschwindet von selbst, sobald kein Dashboard sie mehr verwendet."
     }
   },
   "entity": {

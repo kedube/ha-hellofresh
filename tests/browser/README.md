@@ -21,5 +21,5 @@ Harness URL parameters: `view` (overview, menu, market, recipes, account), `them
 `scenario` (`clean` without the expiring-card banner, `live` for a Netherlands delivery on the
 road, `delivery`), `now` (a fixed clock, e.g. `2026-10-05T17:40:00`), `panel=1` to mount the
 sidebar panel instead of the card (with `narrow=1` for a phone, `frame=ha` for a Home
-Assistant-style sidebar, and the section in the path: `/hellofresh-app/menu`), `classic=<card>`
-for one of the deprecated classic cards, `latency` and `fail=<service>`.
+Assistant-style sidebar, and the section in the path: `/hellofresh-app/menu`), `latency` and
+`fail=<service>`.

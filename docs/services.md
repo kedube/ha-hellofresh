@@ -26,7 +26,7 @@ Change what is in a box.
 
 ### `hellofresh.get_weeks`
 
-**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, the menu `badge` (BESTSELLER, NEW, Premium Picks, …) with HelloFresh's own hex-gated `badge_foreground`/`badge_background` colors, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons), its `menu_categories` (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, … — as `{name, slug, recipe_ids}` rows, present only on weeks with a browsable menu payload), and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the [Meal planner](dashboard.md#meal-planner-card), [Market](dashboard.md#market-card), and [Schedule](dashboard.md#schedule-card) cards. Each week's summary now includes `benefits` — the wallet promises (weekly discounts such as "$10 off premium meals") HelloFresh will apply to that box — and the `account` payload carries `next_box_discount`, the promise that applies to the next box, as `sensor.next_box_discount` reports it.
+**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, the menu `badge` (BESTSELLER, NEW, Premium Picks, …) with HelloFresh's own hex-gated `badge_foreground`/`badge_background` colors, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons), its `menu_categories` (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, … — as `{name, slug, recipe_ids}` rows, present only on weeks with a browsable menu payload), and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the HelloFresh card's [Overview](dashboard.md#overview), [Menu](dashboard.md#menu) and [Market](dashboard.md#market) cards. Each week's summary now includes `benefits` — the wallet promises (weekly discounts such as "$10 off premium meals") HelloFresh will apply to that box — and the `account` payload carries `next_box_discount`, the promise that applies to the next box, as `sensor.next_box_discount` reports it.
 
 ### `hellofresh.get_menu_courses`
 
@@ -78,7 +78,7 @@ Read or change the subscription itself.
 
 ### `hellofresh.get_account_summary`
 
-**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Read-only. Powers the [Subscription card](dashboard.md#subscription-card).
+**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Read-only. Powers the HelloFresh card's header and [Account › Plan & billing](dashboard.md#account).
 
 ### `hellofresh.get_plan_options`
 
@@ -98,7 +98,7 @@ change the recurring box size (`product_handle` from `get_plan_options`). Affect
 
 ### `hellofresh.get_spending`
 
-**Returns a response.** Your HelloFresh spending ledger built from the full billing history — `weeks` (per-box delivery date + amount, newest first), `months` (per-month rollup with box count and total), and a running `total` (lifetime spend across past deliveries, with box count). Each week also carries the **realized discount** (`discount`, the billing ledger's coupon lines for that delivery, and its `coupon_code`), months a `discount` rollup and the total a running `discount` — the amounts are already net. Upcoming boxes are flagged and excluded from the running total. Read-only. Powers the [Cost card](dashboard.md#cost-card).
+**Returns a response.** Your HelloFresh spending ledger built from the full billing history — `weeks` (per-box delivery date + amount, newest first), `months` (per-month rollup with box count and total), and a running `total` (lifetime spend across past deliveries, with box count). Each week also carries the **realized discount** (`discount`, the billing ledger's coupon lines for that delivery, and its `coupon_code`), months a `discount` rollup and the total a running `discount` — the amounts are already net. Upcoming boxes are flagged and excluded from the running total. Read-only. Powers the HelloFresh card's [Account › Spending](dashboard.md#account).
 
 ## Food profile
 
@@ -106,7 +106,7 @@ The preferences HelloFresh uses to auto-preselect meals.
 
 ### `hellofresh.get_food_profile`
 
-**Returns a response.** The customer's food profile (the preferences HelloFresh uses to auto-preselect meals), a `completion` summary (how many profile fields HelloFresh considers answered, and which are still outstanding), plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the [Food Profile card](dashboard.md#food-profile-card).
+**Returns a response.** The customer's food profile (the preferences HelloFresh uses to auto-preselect meals), a `completion` summary (how many profile fields HelloFresh considers answered, and which are still outstanding), plus the full catalog of selectable options (taste exclusions, dietary preference, liked/disliked cuisines/proteins/flavors/dish-types, nutrition goals, meal types, household size, and goals). Read-only; fetched live from the profile-service. Powers the HelloFresh card's [Account › Food preferences](dashboard.md#account).
 
 ### `hellofresh.set_food_profile`
 
@@ -118,7 +118,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_recipe_collections`
 
-**Returns a response.** The browsable categories of HelloFresh's public recipe catalog (Chicken Recipes, Carb Smart, Hall of Fame, …), each with a slug, name, and thumbnail. Read-only. Powers the [Recipes card](dashboard.md#recipes-card).
+**Returns a response.** The browsable categories of HelloFresh's public recipe catalog (Chicken Recipes, Carb Smart, Hall of Fame, …), each with a slug, name, and thumbnail. Read-only. Powers the HelloFresh card's [Recipes](dashboard.md#recipes).
 
 ### `hellofresh.get_catalog_recipes`
 
@@ -126,7 +126,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_recipe_detail`
 
-**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, its photo, the `allergens` it contains, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps` (each with plain `instructions`, the same text as `paragraphs` of `{text, bold}` runs keeping HelloFresh's bold ingredient names, the step photo's `image_url` and `caption`, and any cooking `timers` as `{name, seconds}`), `labels` (the badges HelloFresh shows, e.g. "Protein Smart"), `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe detail view in the [Recipes card](dashboard.md#recipes-card).
+**Returns a response.** One recipe's full cooking detail — `ingredients` (each with an amount scaled to the requested `servings`, its photo, the `allergens` it contains, and flagged when it's a pantry staple you supply rather than something shipped in the box), step-by-step `steps` (each with plain `instructions`, the same text as `paragraphs` of `{text, bold}` runs keeping HelloFresh's bold ingredient names, the step photo's `image_url` and `caption`, and any cooking `timers` as `{name, seconds}`), `labels` (the badges HelloFresh shows, e.g. "Protein Smart"), `utensils`, `allergens`, `nutrition`, `video_url`, and `card_url` (the printable recipe-card PDF). Works for any recipe id, from a delivery week or the browse catalog. Unlike the catalog listing, this reads a plain HelloFresh API rather than the website, so it does **not** depend on the site's build id. Read-only. Powers the recipe sheet the HelloFresh card opens from any recipe (see [Recipes](dashboard.md#recipes)).
 
 ### `hellofresh.get_favorites`
 

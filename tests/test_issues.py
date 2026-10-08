@@ -88,9 +88,9 @@ def test_write_actions_issue_delete_targets_same_id() -> None:
     assert delete.call_args.args[2] == created_id
 
 
-def test_classic_cards_notice_names_the_cards_and_dashboards(monkeypatch) -> None:
-    """Dashboards still using the deprecated classic cards get one Repairs notice naming them;
-    it clears itself once none does."""
+def test_removed_cards_notice_names_the_cards_and_dashboards(monkeypatch) -> None:
+    """Dashboards still using a removed classic card get one Repairs notice naming them; it
+    clears itself once none does."""
     from custom_components.hellofresh import issues
 
     created: list = []
@@ -98,7 +98,7 @@ def test_classic_cards_notice_names_the_cards_and_dashboards(monkeypatch) -> Non
     monkeypatch.setattr(issues.ir, "async_create_issue", lambda *a, **kw: created.append((a, kw)))
     monkeypatch.setattr(issues.ir, "async_delete_issue", lambda *a: deleted.append(a))
 
-    issues.async_update_classic_cards_issue(
+    issues.async_update_removed_cards_issue(
         object(),
         {
             "custom:hellofresh-schedule-card": ["Kitchen", "Overview"],
@@ -106,12 +106,15 @@ def test_classic_cards_notice_names_the_cards_and_dashboards(monkeypatch) -> Non
         },
     )
     ((args, kwargs),) = created
-    assert args[1:] == ("hellofresh", "deprecated_classic_cards")
+    # Not the deprecation notice's id, so it shows even to those who dismissed that one.
+    assert args[1:] == ("hellofresh", "removed_classic_cards")
+    assert kwargs["translation_key"] == "removed_classic_cards"
+    assert kwargs["severity"] == issues.ir.IssueSeverity.ERROR
     assert kwargs["translation_placeholders"] == {
         "cards": "`custom:hellofresh-cost-card`, `custom:hellofresh-schedule-card`",
         "dashboards": "Kitchen, Overview",
     }
     assert kwargs["learn_more_url"].endswith("#moving-from-the-classic-cards")
 
-    issues.async_update_classic_cards_issue(object(), {})
-    assert deleted and deleted[-1][1:] == ("hellofresh", "deprecated_classic_cards")
+    issues.async_update_removed_cards_issue(object(), {})
+    assert deleted and deleted[-1][1:] == ("hellofresh", "removed_classic_cards")

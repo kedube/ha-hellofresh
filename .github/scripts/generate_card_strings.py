@@ -5,7 +5,7 @@ The card's words live in the integration's translation files under ``config_pane
 (``strings.json`` is the English source; ``translations/<code>.json`` hold the languages). Home
 Assistant serves them to the card in the user's language. English also ships as a JavaScript
 module, ``www/hellofresh-i18n-en.js``, so the card shows English without waiting on Home
-Assistant, and the modules it shares with the classic cards read it without asking.
+Assistant.
 
 That module is generated from ``strings.json`` by this script, and CI runs it with ``--check``,
 which fails when the module is out of date instead of writing it.

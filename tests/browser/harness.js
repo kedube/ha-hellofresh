@@ -96,16 +96,6 @@ if (params.get("panel")) {
     find();
   });
   window.__ready = true;
-} else if (params.get("classic")) {
-  // ?classic=hellofresh-schedule-card mounts one of the (deprecated) classic cards.
-  const type = params.get("classic");
-  await import(`/hellofresh/${type}.js?v=dev`);
-  const card = document.createElement(type);
-  card.setConfig({ type: `custom:${type}`, ...(params.get("config") ? JSON.parse(params.get("config")) : {}) });
-  card.hass = hass;
-  document.getElementById("wrap").appendChild(card);
-  window.__card = card;
-  window.__ready = true;
 } else {
   await import(`/hellofresh/hellofresh-card.js?v=dev`);
   const card = document.createElement("hellofresh-card");

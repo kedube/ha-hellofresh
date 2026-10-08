@@ -27,16 +27,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 # (module filename, custom element it must define)
-CARDS = (
-    ("hellofresh-card.js", "hellofresh-card"),
-    ("hellofresh-meal-planner-card.js", "hellofresh-meal-planner-card"),
-    ("hellofresh-market-card.js", "hellofresh-market-card"),
-    ("hellofresh-schedule-card.js", "hellofresh-schedule-card"),
-    ("hellofresh-subscription-card.js", "hellofresh-subscription-card"),
-    ("hellofresh-cost-card.js", "hellofresh-cost-card"),
-    ("hellofresh-food-profile-card.js", "hellofresh-food-profile-card"),
-    ("hellofresh-recipes-card.js", "hellofresh-recipes-card"),
-)
+CARDS = (("hellofresh-card.js", "hellofresh-card"),)
 
 # Minimal stubs for the browser surface the cards touch while their module body runs.
 _BROWSER_STUBS = """
