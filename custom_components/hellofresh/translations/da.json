@@ -1,5 +1,8 @@
 {
   "config": {
+    "initiate_flow": {
+      "user": "Tilføj konto"
+    },
     "step": {
       "user": {
         "title": "Forbind til HelloFresh",
