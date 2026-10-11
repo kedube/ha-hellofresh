@@ -1,7 +1,9 @@
 # (Unofficial) HelloFresh Integration for Home Assistant
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
+[![GitHub Release](https://img.shields.io/github/v/release/kedube/ha-hellofresh?sort=semver)](https://github.com/kedube/ha-hellofresh/releases)
 [![CI](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml/badge.svg)](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
+[![License](https://img.shields.io/github/license/kedube/ha-hellofresh)](LICENSE)
 
 <p align="center">
   <img src="images/hero.png" alt="HelloFresh in the Home Assistant sidebar: the next box with its deadline countdown, meals, price and pantry checklist on a desktop, and this week's menu on a phone in dark mode" width="100%">
