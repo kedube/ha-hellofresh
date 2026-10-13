@@ -206,6 +206,11 @@ class HelloFreshMealsCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
         self.async_write_ha_state()
 
     @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """When the plan last changed, so an open card can re-read it."""
+        return {"plan_updated": self._meal_plan.updated.isoformat()}
+
+    @property
     def event(self) -> CalendarEvent | None:
         """Return the meal under way, else the next one."""
         now = dt_util.now()

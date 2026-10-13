@@ -627,6 +627,8 @@ class HelloFreshCard extends HTMLElement {
       // Live tracking, only for accounts where HelloFresh drives its own vans (the Netherlands, Germany).
       trackingPhase: find("delivery_tracking_phase", "sensor"),
       trackingEta: find("delivery_tracking_eta", "sensor"),
+      // The Week tab's Meals calendar: its plan_updated attribute moves with every plan change.
+      meals: find("meals", "calendar"),
     };
     this._entityIdsFor = hass.entities;
     return this._entityIds;
@@ -652,6 +654,7 @@ class HelloFreshCard extends HTMLElement {
       plan: sign([ids.boxSize, ids.deliveryDay]),
       health: sign([ids.accessToken, ids.refreshToken, ids.writeActions, ids.payloadShape]),
       tracking: sign([ids.trackingPhase, ids.trackingEta]),
+      mealplan: sign([ids.meals]),
     };
   }
 
@@ -666,6 +669,8 @@ class HelloFreshCard extends HTMLElement {
       if (this._view === "overview" || this._view === "menu") this.renderView();
     }
     if (this._view === "account" && (groups.has("plan") || groups.has("health"))) this.renderView();
+    // The plan changed somewhere else (another device, an automation): re-read it.
+    if (groups.has("mealplan")) this.loadMealPlan();
     if (groups.has("tracking")) {
       if (this._view === "overview") this.renderView();
       if (this.sheetKind === "delivery") this.renderSheet();

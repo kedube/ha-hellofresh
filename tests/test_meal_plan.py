@@ -291,6 +291,11 @@ async def test_calendar_events_are_timed_and_worded_in_the_language(
     assert events[0].description == "Appetizer: Gyoza\nCooking time: 30 min"
     assert events[0].uid == "entry1_meal_2026-10-14_dinner"
 
+    stamp = calendar.extra_state_attributes["plan_updated"]
+    plan.updated -= timedelta(minutes=1)
+    await plan.async_set(TODAY + timedelta(days=2), text="Leftovers")
+    assert calendar.extra_state_attributes["plan_updated"] > stamp
+
     hass.config.language = "de"
     calendar._labels = await async_meal_labels(hass)
     assert calendar._build_events()[0].summary == "Abendessen: Butter Shrimp"

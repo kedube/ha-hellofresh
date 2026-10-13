@@ -711,6 +711,14 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     reg("binary_sensor.hellofresh_us_payload_shape_changed", "payload_shape_changed"),
   ]);
   const devices = { dev1: { id: "dev1", config_entries: ["entry1"], name: "HelloFresh (US)" } };
+  // The Meals calendar's plan_updated moves with every plan change, wherever it was made.
+  const touchMealPlan = () => setState("calendar.hellofresh_us_meals", "off", { plan_updated: new Date().toISOString() });
+  if (plan) {
+    Object.assign(entities, Object.fromEntries([reg("calendar.hellofresh_us_meals", "meals")]));
+    touchMealPlan();
+    fx.mealPlan = plan;
+    fx.touchMealPlan = touchMealPlan;
+  }
 
   // ?scenario=live: a box on the road in the Netherlands, where HelloFresh drives its own vans and
   // the integration turns the live tracker behind hftrack.nl into sensors. The next box's order
@@ -760,11 +768,13 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     async set_planned_meal(data) {
       if (!plan) throw new Error("Meal planning is off.");
       plan.set(data);
+      touchMealPlan();
       return plan.view();
     },
     async clear_planned_meal(data) {
       if (!plan) throw new Error("Meal planning is off.");
       plan.clear(data);
+      touchMealPlan();
       return plan.view();
     },
     async get_menu_courses({ week_id, filters }) {

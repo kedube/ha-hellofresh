@@ -384,6 +384,9 @@ class MealPlan:
             hass, STORAGE_VERSION, storage_key(entry.entry_id)
         )
         self.days: dict[str, dict[str, Any]] = {}
+        # When the plan last changed: the Meals calendar exposes it so an open card can notice a
+        # change made elsewhere (another device, an automation) and re-read the plan.
+        self.updated: datetime = dt_util.utcnow()
         self._listeners: list[CALLBACK_TYPE] = []
         # Market items' cooking times, looked up once per recipe from its detail.
         self._minutes_cache: dict[str, int | None] = {}
@@ -410,6 +413,7 @@ class MealPlan:
         self._store.async_delay_save(lambda: {"days": self.days}, _SAVE_DELAY_SECONDS)
 
     def _changed(self) -> None:
+        self.updated = dt_util.utcnow()
         self._prune()
         self._schedule_save()
         for update in list(self._listeners):
