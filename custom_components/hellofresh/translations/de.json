@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Wochen-Tab (Essensplanung)",
-            "description": "Plane, an welchem Tag du jedes Gericht aus deiner Box kochst. Eingeschaltet kommen der Tab „Woche“ der Karte, ein Kalender „Mahlzeiten“ mit einem Termin für jede geplante Mahlzeit und Sensoren für die heutigen Mahlzeiten hinzu.",
+            "name": "Wochen-Tab",
+            "description": "Wann der Kalendertermin jeder geplanten Mahlzeit beginnt und wie lange er dauert, und ob Frühstück und Mittagessen jede Woche im Wochen-Tab erscheinen.",
             "data": {
-              "enable_meal_planning": "Wochen-Tab anzeigen",
               "dinner_start": "Abendessen beginnt um",
               "dinner_minutes": "Dauer des Abendessens (Minuten)",
               "dinner_use_cooking_time": "HelloFresh-Kochzeit für das Abendessen verwenden",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Dauer des Mittagessens (Minuten)"
             },
             "data_description": {
-              "enable_meal_planning": "Fügt den Tab „Woche“ nach „Rezepte“, den Kalender „Mahlzeiten“ und Sensoren für die heutigen Mahlzeiten hinzu. Standardmäßig aus. Dein Plan bleibt erhalten, wenn du das ausschaltest; er wird erst gelöscht, wenn die Integration entfernt wird.",
               "dinner_start": "Wann jeder Abendessen-Termin beginnt. Die Uhrzeit eines einzelnen Tages lässt sich auch im Tab „Woche“ ändern.",
               "dinner_minutes": "Wie lange jeder Abendessen-Termin dauert: Vorbereiten, Kochen, Essen und Aufräumen. Standard 90 Minuten. Mit der HelloFresh-Kochzeit gilt das nur für Abendessen ohne Kochzeit, etwa eine Notiz.",
               "dinner_use_cooking_time": "Jeder Abendessen-Termin dauert so lange wie die Kochzeit des Gerichts laut HelloFresh (plus die der Vorspeise, falls vorhanden) plus die zusätzliche Zeit unten.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Essensplan abrufen",
-      "description": "Gibt den Essensplan des Wochen-Tabs zurück: seine Einstellungen und jeden geplanten Tag, jede Mahlzeit mit Beginn und Ende. Nur lesend; liefert eine Antwort. Antwortet mit enabled false, wenn der Wochen-Tab ausgeschaltet ist.",
+      "description": "Gibt den Essensplan des Wochen-Tabs zurück: seine Einstellungen und jeden geplanten Tag, jede Mahlzeit mit Beginn und Ende. Nur lesend; liefert eine Antwort.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh-Grün",
         "accent_theme": "Primärfarbe des Designs",
         "help": {
-          "views": "Wähle einen Bereich für eine fokussierte Karte ohne Tab-Leiste. Woche erscheint nur, wenn der Wochen-Tab in den Optionen der Integration eingeschaltet ist.",
+          "views": "Wähle einen Bereich für eine fokussierte Karte ohne Tab-Leiste.",
           "default_view": "Leer lassen, um den zuletzt genutzten Bereich zu öffnen.",
           "config_entry_id": "Nur nötig bei mehr als einem HelloFresh-Konto."
         }

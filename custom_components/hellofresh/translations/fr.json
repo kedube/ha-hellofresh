@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Onglet Semaine (planning des repas)",
-            "description": "Planifiez le jour où chaque repas de votre box sera préparé. L'activer ajoute l'onglet Semaine de la carte, un calendrier Repas avec un événement horaire pour chaque repas planifié, et des capteurs pour les repas du jour.",
+            "name": "Onglet Semaine",
+            "description": "L'heure de début et la durée de l'événement de calendrier de chaque repas planifié, et si le petit-déjeuner et le déjeuner apparaissent chaque semaine dans l'onglet Semaine.",
             "data": {
-              "enable_meal_planning": "Afficher l'onglet Semaine",
               "dinner_start": "Début du dîner",
               "dinner_minutes": "Durée du dîner (minutes)",
               "dinner_use_cooking_time": "Utiliser le temps de cuisson HelloFresh pour le dîner",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Durée du déjeuner (minutes)"
             },
             "data_description": {
-              "enable_meal_planning": "Ajoute l'onglet Semaine après Recettes, le calendrier Repas et des capteurs pour les repas du jour. Désactivé par défaut. Votre planning est conservé si vous désactivez cette option ; il n'est supprimé que lorsque l'intégration est supprimée.",
               "dinner_start": "L'heure de début de chaque événement de dîner. L'heure d'un jour précis peut aussi être modifiée dans l'onglet Semaine.",
               "dinner_minutes": "La durée de chaque événement de dîner : préparation, cuisson, repas et rangement. 90 minutes par défaut. Avec le temps de cuisson HelloFresh activé, elle ne s'applique qu'aux dîners sans temps de cuisson, comme une note.",
               "dinner_use_cooking_time": "Chaque événement de dîner dure le temps de cuisson du repas indiqué par HelloFresh (plus celui de l'entrée, le cas échéant), plus le temps supplémentaire ci-dessous.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Obtenir le planning des repas",
-      "description": "Renvoie le planning des repas de l'onglet Semaine : ses réglages et chaque jour planifié, chaque repas avec son heure de début et de fin. Lecture seule ; renvoie une réponse. Répond enabled false lorsque l'onglet Semaine est désactivé.",
+      "description": "Renvoie le planning des repas de l'onglet Semaine : ses réglages et chaque jour planifié, chaque repas avec son heure de début et de fin. Lecture seule ; renvoie une réponse.",
       "fields": {
         "config_entry_id": {
           "name": "Identifiant de configuration",
@@ -1720,7 +1718,7 @@
         "accent_brand": "Vert HelloFresh",
         "accent_theme": "Couleur principale du thème",
         "help": {
-          "views": "Choisissez une seule section pour une carte ciblée, sans barre d'onglets. Semaine n'apparaît que si l'onglet Semaine est activé dans les options de l'intégration.",
+          "views": "Choisissez une seule section pour une carte ciblée, sans barre d'onglets.",
           "default_view": "Laissez vide pour rouvrir la dernière section utilisée.",
           "config_entry_id": "Nécessaire uniquement avec plusieurs comptes HelloFresh."
         }

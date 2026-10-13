@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Uke-fanen (måltidsplanlegging)",
-            "description": "Planlegg hvilken dag hver rett i kassen din skal lages. Når dette er slått på, får kortet fanen Uke, det kommer en Måltider-kalender med en tidsbestemt hendelse for hvert planlagte måltid, og sensorer for dagens måltider.",
+            "name": "Uke-fanen",
+            "description": "Når kalenderhendelsen for hvert planlagte måltid starter og hvor lenge den varer, og om frokost og lunsj vises i fanen Uke hver uke.",
             "data": {
-              "enable_meal_planning": "Vis Uke-fanen",
               "dinner_start": "Middag starter kl.",
               "dinner_minutes": "Varighet for middag (minutter)",
               "dinner_use_cooking_time": "Bruk HelloFresh sin tilberedningstid for middag",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Varighet for lunsj (minutter)"
             },
             "data_description": {
-              "enable_meal_planning": "Legger til fanen Uke etter Oppskrifter, Måltider-kalenderen og sensorer for dagens måltider. Av som standard. Planen din beholdes hvis du slår dette av; den slettes først når integrasjonen fjernes.",
               "dinner_start": "Når hver middagshendelse starter. Tidspunktet for én dag kan også endres i fanen Uke.",
               "dinner_minutes": "Hvor lenge hver middagshendelse varer: forberedelse, matlaging, spising og opprydding. Standard 90 minutter. Med HelloFresh sin tilberedningstid slått på gjelder dette bare middager uten tilberedningstid, for eksempel et notat.",
               "dinner_use_cooking_time": "Hver middagshendelse varer like lenge som rettens tilberedningstid fra HelloFresh (pluss forrettens, hvis den har en), pluss ekstratiden nedenfor.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Hent måltidsplan",
-      "description": "Returnerer Uke-fanens måltidsplan: innstillingene og hver planlagte dag, hvert måltid med start- og sluttid. Kun lesing; returnerer et svar. Svarer med enabled false når Uke-fanen er slått av.",
+      "description": "Returnerer Uke-fanens måltidsplan: innstillingene og hver planlagte dag, hvert måltid med start- og sluttid. Kun lesing; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh-grønn",
         "accent_theme": "Temaets primærfarge",
         "help": {
-          "views": "Velg én seksjon for et fokusert kort uten fanelinje. Uke vises bare når Uke-fanen er slått på i integrasjonens innstillinger.",
+          "views": "Velg én seksjon for et fokusert kort uten fanelinje.",
           "default_view": "La stå tomt for å åpne sist brukte seksjon.",
           "config_entry_id": "Trengs bare med mer enn én HelloFresh-konto."
         }

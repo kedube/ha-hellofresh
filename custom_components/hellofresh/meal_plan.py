@@ -74,7 +74,6 @@ MEAL_SENSOR_KEYS = {
     "lunch": "todays_lunch",
     "dinner": "tonights_dinner",
 }
-MEAL_ENTITY_KEYS = (MEAL_CALENDAR_KEY, *MEAL_SENSOR_KEYS.values())
 
 KIND_MEAL = "meal"
 KIND_MARKET = "market"
@@ -465,7 +464,7 @@ class MealPlan:
                 }
             if meals:
                 days[key] = meals
-        return {"enabled": True, **self.settings.as_dict(), "days": days}
+        return {**self.settings.as_dict(), "days": days}
 
     # ---- writing ----------------------------------------------------------------------------
 

@@ -38,7 +38,6 @@ from .const import (
     CONF_DINNER_START,
     CONF_DINNER_USE_COOKING_TIME,
     CONF_ENABLE_FAVORITES,
-    CONF_ENABLE_MEAL_PLANNING,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
@@ -69,7 +68,6 @@ from .const import (
     DEFAULT_DINNER_MINUTES,
     DEFAULT_DINNER_START,
     DEFAULT_ENABLE_FAVORITES,
-    DEFAULT_ENABLE_MEAL_PLANNING,
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
@@ -796,7 +794,6 @@ def _minutes_selector(minimum: int, maximum: int) -> NumberSelector:
 def _week_tab_fields() -> list[tuple[str, object, object]]:
     meal_minutes = _minutes_selector(MIN_MEAL_MINUTES, MAX_MEAL_MINUTES)
     return [
-        (CONF_ENABLE_MEAL_PLANNING, DEFAULT_ENABLE_MEAL_PLANNING, cv.boolean),
         (CONF_DINNER_START, DEFAULT_DINNER_START, TimeSelector()),
         (CONF_DINNER_MINUTES, DEFAULT_DINNER_MINUTES, meal_minutes),
         (CONF_DINNER_USE_COOKING_TIME, False, cv.boolean),

@@ -13,7 +13,6 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.typing import ConfigType
 import voluptuous as vol
@@ -50,7 +49,6 @@ from .const import (
     CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
-    CONF_ENABLE_MEAL_PLANNING,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
@@ -70,7 +68,6 @@ from .const import (
     DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
-    DEFAULT_ENABLE_MEAL_PLANNING,
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
@@ -125,7 +122,7 @@ from .issues import (
     async_delete_data_quality_issues,
     async_delete_write_actions_issue,
 )
-from .meal_plan import COURSES, MEAL_ENTITY_KEYS, MEALS, MealPlan, async_remove_meal_plan
+from .meal_plan import COURSES, MEALS, MealPlan, async_remove_meal_plan
 from .sensor_helpers import sensor_native_value
 from .tls_transport import async_close_shared_session
 from .tracey import HelloFreshTraceyCoordinator
@@ -411,14 +408,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await tracey.async_refresh()
         coordinator.tracey = tracey
 
-    # The Week tab's meal plan (an option, off by default). With it off there is no plan and no
-    # entities for it — including any left in the registry from when it was on.
-    if entry.options.get(CONF_ENABLE_MEAL_PLANNING, DEFAULT_ENABLE_MEAL_PLANNING):
-        meal_plan = MealPlan(hass, entry, coordinator)
-        await meal_plan.async_load()
-        coordinator.meal_plan = meal_plan
-    else:
-        _remove_meal_plan_entities(hass, entry)
+    # The Week tab's meal plan. Nothing is written to storage until something is planned.
+    meal_plan = MealPlan(hass, entry, coordinator)
+    await meal_plan.async_load()
+    coordinator.meal_plan = meal_plan
 
     # HA's per-entry storage: platforms, services, diagnostics and intents all read the
     # coordinator from here. HA clears it when the entry unloads.
@@ -429,18 +422,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # The sidebar entry that opens the HelloFresh card full screen (when the option is on).
     await async_add_entry_panel(hass, entry)
     return True
-
-
-def _remove_meal_plan_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Drop the Meals calendar and meal sensors from the registry (meal planning is off).
-
-    Otherwise turning the option off would leave them behind as unavailable entities.
-    """
-    registry = er.async_get(hass)
-    unique_ids = {f"{entry.entry_id}_{key}" for key in MEAL_ENTITY_KEYS}
-    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if entity.unique_id in unique_ids:
-            registry.async_remove(entity.entity_id)
 
 
 def _entry_platforms(entry: ConfigEntry) -> list[Platform]:
@@ -644,8 +625,6 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "selected_plan_total_price": data.selected_plan_total_price,
             "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
             "menu_grace_weeks": coordinator.client.menu_grace_weeks,
-            # Whether the Week tab is on (the card shows the tab only then).
-            "meal_planning": getattr(coordinator, "meal_plan", None) is not None,
             **_refresh_contract(coordinator),
             # The next box's /gw/calculate split (subtotal, shipping, discount, tax, coupon), so
             # the schedule card can show the discount applied to the box it summarizes.
@@ -818,25 +797,15 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         return await _single_client(service_call).async_get_spending()
 
     def _meal_plan(service_call: ServiceCall) -> MealPlan:
-        """The target account's meal plan, or a clear error when the Week tab is off."""
-        meal_plan = getattr(_resolve_single_coordinator(hass, service_call), "meal_plan", None)
-        if meal_plan is None:
-            raise HomeAssistantError(
-                "Meal planning is off. Turn on the Week tab in the HelloFresh integration's "
-                "options to use it."
-            )
-        return meal_plan
+        """The target account's meal plan."""
+        return _resolve_single_coordinator(hass, service_call).meal_plan
 
     async def async_get_meal_plan(service_call: ServiceCall) -> ServiceResponse:
         """Return the Week tab's meal plan: its settings and every planned day.
 
-        Read-only. Each planned meal carries its computed ``start`` and ``end``. With meal
-        planning off this answers ``{"enabled": false}`` rather than failing, so a dashboard
-        can ask without knowing the option.
+        Read-only. Each planned meal carries its computed ``start`` and ``end``.
         """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        meal_plan = getattr(coordinator, "meal_plan", None)
-        return meal_plan.as_dict() if meal_plan is not None else {"enabled": False}
+        return _meal_plan(service_call).as_dict()
 
     async def async_set_planned_meal(service_call: ServiceCall) -> ServiceResponse:
         """Plan one course of a day's meal (a box meal, a Market item or a note), and/or move

@@ -7,10 +7,9 @@
  * box meal, a Market item bought that week, or a note ("Pizza night"), and to change when it
  * starts. Dinner can add an appetizer and a dessert.
  *
- * Only present while the integration's "Week tab" option is on (the get_weeks account payload's
- * `meal_planning`). The plan lives in the integration (get_meal_plan / set_planned_meal /
- * clear_planned_meal), which also turns it into the Meals calendar and today's-meal sensors;
- * nothing here writes to HelloFresh.
+ * The plan lives in the integration (get_meal_plan / set_planned_meal / clear_planned_meal),
+ * which also turns it into the Meals calendar and today's-meal sensors; nothing here writes to
+ * HelloFresh.
  */
 
 const WEEK_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";

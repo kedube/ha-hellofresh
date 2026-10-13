@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Fliken Vecka (måltidsplanering)",
-            "description": "Planera vilken dag varje rätt i din matkasse ska lagas. När det är aktiverat får kortet fliken Vecka, en Måltider-kalender med en tidsbestämd händelse för varje planerad måltid och sensorer för dagens måltider.",
+            "name": "Fliken Vecka",
+            "description": "När kalenderhändelsen för varje planerad måltid börjar och hur länge den varar, och om frukost och lunch visas i fliken Vecka varje vecka.",
             "data": {
-              "enable_meal_planning": "Visa fliken Vecka",
               "dinner_start": "Middagen börjar kl.",
               "dinner_minutes": "Middagens längd (minuter)",
               "dinner_use_cooking_time": "Använd HelloFreshs tillagningstid för middagen",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Lunchens längd (minuter)"
             },
             "data_description": {
-              "enable_meal_planning": "Lägger till fliken Vecka efter Recept, Måltider-kalendern och sensorer för dagens måltider. Av som standard. Din plan sparas om du stänger av det; den raderas först när integrationen tas bort.",
               "dinner_start": "När varje middagshändelse börjar. Tiden för en enskild dag kan också ändras i fliken Vecka.",
               "dinner_minutes": "Hur länge varje middagshändelse varar: förberedelser, matlagning, måltid och disk. Standard 90 minuter. Med HelloFreshs tillagningstid aktiverad gäller det bara middagar utan tillagningstid, till exempel en anteckning.",
               "dinner_use_cooking_time": "Varje middagshändelse varar lika länge som rättens tillagningstid enligt HelloFresh (plus förrättens, om den har en), plus den extra tiden nedan.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Hämta måltidsplan",
-      "description": "Returnerar måltidsplanen för fliken Vecka: dess inställningar och varje planerad dag, varje måltid med start- och sluttid. Endast läsning; returnerar ett svar. Svarar med enabled false när fliken Vecka är avstängd.",
+      "description": "Returnerar måltidsplanen för fliken Vecka: dess inställningar och varje planerad dag, varje måltid med start- och sluttid. Endast läsning; returnerar ett svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh-grön",
         "accent_theme": "Temats primärfärg",
         "help": {
-          "views": "Välj ett avsnitt för ett fokuserat kort utan flikrad. Vecka visas bara när fliken Vecka är aktiverad i integrationens alternativ.",
+          "views": "Välj ett avsnitt för ett fokuserat kort utan flikrad.",
           "default_view": "Lämna tomt för att öppna det senast använda avsnittet.",
           "config_entry_id": "Behövs bara med mer än ett HelloFresh-konto."
         }

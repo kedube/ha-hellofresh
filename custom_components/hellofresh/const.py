@@ -101,12 +101,10 @@ CONF_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
 DEFAULT_SHOW_SIDEBAR_PANEL = True
 
 # The Week tab: plan which day each meal in the box (and each Market item bought) gets cooked,
-# shown as timed events on a Meals calendar and as today's-meal sensors. Off by default; turning
-# it on adds the card's Week tab, the calendar, the sensors and the plan services' storage.
-# Changing any of these reloads the entry. The options form groups them in one collapsible
-# section (OPTIONS_SECTION_WEEK_TAB); they are stored flat in entry.options like the rest.
-CONF_ENABLE_MEAL_PLANNING = "enable_meal_planning"
-DEFAULT_ENABLE_MEAL_PLANNING = False
+# shown as timed events on a Meals calendar and as today's-meal sensors. Always there; nothing
+# is stored until something is planned. These settings time the calendar's events. Changing
+# any of them reloads the entry. The options form groups them in one collapsible section
+# (OPTIONS_SECTION_WEEK_TAB); they are stored flat in entry.options like the rest.
 OPTIONS_SECTION_WEEK_TAB = "week_tab"
 # Breakfast and lunch appear in a week only when it has Market breakfast/lunch items (or
 # something already planned for them); these show them every week, for free-text plans.

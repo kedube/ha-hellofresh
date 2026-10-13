@@ -15,7 +15,6 @@
  * address in place, so a reload or bookmark comes back to the same one.
  */
 
-// Week exists only with meal planning on; the card itself declines it otherwise.
 const SECTIONS = ["overview", "menu", "market", "recipes", "week", "account"];
 const WEEK_ID = /^\d{4}-W\d{2}$/;
 

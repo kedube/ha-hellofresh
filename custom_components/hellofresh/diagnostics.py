@@ -109,7 +109,7 @@ async def async_get_config_entry_diagnostics(
         },
         "token_health": token_health,
         # The Week tab's plan, summarized: notes are typed by the household, so none of the
-        # planned content is included — only whether it is on and how much is planned.
+        # planned content is included — only how much is planned.
         "meal_plan": _meal_plan_summary(coordinator),
         # Expected card resource URLs (stamped with the release version) vs. what Lovelace
         # actually has registered — a mismatch means the user is loading a stale cached card.
@@ -137,13 +137,12 @@ async def async_get_config_entry_diagnostics(
 
 
 def _meal_plan_summary(coordinator: object) -> dict[str, object]:
-    """Whether meal planning is on and how many days and meals are planned."""
+    """How many days and meals are planned, and the settings that time them."""
     meal_plan = getattr(coordinator, "meal_plan", None)
     if meal_plan is None:
-        return {"enabled": False}
+        return {}
     days = meal_plan.days
     return {
-        "enabled": True,
         "planned_days": len(days),
         "planned_meals": sum(len(meals) for meals in days.values() if isinstance(meals, dict)),
         "settings": meal_plan.settings.as_dict(),

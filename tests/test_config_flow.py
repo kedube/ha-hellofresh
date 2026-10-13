@@ -23,7 +23,6 @@ from custom_components.hellofresh.const import (
     CONF_DINNER_MINUTES,
     CONF_DINNER_START,
     CONF_ENABLE_FAVORITES,
-    CONF_ENABLE_MEAL_PLANNING,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_HISTORY_WEEKS,
@@ -206,11 +205,10 @@ def _week_tab_section(schema):
 
 
 def test_options_week_tab_settings_are_folded_away_and_saved_flat() -> None:
-    """The Week tab's settings sit in one collapsed section, off by default, stored flat."""
+    """The Week tab's settings sit in one collapsed section and are stored flat."""
     flow = _make_options_flow("us")
     section = _week_tab_section(_run(flow.async_step_init())["data_schema"])
     assert section.options["collapsed"] is True
-    assert _schema_default(section.schema, CONF_ENABLE_MEAL_PLANNING) is False
     assert _schema_default(section.schema, CONF_DINNER_START) == "17:30:00"
     assert _schema_default(section.schema, CONF_DINNER_MINUTES) == 90
 
@@ -219,7 +217,6 @@ def test_options_week_tab_settings_are_folded_away_and_saved_flat() -> None:
             {
                 **_default_options_payload(),
                 OPTIONS_SECTION_WEEK_TAB: {
-                    CONF_ENABLE_MEAL_PLANNING: True,
                     CONF_DINNER_START: "18:00:00",
                     CONF_DINNER_MINUTES: 75.0,  # NumberSelector hands back a float
                 },
@@ -228,7 +225,6 @@ def test_options_week_tab_settings_are_folded_away_and_saved_flat() -> None:
     )
     data = result["data"]
     assert OPTIONS_SECTION_WEEK_TAB not in data
-    assert data[CONF_ENABLE_MEAL_PLANNING] is True
     assert data[CONF_DINNER_START] == "18:00:00"
     assert data[CONF_DINNER_MINUTES] == 75 and isinstance(data[CONF_DINNER_MINUTES], int)
     assert data[CONF_BREAKFAST_MINUTES] == 30  # a field left alone keeps its default
@@ -236,7 +232,6 @@ def test_options_week_tab_settings_are_folded_away_and_saved_flat() -> None:
     saved = _make_options_flow("us", data)
     section = _week_tab_section(_run(saved.async_step_init())["data_schema"])
     assert _schema_default(section.schema, CONF_DINNER_START) == "18:00:00"
-    assert _schema_default(section.schema, CONF_ENABLE_MEAL_PLANNING) is True
 
 
 def test_options_show_delivery_tracking_interval_for_netherlands() -> None:

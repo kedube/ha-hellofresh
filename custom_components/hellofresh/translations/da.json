@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Uge-fanen (madplanlægning)",
-            "description": "Planlæg, hvilken dag hver ret i din kasse skal laves. Når det er slået til, får kortet fanen Uge, der kommer en Måltider-kalender med en tidsbestemt begivenhed for hvert planlagt måltid, og sensorer for dagens måltider.",
+            "name": "Uge-fanen",
+            "description": "Hvornår kalenderbegivenheden for hvert planlagt måltid starter, og hvor længe den varer, og om morgenmad og frokost vises i fanen Uge hver uge.",
             "data": {
-              "enable_meal_planning": "Vis Uge-fanen",
               "dinner_start": "Aftensmad starter kl.",
               "dinner_minutes": "Varighed af aftensmad (minutter)",
               "dinner_use_cooking_time": "Brug HelloFreshs tilberedningstid til aftensmad",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Varighed af frokost (minutter)"
             },
             "data_description": {
-              "enable_meal_planning": "Tilføjer fanen Uge efter Opskrifter, Måltider-kalenderen og sensorer for dagens måltider. Slået fra som standard. Din plan bevares, hvis du slår det fra; den slettes først, når integrationen fjernes.",
               "dinner_start": "Hvornår hver aftensmadsbegivenhed starter. Tidspunktet for en enkelt dag kan også ændres i fanen Uge.",
               "dinner_minutes": "Hvor længe hver aftensmadsbegivenhed varer: forberedelse, madlavning, spisning og oprydning. Standard 90 minutter. Med HelloFreshs tilberedningstid slået til gælder det kun aftensmad uden tilberedningstid, f.eks. en note.",
               "dinner_use_cooking_time": "Hver aftensmadsbegivenhed varer rettens tilberedningstid fra HelloFresh (plus forrettens, hvis den har en) plus den ekstra tid nedenfor.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Hent madplan",
-      "description": "Returnerer Uge-fanens madplan: dens indstillinger og hver planlagt dag, hvert måltid med start- og sluttidspunkt. Kun læsning; returnerer et svar. Svarer med enabled false, når Uge-fanen er slået fra.",
+      "description": "Returnerer Uge-fanens madplan: dens indstillinger og hver planlagt dag, hvert måltid med start- og sluttidspunkt. Kun læsning; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh-grøn",
         "accent_theme": "Temaets primærfarve",
         "help": {
-          "views": "Vælg én sektion for et fokuseret kort uden fanelinje. Uge vises kun, når Uge-fanen er slået til i integrationens indstillinger.",
+          "views": "Vælg én sektion for et fokuseret kort uden fanelinje.",
           "default_view": "Lad feltet være tomt for at åbne den senest brugte sektion.",
           "config_entry_id": "Kun nødvendigt med mere end én HelloFresh-konto."
         }

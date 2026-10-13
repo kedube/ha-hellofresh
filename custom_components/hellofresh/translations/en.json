@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Week tab (meal planning)",
-            "description": "Plan which day each meal in your box gets made. Turning this on adds the card's Week tab, a Meals calendar with a timed event for each planned meal, and sensors for today's meals.",
+            "name": "Week tab",
+            "description": "When each planned meal's calendar event starts and how long it lasts, and whether breakfast and lunch show in the Week tab every week.",
             "data": {
-              "enable_meal_planning": "Show the Week tab",
               "dinner_start": "Dinner starts at",
               "dinner_minutes": "Dinner length (minutes)",
               "dinner_use_cooking_time": "Use HelloFresh's cooking time for dinner",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Lunch length (minutes)"
             },
             "data_description": {
-              "enable_meal_planning": "Adds the Week tab after Recipes, the Meals calendar and sensors for today's meals. Off by default. Your plan is kept if you turn this off; it's deleted only when the integration is removed.",
               "dinner_start": "When each dinner event starts. A single day's time can also be changed in the Week tab.",
               "dinner_minutes": "How long each dinner event lasts: prep, cooking, eating and clean-up. Default 90 minutes. With HelloFresh's cooking time turned on, this applies only to dinners without one, such as a note.",
               "dinner_use_cooking_time": "Make each dinner event last the meal's cooking time from HelloFresh (plus the appetizer's, if it has one), plus the extra time below.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Get meal plan",
-      "description": "Return the Week tab's meal plan: its settings and every planned day, each meal with its start and end time. Read-only; returns a response. Answers with enabled false when the Week tab is turned off.",
+      "description": "Return the Week tab's meal plan: its settings and every planned day, each meal with its start and end time. Read-only; returns a response.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh green",
         "accent_theme": "Theme primary colour",
         "help": {
-          "views": "Pick one section for a focused card without the tab bar. Week shows only while the Week tab is turned on in the integration's options.",
+          "views": "Pick one section for a focused card without the tab bar.",
           "default_view": "Leave empty to reopen the last section used.",
           "config_entry_id": "Only needed with more than one HelloFresh account."
         }

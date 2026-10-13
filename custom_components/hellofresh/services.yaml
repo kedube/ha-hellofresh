@@ -479,8 +479,7 @@ get_meal_plan:
   name: Get meal plan
   description: >-
     Return the Week tab's meal plan: its settings and every planned day, each
-    meal with its start and end time. Read-only; returns a response. Answers
-    with enabled false when the Week tab is turned off.
+    meal with its start and end time. Read-only; returns a response.
   fields:
     config_entry_id:
       required: false

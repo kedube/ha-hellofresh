@@ -122,10 +122,9 @@
         },
         "sections": {
           "week_tab": {
-            "name": "Tabblad Week (maaltijdplanning)",
-            "description": "Plan op welke dag je elke maaltijd uit je box maakt. Als je dit inschakelt, krijgt de kaart het tabblad Week, komt er een agenda Maaltijden met een afspraak voor elke geplande maaltijd en komen er sensoren voor de maaltijden van vandaag.",
+            "name": "Tabblad Week",
+            "description": "Wanneer de agenda-afspraak van elke geplande maaltijd begint en hoe lang die duurt, en of ontbijt en lunch elke week in het tabblad Week verschijnen.",
             "data": {
-              "enable_meal_planning": "Tabblad Week tonen",
               "dinner_start": "Avondeten begint om",
               "dinner_minutes": "Duur avondeten (minuten)",
               "dinner_use_cooking_time": "HelloFresh-kooktijd gebruiken voor het avondeten",
@@ -138,7 +137,6 @@
               "lunch_minutes": "Duur lunch (minuten)"
             },
             "data_description": {
-              "enable_meal_planning": "Voegt het tabblad Week na Recepten toe, de agenda Maaltijden en sensoren voor de maaltijden van vandaag. Standaard uit. Je plan blijft bewaard als je dit uitschakelt; het wordt pas verwijderd als de integratie wordt verwijderd.",
               "dinner_start": "Wanneer elke afspraak voor het avondeten begint. De tijd van één dag kun je ook in het tabblad Week wijzigen.",
               "dinner_minutes": "Hoe lang elke afspraak voor het avondeten duurt: voorbereiden, koken, eten en opruimen. Standaard 90 minuten. Met de HelloFresh-kooktijd ingeschakeld geldt dit alleen voor avondeten zonder kooktijd, zoals een notitie.",
               "dinner_use_cooking_time": "Elke afspraak voor het avondeten duurt zo lang als de kooktijd van de maaltijd volgens HelloFresh (plus die van het voorgerecht, als dat er een heeft), plus de extra tijd hieronder.",
@@ -816,7 +814,7 @@
     },
     "get_meal_plan": {
       "name": "Maaltijdplan ophalen",
-      "description": "Geeft het maaltijdplan van het tabblad Week terug: de instellingen en elke geplande dag, elke maaltijd met begin- en eindtijd. Alleen-lezen; geeft een antwoord terug. Antwoordt met enabled false als het tabblad Week is uitgeschakeld.",
+      "description": "Geeft het maaltijdplan van het tabblad Week terug: de instellingen en elke geplande dag, elke maaltijd met begin- en eindtijd. Alleen-lezen; geeft een antwoord terug.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -1720,7 +1718,7 @@
         "accent_brand": "HelloFresh-groen",
         "accent_theme": "Primaire kleur van het thema",
         "help": {
-          "views": "Kies één onderdeel voor een gerichte kaart zonder tabbalk. Week verschijnt alleen als het tabblad Week is ingeschakeld in de opties van de integratie.",
+          "views": "Kies één onderdeel voor een gerichte kaart zonder tabbalk.",
           "default_view": "Laat leeg om het laatst gebruikte onderdeel te openen.",
           "config_entry_id": "Alleen nodig met meer dan één HelloFresh-account."
         }

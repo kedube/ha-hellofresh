@@ -62,7 +62,7 @@ export class OverviewView {
   // "Tonight: Creamy Tuscan Chicken at 5:30 PM" — what's still to come today, linking to Week.
   _todayPlan() {
     const card = this.card;
-    if (!card.mealPlanEnabled() || !card.hasView("week") || !card.mealPlan) return "";
+    if (!card.hasView("week") || !card.mealPlan) return "";
     const today = L.todayPlan(card.mealPlan);
     if (!today.length) return "";
     // The time stays on one line ("5:30 PM", never "5:30" then "PM").

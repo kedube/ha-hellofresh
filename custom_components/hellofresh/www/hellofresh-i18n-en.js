@@ -670,7 +670,7 @@ export const EN = {
   "editor.config_entry_id": "HelloFresh account",
   "editor.accent_brand": "HelloFresh green",
   "editor.accent_theme": "Theme primary colour",
-  "editor.help.views": "Pick one section for a focused card without the tab bar. Week shows only while the Week tab is turned on in the integration's options.",
+  "editor.help.views": "Pick one section for a focused card without the tab bar.",
   "editor.help.default_view": "Leave empty to reopen the last section used.",
   "editor.help.config_entry_id": "Only needed with more than one HelloFresh account.",
   "weekplan.meal.breakfast": "Breakfast",

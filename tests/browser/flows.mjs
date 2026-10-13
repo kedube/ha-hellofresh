@@ -688,7 +688,7 @@ await check("in Norwegian: the card asks Home Assistant for its text once and re
   const ws = await page.evaluate(() => window.__calls.filter((c) => c.ws === "frontend/get_translations").map((c) => c.data));
   assert(ws.length === 1 && ws[0].language === "nb" && ws[0].category === "config_panel", JSON.stringify(ws));
   const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-tab > span:not(.hf-count)")].map((e) => e.textContent.trim()));
-  assert(JSON.stringify(tabs) === JSON.stringify(["Oversikt", "Meny", "Market", "Oppskrifter", "Konto"]), JSON.stringify(tabs));
+  assert(JSON.stringify(tabs) === JSON.stringify(["Oversikt", "Meny", "Market", "Oppskrifter", "Uke", "Konto"]), JSON.stringify(tabs));
   const eyebrow = await text(page, ".hf-eyebrow");
   assert(["Neste kasse", "Kommer i dag", "Kommer i morgen", "Forrige kasse"].includes(eyebrow.trim()), `eyebrow: ${eyebrow}`);
   const heroDate = await text(page, ".hf-herodate");

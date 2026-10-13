@@ -559,11 +559,11 @@ async function translations(origin, language, category) {
   return { resources: { ...english, ...own } };
 }
 
-// ?mealplan=1: the integration's Week tab option on. The week being eaten now gets a few Market
+// The Week tab's plan, empty unless ?mealplan=1: then the week being eaten now gets a few Market
 // items bought (an appetizer, two desserts, a breakfast kit) and a plan already half filled in.
 // Mirrors meal_plan.py: one item per course, each box meal or Market item planned no more often
 // than it was ordered, and each meal's start and end from its default time and length.
-function fakeMealPlan(fx) {
+function fakeMealPlan(fx, { sample = false } = {}) {
   const today = iso(new Date());
   const lastDay = (w) => {
     const d = new Date(`${w.delivery_date}T00:00`);
@@ -641,10 +641,10 @@ function fakeMealPlan(fx) {
         (out[day] = out[day] || {})[meal] = { ...slot, start: start.toISOString(), end: end.toISOString(), custom_start: Boolean(slot.start) };
       }
     }
-    return JSON.parse(JSON.stringify({ enabled: true, ...settings, days: out }));
+    return JSON.parse(JSON.stringify({ ...settings, days: out }));
   };
 
-  if (current) {
+  if (sample && current) {
     const buy = { m2: 1, m5: 2, m11: 1, m8: 1 }; // gyoza, lava cakes, pancake kit, chicken breasts
     for (const item of current.market_items) {
       if (buy[item.item_id]) {
@@ -674,8 +674,7 @@ function fakeMealPlan(fx) {
 
 export function buildHass(origin, { dark = false, scenario = "default", latency = 250, fail = "", language = "en", mealPlan = false } = {}) {
   const fx = buildFixtures(origin, { scenario });
-  const plan = mealPlan ? fakeMealPlan(fx) : null;
-  if (plan) fx.account.meal_planning = true;
+  const plan = fakeMealPlan(fx, { sample: mealPlan });
   const calls = [];
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const upcoming = fx.weeks.filter((w) => new Date(w.delivery_date) >= new Date(new Date().toDateString()) && !w.is_skipped && w.recipes.length);
@@ -713,12 +712,10 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
   const devices = { dev1: { id: "dev1", config_entries: ["entry1"], name: "HelloFresh (US)" } };
   // The Meals calendar's plan_updated moves with every plan change, wherever it was made.
   const touchMealPlan = () => setState("calendar.hellofresh_us_meals", "off", { plan_updated: new Date().toISOString() });
-  if (plan) {
-    Object.assign(entities, Object.fromEntries([reg("calendar.hellofresh_us_meals", "meals")]));
-    touchMealPlan();
-    fx.mealPlan = plan;
-    fx.touchMealPlan = touchMealPlan;
-  }
+  Object.assign(entities, Object.fromEntries([reg("calendar.hellofresh_us_meals", "meals")]));
+  touchMealPlan();
+  fx.mealPlan = plan;
+  fx.touchMealPlan = touchMealPlan;
 
   // ?scenario=live: a box on the road in the Netherlands, where HelloFresh drives its own vans and
   // the integration turns the live tracker behind hftrack.nl into sensors. The next box's order
@@ -763,16 +760,14 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
       return fx.summary;
     },
     async get_meal_plan() {
-      return plan ? plan.view() : { enabled: false };
+      return plan.view();
     },
     async set_planned_meal(data) {
-      if (!plan) throw new Error("Meal planning is off.");
       plan.set(data);
       touchMealPlan();
       return plan.view();
     },
     async clear_planned_meal(data) {
-      if (!plan) throw new Error("Meal planning is off.");
       plan.clear(data);
       touchMealPlan();
       return plan.view();
