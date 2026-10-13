@@ -118,6 +118,48 @@ def test_history_is_sorted_and_falls_back_to_internal_fields() -> None:
     ]
 
 
+def test_message_keys_in_status_read_as_the_coarse_status() -> None:
+    """Since 2026-09-21 Veho puts `package.*` message keys in `status`, alone or as a twin.
+
+    Shapes from the 2026-10-12 diagnostics (the Oct 5 and Sep 21 boxes). Shown raw, the card
+    read "Package.Delivered" and the tracking sensor never matched delivered/out for delivery.
+    """
+    box = {
+        "carrier": "VEHO",
+        "last_status": _status("2026-10-05T18:27:40Z", "package.delivered", "delivered"),
+        "statuses": [
+            _status("2026-10-05T18:27:40Z", "package.delivered", "delivered"),
+            _status("2026-10-05T18:27:40Z", "delivered", "delivered"),
+            _status("2026-10-05T14:39:59Z", "package.pickedUpFromVeho", "out_for_delivery"),
+            _status("2026-10-05T05:06:22Z", "package.droppedOffAtVeho", "arrived_at_hub"),
+            _status("2026-10-05T05:06:22Z", "package.droppedOffAtVeho", "arrived_at_hub"),
+            _status("2026-10-05T05:06:22Z", "in_transit", "received_at_origin_facility"),
+            # An unknown key falls back to internal_status, and is dropped when that is one too.
+            _status("2026-10-04T09:00:00Z", "package.somethingNew", "label_created", "pre_transit"),
+            _status("2026-10-04T08:00:00Z", "package.somethingNew", None),
+        ],
+    }
+    details = extract_scm_tracking_details(box)
+
+    assert details["tracking_status"] == "delivered"
+    assert details["tracking_events"] == [
+        {"time": "2026-10-05T18:27:40+00:00", "status": "delivered", "detail": "delivered"},
+        {
+            "time": "2026-10-05T14:39:59+00:00",
+            "status": "out_for_delivery",
+            "detail": "out_for_delivery",
+        },
+        {"time": "2026-10-05T05:06:22+00:00", "status": "in_transit", "detail": "arrived_at_hub"},
+        {
+            "time": "2026-10-05T05:06:22+00:00",
+            "status": "in_transit",
+            "detail": "received_at_origin_facility",
+        },
+        {"time": "2026-10-04T09:00:00+00:00", "status": "pre_transit", "detail": "label_created"},
+        {"time": "2026-10-04T08:00:00+00:00", "status": None, "detail": None},
+    ]
+
+
 def test_proof_of_delivery_accepts_plausible_shapes_and_drops_the_rest() -> None:
     def photos(value):
         return extract_scm_tracking_details({"proof_of_delivery_photo_urls": value})[

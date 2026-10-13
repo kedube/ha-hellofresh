@@ -5,6 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Veho deliveries no longer show "Package.Delivered".** Since late September, Veho's tracking
+  feed sometimes reports a box's status as an internal code (`package.delivered`,
+  `package.pickedUpFromVeho`) instead of the usual one. The integration now reads these as
+  Delivered, Out for delivery and In transit. This fixes the Overview rows, the delivery details
+  and the **Tracked shipment status** sensor, and the scan history no longer lists the same step
+  twice. Out-for-delivery scans count as in progress again, so delivery-day polling and
+  `box_shipped` events use them.
+
 ## 4.05 — 2026-10-08
 - **Removed: the seven classic cards** (Meal planner, Market, Recipes, Food Profile, Schedule,
   Subscription and Cost), deprecated in 4.00. The HelloFresh card does everything they did: open

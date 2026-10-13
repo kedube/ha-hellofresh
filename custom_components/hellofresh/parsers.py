@@ -32,6 +32,15 @@ _CARRIER_LABELS = {
     "VEHO": "Veho",
 }
 
+# SCM message keys ("package.droppedOffAtVeho") that turned up in a status entry's ``status``,
+# each with the coarse status its same-timestamp twin carries (diagnostics, 2026-10-12).
+_SCM_MESSAGE_KEY_RE = re.compile(r"^[a-z]+\.[A-Za-z]+$")
+_SCM_MESSAGE_KEY_STATUSES = {
+    "package.delivered": "delivered",
+    "package.pickedupfromveho": "out_for_delivery",
+    "package.droppedoffatveho": "in_transit",
+}
+
 _RECIPE_HEADING_DISALLOWED = {
     "our plans",
     "about us",
@@ -688,7 +697,7 @@ def _tracking_events(statuses: Any) -> list[dict[str, str | None]]:
         when = parse_datetime(entry.get("datetime"))
         if when is not None and when.tzinfo is None:
             when = when.replace(tzinfo=UTC)  # offset-less scan times are UTC like the rest
-        status = text("status", "internal_status")
+        status = _scm_status(entry)
         detail = text("status_detail", "internal_status_detail")
         if when is None and status is None and detail is None:
             continue
@@ -697,7 +706,29 @@ def _tracking_events(statuses: Any) -> list[dict[str, str | None]]:
         )
     epoch = datetime.min.replace(tzinfo=UTC)
     events.sort(key=lambda pair: pair[0] or epoch, reverse=True)
-    return [event for _, event in events]
+    # A message-key entry and its normal twin share a timestamp and, once mapped, everything else.
+    unique = {tuple(event.values()): event for _, event in reversed(events)}
+    return list(reversed(unique.values()))
+
+
+def _scm_status(node: dict[str, Any]) -> str | None:
+    """Return an SCM status entry's coarse status (``status``, else ``internal_status``).
+
+    Since 2026-09-21 Veho entries can carry the untranslated message key in ``status``
+    (``package.delivered``), on its own or as a twin of the normal entry. A known key reads as
+    the status its twin carries; an unknown one is skipped rather than shown raw.
+    """
+    for key in ("status", "internal_status"):
+        value = node.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        value = value.strip()
+        if not _SCM_MESSAGE_KEY_RE.match(value):
+            return value
+        mapped = _SCM_MESSAGE_KEY_STATUSES.get(value.casefold())
+        if mapped is not None:
+            return mapped
+    return None
 
 
 def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, Any]:
@@ -728,9 +759,7 @@ def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, Any]:
     return {
         "tracking_url": tracking_url,
         "tracking_number": pick(box, "tracking_code", "tracking_id"),
-        "tracking_status": (
-            pick(last_status, "status", "internal_status") or pick(box, "status", "internal_status")
-        ),
+        "tracking_status": _scm_status(last_status) or _scm_status(box),
         "carrier": normalize_carrier_name(pick(box, "carrier")),
         "estimated_delivery": estimated_delivery,
         # The finer step behind the coarse status: `in_transit` is `label_created`, then
