@@ -119,6 +119,38 @@
           "show_data_quality_issues": "Waarschuwingen tonen in het scherm Reparaties wanneer HelloFresh-gegevens beperkt zijn (menuterugval actief, onbekende gegevensformaten, accountgegevens niet beschikbaar, geblokkeerde schrijfacties). De gegevens blijven hoe dan ook laden. Zet dit uit om deze waarschuwingen te onderdrukken en al getoonde waarschuwingen te wissen.",
           "use_curl_cffi_headers": "Laat curl_cffi Chrome-headers leveren voor aanmelden, tokenvernieuwing en gegevensverzoeken. De integratie stelt nog steeds API-headers in en corrigeert de fetch-metadata voor een XHR. Uit (aanbevolen) verstuurt de volledige, geordende XHR-headers van de integratie.",
           "log_auth_diagnostics": "Log indien ingeschakeld mislukte aanmeldingen en tokenvernieuwingen, inclusief een eventuele Cloudflare-challengevlag, foutcode en Ray ID. Geslaagde stappen worden alleen op debugniveau gelogd. De extra diagnosevelden bevatten geen ruwe antwoordinhoud of inloggegevens. Standaard aan."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Tabblad Week (maaltijdplanning)",
+            "description": "Plan op welke dag je elke maaltijd uit je box maakt. Als je dit inschakelt, krijgt de kaart het tabblad Week, komt er een agenda Maaltijden met een afspraak voor elke geplande maaltijd en komen er sensoren voor de maaltijden van vandaag.",
+            "data": {
+              "enable_meal_planning": "Tabblad Week tonen",
+              "dinner_start": "Avondeten begint om",
+              "dinner_minutes": "Duur avondeten (minuten)",
+              "dinner_use_cooking_time": "HelloFresh-kooktijd gebruiken voor het avondeten",
+              "dinner_extra_minutes": "Extra tijd na het koken (minuten)",
+              "always_show_breakfast": "Ontbijt altijd tonen",
+              "breakfast_start": "Ontbijt begint om",
+              "breakfast_minutes": "Duur ontbijt (minuten)",
+              "always_show_lunch": "Lunch altijd tonen",
+              "lunch_start": "Lunch begint om",
+              "lunch_minutes": "Duur lunch (minuten)"
+            },
+            "data_description": {
+              "enable_meal_planning": "Voegt het tabblad Week na Recepten toe, de agenda Maaltijden en sensoren voor de maaltijden van vandaag. Standaard uit. Je plan blijft bewaard als je dit uitschakelt; het wordt pas verwijderd als de integratie wordt verwijderd.",
+              "dinner_start": "Wanneer elke afspraak voor het avondeten begint. De tijd van één dag kun je ook in het tabblad Week wijzigen.",
+              "dinner_minutes": "Hoe lang elke afspraak voor het avondeten duurt: voorbereiden, koken, eten en opruimen. Standaard 90 minuten. Met de HelloFresh-kooktijd ingeschakeld geldt dit alleen voor avondeten zonder kooktijd, zoals een notitie.",
+              "dinner_use_cooking_time": "Elke afspraak voor het avondeten duurt zo lang als de kooktijd van de maaltijd volgens HelloFresh (plus die van het voorgerecht, als dat er een heeft), plus de extra tijd hieronder.",
+              "dinner_extra_minutes": "Wordt bij de kooktijd opgeteld voor eten en opruimen. Alleen gebruikt met de HelloFresh-kooktijd ingeschakeld. Standaard 45 minuten.",
+              "always_show_breakfast": "Ontbijt verschijnt in een week alleen als je er Market-ontbijt voor hebt gekocht. Schakel in om elke week ontbijt te plannen, bijvoorbeeld met notities.",
+              "breakfast_start": "Wanneer elke afspraak voor het ontbijt begint.",
+              "breakfast_minutes": "Hoe lang elke afspraak voor het ontbijt duurt. Standaard 30 minuten.",
+              "always_show_lunch": "Lunch verschijnt in een week alleen als je er Market-lunch voor hebt gekocht. Schakel in om elke week lunch te plannen.",
+              "lunch_start": "Wanneer elke afspraak voor de lunch begint.",
+              "lunch_minutes": "Hoe lang elke afspraak voor de lunch duurt. Standaard 45 minuten."
+            }
+          }
         }
       }
     }
@@ -308,6 +340,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Bezorger"
+      },
+      "todays_breakfast": {
+        "name": "Ontbijt van vandaag"
+      },
+      "todays_lunch": {
+        "name": "Lunch van vandaag"
+      },
+      "tonights_dinner": {
+        "name": "Avondeten van vandaag"
       }
     },
     "binary_sensor": {
@@ -335,6 +376,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Bezorgschema"
+      },
+      "meals": {
+        "name": "Maaltijden"
       }
     },
     "event": {
@@ -769,6 +813,80 @@
           "description": "Voedingsdoelen voor het profiel."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Maaltijdplan ophalen",
+      "description": "Geeft het maaltijdplan van het tabblad Week terug: de instellingen en elke geplande dag, elke maaltijd met begin- en eindtijd. Alleen-lezen; geeft een antwoord terug. Antwoordt met enabled false als het tabblad Week is uitgeschakeld.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Geplande maaltijd instellen",
+      "description": "Plant één gang van de maaltijd van een dag in het tabblad Week: een maaltijd uit je box, een Market-artikel dat die week is gekocht of een notitie in vrije tekst. Kan ook wijzigen wanneer die maaltijd op die dag begint. Geeft het bijgewerkte plan terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "De dag om te plannen."
+        },
+        "meal": {
+          "name": "Maaltijd",
+          "description": "Ontbijt, lunch of avondeten. Standaard avondeten."
+        },
+        "course": {
+          "name": "Gang",
+          "description": "Hoofdgerecht, voorgerecht of dessert. Voorgerecht en dessert zijn alleen voor het avondeten. Standaard hoofdgerecht."
+        },
+        "recipe_id": {
+          "name": "Recept-ID",
+          "description": "Een maaltijd die in een van je boxen is gekozen."
+        },
+        "market_item_id": {
+          "name": "Market-artikel-ID",
+          "description": "Een Market-artikel dat in een van je boxen is gekocht."
+        },
+        "text": {
+          "name": "Notitie",
+          "description": "Vrije tekst in plaats van een maaltijd, zoals Restjes of Pizza-avond."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De box waar de maaltijd of het Market-artikel vandaan komt, als de datum alleen niet duidelijk genoeg is."
+        },
+        "start_time": {
+          "name": "Begintijd",
+          "description": "Wanneer deze maaltijd op deze dag begint, in plaats van de tijd uit de opties van de integratie."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Geplande maaltijd wissen",
+      "description": "Wist één gang van de maaltijd van een dag in het tabblad Week, of de hele maaltijd als er geen gang is opgegeven. Geeft het bijgewerkte plan terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "De dag om te plannen."
+        },
+        "meal": {
+          "name": "Maaltijd",
+          "description": "Ontbijt, lunch of avondeten. Standaard avondeten."
+        },
+        "course": {
+          "name": "Gang",
+          "description": "Hoofdgerecht, voorgerecht of dessert. Laat leeg om de hele maaltijd te wissen."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +913,7 @@
         "menu": "Menu",
         "market": "Market",
         "recipes": "Recepten",
+        "week": "Week",
         "account": "Account"
       },
       "card": {
@@ -1601,10 +1720,65 @@
         "accent_brand": "HelloFresh-groen",
         "accent_theme": "Primaire kleur van het thema",
         "help": {
-          "views": "Kies één onderdeel voor een gerichte kaart zonder tabbalk.",
+          "views": "Kies één onderdeel voor een gerichte kaart zonder tabbalk. Week verschijnt alleen als het tabblad Week is ingeschakeld in de opties van de integratie.",
           "default_view": "Laat leeg om het laatst gebruikte onderdeel te openen.",
           "config_entry_id": "Alleen nodig met meer dan één HelloFresh-account."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Ontbijt",
+          "lunch": "Lunch",
+          "dinner": "Avondeten"
+        },
+        "course": {
+          "main": "Hoofdgerecht",
+          "appetizer": "Voorgerecht",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Kooktijd: {minutes} min"
+        },
+        "load_failed": "Het maaltijdplan kon niet worden geladen: {error}",
+        "no_weeks": "Er is geen huidige of komende box om te plannen.",
+        "planned_count": "{planned}/{total} gepland",
+        "this_week": "Deze week",
+        "range": "{start} – {end}",
+        "skipped": "Deze week geen box. Je kunt voor deze dagen nog steeds andere maaltijden plannen.",
+        "pick_first": "Kies eerst de maaltijden van deze week en plan daarna op welke dag je ze maakt.",
+        "all_planned": "Alles in deze box heeft een dag.",
+        "not_planned_yet": "Nog niet gepland",
+        "tray_left": "{count} van {total} over",
+        "days": "Dagen",
+        "not_planned": "Niet gepland",
+        "plan": "Plannen",
+        "view_recipe": "Recept voor {name} bekijken",
+        "no_longer_in_box": "Niet meer in je box",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (optioneel)",
+        "more_from_week": "Meer uit deze week",
+        "start": "Begint om",
+        "clear": "Wissen",
+        "save": "Opslaan",
+        "planned_on": "Gepland: {days}",
+        "left": {
+          "one": "{count} over",
+          "other": "{count} over"
+        },
+        "none": "Geen",
+        "something_else": "Iets anders",
+        "something_else_hint": "Restjes, pizza-avond, uit eten…",
+        "saving": "Plan opslaan…",
+        "save_failed": "Het plan kon niet worden opgeslagen: {error}",
+        "saved": "Plan opgeslagen",
+        "cleared": "Plan gewist",
+        "item_title": "{name} plannen",
+        "replaces": "Vervangt {name}",
+        "tonight": "Vanavond: {name} om {time}",
+        "today": "Vandaag: {meals}",
+        "today_item": "{meal} {name} om {time}"
       }
     }
   }

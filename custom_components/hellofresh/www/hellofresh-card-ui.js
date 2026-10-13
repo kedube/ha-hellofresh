@@ -54,6 +54,25 @@ export function chosenMeals(week, selection) {
   return out;
 }
 
+// Keep the chosen week visible in the strip — but only when the chosen week changed, so a user
+// scrolling the strip isn't yanked back on every re-render.
+export function centerStrip(root, view, week) {
+  const strip = root.querySelector(".hf-weekstrip");
+  const chip = strip && strip.querySelector('[aria-pressed="true"]');
+  if (!chip || !week) return;
+  const changed = view._stripWeek !== week.week_id;
+  const first = view._stripWeek === null;
+  view._stripWeek = week.week_id;
+  // Measured against the strip itself: a chip's offsetLeft is relative to the nearest
+  // positioned ancestor, which is the card, not the scroller.
+  const s = strip.getBoundingClientRect();
+  const c = chip.getBoundingClientRect();
+  const visible = c.left >= s.left + 16 && c.right <= s.right - 16;
+  if (!changed && visible) return;
+  const delta = c.left - s.left - (strip.clientWidth - c.width) / 2;
+  strip.scrollTo({ left: Math.max(0, strip.scrollLeft + delta), behavior: changed && !first ? "smooth" : "instant" });
+}
+
 // A row of meal thumbnails ("+N" when more), or an empty-state line.
 export function thumbRow(meals, { max = 4, width = 120, empty = t("meals.none_chosen"), size = "" } = {}) {
   if (!meals.length) return `<div class="hf-thumbs empty">${esc(empty)}</div>`;

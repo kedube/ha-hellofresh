@@ -9,6 +9,8 @@
  *               build the box with + Add / servings steppers.
  *   Market    — the same week's add-ons.
  *   Recipes   — the public catalog and your cookbook.
+ *   Week      — which day each meal in the box gets eaten (only with the integration's "Week
+ *               tab" option on): a meal plan the integration turns into a calendar and sensors.
  *   Account   — plan & billing (with the recurring plan controls), food preferences, spending.
  *
  * Menu and Market edit ONE pending box per week. The sticky box bar at the bottom shows what is
@@ -23,7 +25,7 @@
  *   config_entry_id: <optional>   # only with more than one HelloFresh account
  *   title: HelloFresh             # header title ("" hides it)
  *   logo: true                    # bundled logo (false hides it, or a URL)
- *   views: [overview, menu, market, recipes, account]   # which sections, in order
+ *   views: [overview, menu, market, recipes, week, account]   # which sections, in order
  *   default_view: overview        # where the card opens (else the last section used)
  *   accent: brand                 # brand (HelloFresh green) | theme (HA primary colour)
  *   image_width: 400              # recipe image resize width
@@ -47,7 +49,7 @@ const moduleUrl = (name) =>
   new URL(`./${name}?v=${encodeURIComponent(CARD_VERSION)}`, import.meta.url).href;
 
 // AWAITED at module top level: every view renders synchronously from these on first paint.
-const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { AccountView }] =
+const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { WeekView }, { AccountView }] =
   await Promise.all([
     import(moduleUrl("hellofresh-card-logic.js")),
     import(moduleUrl("hellofresh-card-styles.js")),
@@ -55,6 +57,7 @@ const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { Accoun
     import(moduleUrl("hellofresh-card-deliveries.js")),
     import(moduleUrl("hellofresh-card-menu.js")),
     import(moduleUrl("hellofresh-card-recipes.js")),
+    import(moduleUrl("hellofresh-card-week.js")),
     import(moduleUrl("hellofresh-card-account.js")),
   ]);
 
@@ -72,12 +75,17 @@ export const VIEWS = [
   { key: "menu", icon: "mdi:silverware-fork-knife" },
   { key: "market", icon: "mdi:storefront-outline" },
   { key: "recipes", icon: "mdi:book-open-page-variant-outline" },
+  { key: "week", icon: "mdi:calendar-week" },
   { key: "account", icon: "mdi:account-circle-outline" },
 ].map((view) => Object.defineProperty(view, "label", { enumerable: true, get: () => t(`views.${view.key}`) }));
 const VIEW_KEYS = VIEWS.map((v) => v.key);
 
 // Views that edit a week's box, and so carry the sticky box bar.
 const BOX_VIEWS = new Set(["menu", "market"]);
+
+// Sections that exist only while an integration option is on: Week needs meal planning (the
+// get_weeks account payload says whether it is). A config may list them either way.
+const OPTIONAL_VIEWS = new Set(["week"]);
 
 // Keep only known section keys, in the order given; nothing valid means every section.
 export function normalizeViews(value) {
@@ -102,6 +110,10 @@ class HelloFreshCard extends HTMLElement {
     this._weeks = null;
     this._account = null;
     this._summary = null;
+    // The Week tab's meal plan (get_meal_plan), loaded only while meal planning is on.
+    this._mealPlan = null;
+    this._mealPlanError = null;
+    this._mealPlanLoading = false;
     this._loading = false;
     this._summaryLoading = false;
     this._error = null;
@@ -328,8 +340,58 @@ class HelloFreshCard extends HTMLElement {
     return Number.isFinite(weeks) ? weeks : 2;
   }
 
+  // The sections showing: the configured ones, less Week while meal planning is off. Before the
+  // first get_weeks answers, a configured Week still counts for navigation (an address naming it
+  // must open it), but no tab shows until the account says it exists.
+  views() {
+    if (!this._config) return [];
+    const views = this._config.views;
+    return this.mealPlanEnabled() ? views : views.filter((key) => !OPTIONAL_VIEWS.has(key));
+  }
+
   hasView(key) {
-    return Boolean(this._config && this._config.views.includes(key));
+    if (!this._config) return false;
+    if (OPTIONAL_VIEWS.has(key) && this._account === null) return this._config.views.includes(key);
+    return this.views().includes(key);
+  }
+
+  // ---- meal plan (the Week tab) ----------------------------------------------------------
+
+  mealPlanEnabled() {
+    return Boolean(this._account && this._account.meal_planning);
+  }
+
+  get mealPlan() {
+    return this._mealPlan;
+  }
+
+  get mealPlanError() {
+    return this._mealPlanError;
+  }
+
+  async loadMealPlan() {
+    if (!this._hass || !this.mealPlanEnabled()) {
+      this._mealPlan = null;
+      return;
+    }
+    if (this._mealPlanLoading) return;
+    this._mealPlanLoading = true;
+    try {
+      this._mealPlan = await this.call("get_meal_plan");
+      this._mealPlanError = null;
+    } catch (err) {
+      this._mealPlanError = (err && err.message) || String(err);
+    } finally {
+      this._mealPlanLoading = false;
+      if (this._view === "week" || this._view === "overview") this.renderView();
+    }
+  }
+
+  // A write answered with the updated plan: show it without another round trip.
+  setMealPlan(plan) {
+    this._mealPlan = plan;
+    this._mealPlanError = null;
+    this.renderView();
   }
 
   // ---- services --------------------------------------------------------------------------
@@ -368,6 +430,7 @@ class HelloFreshCard extends HTMLElement {
 
   async refresh({ quiet = false } = {}) {
     await Promise.all([this._fetchWeeks({ quiet }), this._fetchSummary()]);
+    await this.loadMealPlan();
     const view = this._views[this._view];
     if (view && view.onRefresh) view.onRefresh();
   }
@@ -400,6 +463,7 @@ class HelloFreshCard extends HTMLElement {
       this._weeks = L.browsableWeeks(response.weeks || []);
       this._account = response.account || null;
       this._error = null;
+      this._ensureView();
       this.box.reconcile(this._weeks, seq);
       for (const view of Object.values(this._views)) if (view.onData) view.onData();
       this._ensureWeek();
@@ -447,6 +511,13 @@ class HelloFreshCard extends HTMLElement {
         this._fetchSummary();
       }
     }
+  }
+
+  // An optional section the account turns out not to have (Week with meal planning off): open
+  // the first one that exists instead.
+  _ensureView() {
+    const views = this.views();
+    if (views.length && !views.includes(this._view)) this._view = views[0];
   }
 
   // Land on a sensible week: keep the current one, else the week another HelloFresh card last
@@ -1042,6 +1113,7 @@ class HelloFreshCard extends HTMLElement {
         menu: () => new Menu.MealsView(this),
         market: () => new Menu.MarketView(this),
         recipes: () => new RecipesView(this),
+        week: () => new WeekView(this),
         account: () => new AccountView(this),
       };
       this._views[key] = (factories[key] || factories.overview)();
@@ -1177,7 +1249,7 @@ class HelloFreshCard extends HTMLElement {
     const sub = this._subtitle();
     const menu = this._wantsMenuButton();
     this._menuShown = menu;
-    if (!menu && !logo && !title && cfg.views.length < 2) return "";
+    if (!menu && !logo && !title && this.views().length < 2) return "";
     return `
       ${menu ? `<button class="hf-iconbtn hf-menubtn" data-action="sidebar" title="${ht("card.sidebar")}" aria-label="${ht("card.open_sidebar")}">${icon("mdi:menu")}</button>` : ""}
       ${logo ? `<img class="hf-logo" src="${esc(logo)}" alt="">` : ""}
@@ -1189,7 +1261,7 @@ class HelloFreshCard extends HTMLElement {
   }
 
   _renderTabs() {
-    const views = this._config.views;
+    const views = this.views();
     if (views.length < 2) return "";
     const needs = L.weeksNeedingAttention(this._weeks || []).length;
     return VIEWS.filter((v) => views.includes(v.key))

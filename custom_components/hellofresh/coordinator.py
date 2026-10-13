@@ -237,6 +237,9 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         # sensor platform and the get_delivery_tracking service can reach it without a
         # second hass.data map.
         self.tracey = None
+        # The Week tab's meal plan (meal_plan.MealPlan), mounted by setup only when the option
+        # is on; None otherwise. Its calendar, sensors and services reach it through here.
+        self.meal_plan = None
         self._cancel_delivery_watch = None
         self._delivery_watch_interval = DEFAULT_DELIVERY_WATCH_INTERVAL
         self._refresh_in_progress = False

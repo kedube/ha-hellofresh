@@ -119,6 +119,38 @@
           "show_data_quality_issues": "Afficher des avertissements dans l'écran Réparations lorsque les données HelloFresh sont dégradées (menu de secours actif, formats non reconnus, données de compte indisponibles, actions d'écriture bloquées). Les données continuent d'être chargées dans tous les cas. Désactivez pour masquer ces avertissements et effacer ceux déjà affichés.",
           "use_curl_cffi_headers": "Laisser curl_cffi fournir ses en-têtes Chrome pour la connexion, le renouvellement du jeton et les requêtes de données. L’intégration définit toujours les en-têtes API et corrige les métadonnées Fetch pour une requête XHR. Désactivé (recommandé) envoie les en-têtes XHR complets et ordonnés de l’intégration.",
           "log_auth_diagnostics": "Si activé, journalise les échecs de connexion et de renouvellement du jeton, ainsi que tout indicateur de défi Cloudflare, code d’erreur et Ray ID. Les étapes réussies ne sont journalisées qu’au niveau debug. Les champs de diagnostic ajoutés ne contiennent ni corps de réponse brut ni identifiants de connexion. Activé par défaut."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Onglet Semaine (planning des repas)",
+            "description": "Planifiez le jour où chaque repas de votre box sera préparé. L'activer ajoute l'onglet Semaine de la carte, un calendrier Repas avec un événement horaire pour chaque repas planifié, et des capteurs pour les repas du jour.",
+            "data": {
+              "enable_meal_planning": "Afficher l'onglet Semaine",
+              "dinner_start": "Début du dîner",
+              "dinner_minutes": "Durée du dîner (minutes)",
+              "dinner_use_cooking_time": "Utiliser le temps de cuisson HelloFresh pour le dîner",
+              "dinner_extra_minutes": "Temps supplémentaire après la cuisson (minutes)",
+              "always_show_breakfast": "Toujours afficher le petit-déjeuner",
+              "breakfast_start": "Début du petit-déjeuner",
+              "breakfast_minutes": "Durée du petit-déjeuner (minutes)",
+              "always_show_lunch": "Toujours afficher le déjeuner",
+              "lunch_start": "Début du déjeuner",
+              "lunch_minutes": "Durée du déjeuner (minutes)"
+            },
+            "data_description": {
+              "enable_meal_planning": "Ajoute l'onglet Semaine après Recettes, le calendrier Repas et des capteurs pour les repas du jour. Désactivé par défaut. Votre planning est conservé si vous désactivez cette option ; il n'est supprimé que lorsque l'intégration est supprimée.",
+              "dinner_start": "L'heure de début de chaque événement de dîner. L'heure d'un jour précis peut aussi être modifiée dans l'onglet Semaine.",
+              "dinner_minutes": "La durée de chaque événement de dîner : préparation, cuisson, repas et rangement. 90 minutes par défaut. Avec le temps de cuisson HelloFresh activé, elle ne s'applique qu'aux dîners sans temps de cuisson, comme une note.",
+              "dinner_use_cooking_time": "Chaque événement de dîner dure le temps de cuisson du repas indiqué par HelloFresh (plus celui de l'entrée, le cas échéant), plus le temps supplémentaire ci-dessous.",
+              "dinner_extra_minutes": "Ajouté au temps de cuisson pour le repas et le rangement. Utilisé uniquement avec le temps de cuisson HelloFresh activé. 45 minutes par défaut.",
+              "always_show_breakfast": "Le petit-déjeuner n'apparaît une semaine que si vous avez acheté des petits-déjeuners Market pour celle-ci. Activez pour planifier le petit-déjeuner chaque semaine, par exemple avec des notes.",
+              "breakfast_start": "L'heure de début de chaque événement de petit-déjeuner.",
+              "breakfast_minutes": "La durée de chaque événement de petit-déjeuner. 30 minutes par défaut.",
+              "always_show_lunch": "Le déjeuner n'apparaît une semaine que si vous avez acheté des déjeuners Market pour celle-ci. Activez pour planifier le déjeuner chaque semaine.",
+              "lunch_start": "L'heure de début de chaque événement de déjeuner.",
+              "lunch_minutes": "La durée de chaque événement de déjeuner. 45 minutes par défaut."
+            }
+          }
         }
       }
     }
@@ -308,6 +340,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Livreur"
+      },
+      "todays_breakfast": {
+        "name": "Petit-déjeuner du jour"
+      },
+      "todays_lunch": {
+        "name": "Déjeuner du jour"
+      },
+      "tonights_dinner": {
+        "name": "Dîner de ce soir"
       }
     },
     "binary_sensor": {
@@ -335,6 +376,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Calendrier des livraisons"
+      },
+      "meals": {
+        "name": "Repas"
       }
     },
     "event": {
@@ -769,6 +813,80 @@
           "description": "Objectifs alimentaires pour le profil."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Obtenir le planning des repas",
+      "description": "Renvoie le planning des repas de l'onglet Semaine : ses réglages et chaque jour planifié, chaque repas avec son heure de début et de fin. Lecture seule ; renvoie une réponse. Répond enabled false lorsque l'onglet Semaine est désactivé.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Définir un repas planifié",
+      "description": "Planifie un plat d'un repas d'une journée dans l'onglet Semaine : un repas de votre box, un article Market acheté cette semaine-là ou une note libre. Peut aussi changer l'heure de début de ce repas ce jour-là. Renvoie le planning mis à jour.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Le jour à planifier."
+        },
+        "meal": {
+          "name": "Repas",
+          "description": "Petit-déjeuner, déjeuner ou dîner. Dîner par défaut."
+        },
+        "course": {
+          "name": "Plat",
+          "description": "Plat principal, entrée ou dessert. L'entrée et le dessert ne concernent que le dîner. Plat principal par défaut."
+        },
+        "recipe_id": {
+          "name": "Identifiant de recette",
+          "description": "Un repas choisi dans l'une de vos box."
+        },
+        "market_item_id": {
+          "name": "Identifiant d'article Market",
+          "description": "Un article Market acheté dans l'une de vos box."
+        },
+        "text": {
+          "name": "Note",
+          "description": "Texte libre à la place d'un repas, par exemple Restes ou Soirée pizza."
+        },
+        "week_id": {
+          "name": "Identifiant de semaine",
+          "description": "La box d'où vient le repas ou l'article Market, lorsque la date seule ne suffit pas."
+        },
+        "start_time": {
+          "name": "Heure de début",
+          "description": "L'heure de début de ce repas ce jour-là, au lieu de celle définie dans les options de l'intégration."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Effacer un repas planifié",
+      "description": "Efface un plat d'un repas d'une journée dans l'onglet Semaine, ou le repas entier si aucun plat n'est indiqué. Renvoie le planning mis à jour.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Identifiant de configuration",
+          "description": "L'entrée de compte HelloFresh concernée lorsque plusieurs comptes sont configurés."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Le jour à planifier."
+        },
+        "meal": {
+          "name": "Repas",
+          "description": "Petit-déjeuner, déjeuner ou dîner. Dîner par défaut."
+        },
+        "course": {
+          "name": "Plat",
+          "description": "Plat principal, entrée ou dessert. Laissez vide pour effacer le repas entier."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +913,7 @@
         "menu": "Menu",
         "market": "Market",
         "recipes": "Recettes",
+        "week": "Semaine",
         "account": "Compte"
       },
       "card": {
@@ -1601,10 +1720,65 @@
         "accent_brand": "Vert HelloFresh",
         "accent_theme": "Couleur principale du thème",
         "help": {
-          "views": "Choisissez une seule section pour une carte ciblée, sans barre d'onglets.",
+          "views": "Choisissez une seule section pour une carte ciblée, sans barre d'onglets. Semaine n'apparaît que si l'onglet Semaine est activé dans les options de l'intégration.",
           "default_view": "Laissez vide pour rouvrir la dernière section utilisée.",
           "config_entry_id": "Nécessaire uniquement avec plusieurs comptes HelloFresh."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Petit-déjeuner",
+          "lunch": "Déjeuner",
+          "dinner": "Dîner"
+        },
+        "course": {
+          "main": "Plat principal",
+          "appetizer": "Entrée",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal} : {name}",
+          "course": "{course} : {name}",
+          "cooking": "Temps de cuisson : {minutes} min"
+        },
+        "load_failed": "Impossible de charger le planning des repas : {error}",
+        "no_weeks": "Aucune box en cours ou à venir à planifier.",
+        "planned_count": "{planned}/{total} planifiés",
+        "this_week": "Cette semaine",
+        "range": "{start} – {end}",
+        "skipped": "Pas de box cette semaine. Vous pouvez quand même planifier d'autres repas pour ces jours.",
+        "pick_first": "Choisissez d'abord les repas de cette semaine, puis planifiez le jour où les préparer.",
+        "all_planned": "Tout ce qui est dans cette box a un jour.",
+        "not_planned_yet": "Pas encore planifié",
+        "tray_left": "{count} sur {total} restants",
+        "days": "Jours",
+        "not_planned": "Non planifié",
+        "plan": "Planifier",
+        "view_recipe": "Voir la recette de {name}",
+        "no_longer_in_box": "N'est plus dans votre box",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (facultatif)",
+        "more_from_week": "Autres articles de cette semaine",
+        "start": "Commence à",
+        "clear": "Effacer",
+        "save": "Enregistrer",
+        "planned_on": "Planifié : {days}",
+        "left": {
+          "one": "{count} restant",
+          "other": "{count} restants"
+        },
+        "none": "Aucun",
+        "something_else": "Autre chose",
+        "something_else_hint": "Restes, soirée pizza, repas dehors…",
+        "saving": "Enregistrement du planning…",
+        "save_failed": "Impossible d'enregistrer le planning : {error}",
+        "saved": "Planning enregistré",
+        "cleared": "Planning effacé",
+        "item_title": "Planifier {name}",
+        "replaces": "Remplace {name}",
+        "tonight": "Ce soir : {name} à {time}",
+        "today": "Aujourd'hui : {meals}",
+        "today_item": "{meal} {name} à {time}"
       }
     }
   }

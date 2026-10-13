@@ -6,12 +6,14 @@ from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    TimeSelector,
 )
 import voluptuous as vol
 
@@ -24,16 +26,27 @@ from .api import (
 )
 from .const import (
     CONF_ACCESS_TOKEN,
+    CONF_ALWAYS_SHOW_BREAKFAST,
+    CONF_ALWAYS_SHOW_LUNCH,
+    CONF_BREAKFAST_MINUTES,
+    CONF_BREAKFAST_START,
     CONF_COUNTRY,
     CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+    CONF_DINNER_EXTRA_MINUTES,
+    CONF_DINNER_MINUTES,
+    CONF_DINNER_START,
+    CONF_DINNER_USE_COOKING_TIME,
     CONF_ENABLE_FAVORITES,
+    CONF_ENABLE_MEAL_PLANNING,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
     CONF_EXPIRES_IN,
     CONF_HISTORY_WEEKS,
     CONF_ISSUED_AT,
     CONF_LOG_AUTH_DIAGNOSTICS,
+    CONF_LUNCH_MINUTES,
+    CONF_LUNCH_START,
     CONF_MENU_GRACE_WEEKS,
     CONF_PASSWORD,
     CONF_REFRESH_EXPIRES_IN,
@@ -47,14 +60,22 @@ from .const import (
     CONF_USE_CURL_CFFI_HEADERS,
     CONF_USERNAME,
     COUNTRY_BASE_URLS,
+    DEFAULT_BREAKFAST_MINUTES,
+    DEFAULT_BREAKFAST_START,
     DEFAULT_COUNTRY,
     DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
+    DEFAULT_DINNER_EXTRA_MINUTES,
+    DEFAULT_DINNER_MINUTES,
+    DEFAULT_DINNER_START,
     DEFAULT_ENABLE_FAVORITES,
+    DEFAULT_ENABLE_MEAL_PLANNING,
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
     DEFAULT_HISTORY_WEEKS,
     DEFAULT_LOG_AUTH_DIAGNOSTICS,
+    DEFAULT_LUNCH_MINUTES,
+    DEFAULT_LUNCH_START,
     DEFAULT_MENU_GRACE_WEEKS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
@@ -63,14 +84,18 @@ from .const import (
     DOMAIN,
     MAX_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MAX_DELIVERY_WATCH_INTERVAL_MINUTES,
+    MAX_EXTRA_MINUTES,
     MAX_HISTORY_WEEKS,
+    MAX_MEAL_MINUTES,
     MAX_MENU_GRACE_WEEKS,
     MAX_SCAN_INTERVAL_MINUTES,
     MIN_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     MIN_DELIVERY_WATCH_INTERVAL_MINUTES,
     MIN_HISTORY_WEEKS,
+    MIN_MEAL_MINUTES,
     MIN_MENU_GRACE_WEEKS,
     MIN_SCAN_INTERVAL_MINUTES,
+    OPTIONS_SECTION_WEEK_TAB,
     TRACEY_COUNTRIES,
 )
 from .parsers import token_payload_to_entry_data
@@ -626,6 +651,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                     user_input[CONF_DELIVERY_WATCH_INTERVAL_MINUTES]
                 ),
             }
+            data.update(_week_tab_options(user_input.get(OPTIONS_SECTION_WEEK_TAB) or {}))
             if tracey_supported:
                 data[CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS] = int(
                     user_input.get(
@@ -745,6 +771,62 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlow):
                     CONF_LOG_AUTH_DIAGNOSTICS,
                     default=options.get(CONF_LOG_AUTH_DIAGNOSTICS, DEFAULT_LOG_AUTH_DIAGNOSTICS),
                 ): cv.boolean,
+                # The Week tab's settings, folded away: most people never open it.
+                vol.Required(OPTIONS_SECTION_WEEK_TAB): section(
+                    vol.Schema(_week_tab_schema(options)), {"collapsed": True}
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
+
+
+def _minutes_selector(minimum: int, maximum: int) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=minimum,
+            max=maximum,
+            step=5,
+            mode=NumberSelectorMode.BOX,
+            unit_of_measurement="minutes",
+        )
+    )
+
+
+# The Week tab section's fields: (key, default, selector), in the order the form shows them.
+def _week_tab_fields() -> list[tuple[str, object, object]]:
+    meal_minutes = _minutes_selector(MIN_MEAL_MINUTES, MAX_MEAL_MINUTES)
+    return [
+        (CONF_ENABLE_MEAL_PLANNING, DEFAULT_ENABLE_MEAL_PLANNING, cv.boolean),
+        (CONF_DINNER_START, DEFAULT_DINNER_START, TimeSelector()),
+        (CONF_DINNER_MINUTES, DEFAULT_DINNER_MINUTES, meal_minutes),
+        (CONF_DINNER_USE_COOKING_TIME, False, cv.boolean),
+        (
+            CONF_DINNER_EXTRA_MINUTES,
+            DEFAULT_DINNER_EXTRA_MINUTES,
+            _minutes_selector(0, MAX_EXTRA_MINUTES),
+        ),
+        (CONF_ALWAYS_SHOW_BREAKFAST, False, cv.boolean),
+        (CONF_BREAKFAST_START, DEFAULT_BREAKFAST_START, TimeSelector()),
+        (CONF_BREAKFAST_MINUTES, DEFAULT_BREAKFAST_MINUTES, meal_minutes),
+        (CONF_ALWAYS_SHOW_LUNCH, False, cv.boolean),
+        (CONF_LUNCH_START, DEFAULT_LUNCH_START, TimeSelector()),
+        (CONF_LUNCH_MINUTES, DEFAULT_LUNCH_MINUTES, meal_minutes),
+    ]
+
+
+def _week_tab_schema(options: dict[str, object]) -> dict[vol.Marker, object]:
+    return {
+        vol.Required(key, default=options.get(key, default)): selector
+        for key, default, selector in _week_tab_fields()
+    }
+
+
+def _week_tab_options(values: dict[str, object]) -> dict[str, object]:
+    """The Week tab section's submitted values, as flat options (minutes as whole numbers)."""
+    out: dict[str, object] = {}
+    for key, default, _selector in _week_tab_fields():
+        value = values.get(key, default)
+        out[key] = (
+            int(value) if isinstance(default, int) and not isinstance(default, bool) else value
+        )
+    return out

@@ -15,7 +15,8 @@
  * address in place, so a reload or bookmark comes back to the same one.
  */
 
-const SECTIONS = ["overview", "menu", "market", "recipes", "account"];
+// Week exists only with meal planning on; the card itself declines it otherwise.
+const SECTIONS = ["overview", "menu", "market", "recipes", "week", "account"];
 const WEEK_ID = /^\d{4}-W\d{2}$/;
 
 const PANEL_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";

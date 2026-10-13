@@ -119,6 +119,38 @@
           "show_data_quality_issues": "Vis advarsler i Reparasjoner-skjermen når HelloFresh-data er forringet (menyreserve aktiv, ukjente dataformater, kontodata utilgjengelige, blokkerte skrivehandlinger). Dataene lastes uansett. Slå av for å skjule disse advarslene og fjerne dem som allerede vises.",
           "use_curl_cffi_headers": "La curl_cffi sende Chrome-headere for innlogging, tokenfornyelse og dataforespørsler. Integrasjonen setter fortsatt API-headere og retter fetch-metadata for en XHR-forespørsel. Av (anbefalt) sender integrasjonens fullstendige, ordnede XHR-headere.",
           "log_auth_diagnostics": "Når dette er på, logges mislykkede innlogginger og tokenfornyelser samt eventuelt Cloudflare-utfordringsflagg, feilkode og Ray ID. Vellykkede trinn logges bare på debug-nivå. De ekstra diagnosefeltene inneholder verken rått svarinnhold eller påloggingsopplysninger. På som standard."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Uke-fanen (måltidsplanlegging)",
+            "description": "Planlegg hvilken dag hver rett i kassen din skal lages. Når dette er slått på, får kortet fanen Uke, det kommer en Måltider-kalender med en tidsbestemt hendelse for hvert planlagte måltid, og sensorer for dagens måltider.",
+            "data": {
+              "enable_meal_planning": "Vis Uke-fanen",
+              "dinner_start": "Middag starter kl.",
+              "dinner_minutes": "Varighet for middag (minutter)",
+              "dinner_use_cooking_time": "Bruk HelloFresh sin tilberedningstid for middag",
+              "dinner_extra_minutes": "Ekstra tid etter tilberedning (minutter)",
+              "always_show_breakfast": "Vis alltid frokost",
+              "breakfast_start": "Frokost starter kl.",
+              "breakfast_minutes": "Varighet for frokost (minutter)",
+              "always_show_lunch": "Vis alltid lunsj",
+              "lunch_start": "Lunsj starter kl.",
+              "lunch_minutes": "Varighet for lunsj (minutter)"
+            },
+            "data_description": {
+              "enable_meal_planning": "Legger til fanen Uke etter Oppskrifter, Måltider-kalenderen og sensorer for dagens måltider. Av som standard. Planen din beholdes hvis du slår dette av; den slettes først når integrasjonen fjernes.",
+              "dinner_start": "Når hver middagshendelse starter. Tidspunktet for én dag kan også endres i fanen Uke.",
+              "dinner_minutes": "Hvor lenge hver middagshendelse varer: forberedelse, matlaging, spising og opprydding. Standard 90 minutter. Med HelloFresh sin tilberedningstid slått på gjelder dette bare middager uten tilberedningstid, for eksempel et notat.",
+              "dinner_use_cooking_time": "Hver middagshendelse varer like lenge som rettens tilberedningstid fra HelloFresh (pluss forrettens, hvis den har en), pluss ekstratiden nedenfor.",
+              "dinner_extra_minutes": "Legges til tilberedningstiden for spising og opprydding. Brukes bare når HelloFresh sin tilberedningstid er slått på. Standard 45 minutter.",
+              "always_show_breakfast": "Frokost vises bare i en uke hvis du har kjøpt frokost fra Market til den. Slå på for å planlegge frokost hver uke, for eksempel med notater.",
+              "breakfast_start": "Når hver frokosthendelse starter.",
+              "breakfast_minutes": "Hvor lenge hver frokosthendelse varer. Standard 30 minutter.",
+              "always_show_lunch": "Lunsj vises bare i en uke hvis du har kjøpt lunsj fra Market til den. Slå på for å planlegge lunsj hver uke.",
+              "lunch_start": "Når hver lunsjhendelse starter.",
+              "lunch_minutes": "Hvor lenge hver lunsjhendelse varer. Standard 45 minutter."
+            }
+          }
         }
       }
     }
@@ -308,6 +340,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Leveringssjåfør"
+      },
+      "todays_breakfast": {
+        "name": "Dagens frokost"
+      },
+      "todays_lunch": {
+        "name": "Dagens lunsj"
+      },
+      "tonights_dinner": {
+        "name": "Kveldens middag"
       }
     },
     "binary_sensor": {
@@ -335,6 +376,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Leveringsplan"
+      },
+      "meals": {
+        "name": "Måltider"
       }
     },
     "event": {
@@ -769,6 +813,80 @@
           "description": "Kostmål for profilen."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Hent måltidsplan",
+      "description": "Returnerer Uke-fanens måltidsplan: innstillingene og hver planlagte dag, hvert måltid med start- og sluttid. Kun lesing; returnerer et svar. Svarer med enabled false når Uke-fanen er slått av.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Angi planlagt måltid",
+      "description": "Planlegger én rett i en dags måltid i Uke-fanen: en rett fra kassen din, en Market-vare kjøpt den uken eller et notat i fritekst. Kan også endre når måltidet starter den dagen. Returnerer den oppdaterte planen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Dagen som skal planlegges."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Frokost, lunsj eller middag. Standard er middag."
+        },
+        "course": {
+          "name": "Rett",
+          "description": "Hovedrett, forrett eller dessert. Forrett og dessert gjelder bare middag. Standard er hovedrett."
+        },
+        "recipe_id": {
+          "name": "Oppskrifts-ID",
+          "description": "En rett som er valgt i en av kassene dine."
+        },
+        "market_item_id": {
+          "name": "Market-vare-ID",
+          "description": "En Market-vare kjøpt i en av kassene dine."
+        },
+        "text": {
+          "name": "Notat",
+          "description": "Fritekst i stedet for en rett, for eksempel Rester eller Pizzakveld."
+        },
+        "week_id": {
+          "name": "Uke-ID",
+          "description": "Kassen retten eller Market-varen kom fra, når datoen alene ikke gjør det klart."
+        },
+        "start_time": {
+          "name": "Starttid",
+          "description": "Når dette måltidet starter denne dagen, i stedet for tiden i integrasjonens innstillinger."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Fjern planlagt måltid",
+      "description": "Fjerner én rett i en dags måltid i Uke-fanen, eller hele måltidet når ingen rett er oppgitt. Returnerer den oppdaterte planen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Dagen som skal planlegges."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Frokost, lunsj eller middag. Standard er middag."
+        },
+        "course": {
+          "name": "Rett",
+          "description": "Hovedrett, forrett eller dessert. La stå tomt for å fjerne hele måltidet."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +913,7 @@
         "menu": "Meny",
         "market": "Market",
         "recipes": "Oppskrifter",
+        "week": "Uke",
         "account": "Konto"
       },
       "card": {
@@ -1601,10 +1720,65 @@
         "accent_brand": "HelloFresh-grønn",
         "accent_theme": "Temaets primærfarge",
         "help": {
-          "views": "Velg én seksjon for et fokusert kort uten fanelinje.",
+          "views": "Velg én seksjon for et fokusert kort uten fanelinje. Uke vises bare når Uke-fanen er slått på i integrasjonens innstillinger.",
           "default_view": "La stå tomt for å åpne sist brukte seksjon.",
           "config_entry_id": "Trengs bare med mer enn én HelloFresh-konto."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Frokost",
+          "lunch": "Lunsj",
+          "dinner": "Middag"
+        },
+        "course": {
+          "main": "Hovedrett",
+          "appetizer": "Forrett",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Tilberedningstid: {minutes} min"
+        },
+        "load_failed": "Kunne ikke laste inn måltidsplanen: {error}",
+        "no_weeks": "Det finnes ingen nåværende eller kommende kasse å planlegge.",
+        "planned_count": "{planned}/{total} planlagt",
+        "this_week": "Denne uken",
+        "range": "{start} – {end}",
+        "skipped": "Ingen kasse denne uken. Du kan fortsatt planlegge andre måltider for disse dagene.",
+        "pick_first": "Velg ukens retter først, og planlegg deretter hvilken dag de skal lages.",
+        "all_planned": "Alt i denne kassen har fått en dag.",
+        "not_planned_yet": "Ikke planlagt ennå",
+        "tray_left": "{count} av {total} igjen",
+        "days": "Dager",
+        "not_planned": "Ikke planlagt",
+        "plan": "Planlegg",
+        "view_recipe": "Se oppskriften på {name}",
+        "no_longer_in_box": "Ikke lenger i kassen din",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (valgfritt)",
+        "more_from_week": "Mer fra denne uken",
+        "start": "Starter kl.",
+        "clear": "Fjern",
+        "save": "Lagre",
+        "planned_on": "Planlagt: {days}",
+        "left": {
+          "one": "{count} igjen",
+          "other": "{count} igjen"
+        },
+        "none": "Ingen",
+        "something_else": "Noe annet",
+        "something_else_hint": "Rester, pizzakveld, spise ute …",
+        "saving": "Lagrer planen …",
+        "save_failed": "Kunne ikke lagre planen: {error}",
+        "saved": "Planen er lagret",
+        "cleared": "Planen er fjernet",
+        "item_title": "Planlegg {name}",
+        "replaces": "Erstatter {name}",
+        "tonight": "I kveld: {name} kl. {time}",
+        "today": "I dag: {meals}",
+        "today_item": "{meal} {name} kl. {time}"
       }
     }
   }

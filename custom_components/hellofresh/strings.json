@@ -119,6 +119,38 @@
           "show_data_quality_issues": "Raise warnings on the Repairs screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Data keeps loading either way. Turn off to suppress these warnings and clear any that are already showing.",
           "use_curl_cffi_headers": "Let curl_cffi supply its Chrome headers for login, token refresh, and data requests. The integration still sets API headers and corrects the browser's fetch metadata to describe an XHR. Off (recommended) sends the integration's complete, ordered XHR headers.",
           "log_auth_diagnostics": "When enabled, log failed login and token refresh attempts, including any Cloudflare challenge flag, error code, and Ray ID. Successful steps are logged only at debug level. The added diagnostic fields contain no raw response body or credentials. On by default."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Week tab (meal planning)",
+            "description": "Plan which day each meal in your box gets made. Turning this on adds the card's Week tab, a Meals calendar with a timed event for each planned meal, and sensors for today's meals.",
+            "data": {
+              "enable_meal_planning": "Show the Week tab",
+              "dinner_start": "Dinner starts at",
+              "dinner_minutes": "Dinner length (minutes)",
+              "dinner_use_cooking_time": "Use HelloFresh's cooking time for dinner",
+              "dinner_extra_minutes": "Extra time after cooking (minutes)",
+              "always_show_breakfast": "Always show breakfast",
+              "breakfast_start": "Breakfast starts at",
+              "breakfast_minutes": "Breakfast length (minutes)",
+              "always_show_lunch": "Always show lunch",
+              "lunch_start": "Lunch starts at",
+              "lunch_minutes": "Lunch length (minutes)"
+            },
+            "data_description": {
+              "enable_meal_planning": "Adds the Week tab after Recipes, the Meals calendar and sensors for today's meals. Off by default. Your plan is kept if you turn this off; it's deleted only when the integration is removed.",
+              "dinner_start": "When each dinner event starts. A single day's time can also be changed in the Week tab.",
+              "dinner_minutes": "How long each dinner event lasts: prep, cooking, eating and clean-up. Default 90 minutes. With HelloFresh's cooking time turned on, this applies only to dinners without one, such as a note.",
+              "dinner_use_cooking_time": "Make each dinner event last the meal's cooking time from HelloFresh (plus the appetizer's, if it has one), plus the extra time below.",
+              "dinner_extra_minutes": "Added to the cooking time for eating and clean-up. Only used with HelloFresh's cooking time turned on. Default 45 minutes.",
+              "always_show_breakfast": "Breakfast shows in a week only when you bought Market breakfast items for it. Turn this on to plan breakfast every week, for example with notes.",
+              "breakfast_start": "When each breakfast event starts.",
+              "breakfast_minutes": "How long each breakfast event lasts. Default 30 minutes.",
+              "always_show_lunch": "Lunch shows in a week only when you bought Market lunch items for it. Turn this on to plan lunch every week.",
+              "lunch_start": "When each lunch event starts.",
+              "lunch_minutes": "How long each lunch event lasts. Default 45 minutes."
+            }
+          }
         }
       }
     }
@@ -286,6 +318,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Delivery driver"
+      },
+      "todays_breakfast": {
+        "name": "Today's breakfast"
+      },
+      "todays_lunch": {
+        "name": "Today's lunch"
+      },
+      "tonights_dinner": {
+        "name": "Tonight's dinner"
       }
     },
     "binary_sensor": {
@@ -313,6 +354,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Delivery schedule"
+      },
+      "meals": {
+        "name": "Meals"
       }
     },
     "event": {
@@ -769,6 +813,80 @@
           "description": "Cooking goals to set, as a list of option ids from Get food profile."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Get meal plan",
+      "description": "Return the Week tab's meal plan: its settings and every planned day, each meal with its start and end time. Read-only; returns a response. Answers with enabled false when the Week tab is turned off.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Set planned meal",
+      "description": "Plan one course of a day's meal in the Week tab: a meal from your box, a Market item bought that week, or a free-text note. It can also change when that meal starts on that day. Returns the updated plan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day to plan."
+        },
+        "meal": {
+          "name": "Meal",
+          "description": "Breakfast, lunch or dinner. Default dinner."
+        },
+        "course": {
+          "name": "Course",
+          "description": "Main, appetizer or dessert. Appetizer and dessert are for dinner only. Default main."
+        },
+        "recipe_id": {
+          "name": "Recipe ID",
+          "description": "A meal selected in one of your boxes."
+        },
+        "market_item_id": {
+          "name": "Market item ID",
+          "description": "A Market item bought in one of your boxes."
+        },
+        "text": {
+          "name": "Note",
+          "description": "Free text instead of a meal, such as Leftovers or Pizza night."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The box the meal or Market item came from, when the date alone doesn't make it clear."
+        },
+        "start_time": {
+          "name": "Start time",
+          "description": "When this meal starts on this day, instead of the time set in the integration's options."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Clear planned meal",
+      "description": "Clear one course of a day's meal in the Week tab, or the whole meal when no course is given. Returns the updated plan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day to plan."
+        },
+        "meal": {
+          "name": "Meal",
+          "description": "Breakfast, lunch or dinner. Default dinner."
+        },
+        "course": {
+          "name": "Course",
+          "description": "Main, appetizer or dessert. Leave empty to clear the whole meal."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +913,7 @@
         "menu": "Menu",
         "market": "Market",
         "recipes": "Recipes",
+        "week": "Week",
         "account": "Account"
       },
       "card": {
@@ -1601,10 +1720,65 @@
         "accent_brand": "HelloFresh green",
         "accent_theme": "Theme primary colour",
         "help": {
-          "views": "Pick one section for a focused card without the tab bar.",
+          "views": "Pick one section for a focused card without the tab bar. Week shows only while the Week tab is turned on in the integration's options.",
           "default_view": "Leave empty to reopen the last section used.",
           "config_entry_id": "Only needed with more than one HelloFresh account."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Breakfast",
+          "lunch": "Lunch",
+          "dinner": "Dinner"
+        },
+        "course": {
+          "main": "Main",
+          "appetizer": "Appetizer",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Cooking time: {minutes} min"
+        },
+        "load_failed": "Couldn't load the meal plan: {error}",
+        "no_weeks": "There's no current or upcoming box to plan.",
+        "planned_count": "{planned}/{total} planned",
+        "this_week": "This week",
+        "range": "{start} – {end}",
+        "skipped": "No box this week. You can still plan other meals for these days.",
+        "pick_first": "Choose this week's meals first, then plan which day to make them.",
+        "all_planned": "Everything in this box has a day.",
+        "not_planned_yet": "Not planned yet",
+        "tray_left": "{count} of {total} left",
+        "days": "Days",
+        "not_planned": "Not planned",
+        "plan": "Plan",
+        "view_recipe": "View the recipe for {name}",
+        "no_longer_in_box": "No longer in your box",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (optional)",
+        "more_from_week": "More from this week",
+        "start": "Starts at",
+        "clear": "Clear",
+        "save": "Save",
+        "planned_on": "Planned {days}",
+        "left": {
+          "one": "{count} left",
+          "other": "{count} left"
+        },
+        "none": "None",
+        "something_else": "Something else",
+        "something_else_hint": "Leftovers, pizza night, eating out…",
+        "saving": "Saving the plan…",
+        "save_failed": "Couldn't save the plan: {error}",
+        "saved": "Plan saved",
+        "cleared": "Plan cleared",
+        "item_title": "Plan {name}",
+        "replaces": "Replaces {name}",
+        "tonight": "Tonight: {name} at {time}",
+        "today": "Today: {meals}",
+        "today_item": "{meal} {name} at {time}"
       }
     }
   }

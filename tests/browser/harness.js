@@ -54,6 +54,7 @@ const { hass, calls, fx } = buildHass(location.origin, {
   latency: Number(params.get("latency") || 200),
   fail: params.get("fail") || "",
   language: params.get("lang") || "en",
+  mealPlan: params.get("mealplan") === "1",
 });
 window.__hass = hass;
 window.__calls = calls;

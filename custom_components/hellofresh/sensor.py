@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from homeassistant.components.sensor import (
     ENTITY_ID_FORMAT,
     SensorDeviceClass,
@@ -10,11 +12,14 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
 
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
+from .meal_plan import KIND_MARKET, KIND_MEAL, MEAL_SENSOR_KEYS, MEALS, MealPlan, slot_title
 from .sensor_helpers import (
     humanize_status,
     sensor_extra_state_attributes,
@@ -357,6 +362,10 @@ async def async_setup_entry(
             HelloFreshTraceySensor(coordinator.tracey, description)
             for description in TRACEY_SENSORS
         )
+    if coordinator.meal_plan is not None:
+        entities.extend(
+            HelloFreshMealSensor(coordinator, coordinator.meal_plan, meal) for meal in MEALS
+        )
     async_add_entities(entities)
 
 
@@ -523,3 +532,94 @@ class HelloFreshTraceySensor(HelloFreshCoordinatorEntity, SensorEntity):
                 "longitude": data.driver_location["longitude"],
             }
         return None
+
+
+_MEAL_ICONS = {
+    "breakfast": "mdi:coffee-outline",
+    "lunch": "mdi:food-takeout-box-outline",
+    "dinner": "mdi:silverware-variant",
+}
+
+
+class HelloFreshMealSensor(HelloFreshCoordinatorEntity, SensorEntity):
+    """Today's planned breakfast, lunch or dinner, from the Week tab's plan.
+
+    The state is what is planned (a meal, a Market item or a note), or "None". Attributes add
+    when it starts and ends, the recipe, and tomorrow's plan for the same meal — enough for a
+    "thaw the chicken tonight" reminder. The plan is stored locally, so these stay available
+    while HelloFresh itself is unreachable.
+    """
+
+    def __init__(
+        self,
+        coordinator: HelloFreshDataUpdateCoordinator,
+        meal_plan: MealPlan,
+        meal: str,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._meal_plan = meal_plan
+        self._meal = meal
+        key = MEAL_SENSOR_KEYS[meal]
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{key}"
+        self._attr_icon = _MEAL_ICONS[meal]
+        # Dinner is what most households plan; breakfast and lunch start disabled.
+        self._attr_entity_registry_enabled_default = meal == "dinner"
+        self._pin_entity_id(ENTITY_ID_FORMAT, key)
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the plan, and move on to the next day's meal at midnight."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._meal_plan.async_add_listener(self.async_write_ha_state))
+        self.async_on_remove(
+            async_track_time_change(self.hass, self._new_day, hour=0, minute=0, second=1)
+        )
+
+    @callback
+    def _new_day(self, _now) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """The plan is local: it stays readable while HelloFresh is down."""
+        return True
+
+    def _slot(self, offset: int = 0) -> tuple[date, dict | None]:
+        day = dt_util.now().date() + timedelta(days=offset)
+        return day, self._meal_plan.slot(day, self._meal)
+
+    @property
+    def native_value(self) -> str:
+        _day, slot = self._slot()
+        return (slot_title(slot) if slot else None) or "None"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        day, slot = self._slot()
+        _tomorrow, tomorrow = self._slot(1)
+        attrs: dict[str, object] = {
+            "date": day.isoformat(),
+            "tomorrow": slot_title(tomorrow) if tomorrow else None,
+        }
+        if slot is None:
+            return attrs
+        start, end = self._meal_plan.window(day, self._meal, slot)
+        main = slot.get("main") if isinstance(slot.get("main"), dict) else {}
+        kind = main.get("kind")
+        attrs.update(
+            {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "kind": kind,
+                "recipe_id": main.get("id") if kind == KIND_MEAL else None,
+                "market_item_id": main.get("id") if kind == KIND_MARKET else None,
+                "image_url": main.get("image_url"),
+                "cooking_minutes": main.get("minutes"),
+            }
+        )
+        if self._meal == "dinner":
+            for course in ("appetizer", "dessert"):
+                item = slot.get(course)
+                attrs[course] = item.get("name") if isinstance(item, dict) else None
+        return attrs
