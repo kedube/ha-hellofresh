@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.08 — 2026-10-13
 - **Veho deliveries no longer show "Package.Delivered".** Since late September, Veho's tracking
   feed sometimes reports a box's status as an internal code (`package.delivered`,
   `package.pickedUpFromVeho`) instead of the usual one. The integration now reads these as
