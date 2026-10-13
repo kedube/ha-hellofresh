@@ -47,8 +47,9 @@ async def async_setup_entry(
     """Set up HelloFresh calendar entities."""
     coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
     entities: list[CalendarEntity] = [HelloFreshDeliveryCalendar(coordinator)]
-    if coordinator.meal_plan is not None:
-        entities.append(HelloFreshMealsCalendar(coordinator, coordinator.meal_plan))
+    meal_plan = getattr(coordinator, "meal_plan", None)
+    if meal_plan is not None:
+        entities.append(HelloFreshMealsCalendar(coordinator, meal_plan))
     async_add_entities(entities)
 
 

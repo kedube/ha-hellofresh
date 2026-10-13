@@ -710,3 +710,141 @@ def test_the_calendar_starts_on_home_assistants_first_weekday() -> None:
       ];
     """
     assert _run(body) == [1, 6, 1, 1, 0, 1, 0]
+
+
+# ---- the Week tab's plan ---------------------------------------------------------------------
+
+PLAN_WEEK = """
+const box = {
+  week_id: "2026-W42", delivery_date: "2026-10-12",
+  recipes: [
+    { recipe_id: "a", name: "A", is_selected: true, selected_quantity: 1, prep_time_minutes: 30, total_time_minutes: 10 },
+    { recipe_id: "b", name: "B", is_selected: true, selected_quantity: 2 },
+    { recipe_id: "b", name: "B, customized", is_selected: true },
+    { recipe_id: "c", name: "C" },
+  ],
+  market_items: [
+    { item_id: "gy", name: "Gyoza", group_type: "appetizer", selected_quantity: 1 },
+    { item_id: "pk", name: "Pancakes", group_type: "breakfast", selected_quantity: 1 },
+    { item_id: "ck", name: "Chicken", group_type: "protein", is_selected: true },
+    { item_id: "pet", name: "Treats", group_type: "petstable", selected_quantity: 1 },
+    { item_id: "don", name: "Donation", group_type: "donation", selected_quantity: 1 },
+    { item_id: "no", name: "Unbought", group_type: "dessert", selected_quantity: 0 },
+  ],
+};
+const meal = (id) => ({ kind: "meal", id, week_id: "2026-W42", name: id });
+const wednesday = new Date(2026, 9, 14, 15);
+"""
+
+
+def test_plan_covers_seven_days_from_delivery_and_the_weeks_still_being_eaten() -> None:
+    days, weeks, opens, ahead = _run(
+        PLAN_WEEK
+        + """
+      const older = { week_id: "2026-W41", delivery_date: "2026-10-05" };
+      const later = { week_id: "2026-W43", delivery_date: "2026-10-19" };
+      const weeks = L.planWeeks([older, box, later, { week_id: "undated" }], wednesday);
+      return [
+        L.planDays(box),
+        weeks.map((w) => w.week_id),
+        L.defaultPlanWeek(weeks, wednesday).week_id,
+        L.defaultPlanWeek([later], wednesday).week_id,
+      ];
+    """
+    )
+    assert days == [f"2026-10-{d}" for d in range(12, 19)]
+    # Last week's box ended on Sunday the 11th; an undated week has no days to plan.
+    assert weeks == ["2026-W42", "2026-W43"]
+    assert opens == "2026-W42"  # the week whose days include today
+    assert ahead == "2026-W43"  # else the next one
+
+
+def test_plan_offers_the_box_and_the_market_items_bought_never_pets_or_donations() -> None:
+    items, slots = _run(
+        PLAN_WEEK
+        + """
+      const items = L.planItems(box);
+      return [
+        items.map((i) => [i.kind, i.id, i.quantity, i.minutes, i.group || null]),
+        items.map((i) => [i.id, L.suggestedSlot(i).meal, L.suggestedSlot(i).course]),
+      ];
+    """
+    )
+    # A meal listed twice (a customized variant shares the id) is offered once; the tile's
+    # headline time is prep_time_minutes.
+    assert items == [
+        ["meal", "a", 1, 30, None],
+        ["meal", "b", 2, None, None],
+        ["market", "gy", 1, None, "appetizer"],
+        ["market", "pk", 1, None, "breakfast"],
+        ["market", "ck", 1, None, "protein"],
+    ]
+    assert slots == [
+        ["a", "dinner", "main"],
+        ["b", "dinner", "main"],
+        ["gy", "dinner", "appetizer"],
+        ["pk", "breakfast", "main"],
+        ["ck", "dinner", "main"],
+    ]
+
+
+def test_plan_counts_uses_fills_the_tray_and_shows_breakfast_only_when_bought() -> None:
+    uses, skipped, tray, shown, bare, always, titles, notes = _run(
+        PLAN_WEEK
+        + """
+      const gyoza = { kind: "market", id: "gy", week_id: "2026-W42", name: "Gyoza" };
+      const plan = { always_show: { breakfast: false, lunch: false }, days: {
+        "2026-10-12": { dinner: { main: meal("a") } },
+        "2026-10-13": { dinner: { main: meal("b"), appetizer: gyoza } },
+        "2026-10-14": { lunch: { main: { kind: "note", name: "Leftovers" } } },
+      } };
+      const noMarket = { ...box, market_items: [] };
+      return [
+        L.itemUses(plan, meal("b")),
+        L.itemUses(plan, meal("b"), { day: "2026-10-13", meal: "dinner", course: "main" }).count,
+        L.trayItems(box, plan).map((i) => [i.id, i.left]),
+        L.planMealsShown(box, plan),
+        L.planMealsShown(noMarket, { days: {} }),
+        L.planMealsShown(noMarket, { always_show: { lunch: true }, days: {} }),
+        [L.slotTitle(plan.days["2026-10-13"].dinner), L.slotTitle({ appetizer: { name: "Gyoza" }, dessert: { name: "Cake" } })],
+        L.sameItem({ kind: "note", name: "x" }, { kind: "note", name: "x" }),
+      ];
+    """
+    )
+    assert uses == {"count": 1, "days": ["2026-10-13"]}
+    assert skipped == 0  # the slot being edited never counts against its own pick
+    # A is planned as often as it was ordered; B once of twice; the appetizer isn't a tray item.
+    assert tray == [["b", 1], ["pk", 1]]
+    # Breakfast because it was bought, lunch because something is planned for it.
+    assert shown == ["breakfast", "lunch", "dinner"]
+    assert bare == ["dinner"]
+    assert always == ["lunch", "dinner"]
+    assert titles == ["b", "Gyoza, Cake"]
+    assert notes is False  # two notes are never "the same item" (no limit on notes)
+
+
+def test_plan_flags_a_swapped_meal_and_shows_what_is_still_to_come_today() -> None:
+    inbox, swapped, unknown, note, today, start = _run(
+        PLAN_WEEK
+        + """
+      const at = (h, m = 0) => new Date(2026, 9, 14, h, m).toISOString();
+      const plan = { days: { "2026-10-14": {
+        breakfast: { main: { kind: "note", name: "Eggs" }, start: at(7, 30), end: at(8) },
+        dinner: { main: meal("a"), start: at(17, 30), end: at(19) },
+      } } };
+      return [
+        L.stillInBox(meal("a"), [box]),
+        L.stillInBox(meal("c"), [box]),
+        L.stillInBox(meal("a"), []),
+        L.stillInBox({ kind: "note", name: "x" }, [box]),
+        L.todayPlan(plan, wednesday).map((t) => t.meal),
+        L.hhmm(plan.days["2026-10-14"].dinner.start),
+      ];
+    """
+    )
+    assert inbox is True
+    assert swapped is False  # C is on the menu but no longer chosen
+    assert unknown is True  # a week no longer loaded can't be checked
+    assert note is True
+    assert today == ["dinner"]  # breakfast is over by 3 PM
+    assert start == "17:30"

@@ -362,10 +362,9 @@ async def async_setup_entry(
             HelloFreshTraceySensor(coordinator.tracey, description)
             for description in TRACEY_SENSORS
         )
-    if coordinator.meal_plan is not None:
-        entities.extend(
-            HelloFreshMealSensor(coordinator, coordinator.meal_plan, meal) for meal in MEALS
-        )
+    meal_plan = getattr(coordinator, "meal_plan", None)
+    if meal_plan is not None:
+        entities.extend(HelloFreshMealSensor(coordinator, meal_plan, meal) for meal in MEALS)
     async_add_entities(entities)
 
 
