@@ -55,7 +55,7 @@ MAX_HISTORY_WEEKS = 104
 # this window the validated per-week menu stays visible (with the delivered meals overlaid
 # as the selection); older weeks show only what shipped, since their "menu" from the API is
 # an unusable multi-week aggregate. User option like history_weeks; 0 disables the grace
-# entirely (past weeks always delivered-only). The meal-planner card reads the configured
+# entirely (past weeks always delivered-only). The card's Menu reads the configured
 # value from the get_weeks account payload. Values past ~2 weeks buy little: HelloFresh
 # stops serving a real menu for older weeks, whose fetch then fails validation and the week
 # falls back to delivered-only anyway.
@@ -78,7 +78,7 @@ CONF_SHOW_DATA_QUALITY_ISSUES = "show_data_quality_issues"
 DEFAULT_SHOW_DATA_QUALITY_ISSUES = True
 
 # Whether each poll should resolve which meals are bookmarked in the customer's cookbook, so
-# the meal-planner card can show a favorite heart. Costs one extra batched request per refresh
+# the card's Menu can show a favorite heart. Costs one extra batched request per refresh
 # (HelloFresh has no "list my favorites" endpoint — the ids on the menu must be sent to a
 # filter endpoint to learn which are bookmarked). Turn off to skip that request entirely; the
 # add/remove favorite services keep working either way.

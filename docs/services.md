@@ -1,6 +1,6 @@
 # Service reference
 
-Every action the integration exposes. All 24 are also listed in Home Assistant under
+Every action the integration exposes. All 29 are also listed in Home Assistant under
 **Developer tools → Actions**, which renders each field with inline help and is usually the
 fastest way to call one by hand — this page adds the response detail and cross-references that
 the picker cannot show.
@@ -18,6 +18,7 @@ call targets. With a single account it can be omitted.
 - [Plan and account](#plan-and-account)
 - [Food profile](#food-profile)
 - [Recipes and favorites](#recipes-and-favorites)
+- [Week tab](#week-tab)
 - [Maintenance](#maintenance)
 
 ## Meals and Market
@@ -30,7 +31,7 @@ Change what is in a box.
 
 ### `hellofresh.get_menu_courses`
 
-**Returns a response.** Resolves a delivery week's menu through HelloFresh's **own server-side filter service** — the same call the website's filter panel makes — and returns only the matching recipe ids (`{"week_id", "recipe_ids": [...], "count", "filters"}`) to intersect with that week's `recipes` from `get_weeks`. Pass `week_id` and a `filters` object mapping a filter **group slug** to one or more **option slugs**; both come from the week's `menu_filters` (the menu payload's own filter definitions: `cuisine`, `dish-type`, `exclude-allergens`, `diet`, `main-protein`, `total-cooking-time`, with each option's `slug`). Example: `{"cuisine": ["mediterranean", "world-flavors"], "exclude-allergens": ["nuts"]}`. This is what powers the meal planner card's Cuisine type, Dish type and Ingredients to avoid groups, which the integration cannot answer from recipe tags alone (menu recipes carry no allergen data). Read-only.
+**Returns a response.** Resolves a delivery week's menu through HelloFresh's **own server-side filter service** — the same call the website's filter panel makes — and returns only the matching recipe ids (`{"week_id", "recipe_ids": [...], "count", "filters"}`) to intersect with that week's `recipes` from `get_weeks`. Pass `week_id` and a `filters` object mapping a filter **group slug** to one or more **option slugs**; both come from the week's `menu_filters` (the menu payload's own filter definitions: `cuisine`, `dish-type`, `exclude-allergens`, `diet`, `main-protein`, `total-cooking-time`, with each option's `slug`). Example: `{"cuisine": ["mediterranean", "world-flavors"], "exclude-allergens": ["nuts"]}`. This is what powers the card's Menu filters for Cuisine type, Dish type and Ingredients to avoid, which the integration cannot answer from recipe tags alone (menu recipes carry no allergen data). Read-only.
 
 ### `hellofresh.select_meals`
 
@@ -130,7 +131,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_favorites`
 
-**Returns a response.** Your HelloFresh cookbook. Called with no arguments it lists **every** bookmark with full detail (title, headline, image, times, nutrition) — including the ones HelloFresh's own website hides, since its cookbook page only ever renders a 3-item preview while the underlying endpoint reports the true total and pages the rest. Passing `recipe_ids` instead uses HelloFresh's cheaper filter endpoint to answer "which of *these* are bookmarked?", returning ids only — which is how the meal-planner card decorates a week it already has in hand. Read-only.
+**Returns a response.** Your HelloFresh cookbook. Called with no arguments it lists **every** bookmark with full detail (title, headline, image, times, nutrition) — including the ones HelloFresh's own website hides, since its cookbook page only ever renders a 3-item preview while the underlying endpoint reports the true total and pages the rest. Passing `recipe_ids` instead uses HelloFresh's cheaper filter endpoint to answer "which of *these* are bookmarked?", returning ids only — which is how the card's Menu decorates a week it already has in hand. Read-only.
 
 ### `hellofresh.add_favorite`
 
@@ -139,6 +140,33 @@ bookmark a recipe in your cookbook (`recipe_id`). Returns the created favorite (
 ### `hellofresh.remove_favorite`
 
 remove a recipe bookmark (`recipe_id`).
+
+## Week tab
+
+The plan behind the card's [Week tab](dashboard.md#week): which day each meal gets made. It lives in
+Home Assistant (nothing is sent to HelloFresh) and drives the [Meals calendar and meal
+sensors](entities.md#week-tab). A day has up to three meals — `breakfast`, `lunch`, `dinner` — and
+each meal a `main` course; dinner can also have an `appetizer` and a `dessert`.
+
+### `hellofresh.get_meal_plan`
+
+**Returns a response.** The settings (`meals` with each one's default `start` and `minutes`, dinner's `use_cooking_time` and `extra_minutes`, and `always_show` for breakfast and lunch) and every planned day: `{"days": {"2026-10-14": {"dinner": {"main": {...}, "appetizer": {...}, "start": "...", "end": "...", "custom_start": false}}}}`. Each course is a snapshot of what was planned — `kind` (`meal`, `market` or `note`), `id`, `week_id`, `name`, `image_url` and `minutes` — so it still shows after the menu changes. `start` and `end` are computed with the options' timing rules, so a consumer never re-implements them. Read-only.
+
+### `hellofresh.set_planned_meal`
+
+Plan one course of a day's meal: `date`, `meal` (default `dinner`), `course` (default `main`), and **one** of `recipe_id` (a meal chosen in one of your boxes), `market_item_id` (a Market item bought in one), or `text` (a note such as "Pizza night"). A meal can be planned only as many times as it was ordered, a Market item as many times as it was bought, and pet food and donations not at all; the call fails with the reason otherwise. `week_id` names the box when the date alone is ambiguous — by default the box whose seven days include the date, then the most recent one before it. `start_time` moves that meal's start for that day (setting it back to the default time removes the override), on its own or together with a course. **Optionally returns a response**: the updated plan, as `get_meal_plan`.
+
+```yaml
+action: hellofresh.set_planned_meal
+data:
+  date: "2026-10-16"
+  text: Pizza night
+  start_time: "18:30"
+```
+
+### `hellofresh.clear_planned_meal`
+
+Clear one `course` of a day's `meal`, or the whole meal when `course` is left out. **Optionally returns a response**: the updated plan.
 
 ## Maintenance
 

@@ -5,6 +5,24 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **New: the Week tab — plan which day you'll make each meal.** The HelloFresh card has a **Week**
+  tab after Recipes. It shows the seven days a box covers, from its delivery day: tap a day to
+  give it a meal from the box, a Market item you bought that week, or a note such as "Pizza night".
+  Each meal can be planned as many times as it's in the box, and what's left waits under **Not
+  planned yet**. [The Week tab](docs/dashboard.md#week) has the details.
+  - Dinner can add that week's Market **appetizer** and **dessert**. **Breakfast** and **lunch**
+    appear in weeks where you bought Market breakfast or lunch items.
+  - Every planned meal becomes a timed event on a new **Meals** calendar, and **Tonight's dinner**
+    is a sensor for automations (today's breakfast and lunch sensors can be enabled). The Overview
+    says what's for dinner tonight.
+  - When the events start and how long they last are in the integration's options, under **Week
+    tab**: dinner at 5:30 PM for 90 minutes by default, or the meal's HelloFresh cooking time plus
+    extra time for eating and clean-up. A day's meal can also start at its own time.
+  - The plan is kept in Home Assistant (nothing is sent to HelloFresh) and shared by every device.
+    New services `get_meal_plan`, `set_planned_meal` and `clear_planned_meal` read and change it.
+  - Dashboard cards with their own `views:` list show Week only once you add `week` to it.
+
 ## 4.08 — 2026-10-13
 - **Veho deliveries no longer show "Package.Delivered".** Since late September, Veho's tracking
   feed sometimes reports a box's status as an internal code (`package.delivered`,

@@ -95,6 +95,16 @@ await shot(page, image("card-delivery.png"));
 await shot(await open({ view: "market" }, W), image("card-market.png"));
 await shot(await open({ view: "recipes" }, W), image("card-recipes.png"));
 await shot(await open({ view: "account" }, W), image("card-account.png"));
+// The Week tab, half planned, on the Wednesday of a week whose box came on Monday; then that
+// evening's dinner open in the Plan sheet.
+const WEEK = { view: "week", mealplan: "1", now: "2026-10-14T15:00:00" };
+page = await open(WEEK, W);
+await scrollTo(page, ".hf-weekbar", 6);
+await shot(page, image("card-week.png"));
+page = await open(WEEK, W);
+if (!(await click(page, '.hf-planday.today .hf-planline[data-meal="dinner"]'))) problems.push("no dinner to plan");
+await sleep(800);
+await shot(page, image("card-week-plan.png"));
 await shot(await open({ narrow: "1" }, [390, 844], { scale: 2 }), image("card-phone.png"));
 
 // Live tracking (the Netherlands) on delivery day, cropped to the next box.

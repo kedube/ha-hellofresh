@@ -11,10 +11,10 @@
 
 Plan your HelloFresh boxes without leaving Home Assistant. Choose each week's meals (customized like
 on the website) and Market extras and save them together, follow the next box to your door, tick
-off the pantry staples it doesn't include, browse ~10,000 recipes, and manage your plan. It all
-lives in one card that the integration adds to your **sidebar**, so there's no dashboard to build.
-Behind it are **50+ entities**, a delivery calendar, pantry to-do lists and **26 services** for
-your own automations.
+off the pantry staples it doesn't include, plan which day you'll make each meal, browse ~10,000
+recipes, and manage your plan. It all lives in one card that the integration adds to your
+**sidebar**, so there's no dashboard to build. Behind it are **50+ entities**, delivery and meal
+calendars, pantry to-do lists and **29 services** for your own automations.
 
 > ⚠️ This is an **unofficial** integration, reverse-engineered from the HelloFresh website. It is not affiliated with or endorsed by HelloFresh, and the underlying API may change at any time.
 
@@ -185,6 +185,7 @@ The available options are:
 - **Show favorite hearts** — show a ♥ on meals bookmarked in your cookbook. Default **on**; costs one small extra request per refresh. Turning it off only removes the hearts — the favorite services and the card's [Recipes](docs/dashboard.md#recipes) keep working.
 - **Create pantry prep lists** — keep the two [prep-list to-do entities](docs/entities.md#prep-lists) that hold the ingredients your chosen meals need but HelloFresh doesn't ship (salt, oil, butter, eggs), one per upcoming delivery. Default **on**. Turning it off removes both lists and skips the recipe lookups behind them; everything else is unaffected. Changing it reloads the integration.
 - **Full menu history (weeks)** — how long a delivered week keeps its full browsable menu (with your meals highlighted) before collapsing to delivered-meals-only. Default **2**, range **0–3** (**0** disables it). HelloFresh stops publishing menus for older weeks, so weeks beyond that fall back automatically regardless. Changing it reloads the integration.
+- **Week tab** — a collapsed section with the times for the [Week tab](docs/dashboard.md#week)'s Meals calendar: when **dinner**, **breakfast** and **lunch** start (default **5:30 PM**, **7:30 AM**, **12:00 PM**) and how long each lasts (**90**, **30**, **45** minutes). **Use HelloFresh's cooking time for dinner** makes a dinner last its meal's cooking time plus the **extra time** (default **45** minutes) for eating and clean-up. **Always show breakfast** / **Always show lunch** show them every week, not only in weeks with Market breakfast or lunch items. Changing these reloads the integration.
 - **Show data-quality repair warnings** — raise issues on Home Assistant's **Repairs** screen when HelloFresh data is degraded (menu fallback active, unrecognized payloads, account data unavailable, blocked write actions). Default **on**; data keeps loading either way, so turn it off to suppress these warnings (and clear any already showing) if you'd rather not see them.
 
 ### Supported regions
@@ -232,6 +233,7 @@ The integration creates **50+ entities** per HelloFresh account:
 - **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit, payment dates, coupons), account & subscription (plan, servings, status), shipment tracking (status, carrier, tracking link, carrier ETA, actual arrival time), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
 - **Binary sensors** for automations — most notably `binary_sensor.needs_meal_selection`, the primary signal for "review your meals before the cutoff" reminders — plus tracked-shipment availability and parse-health diagnostics.
 - A **delivery calendar** (`calendar.delivery_schedule`), a **refresh button**, and a **skip next week switch**.
+- A **Meals calendar** (`calendar.meals`) and a **Tonight's dinner** sensor from the card's [Week tab](docs/dashboard.md#week), with today's breakfast and lunch sensors you can enable. See [Week tab](docs/entities.md#week-tab).
 - Two **prep lists** (`todo.prep_list`, `todo.prep_list_week_2`) — the pantry staples HelloFresh does *not* ship for your next two boxes, as native to-do lists you can check off from the dashboard, your phone, or a voice assistant. See [Prep lists](docs/entities.md#prep-lists).
 
 The full reference — every entity with its name, ID, device class, and behavior notes — lives in **[docs/entities.md](docs/entities.md)**.
@@ -248,7 +250,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 ### Services
 
-**26 services** cover everything the integration can do, grouped roughly as:
+**29 services** cover everything the integration can do, grouped roughly as:
 
 | Group | Examples |
 |---|---|
@@ -257,6 +259,7 @@ These handlers are intended for Home Assistant conversation workflows and future
 | **Plan and account** | `get_account_summary`, `change_plan`, `get_spending` |
 | **Food profile** | `get_food_profile`, `set_food_profile` |
 | **Recipes and favorites** | `get_catalog_recipes`, `get_recipe_detail`, `add_favorite` |
+| **Week tab** | `get_meal_plan`, `set_planned_meal`, `clear_planned_meal` |
 
 Many **return a response** (delivery weeks, spending, recipe detail) for use with
 `response_variable` in scripts and automations. All of them appear in **Developer tools → Actions**
@@ -331,6 +334,8 @@ the way hellofresh.com is:
   add-ons for a week, see a live price estimate in the sticky box bar, and save both with a single
   tap.
 - **Recipes** — the ~10,000-recipe catalog and your cookbook.
+- **Week** — which day each meal gets made, with that week's Market extras and notes for the other
+  nights, on a Meals calendar at the times you cook.
 - **Account** — plan and billing (including box size and delivery day), food preferences, and
   spending.
 

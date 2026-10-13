@@ -658,16 +658,15 @@ function fakeMealPlan(fx, { sample = false } = {}) {
       d.setDate(d.getDate() + n);
       return iso(d);
     };
-    const offset = Math.round((new Date(`${today}T00:00`) - new Date(`${current.delivery_date}T00:00`)) / 86400000);
-    const at = (n) => day(Math.max(0, Math.min(6, offset + n)));
-    if (meals[0]) set({ date: at(-2), recipe_id: meals[0].recipe_id });
-    set({ date: at(-1), text: "Pizza night", start_time: "18:30" });
+    // Counted from the delivery day, so the plan is the same whatever day the page thinks it is.
+    if (meals[0]) set({ date: day(0), recipe_id: meals[0].recipe_id });
+    set({ date: day(1), text: "Pizza night", start_time: "18:30" });
     if (meals[1]) {
-      set({ date: at(0), recipe_id: meals[1].recipe_id });
-      set({ date: at(0), course: "appetizer", market_item_id: "m2" });
-      set({ date: at(0), course: "dessert", market_item_id: "m5" });
+      set({ date: day(2), recipe_id: meals[1].recipe_id });
+      set({ date: day(2), course: "appetizer", market_item_id: "m2" });
+      set({ date: day(2), course: "dessert", market_item_id: "m5" });
     }
-    set({ date: at(1), meal: "breakfast", market_item_id: "m11" });
+    set({ date: day(3), meal: "breakfast", market_item_id: "m11" });
   }
   return { set, clear, view };
 }
