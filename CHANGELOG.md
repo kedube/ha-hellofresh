@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.17 — 2026-10-14
 - **Week tiles keep their size.** Since 4.16 the week tiles at the top of the Menu, Market and
   Week tabs stretched to fill the row, so a wide window made them long and flat. They're back to
   their earlier width at any window size, all the same width. The row shows as many as fit, with
