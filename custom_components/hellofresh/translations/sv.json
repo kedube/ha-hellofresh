@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Hämta abonnemangsalternativ",
-      "description": "Visar de kassestorlekar detta abonnemang kan byta till (rätter per vecka × portioner), med priser. Ett alternativs handle är det som \"Byt abonnemang\" förväntar sig. Endast läsning.",
+      "description": "Visar de kassestorlekar detta abonnemang kan byta till (rätter per vecka och antal personer), med priser. Ett alternativs handle är det som \"Byt abonnemang\" förväntar sig. Endast läsning.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Byt abonnemang",
-      "description": "Ändra den återkommande kassestorleken (rätter per vecka × portioner). Gäller alla framtida matkassar och ändrar det belopp du faktureras.",
+      "description": "Ändra den återkommande kassestorleken (rätter per vecka och antal personer). Gäller alla framtida matkassar och ändrar det belopp du faktureras.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} rätt för {people}",
           "other": "{count} rätter för {people}"
+        },
+        "people": {
+          "one": "{count} person",
+          "other": "{count} personer"
         },
         "weeks_need_picks": {
           "one": "{count} vecka behöver val av rätter",
@@ -1469,7 +1473,7 @@
         "load_failed": "Det gick inte att läsa in ditt konto.",
         "plan": "Abonnemang",
         "meal_preference": "Måltidspreferens",
-        "servings": "Portioner",
+        "people": "Antal personer",
         "meals_per_box": "Rätter per matkasse",
         "credit": "Kredit",
         "card_on_file": "Registrerat kort",
@@ -1499,8 +1503,7 @@
         "every_future_box": "alla framtida matkassar",
         "box_size": {
           "label": "Matkassens storlek",
-          "hint": "Rätter per vecka och portioner per rätt",
-          "option": "{meals} × {servings}",
+          "hint": "Rätter per vecka och antal personer",
           "change": "Ändra storlek på matkassen",
           "title": "Ändra storlek på matkassen?",
           "body": "Det gäller {every_future_box} och ändrar vad du debiteras. Matkassar vars valfrist har passerat behåller den nuvarande inställningen.",

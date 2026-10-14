@@ -178,8 +178,15 @@ class HelloFreshSelect(HelloFreshCoordinatorEntity, SelectEntity):
         await self._async_load_options()
 
 
+def _box_size_label(meals: int, people: int) -> str:
+    """A box size the way HelloFresh words it: ``3 meals for 2 people``."""
+    meal_word = "meal" if meals == 1 else "meals"
+    people_word = "person" if people == 1 else "people"
+    return f"{meals} {meal_word} for {people} {people_word}"
+
+
 class HelloFreshBoxSizeSelect(HelloFreshSelect):
-    """Recurring box size (meals per week × servings), from the plan's product catalog."""
+    """Recurring box size (meals per week, number of people), from the plan's product catalog."""
 
     async def _async_fetch_options(
         self, subscription: HelloFreshSubscription
@@ -191,9 +198,9 @@ class HelloFreshBoxSizeSelect(HelloFreshSelect):
         for option in options:
             handle = option.get("handle")
             meals = option.get("meals")
-            servings = option.get("servings")
-            if isinstance(meals, int) and isinstance(servings, int):
-                label = f"{meals} meals × {servings} servings"
+            people = option.get("servings")
+            if isinstance(meals, int) and isinstance(people, int):
+                label = _box_size_label(meals, people)
             else:
                 label = str(option.get("name") or handle or "")
             if isinstance(handle, str) and handle:
@@ -209,9 +216,12 @@ class HelloFreshBoxSizeSelect(HelloFreshSelect):
         maintained = raw.get("maintainedSku")
         if isinstance(maintained, str) and maintained:
             return maintained
-        # Fall back to the option whose meal/serving counts match the subscription.
-        wanted = f"{subscription.meals_required} meals × {subscription.servings} servings"
-        return self._handles_by_label.get(wanted)
+        # Fall back to the option whose meal and people counts match the subscription.
+        if isinstance(subscription.meals_required, int) and isinstance(subscription.servings, int):
+            return self._handles_by_label.get(
+                _box_size_label(subscription.meals_required, subscription.servings)
+            )
+        return None
 
     async def _async_write(self, handle: str, subscription: HelloFreshSubscription) -> None:
         await self.coordinator.client.async_change_plan(handle, subscription.subscription_id)

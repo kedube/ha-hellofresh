@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Obtenir les formules disponibles",
-      "description": "Liste les tailles de box vers lesquelles cet abonnement peut basculer (repas par semaine × parts), avec les prix. Le handle d'une option est ce qu'attend \"Changer de formule\". Lecture seule.",
+      "description": "Liste les tailles de box vers lesquelles cet abonnement peut basculer (repas par semaine et nombre de personnes), avec les prix. Le handle d'une option est ce qu'attend \"Changer de formule\". Lecture seule.",
       "fields": {
         "config_entry_id": {
           "name": "Identifiant de configuration",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Changer de formule",
-      "description": "Modifier la taille récurrente de la box (repas par semaine × parts). S'applique à toutes les box futures et modifie le montant facturé.",
+      "description": "Modifier la taille récurrente de la box (repas par semaine et nombre de personnes). S'applique à toutes les box futures et modifie le montant facturé.",
       "fields": {
         "config_entry_id": {
           "name": "Identifiant de configuration",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} repas pour {people}",
           "other": "{count} repas pour {people}"
+        },
+        "people": {
+          "one": "{count} personne",
+          "other": "{count} personnes"
         },
         "weeks_need_picks": {
           "one": "{count} semaine attend votre choix de repas",
@@ -1469,7 +1473,7 @@
         "load_failed": "Impossible de charger votre compte.",
         "plan": "Formule",
         "meal_preference": "Préférence de repas",
-        "servings": "Portions",
+        "people": "Nombre de personnes",
         "meals_per_box": "Repas par box",
         "credit": "Crédit",
         "card_on_file": "Carte enregistrée",
@@ -1499,8 +1503,7 @@
         "every_future_box": "toutes les prochaines box",
         "box_size": {
           "label": "Taille de la box",
-          "hint": "Repas par semaine et portions par repas",
-          "option": "{meals} × {servings}",
+          "hint": "Repas par semaine et nombre de personnes",
           "change": "Changer la taille de la box",
           "title": "Changer la taille de votre box ?",
           "body": "Cela s'applique à {every_future_box} et modifie ce que vous payez. Les box dont la date limite de choix est passée gardent leur réglage actuel.",

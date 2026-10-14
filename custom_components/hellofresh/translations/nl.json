@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Abonnementsopties ophalen",
-      "description": "Toont de boxformaten waarnaar dit abonnement kan overstappen (maaltijden per week × porties), met prijzen. De handle van een optie is wat \"Abonnement wijzigen\" verwacht. Alleen lezen.",
+      "description": "Toont de boxformaten waarnaar dit abonnement kan overstappen (maaltijden per week en aantal personen), met prijzen. De handle van een optie is wat \"Abonnement wijzigen\" verwacht. Alleen lezen.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Abonnement wijzigen",
-      "description": "Het terugkerende boxformaat wijzigen (maaltijden per week × porties). Geldt voor alle toekomstige maaltijdboxen en verandert wat je betaalt.",
+      "description": "Het terugkerende boxformaat wijzigen (maaltijden per week en aantal personen). Geldt voor alle toekomstige maaltijdboxen en verandert wat je betaalt.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} maaltijd voor {people}",
           "other": "{count} maaltijden voor {people}"
+        },
+        "people": {
+          "one": "{count} persoon",
+          "other": "{count} personen"
         },
         "weeks_need_picks": {
           "one": "{count} week wacht op je maaltijdkeuze",
@@ -1469,7 +1473,7 @@
         "load_failed": "Je account kon niet worden geladen.",
         "plan": "Abonnement",
         "meal_preference": "Maaltijdvoorkeur",
-        "servings": "Porties",
+        "people": "Aantal personen",
         "meals_per_box": "Maaltijden per box",
         "credit": "Tegoed",
         "card_on_file": "Opgeslagen kaart",
@@ -1499,8 +1503,7 @@
         "every_future_box": "elke toekomstige box",
         "box_size": {
           "label": "Boxgrootte",
-          "hint": "Maaltijden per week en porties per maaltijd",
-          "option": "{meals} × {servings}",
+          "hint": "Maaltijden per week en aantal personen",
           "change": "Boxgrootte wijzigen",
           "title": "Je boxgrootte wijzigen?",
           "body": "Dit geldt voor {every_future_box} en verandert wat je betaalt. Boxen waarvan de deadline verstreken is, houden hun huidige instelling.",

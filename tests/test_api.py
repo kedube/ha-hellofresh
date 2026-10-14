@@ -5101,10 +5101,10 @@ def test_async_select_meals_returns_false_when_not_downgraded() -> None:
 def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
     """Selecting MORE distinct meals than the plan holds upgrades the cart's product-sku.
 
-    HelloFresh encodes the plan size in the box SKU (``US-CBU-3-2-0`` = 3 meals × 2 servings).
+    HelloFresh encodes the plan size in the box SKU (``US-CBU-3-2-0`` = 3 meals for 2 people).
     Picking a 4th distinct meal on a 3-meal plan must raise the meal digit to ``US-CBU-4-2-0``,
     matching the web app; otherwise the cart endpoint rejects the write with MEAL_SIZE_MISMATCH.
-    The servings digit is unchanged.
+    The people digit is unchanged.
     """
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
@@ -5337,8 +5337,8 @@ def test_box_size_counts_each_portion() -> None:
 def test_cart_write_keeps_the_weeks_own_box() -> None:
     """A week resized for that delivery is written with its own box, not the plan's.
 
-    Here the plan is 3 meals × 2 servings but this week's box is 4 servings; the old lookup
-    took the subscription's SKU first and wrote the week back as a 2-serving box.
+    Here the plan is 3 meals for 2 people but this week's box is for 4 people; the old lookup
+    took the subscription's SKU first and wrote the week back as a box for 2.
     """
     client, requests = _build_select_meals_client()
     week = client._last_account_data.get_week("2026-W26")

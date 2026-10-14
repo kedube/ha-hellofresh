@@ -5,6 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **The plan's size says "people", as HelloFresh does.** The card called the number of people
+  your plan is for "servings": **Servings** on the Account tab, box sizes such as "3 meals × 2
+  servings", and a header that read just "3 meals for 2". It now says **Number of people** and
+  "3 meals for 2 people" in every language, in HelloFresh's own words. A meal you double still
+  shows as 2 servings, as on HelloFresh.
+  - The **Box size** select's options read the same way. An automation that picks a box size by
+    name needs the new wording, such as `3 meals for 2 people`.
+
 ## 4.10 — 2026-10-14
 - **New: the Week tab — plan which day you'll make each meal.** The HelloFresh card has a **Week**
   tab after Recipes. It shows the seven days a box covers, from its delivery day: tap a day to

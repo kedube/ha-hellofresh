@@ -202,7 +202,7 @@ await check("recurring plan change asks first", async () => {
   const page = await open({ view: "account" });
   await page.evaluate(() => {
     const s = window.__card.shadowRoot.querySelector('[data-plan-control="box_size"]');
-    s.value = "4 meals × 2 servings";
+    s.value = "4 meals for 2 people";
     s.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
   });
   await sleep(300);
@@ -210,7 +210,7 @@ await check("recurring plan change asks first", async () => {
   await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-plan"]').click());
   await sleep(600);
   const s = await calls(page, "select.select_option");
-  assert(s.length === 1 && s[0].data.option === "4 meals × 2 servings", JSON.stringify(s));
+  assert(s.length === 1 && s[0].data.option === "4 meals for 2 people", JSON.stringify(s));
   await page.close();
 });
 
@@ -226,6 +226,17 @@ await check("plan change cancel restores the select", async () => {
   await sleep(300);
   const value = await page.evaluate(() => window.__card.shadowRoot.querySelector('[data-plan-control="delivery_day"]').value);
   assert(value === "Monday 8AM - 8PM", value);
+  await page.close();
+});
+
+await check("the plan's size is in people, as HelloFresh words it", async () => {
+  const page = await open({ view: "account" });
+  const sub = await text(page, ".hf-apptitle .hf-sub");
+  assert(/3 meals for 2 people/.test(sub), `subtitle: ${sub}`);
+  const plan = await text(page, ".hf-kv");
+  assert(/Number of people/.test(plan) && !/Servings/.test(plan), `plan: ${plan}`);
+  const shown = await page.evaluate(() => [...window.__card.shadowRoot.querySelector('[data-plan-control="box_size"]').options].map((o) => o.textContent.trim()));
+  assert(shown.includes("3 meals for 2 people") && shown.includes("3 meals for 4 people"), JSON.stringify(shown));
   await page.close();
 });
 
@@ -734,7 +745,9 @@ await check("in Norwegian: the recipe sheet, the delivery details and the accoun
   const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-subtabs button")].map((e) => e.textContent.trim()));
   assert(tabs[0] === "Abonnement og betaling" && tabs[1] === "Matpreferanser" && tabs[2] === "Utgifter", JSON.stringify(tabs));
   const plan = await text(page, ".hf-kv");
-  assert(/Retter per kasse/.test(plan), `plan: ${plan}`);
+  assert(/Retter per kasse/.test(plan) && /Antall personer/.test(plan), `plan: ${plan}`);
+  const sizes = await page.evaluate(() => [...window.__card.shadowRoot.querySelector('[data-plan-control="box_size"]').options].map((o) => o.textContent.trim()));
+  assert(sizes.includes("3 retter for 2 personer"), JSON.stringify(sizes));
   await page.close();
 });
 

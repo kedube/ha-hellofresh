@@ -301,10 +301,10 @@ or the meal's HelloFresh cooking time plus extra time for eating and clean-up.
 
 ![Account › Plan & billing: your plan with its price, credit, card on file and address, upcoming counters, and plan settings for box size and delivery day](../images/card-account.png)
 
-- **Plan & billing** — your plan, meal preference (its full preset name), servings, meals per box,
-  plan price with its shipping and discount split, credit, card on file (with its expiry state),
-  boxes received, account ID and address; **Upcoming** counters, where "Need picks" and "Next
-  skipped" open their week; **Plan settings** to change your **box size** and **delivery day**
+- **Plan & billing** — your plan, meal preference (its full preset name), number of people, meals
+  per box, plan price with its shipping and discount split, credit, card on file (with its expiry
+  state), boxes received, account ID and address; **Upcoming** counters, where "Need picks" and
+  "Next skipped" open their week; **Plan settings** to change your **box size** and **delivery day**
   (this integration's [select entities](entities.md), behind a confirmation — they change every
   future box and the bill); the **Meal presets** reference; and **Integration status** (token
   health, write actions, payload checks, and a **Refresh from HelloFresh** button).

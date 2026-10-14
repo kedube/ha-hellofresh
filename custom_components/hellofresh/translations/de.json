@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Planoptionen abrufen",
-      "description": "Listet die Kochboxgrößen auf, zu denen dieses Abo wechseln kann (Gerichte pro Woche × Portionen), mit Preisen. Der Handle einer Option ist der Wert, den \"Plan ändern\" erwartet. Nur lesend.",
+      "description": "Listet die Kochboxgrößen auf, zu denen dieses Abo wechseln kann (Gerichte pro Woche und Anzahl Personen), mit Preisen. Der Handle einer Option ist der Wert, den \"Plan ändern\" erwartet. Nur lesend.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Plan ändern",
-      "description": "Die wiederkehrende Kochboxgröße ändern (Gerichte pro Woche × Portionen). Betrifft alle künftigen Kochboxen und ändert den berechneten Betrag.",
+      "description": "Die wiederkehrende Kochboxgröße ändern (Gerichte pro Woche und Anzahl Personen). Betrifft alle künftigen Kochboxen und ändert den berechneten Betrag.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} Gericht für {people}",
           "other": "{count} Gerichte für {people}"
+        },
+        "people": {
+          "one": "{count} Person",
+          "other": "{count} Personen"
         },
         "weeks_need_picks": {
           "one": "{count} Woche braucht deine Auswahl",
@@ -1469,7 +1473,7 @@
         "load_failed": "Dein Konto konnte nicht geladen werden.",
         "plan": "Plan",
         "meal_preference": "Essensvorliebe",
-        "servings": "Portionen",
+        "people": "Anzahl Personen",
         "meals_per_box": "Gerichte pro Box",
         "credit": "Guthaben",
         "card_on_file": "Hinterlegte Karte",
@@ -1499,8 +1503,7 @@
         "every_future_box": "alle künftigen Boxen",
         "box_size": {
           "label": "Boxgröße",
-          "hint": "Gerichte pro Woche und Portionen pro Gericht",
-          "option": "{meals} × {servings}",
+          "hint": "Gerichte pro Woche und Anzahl Personen",
           "change": "Boxgröße ändern",
           "title": "Boxgröße ändern?",
           "body": "Das gilt für {every_future_box} und ändert, was dir berechnet wird. Boxen, deren Auswahlfrist abgelaufen ist, behalten ihre aktuelle Einstellung.",

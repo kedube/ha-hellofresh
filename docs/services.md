@@ -79,11 +79,11 @@ Read or change the subscription itself.
 
 ### `hellofresh.get_account_summary`
 
-**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit, servings, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Read-only. Powers the HelloFresh card's header and [Account › Plan & billing](dashboard.md#account).
+**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit, number of people, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Read-only. Powers the HelloFresh card's header and [Account › Plan & billing](dashboard.md#account).
 
 ### `hellofresh.get_plan_options`
 
-**Returns a response.** The box sizes you can switch to (meals per week × servings) with prices. Read-only; pairs with `change_plan`.
+**Returns a response.** The box sizes you can switch to (meals per week and number of people) with prices. Read-only; pairs with `change_plan`.
 
 ### `hellofresh.change_plan`
 

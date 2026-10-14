@@ -1204,7 +1204,7 @@ class HelloFreshCard extends HTMLElement {
       if (s.selected_plan) parts.push(s.selected_plan);
       const meals = Number(s.required_meal_count);
       const people = Number(s.number_of_people);
-      if (meals && people) parts.push(t("card.plan_size", { count: meals, people }));
+      if (meals && people) parts.push(t("card.plan_size", { count: meals, people: t("card.people", { count: people }) }));
       if (s.subscription_status && String(s.subscription_status).toLowerCase() !== "active") {
         parts.push(L.statusLabel(s.subscription_status));
       }

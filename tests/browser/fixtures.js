@@ -691,7 +691,7 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     setState("todo.hellofresh_us_prep_list_week_2", todo["todo.hellofresh_us_prep_list_week_2"].filter((i) => i.status !== "completed").length, { week_id: prepWeeks[1] && prepWeeks[1].week_id });
   };
   refreshTodoStates();
-  setState("select.hellofresh_us_box_size", "3 meals × 2 servings", { options: ["2 meals × 2 servings", "3 meals × 2 servings", "4 meals × 2 servings", "5 meals × 2 servings", "3 meals × 4 servings"] });
+  setState("select.hellofresh_us_box_size", "3 meals for 2 people", { options: ["2 meals for 2 people", "3 meals for 2 people", "4 meals for 2 people", "5 meals for 2 people", "3 meals for 4 people"] });
   setState("select.hellofresh_us_delivery_day", "Monday 8AM - 8PM", { options: ["Monday 8AM - 8PM", "Tuesday 8AM - 8PM", "Wednesday 8AM - 8PM"] });
   setState("sensor.hellofresh_us_access_token_minutes_remaining", 42);
   setState("sensor.hellofresh_us_refresh_token_days_remaining", 26);

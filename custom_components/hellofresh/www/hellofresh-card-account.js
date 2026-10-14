@@ -4,12 +4,12 @@
  * Three tabs, mirroring hellofresh.com's account area:
  *
  *   Plan & billing   — the classic Subscription card's account overview (plan, preference with
- *                      its preset name, price split, credit, card on file, servings, address,
- *                      upcoming counters that jump to their week, the meal-preset reference),
- *                      plus the recurring plan controls that used to need a separate entities
- *                      card (box size, delivery day — via this integration's select entities,
- *                      behind a confirmation because they change every future box and the bill)
- *                      and a small integration-health panel (the old Diagnostics view).
+ *                      its preset name, price split, credit, card on file, number of people,
+ *                      address, upcoming counters that jump to their week, the meal-preset
+ *                      reference), plus the recurring plan controls that used to need a separate
+ *                      entities card (box size, delivery day — via this integration's select
+ *                      entities, behind a confirmation because they change every future box and
+ *                      the bill) and a small integration-health panel (the old Diagnostics view).
  *   Food preferences — the food profile editor (hellofresh-card-profile.js).
  *   Spending         — the classic Cost card: lifetime total, monthly chart, month roll-up and
  *                      recent boxes with vouchers.
@@ -36,16 +36,13 @@ const TABS = [
 // The recurring plan controls (plan.<key>.*): which select entity, and what its confirmation says.
 const PLAN_CONTROLS = ["box_size", "delivery_day"];
 
-// How a plan option reads. The integration names box sizes in English ("3 meals × 2 servings");
+// How a plan option reads. The integration names box sizes in English ("3 meals for 2 people");
 // the card shows them in its own language and still writes the option exactly as it is. Delivery
 // days are HelloFresh's own labels, already in the account's language.
 function planOptionLabel(key, option) {
-  const size = key === "box_size" && /^(\d+) meals × (\d+) servings$/.exec(String(option));
+  const size = key === "box_size" && /^(\d+) meals? for (\d+) (?:people|person)$/.exec(String(option));
   if (!size) return String(option);
-  return t("plan.box_size.option", {
-    meals: t("meals.count", { count: Number(size[1]) }),
-    servings: t("meals.servings", { count: Number(size[2]) }),
-  });
+  return t("card.plan_size", { count: Number(size[1]), people: t("card.people", { count: Number(size[2]) }) });
 }
 
 export class AccountView {
@@ -99,7 +96,7 @@ export class AccountView {
     const cells = [
       [t("account.plan"), s.selected_plan],
       [t("account.meal_preference"), L.preferenceName(s.plan_preference, this.presets)],
-      [t("account.servings"), s.number_of_people],
+      [t("account.people"), s.number_of_people],
       [t("account.meals_per_box"), s.required_meal_count],
       [t("money.plan_price"), price(s.selected_plan_total_price, s.selected_plan_total_price_currency)],
       [t("box.shipping"), shipping == null ? null : price(shipping, s.selected_plan_total_price_currency)],

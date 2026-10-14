@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Hent abonnementsmuligheder",
-      "description": "Viser de kassestørrelser, dette abonnement kan skifte til (retter pr. uge × portioner), med priser. En muligheds handle er det, \"Skift abonnement\" forventer. Kun læsning.",
+      "description": "Viser de kassestørrelser, dette abonnement kan skifte til (retter pr. uge og antal personer), med priser. En muligheds handle er det, \"Skift abonnement\" forventer. Kun læsning.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Skift abonnement",
-      "description": "Skift den faste kassestørrelse (retter pr. uge × portioner). Gælder alle fremtidige måltidskasser og ændrer det beløb, du betaler.",
+      "description": "Skift den faste kassestørrelse (retter pr. uge og antal personer). Gælder alle fremtidige måltidskasser og ændrer det beløb, du betaler.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} ret til {people}",
           "other": "{count} retter til {people}"
+        },
+        "people": {
+          "one": "{count} person",
+          "other": "{count} personer"
         },
         "weeks_need_picks": {
           "one": "{count} uge mangler valg af retter",
@@ -1469,7 +1473,7 @@
         "load_failed": "Kunne ikke indlæse din konto.",
         "plan": "Abonnement",
         "meal_preference": "Måltidspræference",
-        "servings": "Portioner",
+        "people": "Antal personer",
         "meals_per_box": "Retter pr. kasse",
         "credit": "Kredit",
         "card_on_file": "Registreret kort",
@@ -1499,8 +1503,7 @@
         "every_future_box": "alle fremtidige kasser",
         "box_size": {
           "label": "Kassestørrelse",
-          "hint": "Retter pr. uge og portioner pr. ret",
-          "option": "{meals} × {servings}",
+          "hint": "Retter pr. uge og antal personer",
           "change": "Skift kassestørrelse",
           "title": "Skift din kassestørrelse?",
           "body": "Det gælder {every_future_box} og ændrer, hvad du betaler. Kasser, hvis valgfrist er overskredet, beholder den nuværende indstilling.",

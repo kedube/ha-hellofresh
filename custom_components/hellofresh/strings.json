@@ -692,7 +692,7 @@
     },
     "get_plan_options": {
       "name": "Get plan options",
-      "description": "List the box sizes this subscription can switch to (meals per week × servings), with prices. The handle of any option is what Change plan accepts. Read-only.",
+      "description": "List the box sizes this subscription can switch to (meals per week and number of people), with prices. The handle of any option is what Change plan accepts. Read-only.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",
@@ -706,7 +706,7 @@
     },
     "change_plan": {
       "name": "Change plan",
-      "description": "Change the recurring box size (meals per week × servings). Affects all future boxes and changes what you are billed.",
+      "description": "Change the recurring box size (meals per week and number of people). Affects all future boxes and changes what you are billed.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",
@@ -923,6 +923,10 @@
         "plan_size": {
           "one": "{count} meal for {people}",
           "other": "{count} meals for {people}"
+        },
+        "people": {
+          "one": "{count} person",
+          "other": "{count} people"
         },
         "weeks_need_picks": {
           "one": "{count} week needs meal picks",
@@ -1469,7 +1473,7 @@
         "load_failed": "Couldn't load your account.",
         "plan": "Plan",
         "meal_preference": "Meal preference",
-        "servings": "Servings",
+        "people": "Number of people",
         "meals_per_box": "Meals per box",
         "credit": "Credit",
         "card_on_file": "Card on file",
@@ -1499,8 +1503,7 @@
         "every_future_box": "every future box",
         "box_size": {
           "label": "Box size",
-          "hint": "Meals per week and servings per meal",
-          "option": "{meals} × {servings}",
+          "hint": "Meals per week and number of people",
           "change": "Change box size",
           "title": "Change your box size?",
           "body": "This applies to {every_future_box} and changes what you're billed. Boxes past their selection deadline keep their current setting.",

@@ -91,12 +91,42 @@ def test_box_size_select_loads_catalog_and_reports_current_plan() -> None:
 
     _run(entity._async_load_options())
     assert entity.options == [
-        "2 meals × 2 servings",
-        "3 meals × 2 servings",
-        "4 meals × 2 servings",
+        "2 meals for 2 people",
+        "3 meals for 2 people",
+        "4 meals for 2 people",
     ]
     assert entity.available is True
-    assert entity.current_option == "3 meals × 2 servings"
+    assert entity.current_option == "3 meals for 2 people"
+
+
+def test_box_size_options_read_like_hellofresh() -> None:
+    """Options say "people", as HelloFresh's website does ("3 meals for 2 people"), and one
+    person is a person."""
+    client = SimpleNamespace(
+        async_list_plan_options=mock.AsyncMock(
+            return_value=[
+                {"handle": "XX-CBU-2-1-0", "meals": 2, "servings": 1},
+                {"handle": "XX-CBU-3-4-0", "meals": 3, "servings": 4},
+            ]
+        ),
+        async_change_plan=mock.AsyncMock(),
+    )
+    entity = _box_select(client)
+    _run(entity._async_load_options())
+    assert entity.options == ["2 meals for 1 person", "3 meals for 4 people"]
+
+
+def test_box_size_without_a_plan_sku_matches_by_meals_and_people() -> None:
+    client = SimpleNamespace(
+        async_list_plan_options=mock.AsyncMock(return_value=PLAN_OPTIONS),
+        async_change_plan=mock.AsyncMock(),
+    )
+    entity = _box_select(client)
+    entity.coordinator.data.subscriptions[0].raw = {}
+    _run(entity._async_load_options())
+    assert entity.current_option == "3 meals for 2 people"
+    entity.coordinator.data.subscriptions[0].servings = None
+    assert entity.current_option is None
 
 
 def test_box_size_select_writes_the_handle_and_refreshes() -> None:
@@ -107,12 +137,12 @@ def test_box_size_select_writes_the_handle_and_refreshes() -> None:
     entity = _box_select(client)
     _run(entity._async_load_options())
     with mock.patch.object(select_module, "async_delete_write_actions_issue") as cleared:
-        _run(entity.async_select_option("4 meals × 2 servings"))
+        _run(entity.async_select_option("4 meals for 2 people"))
     client.async_change_plan.assert_awaited_once_with("US-CBU-4-2-0", "sub-1")
     entity.coordinator.async_request_refresh.assert_awaited_once()
     cleared.assert_called_once()
     # Re-selecting the current plan is a no-op, not a write.
-    _run(entity.async_select_option("3 meals × 2 servings"))
+    _run(entity.async_select_option("3 meals for 2 people"))
     client.async_change_plan.assert_awaited_once()
 
 
@@ -127,7 +157,7 @@ def test_box_size_select_surfaces_write_failures_as_repairs_issue() -> None:
         mock.patch.object(select_module, "async_create_write_actions_issue") as raised,
         pytest.raises(HomeAssistantError),
     ):
-        _run(entity.async_select_option("2 meals × 2 servings"))
+        _run(entity.async_select_option("2 meals for 2 people"))
     raised.assert_called_once()
     with pytest.raises(HomeAssistantError):
         _run(entity.async_select_option("not an option"))

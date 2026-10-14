@@ -1809,12 +1809,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             extras = self._build_cart_existing_extras(week)
         return await self._async_build_cart_update(week, subscription, selected_meals, extras)
 
-    # HelloFresh box SKUs encode the plan as ``<PREFIX>-<MEALS>-<SERVINGS>-<N>`` (e.g.
-    # ``US-CBU-3-2-0`` is 3 meals × 2 servings). Selecting a different number of meals than the
+    # HelloFresh box SKUs encode the plan as ``<PREFIX>-<MEALS>-<PEOPLE>-<N>`` (e.g.
+    # ``US-CBU-3-2-0`` is 3 meals for 2 people). Selecting a different number of meals than the
     # base plan resizes the box for that week: the cart PUT's ``product-sku`` must carry the
     # matching meal-count digit or the endpoint rejects the write with MEAL_SIZE_MISMATCH. This
     # mirrors the web app, which swaps the digit up (``US-CBU-3-2-0`` → ``US-CBU-4-2-0`` for a 4th
-    # meal) OR down (``US-CBU-2-2-0`` for 2 meals) to match the selection; the servings digit is
+    # meal) OR down (``US-CBU-2-2-0`` for 2 meals) to match the selection; the people digit is
     # unchanged. Both directions are HAR-confirmed against a 3-meal plan. The meal count is the
     # total of the quantities: HelloFresh's Android app sizes the box by it, so a meal at
     # quantity 2 counts twice.
@@ -1837,7 +1837,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
         Resizes the box in either direction (up or down) to match the number of meals selected
         (the total of their quantities), and only rewrites SKUs matching the known
-        ``<prefix>-<meals>-<servings>-<n>``
+        ``<prefix>-<meals>-<people>-<n>``
         box shape; anything else is returned unchanged so we never corrupt an unexpected format.
         """
         match = cls._BOX_SKU_RE.match(product_sku)
@@ -2243,7 +2243,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
         HAR-verified (capture 43): ``GET /gw/api/subscriptions/{id}/product_options``. The
         response nests one entry per product family, each with a ``products`` list whose handles
-        are the plan SKUs (``US-CBU-<meals>-<servings>-0``) accepted by
+        are the plan SKUs (``US-CBU-<meals>-<people>-0``) accepted by
         :meth:`async_change_plan`.
 
         Note this endpoint used to serve ``unifiedPreferences`` and no longer does -- see
