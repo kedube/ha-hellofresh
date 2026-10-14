@@ -1943,6 +1943,13 @@ def test_enrich_subscription_payment_dates_from_orders() -> None:
     ]
     assert subscription.recent_payment_date == date(2026, 6, 4)
     assert subscription.next_payment_date == date(2026, 6, 11)
+    # The diagnostics record of it carries the dates without the subscription id: redaction
+    # goes by key name, and the id used to be the key.
+    attempt = client._debug_trace["payment_attempts"][-1]
+    assert attempt["subscription_payment_dates"] == [
+        {"recent_payment_date": "2026-06-04", "next_payment_date": "2026-06-11"}
+    ]
+    assert subscription.subscription_id not in json.dumps(attempt)
 
 
 def test_summarize_payload_includes_nested_first_item_structure() -> None:

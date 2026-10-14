@@ -55,13 +55,23 @@ export function chosenMeals(week, selection) {
 }
 
 // ---- week strip ----------------------------------------------------------------------------
-// The strip shows a page of weeks (the stylesheet sets how many fit) and its arrows turn a page
-// at a time. Choosing a week on screen moves nothing. The strip goes to the chosen week only when
-// that week is out of view and either changed or the strip has just appeared, and then shows it
-// beside the week before. A strip the user turned away from the chosen week stays where it is.
+// The strip shows a page of weeks (as many as fit) and its arrows turn a page at a time. A strip
+// that has just appeared, or whose view was just switched to, starts at the chosen week; after
+// that it goes to the chosen week only when the choice changes to a week out of view. Either way
+// it shows the chosen week beside the week before. Choosing a week on screen moves nothing, and
+// a strip the user turned away from the chosen week stays where it is.
 
 const stripChips = (strip) => [...strip.querySelectorAll(".hf-weekchip")];
-const stripPage = (strip) => Math.max(1, parseInt(getComputedStyle(strip).getPropertyValue("--hf-week-page"), 10) || 1);
+
+// A page: as many whole chips as fit inside the strip's padding. The chips share one width.
+function stripPage(strip) {
+  const chip = strip.querySelector(".hf-weekchip");
+  if (!chip) return 1;
+  const style = getComputedStyle(strip);
+  const room = strip.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  const gap = parseFloat(getComputedStyle(chip.parentElement).columnGap) || 0;
+  return Math.max(1, Math.floor((room + gap + 0.5) / (chip.getBoundingClientRect().width + gap)));
+}
 const reducedMotion = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
 // Measured against the strip itself: a chip's offsetLeft is relative to the nearest positioned
@@ -109,7 +119,9 @@ export function syncStrip(root, view, week, { entered = false } = {}) {
   const fresh = !strip.hasAttribute("data-scroll-restored");
   const changed = Boolean(week) && view._stripWeek !== week.week_id;
   if (week) view._stripWeek = week.week_id;
-  if (chip && (fresh || entered || changed) && !chipShowing(strip, chip)) {
+  // A new strip starts at the oldest week, which says nothing about where it should be, so it
+  // moves even when the chosen week is somewhere on that first page.
+  if (chip && (fresh || entered || (changed && !chipShowing(strip, chip)))) {
     showStripFrom(strip, stripChips(strip).indexOf(chip) - 1, !(fresh || entered));
   }
   updateStripArrows(strip);

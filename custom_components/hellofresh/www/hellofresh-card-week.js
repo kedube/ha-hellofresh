@@ -125,7 +125,7 @@ export class WeekView {
     return `<div class="hf-weekbar">
         <button class="hf-iconbtn" data-action="strip-page" data-dir="-1"
           aria-label="${ht("week.earlier_weeks")}">${icon("mdi:chevron-left")}</button>
-        <div class="hf-weekstrip" data-scroll-key="planstrip">${chips}</div>
+        <div class="hf-weekstrip" data-scroll-key="planstrip"><div class="hf-weektrack">${chips}</div></div>
         <button class="hf-iconbtn" data-action="strip-page" data-dir="1"
           aria-label="${ht("week.later_weeks")}">${icon("mdi:chevron-right")}</button>
       </div>`;

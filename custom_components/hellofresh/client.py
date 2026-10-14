@@ -2868,8 +2868,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 "path": "/gw/api/customers/me/orders",
                 "status": self._response_status(response),
                 "order_prices_applied": len(price_by_key),
-                "subscription_payment_dates": {
-                    subscription.subscription_id: {
+                # A list in subscription order, not keyed by subscription id: diagnostics
+                # redact by key name, so an id used as a key was published as is.
+                "subscription_payment_dates": [
+                    {
                         "recent_payment_date": (
                             subscription.recent_payment_date.isoformat()
                             if subscription.recent_payment_date
@@ -2882,7 +2884,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                         ),
                     }
                     for subscription in subscriptions
-                },
+                ],
             },
         )
 

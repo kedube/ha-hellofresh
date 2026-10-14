@@ -646,26 +646,27 @@ export const CARD_STYLES = `
   }
 
   /* ---- week strip ----------------------------------------------------------------------- */
-  /* A page of weeks fills the strip: --hf-week-page chips share its width, as many as fit at
-     about 96px each, up to 7. The rest wait off either side, and the arrows turn a page at a
-     time (hellofresh-card-ui.js). The padding keeps a chip's focus ring inside the scroller. */
-  .hf-weekbar { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; container: hfweekbar / inline-size; }
+  /* Week chips keep their size however wide the strip is: the track's columns all take the
+     widest chip's width, never under 92px (what they were before the strip turned pages) nor
+     over 140px. As many as fit show at once, the rest wait off either side behind a soft edge,
+     and the arrows turn a page at a time (hellofresh-card-ui.js). The padding clears a chip at
+     the start of a page, and its focus ring, of the fade. */
+  .hf-weekbar { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; }
   .hf-weekstrip {
-    --hf-week-page: 7;
-    flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px;
-    scroll-snap-type: x proximity; scroll-padding-inline: 4px; scrollbar-width: none;
+    flex: 1; display: flex; overflow-x: auto; padding: 8px 16px;
+    scroll-snap-type: x proximity; scroll-padding-inline: 16px; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
   }
-  @container hfweekbar (max-width: 803px) { .hf-weekstrip { --hf-week-page: 6; } }
-  @container hfweekbar (max-width: 699px) { .hf-weekstrip { --hf-week-page: 5; } }
-  @container hfweekbar (max-width: 595px) { .hf-weekstrip { --hf-week-page: 4; } }
-  @container hfweekbar (max-width: 491px) { .hf-weekstrip { --hf-week-page: 3; } }
-  @container hfweekbar (max-width: 387px) { .hf-weekstrip { --hf-week-page: 2; } }
   .hf-weekstrip::-webkit-scrollbar { display: none; }
+  .hf-weektrack {
+    flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(92px, 1fr);
+    gap: 8px; width: max-content;
+  }
   .hf-weekchip {
-    position: relative; flex: none; scroll-snap-align: start;
-    width: calc((100% - (var(--hf-week-page) - 1) * 8px) / var(--hf-week-page));
+    position: relative; scroll-snap-align: start;
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    min-width: 0; padding: 8px 12px 9px; border-radius: 14px; cursor: pointer;
+    max-width: 140px; padding: 8px 12px 9px; border-radius: 14px; cursor: pointer;
     border: 1px solid var(--hf-border); background: var(--hf-surface); text-align: left;
   }
   .hf-weekchip:hover { border-color: color-mix(in srgb, var(--hf-accent) 45%, var(--hf-border)); }

@@ -161,9 +161,10 @@ await check("pending edits survive switching tabs and weeks", async () => {
 });
 
 // The week strip shows a page of weeks: the chosen one (the next box at first) with the week
-// before it, older weeks a page or more away. Choosing a week on screen keeps the strip still
-// (each re-render used to glide back from the oldest week), and the arrows turn whole pages
-// without changing the chosen week.
+// before it, older weeks a page or more away. Its chips keep one width at any window size, and a
+// page is as many as fit. Choosing a week on screen keeps the strip still (each re-render used
+// to glide back from the oldest week), and the arrows turn whole pages without changing the
+// chosen week.
 await check("week strip: a page of weeks; choosing one keeps it still; the arrows turn pages", async () => {
   const strip = (page) =>
     page.evaluate(() => {
@@ -175,22 +176,35 @@ await check("week strip: a page of weeks; choosing one keeps it still; the arrow
         const r = c.getBoundingClientRect();
         return r.left >= box.left - 1 && r.right <= box.right + 1;
       });
+      const widths = chips.map((c) => Math.round(c.getBoundingClientRect().width * 10) / 10);
+      const style = getComputedStyle(el);
+      const room = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const gap = parseFloat(getComputedStyle(chips[0].parentElement).columnGap);
       const [earlier, later] = root.querySelectorAll('[data-action="strip-page"]');
       return {
         left: Math.round(el.scrollLeft),
         first: chips.indexOf(shown[0]),
         shown: shown.length,
+        fits: Math.floor((room + gap + 0.5) / (widths[0] + gap)),
+        widths: [...new Set(widths)],
         selected: chips.findIndex((c) => c.getAttribute("aria-pressed") === "true"),
         count: chips.length,
         earlier: earlier.disabled,
         later: later.disabled,
       };
     });
-  for (const [width, size] of [[1400, 7], [390, 2]]) {
+  let chipWidth;
+  for (const width of [1400, 390]) {
     const page = await open({ view: "menu" }, [width, 900]);
     const at = `${width}px`;
     let s = await strip(page);
-    assert(s.shown === size, `${at}: ${s.shown} weeks in view, not ${size}`);
+    // One width for every chip, at least the 92px they had before the strip turned pages, and
+    // the same in a wide window as in a narrow one: they used to stretch to fill the strip.
+    assert(s.widths.length === 1 && s.widths[0] >= 92, `${at}: chip widths ${s.widths.join(", ")}`);
+    chipWidth ??= s.widths[0];
+    assert(s.widths[0] === chipWidth, `${at}: chips ${s.widths[0]}px wide, ${chipWidth}px in the first window`);
+    const size = s.fits;
+    assert(size >= 2 && s.shown === size, `${at}: ${s.shown} weeks in view, ${size} fit`);
     assert(s.first === Math.max(0, Math.min(s.selected - 1, s.count - size)), `${at}: page ${JSON.stringify(s)}`);
 
     // Choosing the other week in view: not a frame of movement.

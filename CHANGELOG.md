@@ -5,6 +5,15 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Week tiles keep their size.** Since 4.16 the week tiles at the top of the Menu, Market and
+  Week tabs stretched to fill the row, so a wide window made them long and flat. They're back to
+  their earlier width at any window size, all the same width. The row shows as many as fit, with
+  a soft edge where more weeks wait, and the arrows turn that many at a time.
+- **Diagnostics leave out your subscription number.** A diagnostics download listed your
+  payment dates under your subscription's number, which the download's redaction missed because
+  it hides values by name. The dates are now listed without it.
+
 ## 4.16 — 2026-10-14
 - **Weekly discounts.** HelloFresh refused the weekly-discount lookup ("validation failed"), so
   the Next box discount sensor stayed unknown. The lookup was missing the plan, country and
