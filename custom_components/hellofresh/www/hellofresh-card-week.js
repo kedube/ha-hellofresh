@@ -94,14 +94,13 @@ export class WeekView {
       ${this._tray(week, plan)}${this._days(week, plan)}`;
   }
 
-  afterRender(root) {
-    UI.centerStrip(root, this, this._week());
+  afterRender(root, context) {
+    UI.syncStrip(root, this, this._week(), context);
   }
 
   // The Menu's week chips, counting what's planned rather than the box's state.
   _strip(weeks, selected, plan) {
     const today = L.isoDay(new Date());
-    const index = weeks.indexOf(selected);
     const chips = weeks
       .map((w) => {
         const now = L.planDays(w).includes(today);
@@ -119,16 +118,16 @@ export class WeekView {
             ${now ? `<span class="hf-wcnow">${ht("weekplan.this_week")}</span>` : ""}
             <span class="hf-wcday">${esc(L.fmtWeekday(w.delivery_date))}</span>
             <span class="hf-wcdate">${esc(L.fmtDateShort(w.delivery_date))}</span>
-            <span class="hf-wcstate"><span class="hf-wcdot ${dot}"></span>${esc(label)}</span>
+            <span class="hf-wcstate"><span class="hf-wcdot ${dot}"></span><span class="hf-wclabel">${esc(label)}</span></span>
           </button>`;
       })
       .join("");
     return `<div class="hf-weekbar">
-        <button class="hf-iconbtn" data-action="week-step" data-step="-1" aria-label="${ht("week.previous_week")}"
-          ${index <= 0 ? "disabled" : ""}>${icon("mdi:chevron-left")}</button>
+        <button class="hf-iconbtn" data-action="strip-page" data-dir="-1"
+          aria-label="${ht("week.earlier_weeks")}">${icon("mdi:chevron-left")}</button>
         <div class="hf-weekstrip" data-scroll-key="planstrip">${chips}</div>
-        <button class="hf-iconbtn" data-action="week-step" data-step="1" aria-label="${ht("week.next_week")}"
-          ${index >= weeks.length - 1 ? "disabled" : ""}>${icon("mdi:chevron-right")}</button>
+        <button class="hf-iconbtn" data-action="strip-page" data-dir="1"
+          aria-label="${ht("week.later_weeks")}">${icon("mdi:chevron-right")}</button>
       </div>`;
   }
 
@@ -287,14 +286,9 @@ export class WeekView {
         this.weekId = el.getAttribute("data-week-id");
         card.renderView();
         break;
-      case "week-step": {
-        const index = weeks.indexOf(this._week(weeks)) + (Number(el.getAttribute("data-step")) || 0);
-        if (weeks[index]) {
-          this.weekId = weeks[index].week_id;
-          card.renderView();
-        }
+      case "strip-page":
+        UI.pageStrip(el, Number(el.getAttribute("data-dir")) || 0);
         break;
-      }
       case "plan-slot":
         this._openSlot(el.getAttribute("data-day"), el.getAttribute("data-meal"));
         break;

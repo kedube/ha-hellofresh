@@ -5,6 +5,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **A steadier week strip.** Choosing a week in the Menu, Market or Week tab made the row of
+  weeks jump back to the oldest week and scroll all the way across again. Choosing a week you can
+  see now leaves the row still. The row shows as many weeks as fit, up to seven, with your next box
+  and the week before it in view, and its arrows turn a page of weeks at a time. Older weeks are
+  still a swipe or an arrow away.
+
 ## 4.15 — 2026-10-14
 - **No error after updating with Home Assistant open** ([#15](https://github.com/kedube/ha-hellofresh/issues/15)).
   Updating the integration and restarting Home Assistant while a browser tab had used the

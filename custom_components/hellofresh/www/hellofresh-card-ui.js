@@ -54,23 +54,73 @@ export function chosenMeals(week, selection) {
   return out;
 }
 
-// Keep the chosen week visible in the strip — but only when the chosen week changed, so a user
-// scrolling the strip isn't yanked back on every re-render.
-export function centerStrip(root, view, week) {
-  const strip = root.querySelector(".hf-weekstrip");
-  const chip = strip && strip.querySelector('[aria-pressed="true"]');
-  if (!chip || !week) return;
-  const changed = view._stripWeek !== week.week_id;
-  const first = view._stripWeek === null;
-  view._stripWeek = week.week_id;
-  // Measured against the strip itself: a chip's offsetLeft is relative to the nearest
-  // positioned ancestor, which is the card, not the scroller.
+// ---- week strip ----------------------------------------------------------------------------
+// The strip shows a page of weeks (the stylesheet sets how many fit) and its arrows turn a page
+// at a time. Choosing a week on screen moves nothing. The strip goes to the chosen week only when
+// that week is out of view and either changed or the strip has just appeared, and then shows it
+// beside the week before. A strip the user turned away from the chosen week stays where it is.
+
+const stripChips = (strip) => [...strip.querySelectorAll(".hf-weekchip")];
+const stripPage = (strip) => Math.max(1, parseInt(getComputedStyle(strip).getPropertyValue("--hf-week-page"), 10) || 1);
+const reducedMotion = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+// Measured against the strip itself: a chip's offsetLeft is relative to the nearest positioned
+// ancestor, which is the card, not the scroller.
+function chipShowing(strip, chip) {
   const s = strip.getBoundingClientRect();
   const c = chip.getBoundingClientRect();
-  const visible = c.left >= s.left + 16 && c.right <= s.right - 16;
-  if (!changed && visible) return;
-  const delta = c.left - s.left - (strip.clientWidth - c.width) / 2;
-  strip.scrollTo({ left: Math.max(0, strip.scrollLeft + delta), behavior: changed && !first ? "smooth" : "instant" });
+  return c.left >= s.left - 1 && c.right <= s.right + 1;
+}
+
+// The first chip wholly in view.
+function firstShowing(strip) {
+  const left = strip.getBoundingClientRect().left;
+  const index = stripChips(strip).findIndex((chip) => chip.getBoundingClientRect().left >= left - 1);
+  return Math.max(0, index);
+}
+
+// Scroll so the page starts at chip `index` (kept within the weeks there are).
+function showStripFrom(strip, index, smooth) {
+  const chips = stripChips(strip);
+  if (!chips.length) return;
+  const chip = chips[Math.min(Math.max(0, index), Math.max(0, chips.length - stripPage(strip)))];
+  const pad = parseFloat(getComputedStyle(strip).paddingLeft) || 0;
+  const left = chip.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft - pad;
+  strip.scrollTo({
+    left: Math.min(Math.max(0, left), strip.scrollWidth - strip.clientWidth),
+    behavior: smooth && !reducedMotion() ? "smooth" : "instant",
+  });
+}
+
+function updateStripArrows(strip) {
+  const bar = strip.closest(".hf-weekbar");
+  if (!bar) return;
+  const [earlier, later] = bar.querySelectorAll('[data-action="strip-page"]');
+  if (earlier) earlier.disabled = strip.scrollLeft <= 1;
+  if (later) later.disabled = strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1;
+}
+
+// After a render. `entered`: the view was just switched to.
+export function syncStrip(root, view, week, { entered = false } = {}) {
+  const strip = root.querySelector(".hf-weekstrip");
+  if (!strip) return;
+  const chip = strip.querySelector('[aria-pressed="true"]');
+  // No position carried over from the last render: the strip starts at the oldest week.
+  const fresh = !strip.hasAttribute("data-scroll-restored");
+  const changed = Boolean(week) && view._stripWeek !== week.week_id;
+  if (week) view._stripWeek = week.week_id;
+  if (chip && (fresh || entered || changed) && !chipShowing(strip, chip)) {
+    showStripFrom(strip, stripChips(strip).indexOf(chip) - 1, !(fresh || entered));
+  }
+  updateStripArrows(strip);
+  strip.addEventListener("scroll", () => updateStripArrows(strip), { passive: true });
+}
+
+// An arrow beside the strip: the page before (-1) or after (1).
+export function pageStrip(arrow, direction) {
+  const bar = arrow.closest(".hf-weekbar");
+  const strip = bar && bar.querySelector(".hf-weekstrip");
+  if (strip) showStripFrom(strip, firstShowing(strip) + direction * stripPage(strip), true);
 }
 
 // A row of meal thumbnails ("+N" when more), or an empty-state line.

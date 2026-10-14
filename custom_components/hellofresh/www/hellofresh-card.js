@@ -1143,11 +1143,14 @@ class HelloFreshCard extends HTMLElement {
     const main = this._shell.main;
     const view = this._activeView();
     const ui = this._captureUi(main);
+    // A view rendered right after another one was showing (a tab switch, the first render).
+    const entered = this._renderedView !== view;
+    this._renderedView = view;
     this._renderedEditable = this._currentEditability();
     main.innerHTML = view.render();
     main.classList.toggle("reloading", this._loading && !this._quietLoad);
     this._restoreUi(main, ui);
-    if (view.afterRender) view.afterRender(main);
+    if (view.afterRender) view.afterRender(main, { entered });
     this._renderBoxBar();
   }
 
@@ -1189,8 +1192,10 @@ class HelloFreshCard extends HTMLElement {
     for (const el of root.querySelectorAll("[data-scroll-key]")) {
       const saved = state.scroll[el.getAttribute("data-scroll-key")];
       if (saved) {
-        el.scrollLeft = saved[0];
-        el.scrollTop = saved[1];
+        // At once: the element is new and starts at its beginning, so a smooth scroll would
+        // glide back from there after every re-render.
+        el.scrollTo({ left: saved[0], top: saved[1], behavior: "instant" });
+        el.setAttribute("data-scroll-restored", "");
       }
     }
     if (!state.focusKey) return;

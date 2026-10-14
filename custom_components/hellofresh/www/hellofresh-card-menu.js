@@ -334,7 +334,6 @@ export class BoxStore {
 function renderWeekStrip(card, selected) {
   const weeks = card.weeks;
   const next = L.nextBoxWeek(weeks);
-  const index = weeks.indexOf(selected);
   const chips = weeks
     .map((w) => {
       const state = L.weekState(w);
@@ -349,16 +348,17 @@ function renderWeekStrip(card, selected) {
           ${dirty ? `<span class="hf-wcdirty" title="${ht("box.unsaved_changes")}"></span>` : ""}
           <span class="hf-wcday">${esc(L.fmtWeekday(w.delivery_date))}</span>
           <span class="hf-wcdate">${esc(L.fmtDateShort(w.delivery_date))}</span>
-          <span class="hf-wcstate"><span class="hf-wcdot ${state}"></span>${esc(label)}</span>
+          <span class="hf-wcstate"><span class="hf-wcdot ${state}"></span><span class="hf-wclabel">${esc(label)}</span></span>
         </button>`;
     })
     .join("");
+  // The arrows turn the strip a page at a time; UI.syncStrip disables one at its end.
   return `<div class="hf-weekbar">
-      <button class="hf-iconbtn" data-action="week-step" data-step="-1" aria-label="${ht("week.previous_week")}"
-        ${index <= 0 ? "disabled" : ""}>${icon("mdi:chevron-left")}</button>
+      <button class="hf-iconbtn" data-action="strip-page" data-dir="-1"
+        aria-label="${ht("week.earlier_weeks")}">${icon("mdi:chevron-left")}</button>
       <div class="hf-weekstrip" data-scroll-key="weekstrip">${chips}</div>
-      <button class="hf-iconbtn" data-action="week-step" data-step="1" aria-label="${ht("week.next_week")}"
-        ${index >= weeks.length - 1 ? "disabled" : ""}>${icon("mdi:chevron-right")}</button>
+      <button class="hf-iconbtn" data-action="strip-page" data-dir="1"
+        aria-label="${ht("week.later_weeks")}">${icon("mdi:chevron-right")}</button>
     </div>`;
 }
 
@@ -476,21 +476,14 @@ function searchBox(key, value, placeholder) {
     </label>`;
 }
 
-function stepSelectedWeek(card, delta) {
-  const weeks = card.weeks || [];
-  const idx = weeks.findIndex((w) => w.week_id === card.selectedWeekId);
-  const next = weeks[idx + delta];
-  if (next) card.selectWeek(next.week_id);
-}
-
 // Actions both week views handle identically. Returns true when handled.
 function handleWeekAction(card, view, week, action, el) {
   switch (action) {
     case "select-week":
       card.selectWeek(el.getAttribute("data-week-id"));
       return true;
-    case "week-step":
-      stepSelectedWeek(card, Number(el.getAttribute("data-step")) || 0);
+    case "strip-page":
+      UI.pageStrip(el, Number(el.getAttribute("data-dir")) || 0);
       return true;
     case "goto-kind":
       card.navigate(el.getAttribute("data-view"));
@@ -697,8 +690,8 @@ export class MealsView {
     )}${this._renderBody(week)}`;
   }
 
-  afterRender(root) {
-    UI.centerStrip(root, this, this.card.selectedWeek());
+  afterRender(root, context) {
+    UI.syncStrip(root, this, this.card.selectedWeek(), context);
   }
 
   _renderBody(week) {
@@ -1281,8 +1274,8 @@ export class MarketView {
     )}${this._renderBody(week)}`;
   }
 
-  afterRender(root) {
-    UI.centerStrip(root, this, this.card.selectedWeek());
+  afterRender(root, context) {
+    UI.syncStrip(root, this, this.card.selectedWeek(), context);
   }
 
   _renderBody(week) {

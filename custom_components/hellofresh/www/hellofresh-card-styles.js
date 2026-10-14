@@ -646,27 +646,34 @@ export const CARD_STYLES = `
   }
 
   /* ---- week strip ----------------------------------------------------------------------- */
-  .hf-weekbar { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; }
+  /* A page of weeks fills the strip: --hf-week-page chips share its width, as many as fit at
+     about 96px each, up to 7. The rest wait off either side, and the arrows turn a page at a
+     time (hellofresh-card-ui.js). The padding keeps a chip's focus ring inside the scroller. */
+  .hf-weekbar { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; container: hfweekbar / inline-size; }
   .hf-weekstrip {
-    flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 8px 2px 8px;
-    scroll-snap-type: x proximity; scrollbar-width: none; scroll-behavior: smooth;
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
-    mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+    --hf-week-page: 7;
+    flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px;
+    scroll-snap-type: x proximity; scroll-padding-inline: 4px; scrollbar-width: none;
   }
+  @container hfweekbar (max-width: 803px) { .hf-weekstrip { --hf-week-page: 6; } }
+  @container hfweekbar (max-width: 699px) { .hf-weekstrip { --hf-week-page: 5; } }
+  @container hfweekbar (max-width: 595px) { .hf-weekstrip { --hf-week-page: 4; } }
+  @container hfweekbar (max-width: 491px) { .hf-weekstrip { --hf-week-page: 3; } }
+  @container hfweekbar (max-width: 387px) { .hf-weekstrip { --hf-week-page: 2; } }
   .hf-weekstrip::-webkit-scrollbar { display: none; }
-  .hf-weekstrip > :first-child { margin-left: 14px; }
-  .hf-weekstrip > :last-child { margin-right: 14px; }
   .hf-weekchip {
-    position: relative; flex: none; scroll-snap-align: center;
+    position: relative; flex: none; scroll-snap-align: start;
+    width: calc((100% - (var(--hf-week-page) - 1) * 8px) / var(--hf-week-page));
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    min-width: 92px; padding: 8px 12px 9px; border-radius: 14px; cursor: pointer;
+    min-width: 0; padding: 8px 12px 9px; border-radius: 14px; cursor: pointer;
     border: 1px solid var(--hf-border); background: var(--hf-surface); text-align: left;
   }
   .hf-weekchip:hover { border-color: color-mix(in srgb, var(--hf-accent) 45%, var(--hf-border)); }
   .hf-weekchip .hf-wcday { font-size: 0.68em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hf-muted); }
   .hf-weekchip .hf-wcdate { font-size: 0.98em; font-weight: 800; }
-  .hf-weekchip .hf-wcstate { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72em; font-weight: 600; color: var(--hf-muted); }
-  .hf-weekchip .hf-wcdot { width: 7px; height: 7px; border-radius: 50%; background: var(--hf-muted); }
+  .hf-weekchip .hf-wcstate { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; font-size: 0.72em; font-weight: 600; color: var(--hf-muted); }
+  .hf-weekchip .hf-wclabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hf-weekchip .hf-wcdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--hf-muted); }
   .hf-weekchip .hf-wcdot.ready, .hf-weekchip .hf-wcdot.delivered { background: var(--hf-lime); }
   .hf-weekchip .hf-wcdot.needs { background: #f59e0b; }
   .hf-weekchip .hf-wcdot.shipping { background: #3b82f6; }

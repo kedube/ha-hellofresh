@@ -152,11 +152,95 @@ await check("pending edits survive switching tabs and weeks", async () => {
   await click(page, '[data-action="nav"][data-view="overview"]', 500);
   assert(await q(page, ".hf-hero .hf-notice.tone-info"), "overview shows unsaved notice");
   await click(page, '[data-action="nav"][data-view="menu"]', 500);
-  await click(page, '[data-action="week-step"][data-step="1"]', 500);
-  await click(page, '[data-action="week-step"][data-step="-1"]', 500);
+  const week = await page.evaluate(() => window.__card.selectedWeekId);
+  await click(page, '.hf-weekchip[aria-pressed="true"] + .hf-weekchip', 500);
+  await click(page, `.hf-weekchip[data-week-id="${week}"]`, 500);
   assert(/4 of 3 meals/.test(await text(page, ".js-boxbar")), "still 4 meals");
   assert(await q(page, ".hf-weekchip .hf-wcdirty"), "unsaved dot on chip");
   await page.close();
+});
+
+// The week strip shows a page of weeks: the chosen one (the next box at first) with the week
+// before it, older weeks a page or more away. Choosing a week on screen keeps the strip still
+// (each re-render used to glide back from the oldest week), and the arrows turn whole pages
+// without changing the chosen week.
+await check("week strip: a page of weeks; choosing one keeps it still; the arrows turn pages", async () => {
+  const strip = (page) =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const el = root.querySelector(".hf-weekstrip");
+      const box = el.getBoundingClientRect();
+      const chips = [...el.querySelectorAll(".hf-weekchip")];
+      const shown = chips.filter((c) => {
+        const r = c.getBoundingClientRect();
+        return r.left >= box.left - 1 && r.right <= box.right + 1;
+      });
+      const [earlier, later] = root.querySelectorAll('[data-action="strip-page"]');
+      return {
+        left: Math.round(el.scrollLeft),
+        first: chips.indexOf(shown[0]),
+        shown: shown.length,
+        selected: chips.findIndex((c) => c.getAttribute("aria-pressed") === "true"),
+        count: chips.length,
+        earlier: earlier.disabled,
+        later: later.disabled,
+      };
+    });
+  for (const [width, size] of [[1400, 7], [390, 2]]) {
+    const page = await open({ view: "menu" }, [width, 900]);
+    const at = `${width}px`;
+    let s = await strip(page);
+    assert(s.shown === size, `${at}: ${s.shown} weeks in view, not ${size}`);
+    assert(s.first === Math.max(0, Math.min(s.selected - 1, s.count - size)), `${at}: page ${JSON.stringify(s)}`);
+
+    // Choosing the other week in view: not a frame of movement.
+    const lefts = await page.evaluate(async () => {
+      const root = window.__card.shadowRoot;
+      const el = root.querySelector(".hf-weekstrip");
+      const box = el.getBoundingClientRect();
+      const other = [...el.querySelectorAll('.hf-weekchip:not([aria-pressed="true"])')].find((c) => {
+        const r = c.getBoundingClientRect();
+        return r.left >= box.left - 1 && r.right <= box.right + 1;
+      });
+      other.click();
+      const out = [];
+      for (let i = 0; i < 30; i += 1) {
+        await new Promise((r) => requestAnimationFrame(r));
+        out.push(Math.round(root.querySelector(".hf-weekstrip").scrollLeft));
+      }
+      return out;
+    });
+    assert(new Set([s.left, ...lefts]).size === 1, `${at}: the strip moved: ${s.left} then ${lefts.join(" ")}`);
+    const chosen = (await strip(page)).selected;
+    assert(chosen !== s.selected, `${at}: the click chose the other week`);
+
+    // Earlier pages, a page at a time, down to the first; the chosen week stays chosen.
+    for (let first = s.first; first > 0; ) {
+      await click(page, '[data-action="strip-page"][data-dir="-1"]', 800);
+      s = await strip(page);
+      first = Math.max(0, first - size);
+      assert(s.first === first && s.shown === size, `${at}: earlier page ${JSON.stringify(s)}, expected ${first}`);
+      assert(s.selected === chosen, `${at}: paging changed the chosen week`);
+    }
+    assert(s.earlier && !s.later, `${at}: on the first page only "later" is on`);
+    await click(page, '[data-action="strip-page"][data-dir="1"]', 800);
+    s = await strip(page);
+    assert(s.first === Math.min(size, s.count - size), `${at}: later page ${JSON.stringify(s)}`);
+
+    // A re-render keeps the page the user turned to.
+    await page.evaluate(() => window.__card.renderView());
+    assert((await strip(page)).first === s.first, `${at}: a re-render moved the strip`);
+
+    // A week chosen elsewhere, out of view, brings the strip to it: the last page.
+    await page.evaluate(() => {
+      const chips = window.__card.shadowRoot.querySelectorAll(".hf-weekchip");
+      window.__card.selectWeek(chips[chips.length - 1].getAttribute("data-week-id"));
+    });
+    await sleep(800);
+    s = await strip(page);
+    assert(s.selected === s.count - 1 && s.first === s.count - size && s.later, `${at}: ${JSON.stringify(s)}`);
+    await page.close();
+  }
 });
 
 await check("skip asks first, then skips; unskip is immediate", async () => {
