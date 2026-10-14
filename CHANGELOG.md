@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.11 — 2026-10-14
 - **The plan's size says "people", as HelloFresh does.** The card called the number of people
   your plan is for "servings": **Servings** on the Account tab, box sizes such as "3 meals × 2
   servings", and a header that read just "3 meals for 2". It now says **Number of people** and
