@@ -191,7 +191,7 @@ def _heading_anchors(text: str) -> set[str]:
 DOCS = [
     "README.md",
     "CONTRIBUTING.md",
-    "docs/HELLOFRESH_API.md",
+    "docs/hellofresh-api.md",
     "docs/entities.md",
     "docs/dashboard.md",
     "docs/services.md",

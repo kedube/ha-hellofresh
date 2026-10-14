@@ -80,10 +80,12 @@ roll-ups — so change them there deliberately, not by accident.
   - [`docs/dashboard.md`](docs/dashboard.md) — the HelloFresh card, section by section, its options, and moving from the
     classic cards it replaced.
   - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
-  - [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md) — the endpoint and normalization reference.
-    This one is for contributors rather than users: payload shapes, why each endpoint is called,
-    and the reasoning behind the merge order. Read it before changing anything in `client.py` or
-    `normalizers.py`.
+  - [`docs/hellofresh-api.md`](docs/hellofresh-api.md) — what is known about HelloFresh's API: each
+    endpoint, what it takes and returns, and what isn't known yet. This one is for contributors
+    rather than users. Read it before changing anything in `client.py` or `normalizers.py`, and
+    keep it to facts about the API. Investigation notes, ideas and anything unconfirmed go in a
+    local `docs/hellofresh-api-findings.md`, which git ignores; move a fact into the reference
+    once it is confirmed.
 
   `tests/test_repo_consistency.py` checks that every relative Markdown link resolves to a real file
   and heading, and that the README stays under 500 lines — if that trips, move the newest reference

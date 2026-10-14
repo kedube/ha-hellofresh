@@ -5,6 +5,11 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **A new reference for HelloFresh's API.** [docs/hellofresh-api.md](docs/hellofresh-api.md)
+  describes each endpoint, what it takes and what it returns, and what isn't known yet. It
+  replaces `HELLOFRESH_API.md` and `ANDROID_APP_FINDINGS.md`.
+
 ## 4.11 — 2026-10-14
 - **The plan's size says "people", as HelloFresh does.** The card called the number of people
   your plan is for "servings": **Servings** on the Account tab, box sizes such as "3 meals × 2
@@ -33,7 +38,7 @@ version heading and publishes it as the release's Highlights.
   - Dashboard cards with their own `views:` list show Week only once you add `week` to it.
 - **Fixes from comparing the integration with HelloFresh's Android app.** HelloFresh's own app
   uses the same services, so reading it showed where the integration misread them.
-  [ANDROID_APP_FINDINGS.md](docs/ANDROID_APP_FINDINGS.md) has the details.
+  [docs/hellofresh-api.md](docs/hellofresh-api.md) describes the API.
   - **Skipped weeks are recognized as skipped.** HelloFresh marks a skipped week only as
     "paused", which the integration didn't read. The **Skip next selectable delivery week** switch
     showed off for a skipped week and couldn't unskip it, skipped weeks counted as upcoming
@@ -674,7 +679,7 @@ version heading and publishes it as the release's Highlights.
 - The test fixtures in `tests/test_api.py` use the bare spelling, so they did not exercise the
   real format and every test passed while the feature was inert in production. The actual
   payload shape is now documented in
-  [docs/HELLOFRESH_API.md](docs/HELLOFRESH_API.md#recipe-detail-gwrecipesrecipesid), with
+  [docs/hellofresh-api.md](docs/hellofresh-api.md#recipe), with
   regression tests using the live spelling.
 
 ## 2.79 — 2026-08-21
@@ -788,7 +793,7 @@ version heading and publishes it as the release's Highlights.
   instead of buried in a 24-item bullet list.
 - The densest bullets were split into sub-lists — the Schedule card's timeline entry was a single
   242-word sentence; nothing now exceeds 140 words.
-- `HELLOFRESH_API.md` moved to [`docs/HELLOFRESH_API.md`](docs/HELLOFRESH_API.md). At 157 KB it was
+- `HELLOFRESH_API.md` moved to `docs/HELLOFRESH_API.md`. At 157 KB it was
   the largest file in the repo root and is contributor reference rather than user documentation, so
   it now sits with the other reference docs. `CHANGELOG.md`, `CONTRIBUTING.md` and `QUALITY_SCALE.md`
   stay at the root: the release workflow reads `CHANGELOG.md` by path, and GitHub only links

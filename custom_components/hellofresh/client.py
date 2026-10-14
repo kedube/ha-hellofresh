@@ -2369,7 +2369,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         The web app changes the standing delivery day through the subscription PATCH above.
         HelloFresh's Android app uses ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails``
         instead, which appears in none of the web captures; it is the fallback for when the
-        PATCH is rejected (see docs/HELLOFRESH_API.md, Change recurring delivery weekday).
+        PATCH is rejected (see docs/hellofresh-api.md, Change the delivery day).
 
         Two properties of the verified response are worth knowing, both pinned by tests:
 

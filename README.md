@@ -459,7 +459,7 @@ Tips:
 
 Logs appear in **Settings → System → Logs** (and in `config/home-assistant.log`).
 
-For lower-level endpoint details and normalization notes, see [docs/HELLOFRESH_API.md](docs/HELLOFRESH_API.md).
+HelloFresh's API itself is described in [docs/hellofresh-api.md](docs/hellofresh-api.md).
 
 ## Development
 
