@@ -22,6 +22,44 @@ version heading and publishes it as the release's Highlights.
   - The plan is kept in Home Assistant (nothing is sent to HelloFresh) and shared by every device.
     New services `get_meal_plan`, `set_planned_meal` and `clear_planned_meal` read and change it.
   - Dashboard cards with their own `views:` list show Week only once you add `week` to it.
+- **Fixes from comparing the integration with HelloFresh's Android app.** HelloFresh's own app
+  uses the same services, so reading it showed where the integration misread them.
+  [ANDROID_APP_FINDINGS.md](docs/ANDROID_APP_FINDINGS.md) has the details.
+  - **Skipped weeks are recognized as skipped.** HelloFresh marks a skipped week only as
+    "paused", which the integration didn't read. The **Skip next selectable delivery week** switch
+    showed off for a skipped week and couldn't unskip it, skipped weeks counted as upcoming
+    deliveries, and the `week_skipped` and `week_unskipped` events never fired. The card was
+    right all along.
+  - **The integration signs in again when HelloFresh rejects a token renewal.** A renewal refused
+    with HTTP 400 was treated as a passing problem, so the integration kept retrying the dead
+    token for up to 60 days instead of signing in with your saved password.
+  - **Clearer sign-in errors.** When HelloFresh needs you to reset your password, setup now says
+    so instead of "wrong password". When it locks sign-in after too many attempts, setup says
+    that, and the integration stops trying your password until the lock should be over, since
+    each attempt can extend it.
+  - **Doubled portions size the box correctly.** A meal at quantity 2 takes two of the box's
+    meals, as on HelloFresh. The integration counted it once, so choosing a second portion on a
+    full box asked for a box one size too small.
+  - **Market items you get every week.** Their quantity for a week was read and written wrong:
+    2 of an item you get 1 of every week showed as 3. Removing one for a single week now works
+    the way HelloFresh's app does it.
+  - **Exact box prices are used.** The exact price check never ran on real accounts, so box
+    totals came from a rougher estimate. It now runs, includes your Market add-ons, and counts
+    each portion. The plan price includes your active coupon.
+  - **Weekly discounts.** A discount HelloFresh has applied to your next box now wins over one
+    that is only available. Percentage discounts would have shown 100 times too large, and a
+    discount spread over several boxes now shows each box's own amount.
+  - **Holiday-shifted deliveries show their new date** in the calendar, the next order and the
+    Week tab.
+  - **Failed, cancelled or refunded charges are no longer counted as payments** in the last
+    payment date, box totals or spending.
+  - **Smaller fixes:**
+    - Recipe calories show in every language.
+    - A Mastercard reads "Mastercard", not "Mc".
+    - The cookbook lists every bookmark when it also holds recipes you imported.
+    - A meal sold out for you stays marked sold out.
+    - A week whose box was changed for that week only keeps its box when you change meals.
+    - Skipping still works when a week has no cutoff date.
 
 ## 4.08 — 2026-10-13
 - **Veho deliveries no longer show "Package.Delivered".** Since late September, Veho's tracking

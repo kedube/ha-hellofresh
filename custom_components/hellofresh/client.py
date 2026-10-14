@@ -2972,11 +2972,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         data: HelloFreshAccountData,
         subscriptions: Sequence[HelloFreshSubscription],
     ) -> None:
-        """Read the account credit balance that applies automatically to the next order.
+        """Read the account credit balance that applies to the next order.
 
         Source: ``/gw/payments/customers/{customerUUID}/balance``. The response's
         ``amount`` is the spendable credit the website surfaces as "$X that will apply
-        automatically to your next order"; ``currencyCode`` gives the unit.
+        automatically to your next order" (unless the account is in HelloFresh's manual
+        credit-application experiment); ``currencyCode`` gives the unit.
         """
         if self._session is None:
             return

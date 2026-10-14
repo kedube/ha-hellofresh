@@ -13,7 +13,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-# Smallest valid box HelloFresh sells: a week with fewer distinct meals than this has no valid
+# Smallest valid box HelloFresh sells: a week with fewer meals than this has no valid
 # box, so it genuinely still needs a selection. Mirrors the client's MIN_MEALS_PER_WEEK; kept as
 # a plain module constant here so models.py stays dependency-free (no import from client).
 MIN_MEALS_PER_WEEK = 2

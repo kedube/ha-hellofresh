@@ -35,11 +35,11 @@ Change what is in a box.
 
 ### `hellofresh.select_meals`
 
-set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's own cart endpoint. Selecting more or fewer distinct meals than your plan resizes the box for that week (minimum 2 meals). An optional `market_quantities` map (Market item id/sku/index → quantity, exactly as in `select_market_items`; `0` or omitted removes an item) sets the week's add-ons **in the same cart write** — use it to change meals and extras together, because two separate writes each rebuild the cart from the last poll and the second can undo the first. Leave it out and the current add-ons are kept; pass `{}` to clear them. Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
+set the chosen recipes for a week (`week_id` + `recipe_ids`, with an optional `quantities` map of recipe id → servings for doubled portions); writes to the website's own cart endpoint. Selecting more or fewer meals than your plan resizes the box for that week (minimum 2 meals); a meal at quantity 2 counts as two. An optional `market_quantities` map (Market item id/sku/index → quantity, exactly as in `select_market_items`; `0` or omitted removes an item) sets the week's add-ons **in the same cart write** — use it to change meals and extras together, because two separate writes each rebuild the cart from the last poll and the second can undo the first. Leave it out and the current add-ons are kept; pass `{}` to clear them. Optionally **returns a response** `{ "downgraded": <bool> }` — true when HelloFresh accepted the write but silently shrank the box to fit (see the seamless-downgrade note below)
 
 ### `hellofresh.select_market_items`
 
-set the HelloFresh Market add-on (extras) selection for a week (`week_id` + a `quantities` map of market item id/sku/index → quantity; 0 removes an item); writes the cart's `extras`, preserving the week's meal selection. Optionally **returns a response** `{ "downgraded": <bool> }` (as above)
+set the HelloFresh Market add-on (extras) selection for a week (`week_id` + a `quantities` map of market item id/sku/index → the quantity for that week; 0 or leaving an item out removes it, which for an item you get every week removes it from that week only); writes the cart's `extras`, preserving the week's meal selection. Optionally **returns a response** `{ "downgraded": <bool> }` (as above)
 
 ### `hellofresh.preview_meal_price`
 
@@ -131,7 +131,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_favorites`
 
-**Returns a response.** Your HelloFresh cookbook. Called with no arguments it lists **every** bookmark with full detail (title, headline, image, times, nutrition) — including the ones HelloFresh's own website hides, since its cookbook page only ever renders a 3-item preview while the underlying endpoint reports the true total and pages the rest. Passing `recipe_ids` instead uses HelloFresh's cheaper filter endpoint to answer "which of *these* are bookmarked?", returning ids only — which is how the card's Menu decorates a week it already has in hand. Read-only.
+**Returns a response.** Your HelloFresh cookbook. Called with no arguments it lists **every** bookmark with full detail (title, headline, image, times, nutrition) — including the ones HelloFresh's own website hides, since its cookbook page only ever renders a 3-item preview while the underlying endpoint reports the true total and pages the rest. Passing `recipe_ids` instead uses HelloFresh's cheaper filter endpoint to answer "which of *these* are bookmarked?", returning ids only — which is how the card's Menu decorates a week it already has in hand. Read-only. The listing also returns `secondary_favorites`: HelloFresh's separate favorites store, where its Android app keeps the heart you tap on a recipe (`recipe_ids` lists them). It is not synced with the cookbook, so a recipe hearted in the app may not be in your cookbook.
 
 ### `hellofresh.add_favorite`
 
