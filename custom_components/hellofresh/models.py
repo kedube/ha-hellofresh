@@ -181,7 +181,15 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 
 
 class HelloFreshError(Exception):
-    """Base error for HelloFresh integration."""
+    """Base error for HelloFresh integration.
+
+    ``status`` is the HTTP status of HelloFresh's answer, when the error is one (429 for a rate
+    limit); None otherwise.
+    """
+
+    def __init__(self, *args: object, status: int | None = None) -> None:
+        super().__init__(*args)
+        self.status = status
 
 
 class HelloFreshAuthError(HelloFreshError):

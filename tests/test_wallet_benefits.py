@@ -320,6 +320,82 @@ def test_wallet_failure_leaves_the_discount_unknown() -> None:
     assert client._debug_trace["wallet_attempts"][0]["error"] == "wallet down"
 
 
+def test_wallet_sends_only_weeks_a_discount_can_apply_to() -> None:
+    """Weeks past the last published menu, or missing a cutoff or a box, stay out.
+
+    Sent every upcoming week, three of them past the last published menu, the request was
+    refused with HTTP 400 "validation failed".
+    """
+    client = _client()
+    bodies: list[dict] = []
+
+    async def fake_request(method, path, params=None, json_payload=None, **_):
+        bodies.append(json_payload)
+        return SimpleNamespace(status=200)
+
+    async def fake_json(_response):
+        return {"deliveries": [], "promises": []}
+
+    client._async_api_request = fake_request  # type: ignore[method-assign]
+    client._async_response_json = fake_json  # type: ignore[method-assign]
+    weeks = _weeks()
+    no_cutoff = HelloFreshWeek(
+        week_id="2026-W40",
+        display_name="W40",
+        subscription_id="1000001",
+        delivery_date=WEEK_AFTER,
+        raw={"state": "RUNNING", "product": {"handle": "US-CBU-3-2-0"}},
+    )
+    no_box = HelloFreshWeek(
+        week_id="2026-W41",
+        display_name="W41",
+        subscription_id="1000001",
+        delivery_date=WEEK_AFTER,
+        raw={"state": "RUNNING", "cutoffDate": "2026-09-30T23:59:59-0700"},
+    )
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001", raw={"weekWithLatestMenu": "2026-W38"}
+    )
+    _run(
+        client._async_enrich_wallet_benefits(
+            HelloFreshAccountData(), [subscription], [*weeks, no_cutoff, no_box]
+        )
+    )
+    assert [d["delivery"]["hfWeek"] for d in bodies[0]["deliveries"]] == ["2026-W38"]
+
+    # Nothing left to ask about: no request at all.
+    bodies.clear()
+    subscription.raw["weekWithLatestMenu"] = "2026-W37"
+    _run(client._async_enrich_wallet_benefits(HelloFreshAccountData(), [subscription], weeks))
+    assert bodies == []
+
+
+def test_a_refused_wallet_request_is_recorded_for_diagnostics() -> None:
+    """Diagnostics show what was sent when HelloFresh refuses it, with the subscription hidden."""
+    client = _client()
+
+    async def fake_request(*_a, **_k):
+        raise HelloFreshError("HTTP 400 (error=validation failed)", status=400)
+
+    client._async_api_request = fake_request  # type: ignore[method-assign]
+    _run(
+        client._async_enrich_wallet_benefits(
+            HelloFreshAccountData(),
+            [HelloFreshSubscription(subscription_id="1000001", raw={})],
+            _weeks(),
+        )
+    )
+    attempt = client._debug_trace["wallet_attempts"][0]
+    assert [d["delivery"]["hfWeek"] for d in attempt["json_payload"]["deliveries"]] == [
+        "2026-W38",
+        "2026-W39",
+    ]
+    redacted = async_redact_data(client._debug_trace, TO_REDACT)
+    sent = redacted["wallet_attempts"][0]["json_payload"]["deliveries"]
+    assert {d["subscriptionId"] for d in sent} == {"**REDACTED**"}
+    assert sent[0]["selections"] == {"mealboxHandle": "US-CBU-3-2-0"}
+
+
 def test_benefit_labels_read_like_the_site() -> None:
     label = HelloFreshClient._benefit_label
     assert label("premiumSurcharge", 10.0, "fixed", "USD") == "$10 off premium meals"

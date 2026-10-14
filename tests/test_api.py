@@ -7070,6 +7070,32 @@ def test_data_requests_send_the_web_apps_fetch_headers() -> None:
     assert first["traceparent"].split("-")[1] == first["x-b3-traceid"]
 
 
+def test_a_refused_request_carries_its_http_status() -> None:
+    """A rate limit (429) is told apart from other failures by the error's status."""
+
+    class DummySession:
+        async def request(self, method, url, params=None, json=None, headers=None):
+            return _AuthFlowResponse(
+                429, {"error": "too many requests"}, headers={"Content-Type": "application/json"}
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        access_token="t",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError) as raised:
+        loop.run_until_complete(
+            client._async_api_request("POST", "/gw/cookbook/v1/internal-recipes/search")
+        )
+
+    assert raised.value.status == 429
+    assert HelloFreshError("no answer").status is None
+
+
 def test_website_requests_look_like_the_browsers_own() -> None:
     """A page loads as a navigation; a Next.js data route as the router's fetch().
 
@@ -9726,8 +9752,16 @@ def test_favorites_pass_leaves_state_unknown_when_lookup_fails() -> None:
     assert week.recipes[0].is_favorite is None
 
 
+def _cookbook_listing(rows: list[dict], *, has_more: bool = False, total: int | None = None):
+    """A cookbook listing page (``GET external-recipes``)."""
+    pagination = {"has_more": has_more, "total_count": len(rows) if total is None else total}
+    if has_more:
+        pagination["next_cursor"] = "next-page"
+    return {"data": rows, "pagination": pagination}
+
+
 def test_favorites_pass_marks_hits_and_misses_when_lookup_succeeds() -> None:
-    """A successful lookup must mark non-bookmarked recipes False, not leave them unknown."""
+    """A complete cookbook listing marks non-bookmarked recipes False, not unknown."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     week = HelloFreshWeek(
         week_id="2026-W39",
@@ -9738,12 +9772,91 @@ def test_favorites_pass_marks_hits_and_misses_when_lookup_succeeds() -> None:
             HelloFreshRecipe(recipe_id="000000000000000000000000", name="Not favorited"),
         ],
     )
+    requests: list[tuple[str, str]] = []
+
+    async def fake_api_request(method, path, *_args, **_kwargs):
+        requests.append((method, path))
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return _cookbook_listing([{"id": "row-1", "bookmark_id": "694053fe353e00bd89ba2d3e-en-US"}])
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_apply_favorites([week]))
+
+    assert requests == [("GET", "/gw/cookbook/v1/external-recipes")]
+    assert week.recipes[0].is_favorite is True
+    assert week.recipes[1].is_favorite is False
+
+
+def test_favorites_pass_reads_the_cookbook_once_however_long_the_menus() -> None:
+    """Hearts come from one cookbook listing, not a search per 50 menu recipes.
+
+    Searching every recipe on every published menu took about 60 requests a poll, and
+    HelloFresh refused a third of them with 429.
+    """
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    weeks = [
+        HelloFreshWeek(
+            week_id=f"2026-W4{number}",
+            display_name=f"W4{number}",
+            subscription_id="sub-1",
+            recipes=[
+                HelloFreshRecipe(recipe_id=f"{number}{index:023x}", name=f"Dish {index}")
+                for index in range(460)
+            ],
+        )
+        for number in range(5)
+    ]
+    favorite = weeks[2].recipes[7]
+    requests: list[str] = []
+
+    async def fake_api_request(method, path, *_args, **_kwargs):
+        requests.append(path)
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        return _cookbook_listing([{"id": "row-1", "bookmark_id": f"{favorite.recipe_id}-en-US"}])
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_apply_favorites(weeks))
+
+    assert requests == ["/gw/cookbook/v1/external-recipes"]
+    assert favorite.is_favorite is True
+    assert sum(r.is_favorite is False for week in weeks for r in week.recipes) == 5 * 460 - 1
+
+
+def test_favorites_pass_leaves_recipes_unknown_when_the_listing_stops_early() -> None:
+    """A listing that didn't reach the end of the cookbook can't say a recipe isn't in it."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    client._COOKBOOK_LIST_MAX_PAGES = 1  # type: ignore[misc]
+    week = HelloFreshWeek(
+        week_id="2026-W39",
+        display_name="W39",
+        subscription_id="sub-1",
+        recipes=[
+            HelloFreshRecipe(recipe_id="694053fe353e00bd89ba2d3e", name="Favorited"),
+            HelloFreshRecipe(recipe_id="000000000000000000000000", name="Maybe on page two"),
+        ],
+    )
 
     async def fake_api_request(*_args, **_kwargs):
         return _StubResponse(200)
 
     async def fake_response_json(_response):
-        return {"recipes": [{"id": "srv-1", "bookmark_id": "694053fe353e00bd89ba2d3e-en-US"}]}
+        return _cookbook_listing(
+            [{"id": "row-1", "bookmark_id": "694053fe353e00bd89ba2d3e-en-US"}],
+            has_more=True,
+            total=2,
+        )
 
     client._async_api_request = fake_api_request  # type: ignore[method-assign]
     client._async_response_json = fake_response_json  # type: ignore[method-assign]
@@ -9753,7 +9866,28 @@ def test_favorites_pass_marks_hits_and_misses_when_lookup_succeeds() -> None:
     loop.run_until_complete(client._async_apply_favorites([week]))
 
     assert week.recipes[0].is_favorite is True
-    assert week.recipes[1].is_favorite is False
+    assert week.recipes[1].is_favorite is None
+
+
+def test_favorite_search_stops_after_a_rate_limit() -> None:
+    """After a 429 the batches not yet sent are dropped instead of adding to the burst."""
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    sent: list[int] = []
+
+    async def rate_limited(method, path, params=None, json_payload=None, **_kwargs):
+        sent.append(len(json_payload["bookmark_ids"]))
+        raise HelloFreshError(f"HelloFresh request failed for {path}: HTTP 429", status=429)
+
+    client._async_api_request = rate_limited  # type: ignore[method-assign]
+
+    ids = [f"{index:024x}" for index in range(1000)]  # 20 batches
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    found, answered = loop.run_until_complete(client._async_search_favorites(ids))
+
+    assert (found, answered) == ({}, False)
+    assert len(sent) < 1000 // client._COOKBOOK_SEARCH_BATCH
+    assert client._debug_trace["cookbook_attempts"][-1]["rate_limited"] is True
 
 
 def test_favorites_pass_is_skipped_when_disabled() -> None:
@@ -10475,6 +10609,31 @@ def test_cart_price_payload_is_built_like_the_apps() -> None:
         "hfWeek": "2026-W43",
         "quantityPerCourse": [{"index": 10773, "quantity": 2}],
         "recipeIndexes": ["10773"],
+    }
+
+
+def test_cart_price_sends_the_regions_code() -> None:
+    """The subscription's address holds its region as an object; the request wants the code.
+
+    Sent as the object, every week's price was refused with HTTP 400 ("failed to parse price
+    calculation request"). Without a code the region is left out, as HelloFresh's app does.
+    """
+    client = HelloFreshClient(session=object(), access_token="t", country="us")  # type: ignore[arg-type]
+    address = {
+        "address1": "1 Example Street",
+        "postcode": "02101",
+        "region": {"code": "MA", "name": "Massachusetts"},
+    }
+
+    assert client._extract_shipping_address_payload({"shippingAddress": address}) == {
+        "address1": "1 Example Street",
+        "postcode": "02101",
+        "region": "MA",
+    }
+    address["region"] = {"name": "Massachusetts"}
+    assert client._extract_shipping_address_payload({"shippingAddress": address}) == {
+        "address1": "1 Example Street",
+        "postcode": "02101",
     }
 
 

@@ -44,10 +44,12 @@ class FavoritesClientMixin:
     #
     # Two ways to read favorites, with different costs:
     #   • search  — a FILTER: send candidate bookmark_ids, get back the subset that is
-    #     bookmarked as bare {id, bookmark_id} pairs (no title/image). Right for decorating a
-    #     week's menu, where the candidate ids are already in hand.
+    #     bookmarked as bare {id, bookmark_id} pairs (no title/image). Right for a few
+    #     candidates: one recipe, a catalog page.
     #   • external-recipes — the full list, with title, headline, thumbnail, times, and
-    #     nutrition, plus a `total_count`. Right for "show me my cookbook" with no candidates.
+    #     nutrition, plus a `total_count`. Right for "show me my cookbook", and for the hearts
+    #     on every menu: a page per 50 bookmarks, where searching for every recipe on every
+    #     published menu took about 60 requests a poll and HelloFresh answered with 429s.
 
     _COOKBOOK_PATH = "/gw/cookbook/v1/internal-recipes"
     # Listing and deletion both live under the external-recipes collection (see above).
@@ -104,6 +106,9 @@ class FavoritesClientMixin:
                 unique.append(bare)
         if not unique:
             return {}, True
+        # Once HelloFresh answers 429, the batches not yet sent are dropped: more requests only
+        # add to the burst it is refusing.
+        rate_limited = False
 
         async def _search_batch(batch: list[str]) -> tuple[list[Any], bool]:
             """Look up one batch. Returns ``(rows, answered)``.
@@ -114,6 +119,9 @@ class FavoritesClientMixin:
             apart. (It is also why this cannot lean on ``_async_gather_bounded``'s own
             error swallowing, which collapses a failure to a bare ``[]``.)
             """
+            nonlocal rate_limited
+            if rate_limited:
+                return [], False
             payload = {"bookmark_ids": [self._bookmark_id(rid) for rid in batch]}
             try:
                 response = await self._async_api_request(
@@ -128,6 +136,8 @@ class FavoritesClientMixin:
             except (HelloFreshError, ClientError) as err:
                 # Favorites are decoration layered onto already-fetched data, so a cookbook
                 # failure must never fail the poll — record it and leave the state unknown.
+                if getattr(err, "status", None) == 429:
+                    rate_limited = True
                 self._record_debug_attempt(
                     "cookbook_attempts",
                     {
@@ -171,6 +181,7 @@ class FavoritesClientMixin:
                 "requested": len(unique),
                 "found": len(found),
                 "answered": answered,
+                "rate_limited": rate_limited,
             },
         )
         return found, answered
@@ -178,31 +189,33 @@ class FavoritesClientMixin:
     async def _async_apply_favorites(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Flag each week's recipes with their cookbook bookmark state.
 
-        Every distinct recipe id across all weeks is resolved in one batched pass, since the
-        same dish recurs across weeks and as portion variants. Best-effort by design: on failure
+        The cookbook is listed once (a request per 50 rows) and each recipe looked up in it.
+        Searching for every recipe on every published menu instead took about 60 requests a
+        poll, and HelloFresh refused a third of them with 429. Best-effort by design: on failure
         ``is_favorite`` stays None, which the card renders as "no heart" rather than "not a
-        favorite", so a cookbook outage never shows a misleading empty heart.
+        favorite", so a cookbook outage never shows a misleading empty heart; a listing that
+        stopped early leaves the recipes it didn't find unknown too.
         """
         if not self._enable_favorites:
             return
-        recipe_ids = {
-            recipe.recipe_id for week in weeks for recipe in week.recipes if recipe.recipe_id
-        }
-        if not recipe_ids:
+        if not any(recipe.recipe_id for week in weeks for recipe in week.recipes):
             return
         try:
-            favorites, answered = await self._async_search_favorites(sorted(recipe_ids))
-        except HelloFreshError as err:  # pragma: no cover - defensive; the call already guards
+            favorites, complete = await self._async_list_cookbook()
+        except (HelloFreshError, ClientError) as err:
             _LOGGER.debug("HelloFresh favorites lookup failed: %s", err)
+            self._record_debug_attempt(
+                "cookbook_attempts", {"path": self._COOKBOOK_LIST_PATH, "error": str(err)}
+            )
             return
-        if not answered:
-            # Every batch failed, so "not in favorites" would be a guess rather than an answer.
-            # Leave is_favorite as None so the card shows no heart at all.
-            return
+        saved = {favorite.recipe_id for favorite in favorites}
         for week in weeks:
             for recipe in week.recipes:
                 bare = str(recipe.recipe_id).split("-", 1)[0]
-                recipe.is_favorite = bare in favorites
+                if bare in saved:
+                    recipe.is_favorite = True
+                elif complete:
+                    recipe.is_favorite = False
 
     async def async_add_favorite(self, recipe_id: str) -> HelloFreshFavorite:
         """Bookmark a recipe. Returns the created favorite (rich: title, image, nutrition)."""
@@ -240,6 +253,18 @@ class FavoritesClientMixin:
         and returns full detail — title, headline, thumbnail, times, nutrition. Pages until
         ``has_more`` clears, or until ``limit`` rows have been collected.
         """
+        favorites, _complete = await self._async_list_cookbook(limit)
+        return favorites
+
+    async def _async_list_cookbook(
+        self, limit: int | None = None
+    ) -> tuple[list[HelloFreshFavorite], bool]:
+        """List the cookbook. Returns ``(favorites, complete)``.
+
+        ``complete`` is True only when paging reached the end of the cookbook: a ``limit``,
+        the page cap, a missing cursor or a replayed page all leave rows unread.
+        """
+        complete = False
         favorites: list[HelloFreshFavorite] = []
         seen: set[str] = set()
         seen_rows: set[str] = set()
@@ -269,7 +294,10 @@ class FavoritesClientMixin:
                 )
             payload = await self._async_response_json(response)
             rows = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(rows, list) or not rows:
+            if not isinstance(rows, list):
+                break
+            if not rows:
+                complete = True
                 break
             new_rows = 0
             for row in rows:
@@ -297,7 +325,10 @@ class FavoritesClientMixin:
                 has_more, next_cursor = False, None
             # Stop unless the server both says there is more AND hands back a usable cursor;
             # without one there is no way to advance, and re-requesting would loop.
-            if not has_more or not isinstance(next_cursor, str) or not next_cursor:
+            if not has_more:
+                complete = True
+                break
+            if not isinstance(next_cursor, str) or not next_cursor:
                 break
             if not new_rows:
                 # The page advanced but contributed nothing new — treat as exhausted rather
@@ -305,6 +336,15 @@ class FavoritesClientMixin:
                 break
             cursor = next_cursor
 
+        if total_count is not None and limit is None and len(favorites) + other_rows < total_count:
+            # Surfaces a paging contract change instead of silently under-reporting.
+            complete = False
+            _LOGGER.warning(
+                "HelloFresh cookbook listing returned %d of %d bookmarks; "
+                "pagination may have changed",
+                len(favorites),
+                total_count,
+            )
         self._record_debug_attempt(
             "cookbook_attempts",
             {
@@ -312,17 +352,10 @@ class FavoritesClientMixin:
                 "listed": len(favorites),
                 "other_rows": other_rows,
                 "total_count": total_count,
+                "complete": complete,
             },
         )
-        if total_count is not None and limit is None and len(favorites) + other_rows < total_count:
-            # Surfaces a paging contract change instead of silently under-reporting.
-            _LOGGER.warning(
-                "HelloFresh cookbook listing returned %d of %d bookmarks; "
-                "pagination may have changed",
-                len(favorites),
-                total_count,
-            )
-        return favorites
+        return favorites, complete
 
     @staticmethod
     def _cookbook_row_key(row: Any) -> str:

@@ -258,7 +258,7 @@ one item per subscription. Fields:
 | `nextDelivery`, `nextDeliveryWeek` | The next delivery's date and week |
 | `nextModifiableDeliveryDate`, `nextModifiableDeliveryWeek` | The next delivery the customer can still change |
 | `nextCutoffDate` | A meal deadline |
-| `weekWithLatestMenu` | The last week with a published menu (`2026-W33`); later weeks have no menu yet (app) |
+| `weekWithLatestMenu` | The last week with a published menu (`2026-W47`); later weeks have no menu yet |
 | `isBlocked` | The subscription is blocked (app) |
 
 ### Customer
@@ -921,6 +921,9 @@ It returns `{"hasSeamlessDowngraded": false}`.
 - The meals go under `<CC>-CHARGE-0-0-0`, with `boxSku` set to the box. `quantityPerCourse` lists
   each meal once with its quantity, and `recipeIndexes` lists each meal once per portion (app).
 - Each chosen Market item is a product of its own, under its SKU (app).
+- `shippingAddress.region` is the state's code (`"MA"`). The subscription's address holds the
+  region as an object (`{code, name}`), and sending that object fails the whole request with
+  `400 failed to parse price calculation request`.
 - The app sends only the address's postcode, and no `planID` or `locale` (app).
 
 It returns `grandTotal`, `subTotal`, `shippingAmount` and `discountAmount` in major units, and
@@ -1257,6 +1260,7 @@ The customer's saved recipes. Recipes are saved under `internal-recipes` but lis
 
 - **Search:** `{"bookmark_ids": ["<recipe id>-<locale>", ...]}` returns
   `{"recipes": [{id, bookmark_id}]}`, the saved ones only. The website sends about 40 ids at a time.
+  It rate-limits bursts: of 59 searches sent in one go, 22 were refused with `429`.
 - **Save:** `{"bookmark_id": "<recipe id>-<locale>", "bookmark_source": "hellofresh"}` returns `201`
   with the new row.
 - **List:** `limit` and `cursor` return `{data: [rows], pagination: {total_count, has_more, next_cursor}}`.
@@ -1347,6 +1351,8 @@ different `/gw` paths in all.
 - Whether the week menu has `meals[].isSoldOut` or `feedback.favorite`, and whether a recipe has
   `userFavorite` and `userRating`, for a signed-in customer.
 - Whether the regional menus' `isSoldOut` follows the customer's own availability.
+- What `benefit-distribution` objects to when it answers `400 validation failed`. It did for a
+  request with every upcoming week, three of them after `weekWithLatestMenu`.
 - Whether `changePlanDeliveryDetails` accepts a `deliveryInterval`.
 - What the `x-requested-by` and feature headers change, if anything.
 - The address object's full shape outside the address PATCH, and whether the subscription's

@@ -5,6 +5,20 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Exact box prices.** HelloFresh refused the exact price check for every week, so box totals
+  still came from a rougher estimate without premium surcharges or Market extras, and the
+  card's running price while you pick meals could fail. The integration sent your address's
+  state in a form HelloFresh couldn't read; it now sends the state's code.
+- **Favorite hearts.** Each refresh checked every recipe on every published menu, about 60
+  requests, and HelloFresh refused a third of them, so some hearts were missing. The
+  integration now reads your cookbook once (one request per 50 saved recipes) and marks
+  favorites from it.
+- **Weekly discounts.** HelloFresh refused the weekly-discount lookup ("validation failed"), so
+  the Next box discount sensor stayed unknown. The lookup now leaves out weeks without a
+  published menu, a deadline or a box. If HelloFresh still refuses it, a diagnostics download
+  shows exactly what was sent.
+
 ## 4.13 — 2026-10-14
 - **The HelloFresh card loads on iPads.** On an iPad the card and the sidebar panel could stop at
   "The HelloFresh card couldn't load", in Safari, Firefox and the Home Assistant app alike. All of

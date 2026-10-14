@@ -359,7 +359,10 @@ class PricingClientMixin:
         """Extract the limited shipping address fields used by cart pricing.
 
         Only the postcode is required (HelloFresh's Android app sends nothing else); the web
-        app's ``address1`` and ``region`` are added when present.
+        app's ``address1`` and ``region`` are added when present. The request's ``region`` is the
+        state's code (``"MA"``), while the subscription's address holds an object
+        (``{code, name}``): sent as it was, the whole request failed with HTTP 400 ("failed to
+        parse price calculation request").
         """
         address = self._find_first_nested_dict(node, {"shippingAddress", "address"})
         postcode = address.get("postcode") or address.get("postalCode")
@@ -370,8 +373,10 @@ class PricingClientMixin:
             payload["address1"] = address["address1"]
         payload["postcode"] = postcode
         region = address.get("region") or address.get("state")
-        if region:
-            payload["region"] = region
+        if isinstance(region, dict):
+            region = region.get("code")
+        if isinstance(region, str) and region.strip():
+            payload["region"] = region.strip()
         return payload
 
     def _extract_cart_selection_groups(

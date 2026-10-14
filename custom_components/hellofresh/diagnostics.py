@@ -45,6 +45,9 @@ TO_REDACT = {
     "customerID",
     "subscriptionID",
     "planID",
+    # The wallet trace (wallet_attempts) records a refused request body, whose deliveries name
+    # the subscription as subscriptionId.
+    "subscriptionId",
     "public_id",  # tracking public id — reconstructs the unauthenticated tracking page
     # Proof of delivery: a photo of the customer's door and the name of whoever signed. The
     # photo URLs may also be bearer-style links anyone holding them can open.

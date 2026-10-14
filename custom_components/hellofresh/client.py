@@ -3350,6 +3350,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         all_promises: dict[str, dict[str, Any]] = {}
         for subscription in subscriptions:
             sub_id = subscription.subscription_id
+            # Only weeks a discount can apply to: up to the last week with a published menu
+            # (the subscription's ``weekWithLatestMenu``), each with a cutoff and a box. Sent
+            # every upcoming week, three of them past the last published menu, the request was
+            # refused with HTTP 400 "validation failed".
+            raw_subscription = subscription.raw if isinstance(subscription.raw, dict) else {}
+            latest_menu_week = self._iso_week_tuple(raw_subscription.get("weekWithLatestMenu"))
             sub_weeks = [
                 week
                 for week in weeks
@@ -3364,37 +3370,46 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             deliveries: list[dict[str, Any]] = []
             for week in sub_weeks:
                 raw = week.raw
-                delivery: dict[str, Any] = {
-                    "hfWeek": week.week_id,
-                    "state": raw.get("state") or raw.get("status") or "RUNNING",
-                }
+                week_key = self._iso_week_tuple(week.week_id)
+                if latest_menu_week and week_key and week_key > latest_menu_week:
+                    continue
                 cutoff = raw.get("cutoffDate") or raw.get("cutoffDateTime")
-                if cutoff:
-                    delivery["cutoffDateTime"] = cutoff
                 product = raw.get("product") if isinstance(raw.get("product"), dict) else {}
                 handle = product.get("handle") or week.box_size
-                entry: dict[str, Any] = {
-                    "delivery": delivery,
-                    "selections": {"mealboxHandle": handle} if handle else {},
-                    "subscriptionId": int(sub_id) if str(sub_id).isdigit() else sub_id,
-                }
-                deliveries.append(entry)
+                if not cutoff or not handle:
+                    continue
+                deliveries.append(
+                    {
+                        "delivery": {
+                            "hfWeek": week.week_id,
+                            "state": raw.get("state") or raw.get("status") or "RUNNING",
+                            "cutoffDateTime": cutoff,
+                        },
+                        "selections": {"mealboxHandle": handle},
+                        "subscriptionId": int(sub_id) if str(sub_id).isdigit() else sub_id,
+                    }
+                )
+            if not deliveries:
+                continue
+            body = {"deliveries": deliveries}
             params = {"externalPartnerBenefits": "true", "subscription": sub_id}
             try:
                 response = await self._async_api_request(
                     "POST",
                     self._WALLET_BENEFITS_PATH,
                     params=params,
-                    json_payload={"deliveries": deliveries},
+                    json_payload=body,
                     extra_headers={"x-requested-by": "upselling"},
                 )
                 payload = await self._async_response_json(response)
             except HelloFreshAuthError:
                 raise
             except HelloFreshError as err:
+                # The refused body goes in the trace, so diagnostics show what was sent
+                # (``subscriptionId`` is redacted by key name).
                 self._record_debug_attempt(
                     "wallet_attempts",
-                    {"path": self._WALLET_BENEFITS_PATH, "error": str(err)},
+                    {"path": self._WALLET_BENEFITS_PATH, "error": str(err), "json_payload": body},
                 )
                 continue
             if not isinstance(payload, dict):
@@ -5131,7 +5146,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             if details:
                 detail_text = f"{detail_text} ({safe_error_summary(details)})"
             raise HelloFreshError(
-                f"HelloFresh request failed for {_template_debug_path(path)}:{detail_text}"
+                f"HelloFresh request failed for {_template_debug_path(path)}:{detail_text}",
+                status=response.status,
             )
 
         return response
