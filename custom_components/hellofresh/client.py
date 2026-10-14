@@ -712,16 +712,15 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             return quantities.get(recipe_id, 1)
 
         # A week can be resized to a different box for that delivery: picking more or fewer
-        # DISTINCT meals than the base plan swaps the box SKU up or down (see
-        # _sku_for_meal_count), and HelloFresh reprices it. The only floor is the smallest box
-        # HelloFresh sells — MIN_MEALS_PER_WEEK distinct meals — below which no valid box exists.
-        # The count that resizes the box is distinct meals, NOT total servings (a meal at
-        # quantity 2 fills extra servings of the same box slot, it doesn't add a meal).
-        distinct_meals = len(deduplicated_recipe_ids)
-        if distinct_meals < self.MIN_MEALS_PER_WEEK:
+        # meals than the base plan swaps the box SKU up or down (see _sku_for_meal_count), and
+        # HelloFresh reprices it. The only floor is the smallest box HelloFresh sells —
+        # MIN_MEALS_PER_WEEK meals — below which no valid box exists. A meal at quantity 2 takes
+        # two of the box's slots, so the count is the total of the quantities, as in HelloFresh's
+        # Android app (``DefaultGetSelectedCoursesCountUseCase``, ``CourseBoxLimitRule``).
+        total_meals = sum(_qty(recipe_id) for recipe_id in deduplicated_recipe_ids)
+        if total_meals < self.MIN_MEALS_PER_WEEK:
             raise HelloFreshError(
-                f"Week {week_id} needs at least {self.MIN_MEALS_PER_WEEK} meals, "
-                f"got {distinct_meals}"
+                f"Week {week_id} needs at least {self.MIN_MEALS_PER_WEEK} meals, got {total_meals}"
             )
 
         # Always submit, even when the request matches the local snapshot: that snapshot is
@@ -862,9 +861,14 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         """Resolve requested Market quantities into (item, one_off, preselected) tuples.
 
         Keys are a Market item's id, sku or index (as get_weeks returns them); values are the
-        desired TOTAL quantity, clamped by nothing but checked against ``max_quantity``. Zero or
-        omitted items are simply absent (removed from the cart). Shared by the Market write and
-        the combined meals-and-Market write so both resolve exactly alike.
+        desired quantity for the week, checked against ``max_quantity``. Zero or omitted items
+        are removed. Shared by the Market write and the combined meals-and-Market write so both
+        resolve exactly alike.
+
+        As in HelloFresh's Android app, ``oneOffQuantity`` carries the week's whole quantity and
+        ``preselectedQuantity`` the item's unchanged recurring quantity. A recurring item being
+        removed for this week stays in the cart at ``oneOffQuantity: 0``; leaving it out would
+        not cancel the recurring order.
         """
         by_key: dict[str, HelloFreshMarketItem] = {}
         for item in week.market_items:
@@ -872,10 +876,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 if key:
                     by_key.setdefault(str(key), item)
 
-        # Each requested quantity is the desired TOTAL servings. HelloFresh splits a selection
-        # into a recurring (preselected) part and a this-week (one-off) part; we keep any existing
-        # recurring portion and apply the rest as one-off, matching how the web app writes changes.
         resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
+        kept: set[int] = set()
         for raw_key, raw_qty in quantities.items():
             quantity = coerce_int(raw_qty) or 0
             if quantity <= 0:
@@ -889,9 +891,11 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 raise HelloFreshError(
                     f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"
                 )
-            preselected = min(item.preselected_quantity or 0, quantity)
-            one_off = quantity - preselected
-            resolved.append((item, one_off, preselected))
+            resolved.append((item, quantity, item.preselected_quantity or 0))
+            kept.add(item.index)
+        for item in week.market_items:
+            if item.preselected_quantity and item.index is not None and item.index not in kept:
+                resolved.append((item, 0, item.preselected_quantity))
         return resolved
 
     # ---- Food profile (auto-preselection preferences) ------------------------
@@ -1791,16 +1795,18 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         return await self._async_build_cart_update(week, subscription, selected_meals, extras)
 
     # HelloFresh box SKUs encode the plan as ``<PREFIX>-<MEALS>-<SERVINGS>-<N>`` (e.g.
-    # ``US-CBU-3-2-0`` is 3 meals × 2 servings). Selecting a different number of DISTINCT meals
-    # than the base plan resizes the box for that week: the cart PUT's ``product-sku`` must carry
-    # the matching meal-count digit or the endpoint rejects the write with MEAL_SIZE_MISMATCH.
-    # This mirrors the web app, which swaps the digit up (``US-CBU-3-2-0`` → ``US-CBU-4-2-0`` for
-    # a 4th meal) OR down (``US-CBU-2-2-0`` for 2 meals) to match the selection; the servings
-    # digit is unchanged. Both directions are HAR-confirmed against a 3-meal plan.
+    # ``US-CBU-3-2-0`` is 3 meals × 2 servings). Selecting a different number of meals than the
+    # base plan resizes the box for that week: the cart PUT's ``product-sku`` must carry the
+    # matching meal-count digit or the endpoint rejects the write with MEAL_SIZE_MISMATCH. This
+    # mirrors the web app, which swaps the digit up (``US-CBU-3-2-0`` → ``US-CBU-4-2-0`` for a 4th
+    # meal) OR down (``US-CBU-2-2-0`` for 2 meals) to match the selection; the servings digit is
+    # unchanged. Both directions are HAR-confirmed against a 3-meal plan. The meal count is the
+    # total of the quantities: HelloFresh's Android app sizes the box by it, so a meal at
+    # quantity 2 counts twice.
     _BOX_SKU_RE = re.compile(r"^(?P<prefix>.+-)(?P<meals>\d+)(?P<rest>-\d+-\d+)$")
 
-    # Smallest box HelloFresh accepts. 2 distinct meals is the known minimum (and the smallest
-    # box the HAR proves works); fewer has no valid box SKU to resize to.
+    # Smallest box HelloFresh accepts. 2 meals is the known minimum (and the smallest box the
+    # HAR proves works); fewer has no valid box SKU to resize to.
     #
     # There is deliberately NO upper bound. It is tempting to cap this at the largest box in
     # ``product_options``, but that catalog is per-subscription and varies: capture 43 offers meal
@@ -1814,8 +1820,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     def _sku_for_meal_count(cls, product_sku: str, meal_count: int) -> str:
         """Return ``product_sku`` with its meal-count segment set to ``meal_count``.
 
-        Resizes the box in either direction (up or down) to match the number of distinct meals
-        selected, and only rewrites SKUs matching the known ``<prefix>-<meals>-<servings>-<n>``
+        Resizes the box in either direction (up or down) to match the number of meals selected
+        (the total of their quantities), and only rewrites SKUs matching the known
+        ``<prefix>-<meals>-<servings>-<n>``
         box shape; anything else is returned unchanged so we never corrupt an unexpected format.
         """
         match = cls._BOX_SKU_RE.match(product_sku)
@@ -1850,21 +1857,28 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 or week.raw.get("deadline")
             )
         )
-        preference = await self._async_get_subscription_plan_preference(subscription)
-        product_sku = self._find_first_nested_value(
-            subscription.raw, ("sku",)
-        ) or self._find_first_nested_value(
-            week.raw.get("product"),
-            ("sku", "handle"),
+        # The cart PUT carries the preference the web app sends; HelloFresh's Android app sends
+        # it empty, so an unknown preference no longer abandons the write.
+        preference = await self._async_get_subscription_plan_preference(subscription) or ""
+        # The WEEK's own box first, as for the menu request (and as the app does): a week resized
+        # for that delivery only (other servings or box type) must not be written back as the
+        # base plan's box.
+        week_product = week.raw.get("product") if isinstance(week.raw.get("product"), dict) else {}
+        product_sku = (
+            week_product.get("handle")
+            or week_product.get("sku")
+            or self._find_first_nested_value(subscription.raw, ("sku",))
         )
 
-        if not all((customer_id, cutoff_time, preference, product_sku, week.subscription_id)):
+        if not all((customer_id, cutoff_time, product_sku, week.subscription_id)):
             return None
 
-        # Upgrade the box SKU when more distinct meals are selected than the base plan holds, so
-        # HelloFresh accepts the larger selection (and prices the extra meals) instead of failing
-        # with MEAL_SIZE_MISMATCH. The SKU's meal digit tracks DISTINCT meals, not total servings.
-        product_sku = self._sku_for_meal_count(str(product_sku), len(meals))
+        # Resize the box when the selection holds more or fewer meals than the box, so
+        # HelloFresh accepts it (and prices the extra meals) instead of failing with
+        # MEAL_SIZE_MISMATCH. The meal digit is the total of the meals' quantities.
+        product_sku = self._sku_for_meal_count(
+            str(product_sku), sum(meal.get("quantity") or 1 for meal in meals)
+        )
 
         return {
             "path": f"/gw/v1/carts/{week.week_id}",
@@ -1911,23 +1925,27 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     "index": item.index,
                     "oneOffQuantity": one_off,
                     "preselectedQuantity": preselected,
-                    "courses": [],
+                    # A pairing add-on keeps its link to the meal it was added to.
+                    "courses": [{"index": index} for index in item.courses],
                 }
             )
         return list(groups.values())
 
     @staticmethod
     def _build_cart_existing_extras(week: HelloFreshWeek) -> list[dict[str, Any]]:
-        """Cart ``extras`` payload for the week's currently-selected market items (unchanged).
+        """Cart ``extras`` payload for the week's current Market selection (unchanged).
 
-        Used when writing a MEAL change so the existing market selection is preserved.
+        Used when writing a MEAL change so the existing Market selection is preserved: each
+        selected item at its quantity for the week, and each recurring item the customer
+        removed for this week still at 0 (see ``_resolve_market_selection``).
         """
         resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
         for item in week.market_items:
-            if item.is_selected and item.index is not None:
-                total = item.selected_quantity or 1
-                preselected = min(item.preselected_quantity or 0, total)
-                resolved.append((item, total - preselected, preselected))
+            if item.index is None:
+                continue
+            quantity = (item.selected_quantity or 1) if item.is_selected else 0
+            if quantity or item.preselected_quantity:
+                resolved.append((item, quantity, item.preselected_quantity or 0))
         return HelloFreshClient._build_cart_extras(resolved)
 
     @staticmethod
@@ -4054,7 +4072,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     # Absent from the catalog is NOT evidence of being sold out — the two
                     # payloads can disagree on membership. Leave the recipe untouched.
                     continue
-                recipe.is_sold_out, recipe.is_hidden = flags
+                # The customer's own menu can flag `meals[].isSoldOut` (HelloFresh's Android
+                # app models and enforces it); the regional catalog must not clear that.
+                sold_out, recipe.is_hidden = flags
+                recipe.is_sold_out = recipe.is_sold_out or sold_out
                 if recipe.is_sold_out:
                     marked += 1
 
@@ -4182,6 +4203,25 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         )
         return enriched_weeks
 
+    @staticmethod
+    def _delivery_option_handle(raw: Any) -> str | None:
+        """Return the delivery-option handle a week or subscription payload names explicitly.
+
+        Read from ``deliveryOption.handle`` (then ``deliveryOptionHandle`` and the
+        subscription's ``deliveryTime``), as HelloFresh's Android app does. A search for the
+        first nested ``handle`` anywhere can find the product's handle instead.
+        """
+        if not isinstance(raw, dict):
+            return None
+        option = raw.get("deliveryOption")
+        if isinstance(option, dict) and isinstance(option.get("handle"), str) and option["handle"]:
+            return option["handle"]
+        for key in ("deliveryOptionHandle", "deliveryTime"):
+            value = raw.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
     def _build_delivery_menu_params(
         self,
         subscription: HelloFreshSubscription,
@@ -4190,10 +4230,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     ) -> dict[str, Any] | None:
         """Build the query string required by the live delivery menu endpoint."""
         customer_plan_id = subscription.raw.get("customerPlanId")
-        delivery_option = self._find_first_nested_value(
-            account_week.raw,
-            ("handle", "deliveryOptionHandle"),
-        ) or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
+        delivery_option = (
+            self._delivery_option_handle(account_week.raw)
+            or self._delivery_option_handle(subscription.raw)
+            or self._find_first_nested_value(account_week.raw, ("handle", "deliveryOptionHandle"))
+            or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
+        )
         postcode = self._find_first_nested_value(subscription.raw, ("postcode", "postalCode"))
         preference = (
             plan_preference
@@ -4320,10 +4362,38 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             if resolved:
                 preference = resolved
 
+        if not preference:
+            # Last resort, as in HelloFresh's Android app (``SubscriptionWithPresetDelegate``):
+            # the region's highest-weight preset. Without a preference the week's menu request
+            # cannot be built at all, so any preset beats skipping the menu.
+            preference = await self._async_default_preset_handle(subscription_id)
+
         if preference:
             subscription.raw["planPreference"] = preference
         self._subscription_preferences[subscription_id] = preference
         return preference
+
+    async def _async_default_preset_handle(self, subscription_id: str | None) -> str | None:
+        """Return the handle of the region's highest-weight menu preset, or None."""
+        try:
+            presets = await self.async_get_presets()
+        except HelloFreshError as err:
+            self._record_debug_attempt(
+                "preference_attempts",
+                {"subscription_id": subscription_id, "path": "presets", "error": str(err)},
+            )
+            return None
+        best = max(
+            (preset for preset in presets if isinstance(preset.get("handle"), str)),
+            key=lambda preset: coerce_float(preset.get("weight")) or 0.0,
+            default=None,
+        )
+        handle = best["handle"] if best else None
+        self._record_debug_attempt(
+            "preference_attempts",
+            {"subscription_id": subscription_id, "path": "presets", "plan_preference": handle},
+        )
+        return handle
 
     async def _async_resolve_plan_preference(
         self,
@@ -4560,7 +4630,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             "customerID": customer_id,
             "shippingAddress": {"postcode": postcode} if postcode else {},
             "planID": plan_id,
-            "couponCode": None,
+            # The subscription's active coupon, as HelloFresh's Android app sends it
+            # (``ProductInfoCalculationRequestFactory``); null when there is none.
+            "couponCode": subscription.raw.get("couponCode") or None,
             "locale": locale,
             "country": api_country_code(self._country),
         }

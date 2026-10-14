@@ -777,7 +777,10 @@ class HelloFreshPayloadNormalizer:
                     recipe.variation_default_title = detail.get("default_title")
 
     def _market_item_from_raw(
-        self, raw_item: dict[str, Any], group_type: str | None
+        self,
+        raw_item: dict[str, Any],
+        group_type: str | None,
+        group_sku: str | None = None,
     ) -> HelloFreshMarketItem | None:
         """Build a market item (Market add-on) from one ``addOns.groups[].addOns[]`` entry."""
         recipe_data = (
@@ -797,16 +800,39 @@ class HelloFreshPayloadNormalizer:
         price_cents = coerce_int(price_catalog.get("basePrice"))
         price = round(price_cents / 100, 2) if price_cents is not None else None
 
-        # Selected quantity lives on the item's `selection` block when chosen. Market add-ons use
-        # `oneOffQuantity` (this-week add) + `preselectedQuantity` (recurring add) — NOT `quantity`
-        # (which is what meals use). Unselected items have `selection: null`.
+        # The selected quantity lives on the item's `selection` block (`selection: null` when
+        # unselected), split into `preselectedQuantity`, the recurring quantity carried week to
+        # week, and `oneOffQuantity`, THIS week's quantity when the customer changed it. As in
+        # HelloFresh's Android app (`ExtrasDomainMapper.getQuantityChosen`), the week's quantity is
+        # `oneOffQuantity` when one is set or the item is skipped for the week, otherwise the
+        # recurring `preselectedQuantity`; the two are never added together.
         selection = raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
         one_off = coerce_int(selection.get("oneOffQuantity")) or 0
         preselected = coerce_int(selection.get("preselectedQuantity")) or 0
-        selected_quantity = (one_off + preselected) or coerce_int(
-            selection.get("quantity") or raw_item.get("quantity")
-        )
+        if selection.get("skipped") or one_off > 0:
+            selected_quantity: int | None = one_off
+        elif preselected > 0:
+            selected_quantity = preselected
+        else:
+            selected_quantity = coerce_int(selection.get("quantity") or raw_item.get("quantity"))
         is_selected = bool(selected_quantity and selected_quantity > 0)
+        # Pairing add-ons (`groupType: "modularity"`) are linked to a meal through their
+        # selection's `courses`; a re-sent selection must keep that link.
+        courses = [
+            index
+            for course in selection.get("courses") or []
+            if isinstance(course, dict) and (index := coerce_int(course.get("index"))) is not None
+        ]
+        # HelloFresh's app has no `maxQuantity`: an item's limit is its largest quantity option.
+        max_quantity = coerce_int(raw_item.get("maxQuantity")) or max(
+            (
+                quantity
+                for option in raw_item.get("quantityOptions") or []
+                if isinstance(option, dict)
+                and (quantity := coerce_int(option.get("quantity"))) is not None
+            ),
+            default=None,
+        )
 
         # `item_id` falls back to the SKU or index when no recipe id is present, so it cannot
         # be handed to the recipe-detail API. Keep the real recipe id separately (None when
@@ -819,7 +845,8 @@ class HelloFreshPayloadNormalizer:
             else None,
             name=name,
             index=index,
-            sku=raw_item.get("sku"),
+            # An add-on without its own SKU is ordered under its group's (as the app does).
+            sku=raw_item.get("sku") or group_sku,
             group_type=group_type,
             image_url=_usable_image_url(
                 (
@@ -837,12 +864,13 @@ class HelloFreshPayloadNormalizer:
             calories_kcal=calories,
             price_cents=price_cents,
             price=price,
-            max_quantity=coerce_int(raw_item.get("maxQuantity")),
+            max_quantity=max_quantity,
             is_selected=is_selected,
             selected_quantity=selected_quantity if is_selected else None,
             preselected_quantity=preselected or None,
             is_locked=bool(raw_item.get("isLocked")),
             is_sold_out=bool(raw_item.get("isSoldOut")),
+            courses=courses,
         )
 
     def _build_market_items(self, raw_week: dict[str, Any]) -> list[HelloFreshMarketItem]:
@@ -862,10 +890,11 @@ class HelloFreshPayloadNormalizer:
             if not isinstance(group, dict):
                 continue
             group_type = group.get("groupType")
+            group_sku = group.get("sku") if isinstance(group.get("sku"), str) else None
             for raw_item in group.get("addOns") or []:
                 if not isinstance(raw_item, dict):
                     continue
-                item = self._market_item_from_raw(raw_item, group_type)
+                item = self._market_item_from_raw(raw_item, group_type, group_sku)
                 if item is None or item.index in seen_indexes:
                     continue
                 seen_indexes.add(item.index)

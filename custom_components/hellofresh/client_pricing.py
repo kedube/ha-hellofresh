@@ -105,7 +105,7 @@ class PricingClientMixin:
                     }
                 )
         return {
-            "meal_count": len(course_quantities),
+            "meal_count": sum(course_quantities.values()),
             "course_quantities": {str(k): v for k, v in sorted(course_quantities.items())},
             "grand_total": coerce_float(payload.get("grandTotal")),
             "sub_total": coerce_float(payload.get("subTotal")),
@@ -244,35 +244,42 @@ class PricingClientMixin:
             or subscription.servings
         )
         main_product_handle = self._find_first_nested_value(week.raw.get("product"), ("handle",))
-        delivery_option = self._find_first_nested_value(
-            week.raw.get("deliveryOption"),
-            ("handle",),
-        ) or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
+        delivery_option = (
+            self._delivery_option_handle(week.raw)
+            or self._delivery_option_handle(subscription.raw)
+            or self._find_first_nested_value(subscription.raw, ("handle", "deliveryOptionHandle"))
+        )
         unit_price_cents = coerce_float(
             self._find_first_nested_value(week.raw.get("product"), ("price", "unitPrice"))
         )
-        box_sku = self._find_first_nested_value(subscription.raw, ("sku",)) or main_product_handle
+        # The week's own box, then the plan's (a week can be resized for that delivery).
+        box_sku = main_product_handle or self._find_first_nested_value(subscription.raw, ("sku",))
         locale = subscription.locale or self._find_first_nested_value(subscription.raw, ("locale",))
         shipping_address = self._extract_shipping_address_payload(subscription.raw)
-        selected_groups = self._extract_cart_selection_groups(menu_payload, box_sku)
+        charge_handle = self._meal_charge_handle()
+        selected_groups = self._extract_cart_selection_groups(menu_payload, box_sku, charge_handle)
         if course_quantities is not None:
             selected_groups = self._override_cart_selection_groups(
-                selected_groups, course_quantities, default_box_sku=box_sku
+                selected_groups,
+                course_quantities,
+                default_box_sku=box_sku,
+                default_handle=charge_handle,
             )
             # The meal box SKU encodes how many meals it holds, so a hypothetical selection of a
             # different size needs the matching SKU or HelloFresh rejects it (MEAL_SIZE_MISMATCH).
-            meal_count = len(course_quantities)
+            meal_count = sum(course_quantities.values())
             if isinstance(main_product_handle, str):
                 main_product_handle = self._sku_for_meal_count(main_product_handle, meal_count)
 
+        # Only what HelloFresh's Android app sends is required: the app prices a box with
+        # just the postcode of the address and no planID or locale. The web app's extra fields
+        # are still sent when they are known.
         if not all(
             (
                 customer_id,
-                customer_plan_id,
                 box_size,
                 main_product_handle,
                 delivery_option,
-                locale,
                 shipping_address,
                 selected_groups,
             )
@@ -301,8 +308,23 @@ class PricingClientMixin:
                     "recipeIndexes": group["recipeIndexes"],
                 }
             )
+        # The week's Market add-ons are part of the box total: one product per selected item,
+        # keyed by its own SKU (HelloFresh's Android app, ``BoxContentAddonMapper``).
+        for item in week.market_items:
+            quantity = item.selected_quantity or 0
+            if not item.is_selected or quantity <= 0 or item.index is None or not item.sku:
+                continue
+            products.append(
+                {
+                    "boxSku": item.sku,
+                    "handle": item.sku,
+                    "hfWeek": week.week_id,
+                    "quantityPerCourse": [{"index": item.index, "quantity": quantity}],
+                    "recipeIndexes": [str(item.index)],
+                }
+            )
 
-        return {
+        payload: dict[str, Any] = {
             "boxSize": box_size,
             "isFirstOrder": bool(
                 subscription.raw.get("isFirstOrder")
@@ -314,33 +336,55 @@ class PricingClientMixin:
             ),
             "subscriptionID": coerce_int(subscription.subscription_id)
             or subscription.subscription_id,
-            "planID": customer_plan_id,
-            "products": products,
-            "shippingAddress": shipping_address,
-            "locale": locale,
-            "country": api_country_code(self._country),
         }
+        if customer_plan_id:
+            payload["planID"] = customer_plan_id
+        payload["products"] = products
+        payload["shippingAddress"] = shipping_address
+        if locale:
+            payload["locale"] = locale
+        payload["country"] = api_country_code(self._country)
+        return payload
+
+    def _meal_charge_handle(self) -> str:
+        """Return the product handle the box's meals are priced under, e.g. ``US-CHARGE-0-0-0``.
+
+        The menu's meals carry no handle of their own: HelloFresh's Android app builds this one
+        from the country code (``BoxContentCourseMapper``), and the web's captured request uses
+        the same value.
+        """
+        return f"{api_country_code(self._country)}-CHARGE-0-0-0"
 
     def _extract_shipping_address_payload(self, node: Any) -> dict[str, Any] | None:
-        """Extract the limited shipping address fields used by cart pricing."""
+        """Extract the limited shipping address fields used by cart pricing.
+
+        Only the postcode is required (HelloFresh's Android app sends nothing else); the web
+        app's ``address1`` and ``region`` are added when present.
+        """
         address = self._find_first_nested_dict(node, {"shippingAddress", "address"})
-        address1 = address.get("address1")
         postcode = address.get("postcode") or address.get("postalCode")
-        region = address.get("region") or address.get("state")
-        if not all((address1, postcode, region)):
+        if not postcode:
             return None
-        return {
-            "address1": address1,
-            "postcode": postcode,
-            "region": region,
-        }
+        payload: dict[str, Any] = {}
+        if address.get("address1"):
+            payload["address1"] = address["address1"]
+        payload["postcode"] = postcode
+        region = address.get("region") or address.get("state")
+        if region:
+            payload["region"] = region
+        return payload
 
     def _extract_cart_selection_groups(
         self,
         menu_payload: dict[str, Any],
         default_box_sku: str | None,
+        default_handle: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Collect selected menu items into the grouped payload expected by cart pricing."""
+        """Collect selected menu items into the grouped payload expected by cart pricing.
+
+        A meal is listed in ``recipeIndexes`` once per portion, as HelloFresh's Android app
+        does, so a meal at quantity 2 is priced as two of the box's meals.
+        """
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         for raw_item in self._find_cart_selection_candidates(menu_payload):
             index = raw_item.get("index")
@@ -351,7 +395,12 @@ class PricingClientMixin:
                 continue
 
             charge = raw_item.get("charge") if isinstance(raw_item.get("charge"), dict) else {}
-            handle = charge.get("handle") or raw_item.get("handle") or raw_item.get("sku")
+            handle = (
+                charge.get("handle")
+                or raw_item.get("handle")
+                or raw_item.get("sku")
+                or default_handle
+            )
             box_sku = charge.get("boxSku") or raw_item.get("boxSku") or default_box_sku
             if not handle or not box_sku:
                 continue
@@ -367,7 +416,7 @@ class PricingClientMixin:
                 },
             )
             group["quantityPerCourse"].append({"index": index, "quantity": quantity})
-            group["recipeIndexes"].append(str(index))
+            group["recipeIndexes"].extend([str(index)] * quantity)
 
         return list(grouped.values())
 
@@ -377,6 +426,7 @@ class PricingClientMixin:
         course_quantities: dict[int, int],
         *,
         default_box_sku: str | None,
+        default_handle: str | None = None,
     ) -> list[dict[str, Any]]:
         """Replace the meals in ``groups`` with a hypothetical ``{course_index: quantity}`` set.
 
@@ -385,9 +435,9 @@ class PricingClientMixin:
         HelloFresh would accept — only the chosen courses and their quantities change. The meal
         SKU is resized for the new count, matching what a real selection write does.
         """
-        meal_count = len(course_quantities)
+        meal_count = sum(course_quantities.values())
         template = groups[0] if groups else None
-        handle = (template or {}).get("handle")
+        handle = (template or {}).get("handle") or default_handle
         box_sku = (template or {}).get("boxSku") or default_box_sku
         if not handle or not box_sku:
             return []
@@ -400,7 +450,9 @@ class PricingClientMixin:
                 "quantityPerCourse": [
                     {"index": index, "quantity": quantity} for index, quantity in ordered
                 ],
-                "recipeIndexes": [str(index) for index, _ in ordered],
+                "recipeIndexes": [
+                    str(index) for index, quantity in ordered for _ in range(quantity)
+                ],
             }
         ]
 

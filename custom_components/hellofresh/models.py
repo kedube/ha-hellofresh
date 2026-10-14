@@ -405,12 +405,15 @@ class HelloFreshMarketItem:
     currency: str | None = None
     max_quantity: int | None = None
     is_selected: bool = False
-    # Total selected servings (one-off + preselected). preselected_quantity is the recurring
-    # portion (carried week to week); the cart write preserves it and applies changes as one-off.
+    # This week's quantity. preselected_quantity is the recurring quantity carried week to week;
+    # a change for this week is written as `oneOffQuantity` (the week's whole quantity), with
+    # the recurring quantity sent unchanged.
     selected_quantity: int | None = None
     preselected_quantity: int | None = None
     is_locked: bool = False
     is_sold_out: bool = False
+    # Meal (course) indexes a pairing add-on is linked to, re-sent with its selection.
+    courses: list[int] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize market-item data for the get_weeks response / dashboard card."""

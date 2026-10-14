@@ -5208,7 +5208,9 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
     async def fake_api_request(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
-        requests.append({"method": method, "path": path, "json_payload": json_payload})
+        requests.append(
+            {"method": method, "path": path, "params": params, "json_payload": json_payload}
+        )
 
         class DummyResponse:
             status = 200
@@ -5250,6 +5252,46 @@ def test_async_select_meals_sends_per_recipe_quantities() -> None:
     meals = requests[0]["json_payload"]["meals"]
     # recipe-11 gets quantity 2; recipe-18 defaults to 1.
     assert {m["index"]: m["quantity"] for m in meals} == {11: 2, 18: 1}
+
+
+def test_box_size_counts_each_portion() -> None:
+    """A meal at quantity 2 takes two of the box's meals, as in HelloFresh's Android app.
+
+    2 + 1 portions on a 3-meal plan keep the 3-meal box (counting distinct meals shrank it to 2,
+    one meal short); 2 + 2 grow it to 4; one meal at quantity 2 is the smallest, 2-meal box.
+    """
+    client, requests = _build_select_meals_client()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    for quantities in ({"recipe-11": 2}, {"recipe-11": 2, "recipe-18": 2}):
+        loop.run_until_complete(
+            client.async_select_meals("2026-W26", ["recipe-11", "recipe-18"], quantities)
+        )
+    loop.run_until_complete(client.async_select_meals("2026-W26", ["recipe-11"], {"recipe-11": 2}))
+
+    assert [request["params"]["product-sku"] for request in requests] == [
+        "US-CBU-3-2-0",
+        "US-CBU-4-2-0",
+        "US-CBU-2-2-0",
+    ]
+
+
+def test_cart_write_keeps_the_weeks_own_box() -> None:
+    """A week resized for that delivery is written with its own box, not the plan's.
+
+    Here the plan is 3 meals × 2 servings but this week's box is 4 servings; the old lookup
+    took the subscription's SKU first and wrote the week back as a 2-serving box.
+    """
+    client, requests = _build_select_meals_client()
+    week = client._last_account_data.get_week("2026-W26")
+    week.raw["product"] = {"handle": "US-CBU-3-4-0"}
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client.async_select_meals("2026-W26", ["recipe-11", "recipe-18", "recipe-20"])
+    )
+
+    assert requests[0]["params"]["product-sku"] == "US-CBU-3-4-0"
 
 
 def test_async_select_meals_allows_fewer_meals_than_plan() -> None:
@@ -5569,7 +5611,11 @@ def test_select_market_items_multiple_groups_produce_separate_extras() -> None:
 
 
 def test_select_market_items_preserves_recurring_quantity() -> None:
-    """A recurring (preselected) portion is kept; the rest of the total is applied as one-off."""
+    """``oneOffQuantity`` is the week's whole quantity; the recurring quantity is sent unchanged.
+
+    HelloFresh's Android app writes ``{oneOffQuantity: <wanted>, preselectedQuantity: <recurring>}``.
+    Writing the difference (2 + 1 for a total of 3) would apply as 2.
+    """
     client, requests = _build_market_select_client()
     # Mark m-app as having 1 recurring serving already.
     week = client._last_account_data.get_week("2026-W26")
@@ -5580,49 +5626,99 @@ def test_select_market_items_preserves_recurring_quantity() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    # Request total 3: keep 1 recurring, add 2 one-off.
     loop.run_until_complete(client.async_select_market_items("2026-W26", {"m-app": 3}))
     selection = requests[0]["json_payload"]["extras"][0]["selection"][0]
     assert selection == {
         "index": 70185,
-        "oneOffQuantity": 2,
+        "oneOffQuantity": 3,
         "preselectedQuantity": 1,
         "courses": [],
     }
 
 
-def test_market_item_parses_preselected_quantity() -> None:
-    """preselected_quantity is captured separately from the total selected_quantity."""
+def test_removing_a_recurring_market_item_keeps_it_at_zero_for_the_week() -> None:
+    """A recurring add-on removed for one week stays in the cart at ``oneOffQuantity: 0``.
+
+    That is how HelloFresh's Android app removes it; leaving it out would not cancel the
+    recurring order for the week.
+    """
+    client, requests = _build_market_select_client()
+    week = client._last_account_data.get_week("2026-W26")
+    app_item = next(i for i in week.market_items if i.item_id == "m-app")
+    app_item.preselected_quantity = 2
+    app_item.is_selected = True
+    app_item.selected_quantity = 2
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client.async_select_market_items("2026-W26", {}))
+    selections = [
+        entry for group in requests[0]["json_payload"]["extras"] for entry in group["selection"]
+    ]
+    assert selections == [
+        {"index": 70185, "oneOffQuantity": 0, "preselectedQuantity": 2, "courses": []}
+    ]
+
+
+def _parse_market_selection(selection: dict | None, **extra) -> object:
     from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
 
     norm = HelloFreshPayloadNormalizer.__new__(HelloFreshPayloadNormalizer)
+    raw_item = {
+        "index": 10089,
+        "selection": selection,
+        "priceCatalog": {"basePrice": 899},
+        "recipe": {"id": "trout", "name": "Steelhead Trout"},
+        **extra,
+    }
+    if "sku" not in extra:
+        raw_item["sku"] = "US-APR-0-0-0"
     items = norm._build_market_items(
         {
             "addOns": {
-                "groups": [
-                    {
-                        "groupType": "protein",
-                        "addOns": [
-                            {
-                                "index": 10089,
-                                "sku": "US-APR-0-0-0",
-                                "selection": {
-                                    "skipped": False,
-                                    "oneOffQuantity": 1,
-                                    "preselectedQuantity": 2,
-                                },
-                                "priceCatalog": {"basePrice": 899},
-                                "recipe": {"id": "trout", "name": "Steelhead Trout"},
-                            }
-                        ],
-                    }
-                ]
+                "groups": [{"groupType": "protein", "sku": "US-GRP-0-0-0", "addOns": [raw_item]}]
             }
         }
     )
-    item = items[0]
-    assert item.selected_quantity == 3  # 1 one-off + 2 recurring
-    assert item.preselected_quantity == 2
+    return items[0]
+
+
+def test_market_item_parses_preselected_quantity() -> None:
+    """The week's quantity is ``oneOffQuantity`` when set, else the recurring quantity.
+
+    HelloFresh's Android app reads it as ``(skipped || oneOff > 0) ? oneOff : preselected``;
+    the two are never added together.
+    """
+    changed = _parse_market_selection(
+        {"skipped": False, "oneOffQuantity": 1, "preselectedQuantity": 2}
+    )
+    assert changed.selected_quantity == 1
+    assert changed.preselected_quantity == 2
+
+    recurring = _parse_market_selection(
+        {"skipped": False, "oneOffQuantity": 0, "preselectedQuantity": 2}
+    )
+    assert recurring.selected_quantity == 2
+    assert recurring.is_selected is True
+
+    skipped = _parse_market_selection(
+        {"skipped": True, "oneOffQuantity": 0, "preselectedQuantity": 2}
+    )
+    assert skipped.is_selected is False
+    assert skipped.selected_quantity is None
+    assert skipped.preselected_quantity == 2
+
+
+def test_market_item_reads_limits_sku_and_meal_links_like_the_app() -> None:
+    """quantityOptions give the limit, the group SKU fills a missing one, courses are kept."""
+    item = _parse_market_selection(
+        {"oneOffQuantity": 1, "preselectedQuantity": 0, "courses": [{"index": 4}]},
+        sku=None,
+        quantityOptions=[{"quantity": 1}, {"quantity": 2}, {"quantity": 4}],
+    )
+    assert item.max_quantity == 4
+    assert item.sku == "US-GRP-0-0-0"
+    assert item.courses == [4]
 
 
 def test_scm_tracking_prefers_external_status_label() -> None:
@@ -9076,6 +9172,38 @@ def test_plan_preference_falls_back_to_preset_without_profile_match() -> None:
     assert pref == "chefschoice"
 
 
+def test_plan_preference_falls_back_to_the_highest_weight_preset() -> None:
+    """With no preference anywhere, the region's top preset is used instead of skipping the menu.
+
+    HelloFresh's Android app does the same when a subscription has no preset.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001",
+        account_id="acct-1",
+        locale="en-US",
+        raw={"customerPlanId": "plan-abc"},
+    )
+
+    async def no_preference(_subscription_id, _plan_id):
+        return None
+
+    async def presets(take=150):
+        return [
+            {"handle": "veggie", "weight": 40},
+            {"handle": "chefschoice", "weight": 100},
+            {"handle": "quick", "weight": 70},
+        ]
+
+    client._async_resolve_plan_preference = no_preference  # type: ignore[method-assign]
+    client.async_get_presets = presets  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    pref = loop.run_until_complete(client._async_get_subscription_plan_preference(subscription))
+    assert pref == "chefschoice"
+
+
 def _catalog_client(response_body, status=200):
     """Build a client whose next _async_api_get returns response_body as JSON."""
     client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
@@ -10122,7 +10250,8 @@ def test_preview_meal_price_prices_hypothetical_selection() -> None:
     # Recipe ids are resolved to the course indexes the cart is keyed by.
     assert captured["course_quantities"] == {1: 1, 10: 2}
     assert result["grand_total"] == 90.91
-    assert result["meal_count"] == 2
+    # A meal at quantity 2 takes two of the box's meals.
+    assert result["meal_count"] == 3
     assert result["surcharges"][0]["reason"] == "premium"
     # Surcharges arrive in minor units and are exposed both ways.
     assert result["surcharges"][0]["amount_cents"] == 1398
@@ -10177,6 +10306,126 @@ def test_preview_price_payload_resizes_box_sku_for_meal_count() -> None:
         {"index": 9, "quantity": 1},
         {"index": 14, "quantity": 1},
     ]
+
+
+def test_cart_price_payload_is_built_like_the_apps() -> None:
+    """The exact-price request can be built from a real menu, which carries no charge handles.
+
+    Real weeks were always skipped ("missing_payload") because the builder wanted a
+    ``charge.handle`` the menu never has and a full street address. HelloFresh's Android app
+    builds ``<CC>-CHARGE-0-0-0`` itself, lists a meal once per portion, adds each Market
+    add-on as its own product and sends only the postcode.
+    """
+    client = HelloFreshClient(session=object(), access_token="t", country="us")  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001",
+        account_id="20000001",
+        servings=2,
+        raw={"shippingAddress": {"postcode": "02101"}, "product": {"sku": "US-CBU-3-2-0"}},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W43",
+        display_name="Week 43",
+        subscription_id="1000001",
+        raw={
+            "product": {"handle": "US-CBU-3-2-0", "price": 6594},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+            "_menu_payload": {
+                "meals": [
+                    {"index": 7, "selection": {"quantity": 2}, "recipe": {"id": "a"}},
+                    {"index": 9, "selection": {"quantity": 1}, "recipe": {"id": "b"}},
+                    {"index": 12, "selection": {"quantity": 0}, "recipe": {"id": "c"}},
+                ]
+            },
+        },
+        market_items=[
+            HelloFreshMarketItem(
+                item_id="m1",
+                name="Garlic Bread",
+                index=10773,
+                sku="US-AAB-0-0-0",
+                is_selected=True,
+                selected_quantity=2,
+            ),
+            HelloFreshMarketItem(item_id="m2", name="Cookies", index=10800, sku="US-ADE-0-0-0"),
+        ],
+    )
+
+    payload = client._build_cart_price_payload(subscription, week)
+
+    assert payload is not None
+    assert payload["shippingAddress"] == {"postcode": "02101"}
+    assert "planID" not in payload and "locale" not in payload
+    box, charge, addon = payload["products"]
+    assert box == {
+        "handle": "US-CBU-3-2-0",
+        "deliveryOption": "US-1-0800-2000",
+        "hfWeek": "2026-W43",
+        "unitPrice": 65.94,
+    }
+    assert charge == {
+        "boxSku": "US-CBU-3-2-0",
+        "handle": "US-CHARGE-0-0-0",
+        "hfWeek": "2026-W43",
+        "quantityPerCourse": [{"index": 7, "quantity": 2}, {"index": 9, "quantity": 1}],
+        "recipeIndexes": ["7", "7", "9"],
+    }
+    assert addon == {
+        "boxSku": "US-AAB-0-0-0",
+        "handle": "US-AAB-0-0-0",
+        "hfWeek": "2026-W43",
+        "quantityPerCourse": [{"index": 10773, "quantity": 2}],
+        "recipeIndexes": ["10773"],
+    }
+
+
+def test_calculate_sends_the_subscriptions_coupon() -> None:
+    """``/gw/calculate`` prices the plan with its active coupon, as the app sends it."""
+    client = HelloFreshClient(session=object(), access_token="t", country="us")  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001",
+        account_id="20000001",
+        locale="en-US",
+        raw={
+            "customerPlanId": "plan-1",
+            "couponCode": "SAVE10",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+        },
+    )
+
+    payload = client._build_calculate_payload(subscription)
+
+    assert payload is not None
+    assert payload["couponCode"] == "SAVE10"
+
+
+def test_menu_delivery_option_is_read_from_its_own_field() -> None:
+    """The menu's ``delivery-option`` is ``deliveryOption.handle``, never the product's handle."""
+    client = HelloFreshClient(session=object(), access_token="t", country="us")  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001",
+        account_id="20000001",
+        locale="en-US",
+        servings=2,
+        raw={"customerPlanId": "plan-1", "preset": "quick", "postcode": "02101"},
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W43",
+        display_name="Week 43",
+        subscription_id="1000001",
+        raw={
+            # Key order puts the product's handle first, as a deep search would find it.
+            "product": {"handle": "US-CBU-3-2-0"},
+            "deliveryOption": {"handle": "US-1-0800-2000"},
+        },
+    )
+
+    params = client._build_delivery_menu_params(subscription, week)
+
+    assert params is not None
+    assert params["delivery-option"] == "US-1-0800-2000"
+    assert params["product-sku"] == "US-CBU-3-2-0"
 
 
 def _catalog_page_payload() -> dict:
@@ -11349,6 +11598,32 @@ def test_menu_availability_overlays_sold_out_onto_the_editable_week() -> None:
     assert recipes[0].is_sold_out is False
     assert recipes[1].is_sold_out is True
     assert recipes[1].is_hidden is True
+
+
+def test_menu_availability_never_clears_the_customers_own_sold_out_flag() -> None:
+    """A meal the customer's own menu marks sold out stays sold out.
+
+    HelloFresh's Android app reads ``meals[].isSoldOut`` from the customer menu; the regional
+    catalog saying the meal is available must not overwrite it.
+    """
+    recipe = HelloFreshRecipe(recipe_id="r-1", name="Gone for you", course_index=1)
+    recipe.is_sold_out = True
+    week = _editable_week(recipes=[recipe])
+    payload = _menus_service_payload(
+        "2026-W39",
+        [{"id": "c1", "isSoldOut": False, "recipe": {"id": "r-1", "name": "Gone for you"}}],
+    )
+    client = _availability_client(payload)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert recipe.is_sold_out is True
 
 
 def test_menu_availability_preserves_the_primary_endpoints_fields() -> None:
