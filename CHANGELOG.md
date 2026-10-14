@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.13 — 2026-10-14
 - **The HelloFresh card loads on iPads.** On an iPad the card and the sidebar panel could stop at
   "The HelloFresh card couldn't load", in Safari, Firefox and the Home Assistant app alike. All of
   them run Apple's WebKit, which could hand one part of the card to another before that part had
