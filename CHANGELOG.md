@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.15 — 2026-10-14
 - **No error after updating with Home Assistant open** ([#15](https://github.com/kedube/ha-hellofresh/issues/15)).
   Updating the integration and restarting Home Assistant while a browser tab had used the
   HelloFresh sidebar logged "the name "hellofresh-panel" has already been used with this
