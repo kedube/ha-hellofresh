@@ -152,19 +152,27 @@ def test_default_interval_does_not_warn(caplog) -> None:
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
-def test_rejected_patch_falls_back_to_the_legacy_plans_endpoint() -> None:
-    """No capture proves the plans endpoint is dead, so it is retained as a fallback."""
+def test_rejected_patch_falls_back_to_the_plans_endpoint() -> None:
+    """The Android app's endpoint is the fallback, with the app's body: the handle only."""
     client, sent = _client(fail_patch=True)
 
-    _run(client.async_change_delivery_weekday(TUESDAY, delivery_interval=2))
+    _run(client.async_change_delivery_weekday(TUESDAY))
 
     assert [request["method"] for request in sent] == ["PATCH", "POST"]
     fallback = sent[1]
     assert fallback["path"] == (
         "/gw/api/plans/00000000-0000-4000-8000-a00000000001/changePlanDeliveryDetails"
     )
-    # The fallback is the one path that can carry an interval.
-    assert fallback["json"] == {"deliveryOption": TUESDAY, "deliveryInterval": 2}
+    assert fallback["json"] == {"deliveryOption": TUESDAY}
+
+
+def test_plans_fallback_sends_an_interval_only_when_asked() -> None:
+    """No client sends ``deliveryInterval``; it is added only for a non-weekly request."""
+    client, sent = _client(fail_patch=True)
+
+    _run(client.async_change_delivery_weekday(TUESDAY, delivery_interval=2))
+
+    assert sent[1]["json"] == {"deliveryOption": TUESDAY, "deliveryInterval": 2}
 
 
 def test_auth_failure_is_not_swallowed_by_the_fallback() -> None:

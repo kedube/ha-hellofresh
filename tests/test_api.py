@@ -1024,6 +1024,65 @@ def test_one_malformed_week_is_dropped_not_fatal() -> None:
     assert [week.week_id for week in weeks] == ["week-odd", "week-good"]
 
 
+def test_paused_week_is_skipped() -> None:
+    """A skipped week carries only ``status: "PAUSED"``; it must read as skipped.
+
+    Regression guard: ``is_skipped`` looked only for ``skipped``/``isSkipped`` flags that
+    HelloFresh never sends, so a skipped week showed the skip switch off (and turning it off
+    sent nothing), still counted as an upcoming order, and never fired the skip events.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")
+    payload = {
+        "items": [
+            {"id": "2026-W39", "deliveryDate": "2026-09-21", "status": "PAUSED"},
+            {
+                "id": "2026-W40",
+                "deliveryDate": "2026-09-28",
+                "status": "RUNNING",
+                "state": "PAUSED",
+            },
+            {"id": "2026-W41", "deliveryDate": "2026-10-05", "status": "skipped"},
+            {"id": "2026-W42", "deliveryDate": "2026-10-12", "status": "RUNNING"},
+        ]
+    }
+
+    weeks, _orders = client._normalize_weeks_payload(payload, subscription=subscription)
+
+    assert {week.week_id: week.is_skipped for week in weeks} == {
+        "2026-W39": True,
+        "2026-W40": True,
+        "2026-W41": True,
+        "2026-W42": False,
+    }
+
+
+def test_holiday_shifted_week_shows_its_shifted_date() -> None:
+    """A box moved for a holiday is dated (and ordered) on ``holidayDelivery``.
+
+    The raw ``deliveryDate`` stays in ``raw`` for the skip/unskip PATCH, which must send it.
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", account_id="acct-1")
+    payload = {
+        "items": [
+            {
+                "id": "2026-W52",
+                "deliveryDate": "2026-12-21T12:00:00-0800",
+                "holidayDelivery": "2026-12-19T12:00:00-0800",
+                "status": "RUNNING",
+            }
+        ]
+    }
+
+    weeks, orders = client._normalize_weeks_payload(payload, subscription=subscription)
+
+    assert weeks[0].delivery_date == date(2026, 12, 19)
+    assert weeks[0].holiday_delivery_date == date(2026, 12, 19)
+    assert weeks[0].raw["deliveryDate"] == "2026-12-21T12:00:00-0800"
+    assert orders[0].delivery_date == date(2026, 12, 19)
+
+
 def test_normalize_weeks_payload_extracts_tracking_and_meals() -> None:
     """Delivery payloads should map into stable week and order models."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
@@ -7441,6 +7500,46 @@ def test_skip_week_falls_back_to_guessed_paths_without_dates() -> None:
     assert not any("delivery_dates" in p for p in paths)
 
 
+def test_skip_week_without_cutoff_still_uses_the_status_patch() -> None:
+    """A missing cutoff no longer abandons the verified PATCH; the field is just left out.
+
+    HelloFresh's Android app sends ``{"delivery": {"id", "status", "deliveryDate"}}`` with no
+    ``cutoffDate`` for both skip and unskip.
+    """
+    week = HelloFreshWeek(
+        week_id="2026-W30",
+        display_name="W30",
+        subscription_id="1000001",
+        raw={"deliveryDate": "2026-07-27T12:00:00-0700", "id": "2026-W30"},
+    )
+    client = _client_with_known_week(week)
+    sent: list[tuple[str, str, object]] = []
+
+    async def fake_api_request(
+        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
+    ):
+        sent.append((method, path, json_payload))
+        return object()
+
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client.async_skip_week("2026-W30"))
+
+    assert len(sent) == 1
+    method, path, body = sent[0]
+    assert (method, path) == ("PATCH", "/gw/api/subscriptions/1000001/delivery_dates/2026-W30")
+    assert body == {
+        "delivery": {
+            "deliveryDate": "2026-07-27T12:00:00-0700",
+            "status": "PAUSED",
+            "subscriptionId": "1000001",
+            "id": "2026-W30",
+        }
+    }
+
+
 def test_reschedule_week_posts_oneoff_with_verified_body() -> None:
     """Reschedule should POST /oneoff with the HAR-verified body shape."""
     week = HelloFreshWeek(
@@ -8139,6 +8238,34 @@ def test_accumulate_order_prices_separates_different_dates() -> None:
 
     assert round(price_by_key[("sub-1", date(2026, 6, 8))][0], 2) == 80.00
     assert round(price_by_key[("sub-1", date(2026, 6, 15))][0], 2) == 97.50
+
+
+def test_accumulate_order_prices_ignores_orders_that_were_not_charged() -> None:
+    """A failed, cancelled or charged-back order is not a payment.
+
+    HelloFresh's Android app counts only ``paymentStatus: "paid"`` lines as a successful order.
+    Without the check a failed charge dated the "recent payment" and added to spending.
+    """
+    client = _make_client()
+    paid = _billing_item("sub-1", "2026-06-08", 80.00, created_at="2026-06-01T00:00:00Z")
+    paid["orderLines"][0]["paymentStatus"] = "paid"
+    unpaid = []
+    for status, created in (("failed", "05"), ("CANCELED", "06"), ("chargeback", "07")):
+        item = _billing_item(
+            "sub-1",
+            f"2026-06-{int(created) + 9:02d}",
+            50.0,
+            created_at=f"2026-06-{created}T00:00:00Z",
+        )
+        item["orderLines"][0]["paymentStatus"] = status
+        unpaid.append(item)
+    not_billed_yet = _billing_item("sub-1", "2026-06-22", 97.50, created_at="2026-06-08T00:00:00Z")
+
+    latest, _, _, price_by_key, _ = client._accumulate_order_prices([paid, *unpaid, not_billed_yet])
+
+    assert set(price_by_key) == {("sub-1", date(2026, 6, 8)), ("sub-1", date(2026, 6, 22))}
+    # The latest charge is the un-billed-status order created on Jun 8, not the failed Jun 7 one.
+    assert latest["sub-1"] == datetime(2026, 6, 8, tzinfo=UTC)
 
 
 def test_accumulate_order_prices_future_vs_past_tracking() -> None:

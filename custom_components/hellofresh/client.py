@@ -551,7 +551,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 fresh_orders[order.order_id] = order
 
         changed = False
-        week_fields = ("status", "delivered_at", "delivery_state", "sub_status")
+        week_fields = ("status", "is_skipped", "delivered_at", "delivery_state", "sub_status")
         for week in data.weeks:
             fresh = fresh_weeks.get((week.week_id, week.subscription_id))
             if fresh is None:
@@ -2042,9 +2042,11 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         Observed in a capture as
         ``PATCH /gw/api/subscriptions/{subscription_id}/delivery_dates/{week_id}`` with body
         ``{"delivery": {"cutoffDate", "deliveryDate", "status", "subscriptionId", "id"}}``,
-        where ``status`` is ``PAUSED`` (skip) or ``RUNNING`` (unskip). Returns True on
-        success; returns False (so the caller can fall back) when the required date fields
-        aren't available. A rejection still propagates as ``HelloFreshError``.
+        where ``status`` is ``PAUSED`` (skip) or ``RUNNING`` (unskip). ``cutoffDate`` is
+        optional: the website sends it, while HelloFresh's Android app leaves it out (its
+        request model marks it optional and both skip and unskip pass none), so it is sent
+        only when known. Returns True on success; returns False (so the caller can fall back)
+        when the week has no delivery date. A rejection still propagates as ``HelloFreshError``.
         """
         if week.subscription_id is None:
             return False
@@ -2057,20 +2059,21 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         delivery_date = week.raw.get("deliveryDate") or (
             week.delivery_date.isoformat() if week.delivery_date else None
         )
-        if not cutoff_date or not delivery_date:
+        if not delivery_date:
             return False
 
         path = f"/gw/api/subscriptions/{_seg(week.subscription_id)}/delivery_dates/{_seg(week.week_id)}"
         params = {"country": api_country_code(self._country), "locale": self._locale_for_country()}
-        json_payload = {
-            "delivery": {
-                "cutoffDate": cutoff_date,
+        delivery: dict[str, Any] = {"cutoffDate": cutoff_date} if cutoff_date else {}
+        delivery.update(
+            {
                 "deliveryDate": delivery_date,
                 "status": status,
                 "subscriptionId": week.subscription_id,
                 "id": week.week_id,
             }
-        }
+        )
+        json_payload = {"delivery": delivery}
         await self._async_api_request("PATCH", path, params=params, json_payload=json_payload)
         _LOGGER.info(
             "HelloFresh week %s delivery status set to %s via %s",
@@ -2330,11 +2333,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         ``{"subscription": {"id", "deliveryTime"}}``. This affects **all** future deliveries for
         the subscription, not a single week.
 
-        This replaced an inferred ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails``, which
-        appears in **none** of the 16 retained captures -- the live web app changes the standing
-        delivery day through the subscription PATCH above. The old call is kept as a fallback only
-        for the case where the PATCH is rejected, since no capture proves the plans endpoint is
-        dead (see docs/HELLOFRESH_API.md, Change recurring delivery weekday).
+        The web app changes the standing delivery day through the subscription PATCH above.
+        HelloFresh's Android app uses ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails``
+        instead, which appears in none of the web captures; it is the fallback for when the
+        PATCH is rejected (see docs/HELLOFRESH_API.md, Change recurring delivery weekday).
 
         Two properties of the verified response are worth knowing, both pinned by tests:
 
@@ -2394,11 +2396,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         delivery_option: str,
         delivery_interval: int,
     ) -> None:
-        """Legacy, never-captured fallback for the recurring weekday change.
+        """Fallback for the recurring weekday change: the Android app's endpoint.
 
-        Inferred rather than observed: no capture exercises this endpoint. Retained only because
-        the verified subscription PATCH is US-observed, and an older account or another region
-        could conceivably still need this path.
+        HelloFresh's Android app changes every future delivery with this call
+        (``SubscriptionApi.bulkRescheduleDelivery``), body ``{"deliveryOption": <handle>}`` and
+        ``planId`` = the subscription's ``customerPlanId``. No web capture exercises it. The app
+        never sends ``deliveryInterval``, so it is added only when a caller asks for an interval
+        other than every week, and whether HelloFresh honours it is unverified.
         """
         plan_id = subscription.raw.get("customerPlanId")
         if not plan_id:
@@ -2409,10 +2413,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
         path = f"/gw/api/plans/{_seg(plan_id)}/changePlanDeliveryDetails"
         params = {"country": api_country_code(self._country)}
-        json_payload = {
-            "deliveryOption": delivery_option,
-            "deliveryInterval": delivery_interval,
-        }
+        json_payload: dict[str, Any] = {"deliveryOption": delivery_option}
+        if delivery_interval != 1:
+            json_payload["deliveryInterval"] = delivery_interval
         await self._async_api_request("POST", path, params=params, json_payload=json_payload)
         _LOGGER.info(
             "HelloFresh plan delivery details changed to %s (interval %s)",
@@ -2553,6 +2556,28 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     # Payment-date enrichment helpers
     # ------------------------------------------------------------------
 
+    # Order-line ``paymentStatus`` values that mean no money was kept. HelloFresh's Android app
+    # models paid / failed / chargeback / canceled and counts only ``paid`` as a successful
+    # order (``GetLastSuccessfulOrderUseCase``).
+    _UNCHARGED_PAYMENT_STATUSES = frozenset({"failed", "canceled", "cancelled", "chargeback"})
+
+    @classmethod
+    def _order_was_not_charged(cls, order_lines: list[Any]) -> bool:
+        """Return True when every order line that reports a payment status was not paid.
+
+        Such an order is not a payment: it must not date the last charge, count toward
+        spending, or price a box. Lines without a status (an upcoming box not billed yet) and
+        partly-paid orders still count.
+        """
+        statuses = [
+            line["paymentStatus"].strip().lower()
+            for line in order_lines
+            if isinstance(line, dict) and isinstance(line.get("paymentStatus"), str)
+        ]
+        return bool(statuses) and all(
+            status in cls._UNCHARGED_PAYMENT_STATUSES for status in statuses
+        )
+
     def _accumulate_order_prices(
         self,
         items: list[Any],
@@ -2595,6 +2620,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             )
             subscription_id = str(raw_sub_id) if raw_sub_id is not None else None
             if not subscription_id:
+                continue
+            if self._order_was_not_charged(order_lines):
                 continue
 
             delivery_date = parse_date(first_line.get("deliveryDate"))
@@ -3644,10 +3671,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             ),
             ("/gw/my-deliveries/deliveries", {"subscription": subscription_id}),
             ("/gw/api/customers/me/deliveries", {"subscription": subscription_id}),
-            (
-                f"/gw/api/customers/me/subscriptions/{_seg(subscription_id)}/deliveries",
-                None,
-            ),
+            # HelloFresh's Android app reads a subscription's weeks from this route (its
+            # ``DeliveryDateApi``; no range means every week). It replaced a guessed
+            # ``/gw/api/customers/me/subscriptions/{id}/deliveries`` that no client uses.
+            (f"/gw/api/subscriptions/{_seg(subscription_id)}/deliveries", None),
         )
         ordered_calls = self._order_candidates_by_preference(
             "deliveries", subscription_id, candidate_calls

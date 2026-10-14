@@ -161,6 +161,23 @@ class HelloFreshPayloadNormalizer:
             return state
         return raw_week.get("status") or raw_week.get("deliveryStatus") or state or "scheduled"
 
+    @staticmethod
+    def _raw_week_is_skipped(raw_week: dict[str, Any]) -> bool:
+        """Return True when the customer skipped this week's box.
+
+        HelloFresh marks a skipped week only with ``status: "PAUSED"`` (skipping PATCHes
+        ``PAUSED``, unskipping ``RUNNING``); its delivery model has no ``skipped`` field, as
+        HelloFresh's Android app confirms. ``state`` is checked too, because the week's
+        effective status prefers it (see ``_effective_week_status``). The boolean flags are
+        kept for any payload that does carry them.
+        """
+        if raw_week.get("skipped") or raw_week.get("isSkipped"):
+            return True
+        return any(
+            isinstance(value, str) and value.strip().upper() in ("PAUSED", "SKIPPED")
+            for value in (raw_week.get("status"), raw_week.get("state"))
+        )
+
     @classmethod
     def _delivered_at_from_raw(cls, raw_week: dict[str, Any]) -> datetime | None:
         """Return the actual delivered timestamp for a DELIVERED week, else None.
@@ -186,7 +203,16 @@ class HelloFreshPayloadNormalizer:
         subscription: HelloFreshSubscription,
     ) -> tuple[list[HelloFreshWeek], list[HelloFreshOrder]]:
         """Normalize a deliveries payload into HelloFresh weeks and orders."""
-        raw_weeks = payload.get("weeks") or payload.get("items") or payload.get("deliveries") or []
+        # HelloFresh's collections use ``items``, ``data`` or ``result`` (the Android app accepts
+        # all three); only a list counts, so a dict-shaped ``data`` can't turn into weeks.
+        raw_weeks = next(
+            (
+                value
+                for key in ("weeks", "items", "deliveries", "data", "result")
+                if isinstance(value := payload.get(key), list) and value
+            ),
+            [],
+        )
         weeks: list[HelloFreshWeek] = []
         orders: list[HelloFreshOrder] = []
 
@@ -268,8 +294,14 @@ class HelloFreshPayloadNormalizer:
                         if raw_subscription_id is not None
                         else subscription.subscription_id
                     ),
+                    # A holiday-shifted box arrives on ``holidayDelivery``, so that is the date
+                    # shown everywhere (calendar, next order, the Week tab), as HelloFresh's own
+                    # app does. Writes still send the raw ``deliveryDate`` (see
+                    # ``_async_patch_delivery_status``), and the shifted date is also kept as
+                    # ``holiday_delivery_date`` for the holiday notices.
                     delivery_date=parse_date(
-                        raw_week.get("deliveryDate")
+                        raw_week.get("holidayDelivery")
+                        or raw_week.get("deliveryDate")
                         or raw_week.get("date")
                         or raw_week.get("shipmentDate")
                         or raw_week.get("expectedDeliveryDate")
@@ -283,11 +315,7 @@ class HelloFreshPayloadNormalizer:
                     status=self._effective_week_status(raw_week),
                     meals_required=meals_required,
                     meals_selected=meals_selected,
-                    is_skipped=bool(
-                        raw_week.get("skipped")
-                        or raw_week.get("isSkipped")
-                        or raw_week.get("status") == "skipped"
-                    ),
+                    is_skipped=self._raw_week_is_skipped(raw_week),
                     recipes=recipes,
                     source="account",
                     menu_title=raw_week.get("menuTitle")
