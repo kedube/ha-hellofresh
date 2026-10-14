@@ -19,6 +19,9 @@ version heading and publishes it as the release's Highlights.
   see now leaves the row still. The row shows as many weeks as fit, up to seven, with your next box
   and the week before it in view, and its arrows turn a page of weeks at a time. Older weeks are
   still a swipe or an arrow away.
+- **Browser tests wait longer for Chrome.** On the first CI run on GitHub's new Ubuntu image,
+  Chrome didn't start within 30 seconds, so the browser tests failed before any test ran. Chrome
+  now gets a minute, then one more try that logs its own output.
 
 ## 4.15 — 2026-10-14
 - **No error after updating with Home Assistant open** ([#15](https://github.com/kedube/ha-hellofresh/issues/15)).
