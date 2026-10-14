@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.14 — 2026-10-14
 - **Exact box prices.** HelloFresh refused the exact price check for every week, so box totals
   still came from a rougher estimate without premium surcharges or Market extras, and the
   card's running price while you pick meals could fail. The integration sent your address's
