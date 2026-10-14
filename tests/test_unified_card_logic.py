@@ -848,3 +848,24 @@ def test_plan_flags_a_swapped_meal_and_shows_what_is_still_to_come_today() -> No
     assert note is True
     assert today == ["dinner"]  # breakfast is over by 3 PM
     assert start == "17:30"
+
+
+def test_payment_brands_use_their_names_not_their_codes() -> None:
+    """HelloFresh sends Adyen-style codes; "mc" must read Mastercard, not "Mc"."""
+    result = _run(
+        """
+        return ["mc", "visa", "amex", "bcmc", "i_deal", "paypal", "credit_card", "jcb"].map(
+          (brand) => L.cardOnFile({ payment_card_brand: brand })
+        );
+        """
+    )
+    assert result == [
+        "Mastercard",
+        "Visa",
+        "American Express",
+        "Bancontact",
+        "iDEAL",
+        "PayPal",
+        "Credit card",
+        "Jcb",
+    ]

@@ -1368,12 +1368,33 @@ export function fmtMonth(key, options = { month: "short", year: "numeric" }) {
 // ---- account ---------------------------------------------------------------------------------
 
 // "Visa ending in 4242" — the brand when reported, else the type humanized, plus last four.
+// HelloFresh names payment methods with Adyen-style codes (the list in its Android app's
+// PaymentMethod); "mc" would otherwise read "Mc". Brand names are not translated.
+const PAYMENT_BRANDS = {
+  amex: "American Express",
+  apple_pay: "Apple Pay",
+  bcmc: "Bancontact",
+  i_deal: "iDEAL",
+  ideal: "iDEAL",
+  klarna: "Klarna",
+  maestro: "Maestro",
+  maestrouk: "Maestro",
+  mastercard: "Mastercard",
+  mc: "Mastercard",
+  paypal: "PayPal",
+  ratepay: "Ratepay",
+  sepa: "SEPA",
+  sepadirectdebit: "SEPA",
+  visa: "Visa",
+  visadankort: "Visa Dankort",
+};
+
 export function cardOnFile(summary) {
   const raw = summary && (summary.payment_card_brand || summary.payment_card_type);
   const name = raw ? String(raw) : "";
   if (!name) return "";
   const humanized = name.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
-  const brand = humanized === "Credit Card" ? t("account.credit_card") : humanized;
+  const brand = PAYMENT_BRANDS[name.toLowerCase()] || (humanized === "Credit Card" ? t("account.credit_card") : humanized);
   const last4 = /^\d{4}$/.test(String(summary.payment_card_last4 || "")) ? summary.payment_card_last4 : "";
   return last4 ? t("account.card_ending", { brand, last4 }) : brand;
 }

@@ -2867,20 +2867,30 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
         await self._async_enrich_recent_payment_from_balance_transactions(subscriptions)
 
+    def _customer_uuid(self, subscriptions: Sequence[HelloFreshSubscription]) -> str | None:
+        """Return the customer's UUID, which the payments endpoints are keyed by.
+
+        Read from the subscription's ``customer.uuid``, where HelloFresh's Android app takes it,
+        then from the first ``uuid`` anywhere in the payload (another object's id could match).
+        """
+        for subscription in subscriptions:
+            customer = subscription.raw.get("customer")
+            uuid = customer.get("uuid") if isinstance(customer, dict) else None
+            if isinstance(uuid, str) and uuid:
+                return uuid
+        for subscription in subscriptions:
+            uuid = self._find_first_nested_value(subscription.raw, ("uuid",))
+            if isinstance(uuid, str) and uuid:
+                return uuid
+        return None
+
     async def _async_enrich_recent_payment_from_balance_transactions(
         self,
         subscriptions: Sequence[HelloFreshSubscription],
     ) -> None:
         """Fallback recent-payment lookup using the account balance transactions feed."""
-        customer_uuid = next(
-            (
-                self._find_first_nested_value(subscription.raw, ("uuid",))
-                for subscription in subscriptions
-                if self._find_first_nested_value(subscription.raw, ("uuid",))
-            ),
-            None,
-        )
-        if not isinstance(customer_uuid, str) or not customer_uuid:
+        customer_uuid = self._customer_uuid(subscriptions)
+        if not customer_uuid:
             return
 
         params = {
@@ -2912,7 +2922,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             created_at.date()
             for item in payload
             if isinstance(item, dict)
-            and item.get("transactionType") == "DEBIT"
+            and str(item.get("transactionType") or "").upper() == "DEBIT"
             and (created_at := parse_datetime(item.get("createdAt"))) is not None
         ]
         if not created_dates:
@@ -2946,15 +2956,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         """
         if self._session is None:
             return
-        customer_uuid = next(
-            (
-                uuid
-                for subscription in subscriptions
-                if (uuid := self._find_first_nested_value(subscription.raw, ("uuid",)))
-            ),
-            None,
-        )
-        if not isinstance(customer_uuid, str) or not customer_uuid:
+        customer_uuid = self._customer_uuid(subscriptions)
+        if not customer_uuid:
             return
 
         path = f"/gw/payments/customers/{_seg(customer_uuid)}/balance"
@@ -3177,7 +3180,12 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         "box": "your box",
         "addons": "add-ons",
         "addon": "add-ons",
+        "freeAddons": "free add-ons",
+        "externalProduct": "a partner product",
     }
+    # Unit statuses that mean the discount is on the week: ``applied`` (chosen for it, see
+    # HelloFresh's Android app's ``UnitStatus``) before ``available``; ``inactive`` is not.
+    _ACTIVE_UNIT_STATUSES = ("applied", "available")
     _CURRENCY_SYMBOLS = {
         "USD": "$",
         "CAD": "$",
@@ -3209,6 +3217,18 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             amount_text = f"{symbol}{number}" if symbol else f"{number} {currency}".strip()
         return f"{amount_text} off {target}" if target else f"{amount_text} off"
 
+    @staticmethod
+    def _wallet_budget_amount(benefit: Mapping[str, Any]) -> tuple[float | None, str | None]:
+        """Return a benefit's (amount, budget type) in major units or percent.
+
+        ``budget.value`` is in hundredths: minor units for ``fixed`` and hundredths of a percent
+        for ``percent``/``percentage`` (HelloFresh's Android app divides both by 100), so 1000 is
+        $10 and 1500 is 15%.
+        """
+        budget = benefit.get("budget") if isinstance(benefit.get("budget"), dict) else {}
+        raw_value = coerce_float(budget.get("value"))
+        return (round(raw_value / 100, 2) if raw_value is not None else None), budget.get("type")
+
     @classmethod
     def _parse_wallet_promises(
         cls, payload: Mapping[str, Any], currency: str | None
@@ -3217,34 +3237,38 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
 
         Observed shape (captures 37-51): ``{id, voucherCode, source, expirationDateTime,
         attachmentDateTime, unlimited, type, campaign: {type}, units: [{box, benefits:
-        [{id, applicableTo, budget: {type: "fixed", value: 1000}}], used}]}`` — ``budget.value``
-        is in minor units. Only a fixed premium-surcharge voucher has been seen; ``applicableTo``
-        and ``budget.type`` are carried through generically so other kinds label themselves.
+        [{id, applicableTo, budget: {type: "fixed", value: 1000}}], used}]}``. Each unit is one
+        box of the promise with its own budget (a "3 boxes" promise has three); a week's amount
+        is the unit for that week's ``box``, as in HelloFresh's Android app (``WeekDiscountMapper``).
+        The promise-level amount is its first unused box's. Only a single-box fixed
+        premium-surcharge voucher has been captured; other kinds label themselves generically.
+        The per-box amounts are kept under ``_boxes`` for ``_async_enrich_wallet_benefits`` and
+        are not exposed.
         """
         promises: dict[str, dict[str, Any]] = {}
         for raw in payload.get("promises") or []:
             if not isinstance(raw, dict) or not raw.get("id"):
                 continue
-            benefit: dict[str, Any] = {}
-            for unit in raw.get("units") or []:
-                if not isinstance(unit, dict):
+            units = [unit for unit in raw.get("units") or [] if isinstance(unit, dict)]
+            boxes: dict[int, dict[str, Any]] = {}
+            first: dict[str, Any] | None = None
+            first_unused: dict[str, Any] | None = None
+            for position, unit in enumerate(units, start=1):
+                benefit = next((b for b in unit.get("benefits") or [] if isinstance(b, dict)), None)
+                if benefit is None:
                     continue
-                for candidate in unit.get("benefits") or []:
-                    if isinstance(candidate, dict):
-                        benefit = candidate
-                        break
-                if benefit:
-                    break
-            budget = benefit.get("budget") if isinstance(benefit.get("budget"), dict) else {}
-            amount_type = budget.get("type")
-            raw_value = coerce_float(budget.get("value"))
-            if raw_value is None:
-                amount = None
-            elif amount_type in ("percent", "percentage"):
-                amount = raw_value
-            else:
-                amount = round(raw_value / 100, 2)
-            applies_to = benefit.get("applicableTo") or raw.get("type")
+                amount, amount_type = cls._wallet_budget_amount(benefit)
+                entry = {
+                    "amount": amount,
+                    "amount_type": amount_type,
+                    "applies_to": benefit.get("applicableTo") or raw.get("type"),
+                }
+                boxes[coerce_int(unit.get("box")) or position] = entry
+                first = first or entry
+                if first_unused is None and not unit.get("used"):
+                    first_unused = entry
+            chosen = first_unused or first or {"amount": None, "amount_type": None}
+            applies_to = chosen.get("applies_to") or raw.get("type")
             campaign = raw.get("campaign") if isinstance(raw.get("campaign"), dict) else {}
             expires_at = parse_datetime(raw.get("expirationDateTime"))
             attached_at = parse_datetime(raw.get("attachmentDateTime"))
@@ -3254,16 +3278,21 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 "voucher_code": raw.get("voucherCode") or None,
                 "type": raw.get("type"),
                 "applies_to": applies_to,
-                "amount": amount,
-                "amount_type": amount_type,
+                "amount": chosen["amount"],
+                "amount_type": chosen["amount_type"],
                 "currency": currency,
-                "label": cls._benefit_label(applies_to, amount, amount_type, currency),
-                "one_time": not unlimited,
+                "label": cls._benefit_label(
+                    applies_to, chosen["amount"], chosen["amount_type"], currency
+                ),
+                "one_time": not unlimited and len(units) <= 1,
+                "boxes": None if unlimited else len(units),
+                "boxes_used": sum(1 for unit in units if unit.get("used")),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "attached_at": attached_at.isoformat() if attached_at else None,
                 "source": raw.get("source"),
                 "campaign": campaign.get("type"),
                 "weeks": [],
+                "_boxes": boxes,
             }
         return promises
 
@@ -3363,10 +3392,23 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     if promise is None:
                         continue
                     status = unit.get("status")
-                    summary = {k: v for k, v in promise.items() if k != "weeks"}
+                    summary = {
+                        k: v for k, v in promise.items() if k != "weeks" and not k.startswith("_")
+                    }
                     summary["status"] = status
+                    # The week's own box of the promise (unit ``box``, 1 when absent).
+                    box = promise["_boxes"].get(coerce_int(unit.get("box")) or 1)
+                    if box is not None and box["amount"] != promise["amount"]:
+                        summary["amount"] = box["amount"]
+                        summary["amount_type"] = box["amount_type"]
+                        summary["label"] = self._benefit_label(
+                            box["applies_to"], box["amount"], box["amount_type"], currency
+                        )
                     attached.append(summary)
-                    if status == "available" and week.week_id not in promise["weeks"]:
+                    if (
+                        status in self._ACTIVE_UNIT_STATUSES
+                        and week.week_id not in promise["weeks"]
+                    ):
                         promise["weeks"].append(week.week_id)
                 if attached:
                     week.benefits = attached
@@ -3383,9 +3425,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 },
             )
 
-        data.wallet_benefits = list(all_promises.values())
-        # The next box's discount: the earliest upcoming week that will actually ship and has
-        # an available promise (the same "next box" the price sensors describe).
+        data.wallet_benefits = [
+            {k: v for k, v in promise.items() if not k.startswith("_")}
+            for promise in all_promises.values()
+        ]
+        # The next box's discount: the earliest upcoming week that will actually ship and has an
+        # active promise (the same "next box" the price sensors describe). A promise ``applied``
+        # to the week is its discount; otherwise the first ``available`` one.
         candidates = sorted(
             (
                 week
@@ -3393,13 +3439,16 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 if week.delivery_date is not None
                 and week.delivery_date >= today
                 and not week.is_skipped
-                and any(b.get("status") == "available" for b in week.benefits)
+                and any(b.get("status") in self._ACTIVE_UNIT_STATUSES for b in week.benefits)
             ),
             key=lambda week: (week.delivery_date, week.week_id),
         )
         if candidates:
             next_week = candidates[0]
-            benefit = next(b for b in next_week.benefits if b.get("status") == "available")
+            benefit = min(
+                (b for b in next_week.benefits if b.get("status") in self._ACTIVE_UNIT_STATUSES),
+                key=lambda b: self._ACTIVE_UNIT_STATUSES.index(b["status"]),
+            )
             data.next_box_discount = {**benefit, "week_id": next_week.week_id}
 
     async def _async_get_past_delivery_weeks(

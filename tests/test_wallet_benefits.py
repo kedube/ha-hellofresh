@@ -196,6 +196,112 @@ def test_wallet_skips_a_skipped_week_for_the_next_box_discount() -> None:
     assert data.wallet_benefits[0]["weeks"] == ["2026-W38", "2026-W39"]
 
 
+def _enrich(response: dict) -> tuple[HelloFreshAccountData, list[HelloFreshWeek]]:
+    client = _client()
+
+    async def fake_request(*_a, **_k):
+        return SimpleNamespace(status=200)
+
+    async def fake_json(_response):
+        return response
+
+    client._async_api_request = fake_request  # type: ignore[method-assign]
+    client._async_response_json = fake_json  # type: ignore[method-assign]
+    weeks = _weeks()
+    data = HelloFreshAccountData(next_delivery_total_currency="USD")
+    _run(
+        client._async_enrich_wallet_benefits(
+            data, [HelloFreshSubscription(subscription_id="1000001", raw={})], weeks
+        )
+    )
+    return data, weeks
+
+
+def _promise(promise_id: str, units: list[dict], *, unlimited: bool = False) -> dict:
+    return {"id": promise_id, "type": "mealbox", "unlimited": unlimited, "units": units}
+
+
+def _unit(box: int | None, budget_type: str, value: int, used: bool | None = None) -> dict:
+    return {
+        "box": box,
+        "used": used,
+        "benefits": [{"applicableTo": "mealbox", "budget": {"type": budget_type, "value": value}}],
+    }
+
+
+def test_an_applied_discount_is_the_next_boxs_discount() -> None:
+    """``applied`` is the discount on the week (HelloFresh's app); it beats an ``available`` one."""
+    response = {
+        "deliveries": [
+            {
+                "hfWeek": "2026-W38",
+                "units": [
+                    {"promiseId": "p-available", "status": "available"},
+                    {"promiseId": "p-applied", "status": "applied"},
+                    {"promiseId": "p-inactive", "status": "inactive"},
+                ],
+            }
+        ],
+        "promises": [
+            _promise("p-available", [_unit(None, "fixed", 500)]),
+            _promise("p-applied", [_unit(None, "fixed", 2000)]),
+            _promise("p-inactive", [_unit(None, "fixed", 900)]),
+        ],
+    }
+
+    data, _weeks_ = _enrich(response)
+
+    assert data.next_box_discount["promise_id"] == "p-applied"
+    assert data.next_box_discount["label"] == "$20 off your box"
+    weeks = {p["promise_id"]: p["weeks"] for p in data.wallet_benefits}
+    assert weeks == {"p-available": ["2026-W38"], "p-applied": ["2026-W38"], "p-inactive": []}
+
+
+def test_percent_budgets_are_hundredths_of_a_percent() -> None:
+    """1500 is 15%, as HelloFresh's app formats it (``value / 100``), not 1500%."""
+    response = {
+        "deliveries": [
+            {"hfWeek": "2026-W38", "units": [{"promiseId": "p", "status": "available"}]}
+        ],
+        "promises": [_promise("p", [_unit(None, "percent", 1500)])],
+    }
+
+    data, _weeks_ = _enrich(response)
+
+    assert data.next_box_discount["amount"] == 15.0
+    assert data.next_box_discount["label"] == "15% off your box"
+
+
+def test_each_box_of_a_multi_box_promise_has_its_own_amount() -> None:
+    """A "3 boxes" promise: each week gets its own box's budget; used boxes are skipped."""
+    response = {
+        "deliveries": [
+            {"hfWeek": "2026-W38", "units": [{"promiseId": "p", "status": "available", "box": 2}]},
+            {"hfWeek": "2026-W39", "units": [{"promiseId": "p", "status": "available", "box": 3}]},
+        ],
+        "promises": [
+            _promise(
+                "p",
+                [
+                    _unit(1, "percent", 5000, used=True),
+                    _unit(2, "percent", 3000),
+                    _unit(3, "percent", 2000),
+                ],
+            )
+        ],
+    }
+
+    data, weeks = _enrich(response)
+
+    by_id = {week.week_id: week for week in weeks}
+    assert by_id["2026-W38"].benefits[0]["label"] == "30% off your box"
+    assert by_id["2026-W39"].benefits[0]["label"] == "20% off your box"
+    (promise,) = data.wallet_benefits
+    assert promise["amount"] == 30.0  # the first box not yet used
+    assert (promise["one_time"], promise["boxes"], promise["boxes_used"]) == (False, 3, 1)
+    assert not any(key.startswith("_") for key in promise)
+
+
 def test_wallet_failure_leaves_the_discount_unknown() -> None:
     client = _client()
 

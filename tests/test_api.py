@@ -11946,3 +11946,17 @@ def test_a_real_category_still_reports_its_subcollections() -> None:
     result = _catalog_page(client, "noodle-recipes")
 
     assert [c.name for c in result["subcollections"]] == ["Ramen Noodles", "Udon Noodles"]
+
+
+def test_customer_uuid_is_read_from_the_customer_object_first() -> None:
+    """Payments are keyed by ``customer.uuid``; another object's ``uuid`` must not win."""
+    client = _make_client()
+    subscription = HelloFreshSubscription(
+        subscription_id="sub-1",
+        raw={"voucherInfo": {"uuid": "not-the-customer"}, "customer": {"uuid": "cust-uuid"}},
+    )
+    assert client._customer_uuid([subscription]) == "cust-uuid"
+
+    fallback = HelloFreshSubscription(subscription_id="sub-2", raw={"owner": {"uuid": "deep"}})
+    assert client._customer_uuid([fallback]) == "deep"
+    assert client._customer_uuid([HelloFreshSubscription(subscription_id="sub-3")]) is None
