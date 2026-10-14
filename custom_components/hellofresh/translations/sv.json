@@ -76,8 +76,8 @@
       "bot_blocked_token": "HelloFreshs bot-skydd blockerade den här begäran, så din token kontrollerades inte. Försök igen om några minuter.",
       "invalid_auth": "Ogiltiga inloggningsuppgifter",
       "email_not_registered": "HelloFresh har inget konto med den här e-postadressen i det valda landet. Kontrollera adressen och att landet är det ditt konto hör till.",
-      "password_reset_required": "HelloFresh kräver att du återställer lösenordet för det här kontot innan du kan logga in med det. Återställ det på HelloFreshs webbplats eller i appen och ange sedan det nya lösenordet här.",
-      "too_many_attempts": "HelloFresh har tillfälligt låst inloggningen efter för många försök. Vänta några minuter och försök sedan igen.",
+      "password_reset_required": "Ditt HelloFresh-lösenord har löpt ut. Följ instruktionerna som HelloFresh har skickat till din e-post för att uppdatera det och ange sedan det nya lösenordet här.",
+      "too_many_attempts": "Ditt HelloFresh-konto har låsts tillfälligt efter för många inloggningsförsök. Försök igen om några minuter.",
       "wrong_password": "HelloFresh godkände inte det här lösenordet. Om du loggar in på HelloFresh med Google, Apple eller Facebook har ditt konto kanske inget lösenord; använd alternativet \"Åtkomsttoken (avancerat)\" i stället.",
       "invalid_token": "Denna token kunde inte läsas eller avvisades"
     },
@@ -110,14 +110,14 @@
         },
         "data_description": {
           "scan_interval_minutes": "Hur ofta HelloFresh tillfrågas om konto- och leveransdata. Lägre = färskare data och fler förfrågningar; högre = skonsammare mot API:et. Intervall 5–1440 minuter; standard 180 (3 timmar). Inloggningstoken förnyas enligt sitt eget schema, så detta påverkar inte inloggningen.",
-          "delivery_watch_interval_minutes": "Medan en låda väntas (leveransdagen, eller dagen efter tills transportören bekräftar den) eller en försändelse är på väg, kontrolleras bara leveransstatus och spårning så här ofta, oberoende av uppdateringsintervallet, så att leveransen syns inom några minuter. Intervall 0–60; standard 15. 0 stänger av bevakningen. Övriga dagar görs inga extra anrop.",
+          "delivery_watch_interval_minutes": "Medan en matkasse väntas (leveransdagen, eller dagen efter tills transportören bekräftar den) eller en försändelse är på väg, kontrolleras bara leveransstatus och spårning så här ofta, oberoende av uppdateringsintervallet, så att leveransen syns inom några minuter. Intervall 0–60; standard 15. 0 stänger av bevakningen. Övriga dagar görs inga extra anrop.",
           "delivery_tracking_refresh_interval_seconds": "Endast Nederländerna och Tyskland. Medan live-spårning för sista delen av leveransen är aktiv frågas HelloFreshs oautentiserade Tracey-endpoint så här ofta efter fas, ETA, antal stopp och förarens position. Intervall 60–3600 sekunder; standard 300.",
           "history_weeks": "Hur många veckors tidigare leveranser som läses in så att du kan bläddra i dem i korten. Lägre = mindre data per uppdatering; höj för att se längre tillbaka (cirka 56 för ett helt år). Intervall 1–104 veckor; standard 26 (cirka 6 månader). En ändring läser in integrationen på nytt.",
           "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i kortets Meny-flik (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
           "show_sidebar_panel": "Lägger till en HelloFresh-post i Home Assistants sidofält som öppnar HelloFresh-kortet i helskärm, så att du inte behöver bygga någon instrumentpanel. Med flera konton får vart och ett en egen post. Stäng av för att ta bort den; du kan fortfarande lägga till kortet på valfri instrumentpanel.",
           "enable_public_menu_fallback": "Om de inloggade menydata inte kan läsas in hämtas den offentliga regionala menysidan så att receptnamn ändå visas. Låt detta vara påslaget om du inte enbart vill ha autentiserade data.",
           "enable_favorites": "Slå vid varje uppdatering upp vilka rätter som sparats som favoriter i din HelloFresh-kokbok, så att kortets Meny-flik kan visa ett favorithjärta. Kostar en extra förfrågan per uppdatering: HelloFresh har ingen \"visa mina favoriter\"-slutpunkt, så menyns recept måste skickas till en filterslutpunkt för att ta reda på vilka som är favoriter. Stäng av för att hoppa över det — tjänsterna för att lägga till och ta bort favoriter fungerar ändå.",
-          "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan lådan kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
+          "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan matkassen kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
           "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas.",
           "use_curl_cffi_headers": "Låt curl_cffi skicka Chrome-headers för inloggning, tokenförnyelse och dataanrop. Integrationen anger fortfarande API-headers och korrigerar fetch-metadata för ett XHR-anrop. Av (rekommenderas) skickar integrationens fullständiga, ordnade XHR-headers.",
           "log_auth_diagnostics": "När detta är aktiverat loggas misslyckade inloggningar och tokenförnyelser samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. Lyckade steg loggas endast på debugnivå. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
@@ -143,10 +143,10 @@
               "dinner_minutes": "Hur länge varje middagshändelse varar: förberedelser, matlagning, måltid och disk. Standard 90 minuter. Med HelloFreshs tillagningstid aktiverad gäller det bara middagar utan tillagningstid, till exempel en anteckning.",
               "dinner_use_cooking_time": "Varje middagshändelse varar lika länge som rättens tillagningstid enligt HelloFresh (plus förrättens, om den har en), plus den extra tiden nedan.",
               "dinner_extra_minutes": "Läggs till tillagningstiden för måltid och disk. Används bara när HelloFreshs tillagningstid är aktiverad. Standard 45 minuter.",
-              "always_show_breakfast": "Frukost visas bara en vecka om du har köpt frukost från Market till den. Aktivera för att planera frukost varje vecka, till exempel med anteckningar.",
+              "always_show_breakfast": "Frukost visas bara en vecka om du har köpt frukost som tilläggsprodukt till den. Aktivera för att planera frukost varje vecka, till exempel med anteckningar.",
               "breakfast_start": "När varje frukosthändelse börjar.",
               "breakfast_minutes": "Hur länge varje frukosthändelse varar. Standard 30 minuter.",
-              "always_show_lunch": "Lunch visas bara en vecka om du har köpt lunch från Market till den. Aktivera för att planera lunch varje vecka.",
+              "always_show_lunch": "Lunch visas bara en vecka om du har köpt lunch som tilläggsprodukt till den. Aktivera för att planera lunch varje vecka.",
               "lunch_start": "När varje lunchhändelse börjar.",
               "lunch_minutes": "Hur länge varje lunchhändelse varar. Standard 45 minuter."
             }
@@ -204,10 +204,10 @@
         "name": "Antal rätter i nästa ändringsbara leverans"
       },
       "selected_market_count": {
-        "name": "Antal Market-varor i nästa leverans"
+        "name": "Antal tilläggsprodukter i nästa leverans"
       },
       "next_selectable_delivery_market_count": {
-        "name": "Antal Market-varor i nästa ändringsbara leverans"
+        "name": "Antal tilläggsprodukter i nästa ändringsbara leverans"
       },
       "next_delivery_preselected": {
         "name": "Nästa leverans förvald"
@@ -225,10 +225,10 @@
         "name": "Totalpris för nästa leverans"
       },
       "next_box_discount": {
-        "name": "Rabatt på nästa låda"
+        "name": "Rabatt på nästa matkasse"
       },
       "account_credit": {
-        "name": "Tillgodohavande"
+        "name": "Kredit"
       },
       "selected_plan": {
         "name": "Valt abonnemang"
@@ -387,11 +387,11 @@
         "state_attributes": {
           "event_type": {
             "state": {
-              "box_shipped": "Låda skickad",
-              "box_delivered": "Låda levererad",
+              "box_shipped": "Matkasse skickad",
+              "box_delivered": "Matkasse levererad",
               "delivery_failed": "Leverans misslyckades",
               "week_skipped": "Vecka överhoppad",
-              "week_unskipped": "Vecka återställd",
+              "week_unskipped": "Vecka återaktiverad",
               "selection_locked": "Val låst",
               "menu_published": "Meny publicerad"
             }
@@ -401,7 +401,7 @@
     },
     "select": {
       "box_size": {
-        "name": "Lådstorlek"
+        "name": "Matkassens storlek"
       },
       "delivery_day": {
         "name": "Leveransdag"
@@ -485,14 +485,14 @@
           "description": "Valfri koppling mellan recept-ID och antal portioner (positivt heltal). Recept som utelämnas får en portion som standard; minimiantalet rätter kontrolleras mot det totala antalet portioner."
         },
         "market_quantities": {
-          "name": "Market-antal",
-          "description": "Valfri koppling mellan Market-artikelns ID, SKU eller index och antal, sparad i samma varukorgsuppdatering som rätterna (0 eller utelämnad tar bort en artikel). Utelämna den för att behålla veckans nuvarande tillägg."
+          "name": "Antal tilläggsprodukter",
+          "description": "Valfri koppling mellan tilläggsproduktens ID, SKU eller index och antal, sparad i samma varukorgsuppdatering som rätterna (0 eller utelämnad tar bort en produkt). Utelämna den för att behålla veckans nuvarande tilläggsprodukter."
         }
       }
     },
     "select_market_items": {
-      "name": "Välj Market-varor",
-      "description": "Ange valet av HelloFresh Market-tillägg för en leveransvecka.",
+      "name": "Välj tilläggsprodukter",
+      "description": "Ange valet av HelloFresh-tilläggsprodukter för en leveransvecka.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -504,7 +504,7 @@
         },
         "quantities": {
           "name": "Antal",
-          "description": "Koppling mellan Market-varu-ID och antal. Antalet 0 tar bort varan."
+          "description": "Koppling mellan tilläggsproduktens ID och antal. Antalet 0 tar bort produkten."
         }
       }
     },
@@ -523,8 +523,8 @@
       }
     },
     "unskip_week": {
-      "name": "Ångra överhoppad vecka",
-      "description": "Återställ en HelloFresh-leveransvecka som tidigare hoppats över.",
+      "name": "Återaktivera vecka",
+      "description": "Återaktivera en HelloFresh-leveransvecka som tidigare hoppats över.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -724,7 +724,7 @@
     },
     "get_account_summary": {
       "name": "Hämta kontoöversikt",
-      "description": "Returnerar de viktigaste konto- och abonnemangsvärdena (abonnemang, tillgodohavande, kommande antal, rabattkod, betalningsdatum, helgdagsmeddelande) i ett anrop — samma värden som motsvarande sensorer visar. Endast läsning; returnerar ett svar.",
+      "description": "Returnerar de viktigaste konto- och abonnemangsvärdena (abonnemang, kredit, kommande antal, rabattkod, betalningsdatum, helgdagsmeddelande) i ett anrop — samma värden som motsvarande sensorer visar. Endast läsning; returnerar ett svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -826,7 +826,7 @@
     },
     "set_planned_meal": {
       "name": "Ange planerad måltid",
-      "description": "Planerar en rätt i en dags måltid i fliken Vecka: en rätt från din matkasse, en Market-vara som köptes den veckan eller en anteckning i fritext. Kan också ändra när måltiden börjar den dagen. Returnerar den uppdaterade planen.",
+      "description": "Planerar en rätt i en dags måltid i fliken Vecka: en rätt från din matkasse, en tilläggsprodukt som köptes den veckan eller en anteckning i fritext. Kan också ändra när måltiden börjar den dagen. Returnerar den uppdaterade planen.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-ID",
@@ -842,15 +842,15 @@
         },
         "course": {
           "name": "Rätt",
-          "description": "Huvudrätt, förrätt eller efterrätt. Förrätt och efterrätt gäller bara middag. Standard är huvudrätt."
+          "description": "Huvudrätt, förrätt eller dessert. Förrätt och dessert gäller bara middag. Standard är huvudrätt."
         },
         "recipe_id": {
           "name": "Recept-ID",
           "description": "En rätt som är vald i någon av dina matkassar."
         },
         "market_item_id": {
-          "name": "Market-vara-ID",
-          "description": "En Market-vara som köpts i någon av dina matkassar."
+          "name": "Tilläggsprodukt-ID",
+          "description": "En tilläggsprodukt som köpts i någon av dina matkassar."
         },
         "text": {
           "name": "Anteckning",
@@ -858,7 +858,7 @@
         },
         "week_id": {
           "name": "Vecko-ID",
-          "description": "Matkassen som rätten eller Market-varan kom från, när datumet ensamt inte räcker."
+          "description": "Matkassen som rätten eller tilläggsprodukten kom från, när datumet ensamt inte räcker."
         },
         "start_time": {
           "name": "Starttid",
@@ -884,7 +884,7 @@
         },
         "course": {
           "name": "Rätt",
-          "description": "Huvudrätt, förrätt eller efterrätt. Lämna tomt för att rensa hela måltiden."
+          "description": "Huvudrätt, förrätt eller dessert. Lämna tomt för att rensa hela måltiden."
         }
       }
     }
@@ -911,7 +911,7 @@
       "views": {
         "overview": "Översikt",
         "menu": "Meny",
-        "market": "Market",
+        "market": "Tillbehör",
         "recipes": "Recept",
         "week": "Vecka",
         "account": "Konto"
@@ -1020,12 +1020,12 @@
         "holiday_schedule": "Helgdagsschema",
         "make_changes_by": "Gör ändringar senast {date}",
         "autopicked_title": "HelloFresh har valt de här rätterna åt dig.",
-        "unskip_this_week": "Återuppta den här veckan",
+        "unskip_this_week": "Återaktivera den här veckan",
         "review": "Gå igenom",
         "edit": "Ändra",
         "choose": "Välj",
         "change_day": "Byt dag",
-        "unskip": "Återuppta",
+        "unskip": "Återaktivera",
         "skip": "Hoppa över",
         "nothing_ships": "Inget skickas den här veckan.",
         "edit_by": "Ändra senast {date}",
@@ -1042,19 +1042,19 @@
         "next_week": "Nästa vecka",
         "preselected_title": "HelloFresh har valt rätterna för den här veckan.",
         "pantry": "Inköpslista",
-        "unskip_week": "Återuppta vecka",
+        "unskip_week": "Återaktivera vecka",
         "skipped_title": "Den här veckan är överhoppad.",
-        "unskip_to_choose": "Återuppta den för att välja rätter.",
+        "unskip_to_choose": "Återaktivera den för att välja rätter.",
         "autopicked_before": "Behåll dem eller byt ut några före {date}.",
         "closed": "Den här matkassen kan inte längre ändras — den skickas som den är."
       },
       "skip": {
         "title": "Hoppa över {date}?",
-        "body": "Ingen matkasse skickas den veckan och du debiteras inte för den. Du kan återuppta den fram till valfristen.",
+        "body": "Ingen matkasse skickas den veckan och du debiteras inte för den. Du kan återaktivera den fram till valfristen.",
         "keep": "Behåll min matkasse",
         "skip_failed": "Det gick inte att hoppa över veckan: {error}",
-        "unskip_failed": "Det gick inte att återuppta veckan: {error}",
-        "restored": "Veckan är återupptagen — din matkasse kommer som vanligt.",
+        "unskip_failed": "Det gick inte att återaktivera veckan: {error}",
+        "restored": "Veckan är återaktiverad — din matkasse kommer som vanligt.",
         "done": "Veckan är överhoppad."
       },
       "reschedule": {
@@ -1083,7 +1083,7 @@
         "next_box": "Nästa matkasse",
         "skipped_title": "Den här matkassen är överhoppad.",
         "skipped_body": "Inget skickas och du debiteras inte.",
-        "skipped_body_unskip": "Inget skickas och du debiteras inte — återuppta den före valfristen.",
+        "skipped_body_unskip": "Inget skickas och du debiteras inte — återaktivera den före valfristen.",
         "autopicked_body": "Behåll dem eller byt ut några före valfristen.",
         "unsaved": "Du har ändringar i den här matkassen som inte är sparade.",
         "finish": "Slutför",
@@ -1339,7 +1339,7 @@
         "downsized_body": "Färre varor än du valde sparades — kontrollera den sparade matkassen nedan.",
         "kind_label": "Rätter eller extra",
         "meals": "Rätter",
-        "extras": "Extra",
+        "extras": "Tillbehör",
         "box_total": "Matkassens summa",
         "selected_of_required": "{selected} av {required} rätter",
         "deadline_passed": "Valfristen har passerat — de här ändringarna kan inte sparas",
@@ -1370,17 +1370,17 @@
         "group": {
           "appetizer": "Förrätter",
           "breakfast": "Frukost",
-          "dessert": "Efterrätter",
+          "dessert": "Desserter",
           "lunch": "Lunch",
           "protein": "Proteiner",
-          "sides": "Tillbehör",
+          "sides": "Sidorätter",
           "donation": "Donationer",
           "lowprices": "Låga priser",
           "modularity": "Extra"
         },
         "search": "Sök bland extravaror",
         "none_ordered": "Inga extravaror beställdes den här veckan.",
-        "not_open": "Market för den här veckan har inte öppnat ännu.",
+        "not_open": "Tillbehören för den här veckan går inte att välja ännu.",
         "no_match_query": "Inga extravaror matchar ”{query}”.",
         "none_in_box": "Inga extravaror i matkassen ännu.",
         "no_match_categories": "Inga extravaror matchar de här kategorierna.",
@@ -1471,7 +1471,7 @@
         "meal_preference": "Måltidspreferens",
         "servings": "Portioner",
         "meals_per_box": "Rätter per matkasse",
-        "credit": "Tillgodohavande",
+        "credit": "Kredit",
         "card_on_file": "Registrerat kort",
         "card_expiry": "går ut {date}",
         "card_expired": "har gått ut",
@@ -1498,14 +1498,14 @@
         "from_to": "Från {from} till {to}",
         "every_future_box": "alla framtida matkassar",
         "box_size": {
-          "label": "Lådstorlek",
+          "label": "Matkassens storlek",
           "hint": "Rätter per vecka och portioner per rätt",
           "option": "{meals} × {servings}",
-          "change": "Byt lådstorlek",
-          "title": "Byta lådstorlek?",
+          "change": "Ändra storlek på matkassen",
+          "title": "Ändra storlek på matkassen?",
           "body": "Det gäller {every_future_box} och ändrar vad du debiteras. Matkassar vars valfrist har passerat behåller den nuvarande inställningen.",
-          "changed": "Lådstorleken är ändrad.",
-          "failed": "Det gick inte att ändra lådstorleken: {error}"
+          "changed": "Matkassens storlek är ändrad.",
+          "failed": "Det gick inte att ändra matkassens storlek: {error}"
         },
         "delivery_day": {
           "label": "Leveransdag",
@@ -1734,7 +1734,7 @@
         "course": {
           "main": "Huvudrätt",
           "appetizer": "Förrätt",
-          "dessert": "Efterrätt"
+          "dessert": "Dessert"
         },
         "calendar": {
           "event": "{meal}: {name}",

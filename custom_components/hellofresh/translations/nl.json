@@ -76,8 +76,8 @@
       "bot_blocked_token": "De botbeveiliging van HelloFresh heeft dit verzoek geblokkeerd, dus je token is niet gecontroleerd. Probeer het over een paar minuten opnieuw.",
       "invalid_auth": "Ongeldige inloggegevens",
       "email_not_registered": "HelloFresh heeft geen account met dit e-mailadres in het gekozen land. Controleer het adres en of het land overeenkomt met dat van je account.",
-      "password_reset_required": "HelloFresh vraagt je het wachtwoord van dit account opnieuw in te stellen voordat je ermee kunt aanmelden. Stel het opnieuw in op de website of in de app van HelloFresh en vul hier het nieuwe wachtwoord in.",
-      "too_many_attempts": "HelloFresh heeft aanmelden tijdelijk geblokkeerd na te veel pogingen. Wacht een paar minuten en probeer het dan opnieuw.",
+      "password_reset_required": "Je HelloFresh-wachtwoord is verlopen. Volg de instructies die HelloFresh je per e-mail heeft gestuurd om het bij te werken en vul daarna hier het nieuwe wachtwoord in.",
+      "too_many_attempts": "Je HelloFresh-account is tijdelijk geblokkeerd vanwege te veel inlogpogingen. Probeer het over een paar minuten opnieuw.",
       "wrong_password": "HelloFresh heeft dit wachtwoord niet geaccepteerd. Als je bij HelloFresh inlogt met Google, Apple of Facebook, heeft je account misschien geen wachtwoord; gebruik dan de optie \"Toegangstoken (geavanceerd)\".",
       "invalid_token": "Dit token kon niet worden gelezen of is geweigerd"
     },
@@ -103,7 +103,7 @@
           "show_sidebar_panel": "HelloFresh in de zijbalk tonen",
           "enable_public_menu_fallback": "Openbaar menu als terugval gebruiken",
           "enable_favorites": "Favorietenhartjes tonen",
-          "enable_prep_lists": "Voorraadlijsten aanmaken",
+          "enable_prep_lists": "Voorbereidingslijsten aanmaken",
           "show_data_quality_issues": "Waarschuwingen over gegevenskwaliteit tonen",
           "use_curl_cffi_headers": "Ingebouwde headers van curl_cffi gebruiken (experimenteel)",
           "log_auth_diagnostics": "Authenticatiediagnostiek loggen"
@@ -116,7 +116,7 @@
           "menu_grace_weeks": "Hoeveel weken na de bezorgdatum een week zijn volledige menu houdt om te bekijken in het tabblad Menu van de kaart (je bezorgde maaltijden blijven gemarkeerd); oudere weken tonen alleen wat is bezorgd. Bereik 0–3 weken; standaard 2 (de laatste paar maaltijdboxen blijven te bekijken). Met 0 zet je dit uit. HelloFresh publiceert het menu voor oudere weken niet meer, dus weken daarbuiten tonen alleen nog de bezorgde maaltijden. Wijzigen herlaadt de integratie.",
           "show_sidebar_panel": "Voegt aan de zijbalk van Home Assistant een HelloFresh-item toe dat de HelloFresh-kaart op volledig scherm opent, zodat je geen dashboard hoeft te bouwen. Met meerdere accounts krijgt elk een eigen item. Zet uit om het te verwijderen; je kunt de kaart nog steeds aan elk dashboard toevoegen.",
           "enable_public_menu_fallback": "Als de ingelogde menugegevens niet geladen kunnen worden, wordt de openbare regionale menupagina uitgelezen zodat receptnamen toch verschijnen. Laat dit aan, tenzij je uitsluitend geverifieerde gegevens wilt.",
-          "enable_favorites": "Bij elke vernieuwing opzoeken welke maaltijden in je HelloFresh-kookboek als favoriet zijn opgeslagen, zodat het tabblad Menu van de kaart een hartje kan tonen. Kost één extra verzoek per vernieuwing: HelloFresh heeft geen \"toon mijn favorieten\"-endpoint, dus de recepten van het menu moeten naar een filter-endpoint worden gestuurd om te zien welke favoriet zijn. Zet dit uit om die stap over te slaan — de services om favorieten toe te voegen of te verwijderen blijven hoe dan ook werken.",
+          "enable_favorites": "Bij elke vernieuwing opzoeken welke maaltijden in je HelloFresh-receptenboek als favoriet zijn opgeslagen, zodat het tabblad Menu van de kaart een hartje kan tonen. Kost één extra verzoek per vernieuwing: HelloFresh heeft geen \"toon mijn favorieten\"-endpoint, dus de recepten van het menu moeten naar een filter-endpoint worden gestuurd om te zien welke favoriet zijn. Zet dit uit om die stap over te slaan — de services om favorieten toe te voegen of te verwijderen blijven hoe dan ook werken.",
           "enable_prep_lists": "Voor elk van de volgende twee leveringen een takenlijst maken met de ingrediënten die je gekozen maaltijden nodig hebben maar die HelloFresh niet meelevert — zout, olie, boter, eieren — zodat je ze kunt kopen voordat de box aankomt. Zet dit uit om beide lijsten te verwijderen en de benodigde receptopvragingen over te slaan.",
           "show_data_quality_issues": "Waarschuwingen tonen in het scherm Reparaties wanneer HelloFresh-gegevens beperkt zijn (menuterugval actief, onbekende gegevensformaten, accountgegevens niet beschikbaar, geblokkeerde schrijfacties). De gegevens blijven hoe dan ook laden. Zet dit uit om deze waarschuwingen te onderdrukken en al getoonde waarschuwingen te wissen.",
           "use_curl_cffi_headers": "Laat curl_cffi Chrome-headers leveren voor aanmelden, tokenvernieuwing en gegevensverzoeken. De integratie stelt nog steeds API-headers in en corrigeert de fetch-metadata voor een XHR. Uit (aanbevolen) verstuurt de volledige, geordende XHR-headers van de integratie.",
@@ -129,7 +129,7 @@
             "data": {
               "dinner_start": "Avondeten begint om",
               "dinner_minutes": "Duur avondeten (minuten)",
-              "dinner_use_cooking_time": "HelloFresh-kooktijd gebruiken voor het avondeten",
+              "dinner_use_cooking_time": "HelloFresh-bereidingstijd gebruiken voor het avondeten",
               "dinner_extra_minutes": "Extra tijd na het koken (minuten)",
               "always_show_breakfast": "Ontbijt altijd tonen",
               "breakfast_start": "Ontbijt begint om",
@@ -140,13 +140,13 @@
             },
             "data_description": {
               "dinner_start": "Wanneer elke afspraak voor het avondeten begint. De tijd van één dag kun je ook in het tabblad Week wijzigen.",
-              "dinner_minutes": "Hoe lang elke afspraak voor het avondeten duurt: voorbereiden, koken, eten en opruimen. Standaard 90 minuten. Met de HelloFresh-kooktijd ingeschakeld geldt dit alleen voor avondeten zonder kooktijd, zoals een notitie.",
-              "dinner_use_cooking_time": "Elke afspraak voor het avondeten duurt zo lang als de kooktijd van de maaltijd volgens HelloFresh (plus die van het voorgerecht, als dat er een heeft), plus de extra tijd hieronder.",
-              "dinner_extra_minutes": "Wordt bij de kooktijd opgeteld voor eten en opruimen. Alleen gebruikt met de HelloFresh-kooktijd ingeschakeld. Standaard 45 minuten.",
-              "always_show_breakfast": "Ontbijt verschijnt in een week alleen als je er Market-ontbijt voor hebt gekocht. Schakel in om elke week ontbijt te plannen, bijvoorbeeld met notities.",
+              "dinner_minutes": "Hoe lang elke afspraak voor het avondeten duurt: voorbereiden, koken, eten en opruimen. Standaard 90 minuten. Met de HelloFresh-bereidingstijd ingeschakeld geldt dit alleen voor avondeten zonder bereidingstijd, zoals een notitie.",
+              "dinner_use_cooking_time": "Elke afspraak voor het avondeten duurt zo lang als de bereidingstijd van de maaltijd volgens HelloFresh (plus die van het voorgerecht, als dat er een heeft), plus de extra tijd hieronder.",
+              "dinner_extra_minutes": "Wordt bij de bereidingstijd opgeteld voor eten en opruimen. Alleen gebruikt met de HelloFresh-bereidingstijd ingeschakeld. Standaard 45 minuten.",
+              "always_show_breakfast": "Ontbijt verschijnt in een week alleen als je er ontbijt uit de Markt voor hebt gekocht. Schakel in om elke week ontbijt te plannen, bijvoorbeeld met notities.",
               "breakfast_start": "Wanneer elke afspraak voor het ontbijt begint.",
               "breakfast_minutes": "Hoe lang elke afspraak voor het ontbijt duurt. Standaard 30 minuten.",
-              "always_show_lunch": "Lunch verschijnt in een week alleen als je er Market-lunch voor hebt gekocht. Schakel in om elke week lunch te plannen.",
+              "always_show_lunch": "Lunch verschijnt in een week alleen als je er lunch uit de Markt voor hebt gekocht. Schakel in om elke week lunch te plannen.",
               "lunch_start": "Wanneer elke afspraak voor de lunch begint.",
               "lunch_minutes": "Hoe lang elke afspraak voor de lunch duurt. Standaard 45 minuten."
             }
@@ -170,7 +170,7 @@
     },
     "write_actions_unavailable": {
       "title": "HelloFresh-schrijfacties zijn niet bevestigd voor {entry_title}",
-      "description": "Je probeerde een HelloFresh-actie te gebruiken die accountgegevens wijzigt voor **{entry_title}**, zoals maaltijden kiezen of een week overslaan. De integratie heeft de bekende schrijf-endpoints voor je account geprobeerd, maar geen enkele accepteerde het verzoek. De actie is daarom geblokkeerd in plaats van verder te gokken."
+      "description": "Je probeerde een HelloFresh-actie te gebruiken die accountgegevens wijzigt voor **{entry_title}**, zoals maaltijden kiezen of een week pauzeren. De integratie heeft de bekende schrijf-endpoints voor je account geprobeerd, maar geen enkele accepteerde het verzoek. De actie is daarom geblokkeerd in plaats van verder te gokken."
     },
     "removed_classic_cards": {
       "title": "Dashboards gebruiken nog verwijderde HelloFresh-kaarten",
@@ -204,10 +204,10 @@
         "name": "Aantal maaltijden volgende wijzigbare bezorging"
       },
       "selected_market_count": {
-        "name": "Aantal Market-artikelen volgende bezorging"
+        "name": "Aantal Markt-producten volgende bezorging"
       },
       "next_selectable_delivery_market_count": {
-        "name": "Aantal Market-artikelen volgende wijzigbare bezorging"
+        "name": "Aantal Markt-producten volgende wijzigbare bezorging"
       },
       "next_delivery_preselected": {
         "name": "Volgende bezorging vooraf gekozen"
@@ -276,10 +276,10 @@
         "name": "Bezorgd op"
       },
       "skipped_week_count": {
-        "name": "Aantal overgeslagen weken"
+        "name": "Aantal gepauzeerde weken"
       },
       "next_skipped_week": {
-        "name": "Volgende overgeslagen week"
+        "name": "Volgende gepauzeerde week"
       },
       "boxes_received": {
         "name": "Ontvangen maaltijdboxen"
@@ -390,8 +390,8 @@
               "box_shipped": "Box verzonden",
               "box_delivered": "Box bezorgd",
               "delivery_failed": "Bezorging mislukt",
-              "week_skipped": "Week overgeslagen",
-              "week_unskipped": "Week hersteld",
+              "week_skipped": "Week gepauzeerd",
+              "week_unskipped": "Pauze opgeheven",
               "selection_locked": "Selectie vergrendeld",
               "menu_published": "Menu gepubliceerd"
             }
@@ -409,7 +409,7 @@
     },
     "switch": {
       "skip_next_modifiable_week": {
-        "name": "Volgende wijzigbare bezorgweek overslaan"
+        "name": "Volgende wijzigbare bezorgweek pauzeren"
       }
     },
     "todo": {
@@ -448,7 +448,7 @@
     },
     "get_menu_courses": {
       "name": "Menugerechten ophalen",
-      "description": "Filtert het menu van een bezorgweek via de serverzijdige filterdienst van HelloFresh (keuken, gerechttype, te vermijden ingrediënten, dieetvoorkeur, hoofdeiwit, totale kooktijd). Geeft alleen de overeenkomende recept-id's terug. Alleen-lezen; geeft een antwoord.",
+      "description": "Filtert het menu van een bezorgweek via de serverzijdige filterdienst van HelloFresh (keuken, gerechttype, te vermijden ingrediënten, dieetvoorkeur, hoofdeiwit, totale bereidingstijd). Geeft alleen de overeenkomende recept-id's terug. Alleen-lezen; geeft een antwoord.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -485,14 +485,14 @@
           "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal). Recepten die ontbreken krijgen standaard één portie; het minimum aantal maaltijden wordt getoetst aan het totaal aantal porties."
         },
         "market_quantities": {
-          "name": "Market-aantallen",
-          "description": "Optionele koppeling van Market-artikel-ID, SKU of index aan aantal, opgeslagen in dezelfde winkelwagenupdate als de maaltijden (0 of weggelaten verwijdert een artikel). Laat dit weg om de huidige extra's van de week te behouden."
+          "name": "Markt-aantallen",
+          "description": "Optionele koppeling van Markt-product-ID, SKU of index aan aantal, opgeslagen in dezelfde winkelwagenupdate als de maaltijden (0 of weggelaten verwijdert een product). Laat dit weg om de huidige Markt-producten van de week te behouden."
         }
       }
     },
     "select_market_items": {
-      "name": "Market-artikelen kiezen",
-      "description": "De keuze van HelloFresh Market-extra's voor een bezorgweek instellen.",
+      "name": "Markt-producten kiezen",
+      "description": "De keuze van producten van de HelloFresh Markt voor een bezorgweek instellen.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -504,13 +504,13 @@
         },
         "quantities": {
           "name": "Aantallen",
-          "description": "Koppeling van Market-artikel-ID aan aantal. Een aantal van 0 verwijdert het artikel."
+          "description": "Koppeling van Markt-product-ID aan aantal. Een aantal van 0 verwijdert het product."
         }
       }
     },
     "skip_week": {
-      "name": "Week overslaan",
-      "description": "Een specifieke HelloFresh-bezorgweek overslaan.",
+      "name": "Week pauzeren",
+      "description": "Een specifieke HelloFresh-bezorgweek pauzeren.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -523,8 +523,8 @@
       }
     },
     "unskip_week": {
-      "name": "Week niet overslaan",
-      "description": "Een eerder overgeslagen HelloFresh-bezorgweek herstellen.",
+      "name": "Pauze opheffen",
+      "description": "De pauze van een HelloFresh-bezorgweek opheffen, zodat de box toch wordt bezorgd.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -578,7 +578,7 @@
     },
     "get_favorites": {
       "name": "Favorieten ophalen",
-      "description": "Geeft je HelloFresh-kookboek terug: alle favorieten met volledige details, of — wanneer recept-ID's zijn opgegeven — welke van die recepten favoriet zijn.",
+      "description": "Geeft je HelloFresh-receptenboek terug: alle favorieten met volledige details, of — wanneer recept-ID's zijn opgegeven — welke van die recepten favoriet zijn.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -592,7 +592,7 @@
     },
     "add_favorite": {
       "name": "Favoriet toevoegen",
-      "description": "Een recept als favoriet opslaan in het HelloFresh-kookboek.",
+      "description": "Een recept als favoriet opslaan in het HelloFresh-receptenboek.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -606,7 +606,7 @@
     },
     "remove_favorite": {
       "name": "Favoriet verwijderen",
-      "description": "Een recept uit de favorieten van het HelloFresh-kookboek verwijderen.",
+      "description": "Een recept uit de favorieten van het HelloFresh-receptenboek verwijderen.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -826,7 +826,7 @@
     },
     "set_planned_meal": {
       "name": "Geplande maaltijd instellen",
-      "description": "Plant één gang van de maaltijd van een dag in het tabblad Week: een maaltijd uit je box, een Market-artikel dat die week is gekocht of een notitie in vrije tekst. Kan ook wijzigen wanneer die maaltijd op die dag begint. Geeft het bijgewerkte plan terug.",
+      "description": "Plant één gang van de maaltijd van een dag in het tabblad Week: een maaltijd uit je box, een Markt-product dat die week is gekocht of een notitie in vrije tekst. Kan ook wijzigen wanneer die maaltijd op die dag begint. Geeft het bijgewerkte plan terug.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -849,8 +849,8 @@
           "description": "Een maaltijd die in een van je boxen is gekozen."
         },
         "market_item_id": {
-          "name": "Market-artikel-ID",
-          "description": "Een Market-artikel dat in een van je boxen is gekocht."
+          "name": "Markt-product-ID",
+          "description": "Een Markt-product dat in een van je boxen is gekocht."
         },
         "text": {
           "name": "Notitie",
@@ -858,7 +858,7 @@
         },
         "week_id": {
           "name": "Week-ID",
-          "description": "De box waar de maaltijd of het Market-artikel vandaan komt, als de datum alleen niet duidelijk genoeg is."
+          "description": "De box waar de maaltijd of het Markt-product vandaan komt, als de datum alleen niet duidelijk genoeg is."
         },
         "start_time": {
           "name": "Begintijd",
@@ -911,7 +911,7 @@
       "views": {
         "overview": "Overzicht",
         "menu": "Menu",
-        "market": "Market",
+        "market": "Markt",
         "recipes": "Recepten",
         "week": "Week",
         "account": "Account"
@@ -962,8 +962,8 @@
           "short": "Bezorgd"
         },
         "skipped": {
-          "label": "Overgeslagen",
-          "short": "Overgeslagen"
+          "label": "Gepauzeerd",
+          "short": "Gepauzeerd"
         },
         "locked": {
           "label": "Vergrendeld",
@@ -977,7 +977,7 @@
         "running": "Actief",
         "cancelled": "Opgezegd",
         "canceled": "Opgezegd",
-        "skipped": "Overgeslagen",
+        "skipped": "Gepauzeerd",
         "delivered": "Bezorgd",
         "shipped": "Verzonden",
         "in_transit": "Onderweg",
@@ -1014,19 +1014,19 @@
         "ago": "{duration} geleden"
       },
       "week": {
-        "skip_this_week": "Deze week overslaan",
-        "skip_week": "Week overslaan",
+        "skip_this_week": "Deze week pauzeren",
+        "skip_week": "Week pauzeren",
         "holiday_change": "Gewijzigde bezorging vanwege een feestdag",
         "holiday_schedule": "Feestdagschema",
         "make_changes_by": "Wijzigen kan tot {date}",
         "autopicked_title": "HelloFresh heeft deze maaltijden voor je gekozen.",
-        "unskip_this_week": "Deze week toch bezorgen",
+        "unskip_this_week": "Deze week toch een box ontvangen",
         "review": "Bekijken",
         "edit": "Wijzigen",
         "choose": "Kiezen",
         "change_day": "Dag wijzigen",
-        "unskip": "Toch bezorgen",
-        "skip": "Overslaan",
+        "unskip": "Box ontvangen",
+        "skip": "Pauzeren",
         "nothing_ships": "Deze week wordt er niets bezorgd.",
         "edit_by": "Wijzigen tot {date}",
         "no_box": "Geen box deze week",
@@ -1042,20 +1042,20 @@
         "next_week": "Volgende week",
         "preselected_title": "HelloFresh heeft de maaltijden van deze week gekozen.",
         "pantry": "Boodschappenlijst",
-        "unskip_week": "Week toch bezorgen",
-        "skipped_title": "Deze week is overgeslagen.",
-        "unskip_to_choose": "Zet hem terug om maaltijden te kiezen.",
+        "unskip_week": "Box toch ontvangen",
+        "skipped_title": "Deze week is gepauzeerd.",
+        "unskip_to_choose": "Ontvang toch een box om maaltijden te kiezen.",
         "autopicked_before": "Houd ze of ruil er een paar om vóór {date}.",
         "closed": "Deze box kan niet meer worden gewijzigd — hij wordt bezorgd zoals getoond."
       },
       "skip": {
-        "title": "{date} overslaan?",
-        "body": "Die week wordt er geen box bezorgd en betaal je niets. Je kunt de week tot de deadline terugzetten.",
+        "title": "{date} pauzeren?",
+        "body": "Die week wordt er geen box bezorgd en betaal je niets. Tot de deadline kun je de box toch nog ontvangen.",
         "keep": "Box houden",
-        "skip_failed": "De week kon niet worden overgeslagen: {error}",
-        "unskip_failed": "De week kon niet worden teruggezet: {error}",
-        "restored": "Week teruggezet — je box komt gewoon.",
-        "done": "Week overgeslagen."
+        "skip_failed": "De week kon niet worden gepauzeerd: {error}",
+        "unskip_failed": "De pauze kon niet worden opgeheven: {error}",
+        "restored": "Pauze opgeheven — je box komt gewoon.",
+        "done": "Week gepauzeerd."
       },
       "reschedule": {
         "title": "Bezorgdag wijzigen",
@@ -1081,9 +1081,9 @@
         "arriving_today": "Komt vandaag",
         "arriving_tomorrow": "Komt morgen",
         "next_box": "Volgende box",
-        "skipped_title": "Deze box is overgeslagen.",
+        "skipped_title": "Deze box is gepauzeerd.",
         "skipped_body": "Er wordt niets bezorgd en je betaalt niets.",
-        "skipped_body_unskip": "Er wordt niets bezorgd en je betaalt niets — je kunt hem tot de deadline terugzetten.",
+        "skipped_body_unskip": "Er wordt niets bezorgd en je betaalt niets — tot de deadline kun je de box toch nog ontvangen.",
         "autopicked_body": "Houd ze of ruil er een paar om vóór de deadline.",
         "unsaved": "Je hebt niet-opgeslagen wijzigingen in deze box.",
         "finish": "Afronden",
@@ -1205,8 +1205,8 @@
           "other": "{count} boxen"
         },
         "skipped": {
-          "one": "{count} overgeslagen",
-          "other": "{count} overgeslagen"
+          "one": "{count} gepauzeerd",
+          "other": "{count} gepauzeerd"
         },
         "previous_month": "Vorige maand",
         "next_month": "Volgende maand",
@@ -1263,7 +1263,7 @@
         },
         "in_box": "In de box",
         "per_serving": "/portie",
-        "in_cookbook": "In je kookboek",
+        "in_cookbook": "In je receptenboek",
         "in_your_box": "In je box",
         "sold_out": "Uitverkocht",
         "play_video": "Video van {name} afspelen",
@@ -1339,7 +1339,7 @@
         "downsized_body": "Er zijn minder artikelen opgeslagen dan je koos — bekijk de opgeslagen box hieronder.",
         "kind_label": "Maaltijden of extra's",
         "meals": "Maaltijden",
-        "extras": "Extra's",
+        "extras": "Extra producten",
         "box_total": "Totaal box",
         "selected_of_required": "{selected} van {required} maaltijden",
         "deadline_passed": "De deadline is verstreken — deze wijzigingen kunnen niet worden opgeslagen",
@@ -1380,7 +1380,7 @@
         },
         "search": "Extra's doorzoeken",
         "none_ordered": "Deze week zijn er geen extra's besteld.",
-        "not_open": "De Market voor deze week is nog niet open.",
+        "not_open": "De Markt voor deze week is nog niet open.",
         "no_match_query": "Geen extra's gevonden voor ‘{query}’.",
         "none_in_box": "Nog geen extra's in je box.",
         "no_match_categories": "Geen extra's passen bij deze categorieën.",
@@ -1432,15 +1432,15 @@
       },
       "recipes": {
         "search_failed": "Zoeken mislukt: {error}",
-        "saved": "Opgeslagen in je kookboek.",
-        "removed": "Verwijderd uit je kookboek.",
+        "saved": "Opgeslagen in je receptenboek.",
+        "removed": "Verwijderd uit je receptenboek.",
         "save_failed": "Het recept kon niet worden opgeslagen: {error}",
         "remove_failed": "Het recept kon niet worden verwijderd: {error}",
         "search_label": "Recepten zoeken",
-        "filter_cookbook": "Je kookboek filteren",
+        "filter_cookbook": "Je receptenboek filteren",
         "search_catalog": "Zoek in meer dan 10.000 recepten",
         "top_rated": "Best beoordeeld",
-        "cookbook": "Kookboek",
+        "cookbook": "Receptenboek",
         "fewer_categories": "Minder",
         "all_categories": "Alle categorieën",
         "refine": "Verfijnen",
@@ -1450,12 +1450,12 @@
           "one": "{count} resultaat in alle categorieën",
           "other": "{count} resultaten in alle categorieën"
         },
-        "cookbook_empty": "Je kookboek is leeg. Tik op het hartje bij een recept om het hier te bewaren.",
+        "cookbook_empty": "Je receptenboek is leeg. Tik op het hartje bij een recept om het hier te bewaren.",
         "no_saved_match": "Geen bewaarde recepten gevonden voor ‘{query}’.",
-        "remove_aria": "Uit kookboek verwijderen: {name}",
-        "save_aria": "In kookboek bewaren: {name}",
-        "remove_title": "Uit kookboek verwijderen",
-        "save_title": "In kookboek bewaren"
+        "remove_aria": "Uit receptenboek verwijderen: {name}",
+        "save_aria": "In receptenboek bewaren: {name}",
+        "remove_title": "Uit receptenboek verwijderen",
+        "save_title": "In receptenboek bewaren"
       },
       "account": {
         "credit_card": "Creditcard",
@@ -1482,7 +1482,7 @@
         "upcoming_boxes": "Komende boxen",
         "need_picks": "Keuze nodig",
         "tap_to_review": "Tik om te bekijken",
-        "next_skipped": "Volgende overgeslagen",
+        "next_skipped": "Volgende gepauzeerde",
         "your_plan": "Je abonnement",
         "upcoming": "Binnenkort",
         "presets": "Menuvoorkeuren",
@@ -1739,7 +1739,7 @@
         "calendar": {
           "event": "{meal}: {name}",
           "course": "{course}: {name}",
-          "cooking": "Kooktijd: {minutes} min"
+          "cooking": "Bereidingstijd: {minutes} min"
         },
         "load_failed": "Het maaltijdplan kon niet worden geladen: {error}",
         "no_weeks": "Er is geen huidige of komende box om te plannen.",

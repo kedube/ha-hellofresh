@@ -33,10 +33,11 @@ version heading and publishes it as the release's Highlights.
   - **The integration signs in again when HelloFresh rejects a token renewal.** A renewal refused
     with HTTP 400 was treated as a passing problem, so the integration kept retrying the dead
     token for up to 60 days instead of signing in with your saved password.
-  - **Clearer sign-in errors.** When HelloFresh needs you to reset your password, setup now says
-    so instead of "wrong password". When it locks sign-in after too many attempts, setup says
-    that, and the integration stops trying your password until the lock should be over, since
-    each attempt can extend it.
+  - **Clearer sign-in errors.** When your HelloFresh password has expired, setup now says so and
+    points you to the instructions HelloFresh emailed, instead of "wrong password". When HelloFresh
+    locks your account for a few minutes after too many sign-in attempts, setup says that, and the
+    integration stops trying your password until the lock should be over, since each attempt can
+    extend it.
   - **Doubled portions size the box correctly.** A meal at quantity 2 takes two of the box's
     meals, as on HelloFresh. The integration counted it once, so choosing a second portion on a
     full box asked for a box one size too small.
@@ -60,6 +61,15 @@ version heading and publishes it as the release's Highlights.
     - A meal sold out for you stays marked sold out.
     - A week whose box was changed for that week only keeps its box when you change meals.
     - Skipping still works when a week has no cutoff date.
+- **Translations use HelloFresh's own words.** Checked against HelloFresh's app in each language:
+  - The **Market** tab is now **Markt** in German and Dutch, **Extras** in French, **Tilbehør**
+    in Danish, **Tillbehör** in Swedish and **Tillegg** in Norwegian, as HelloFresh calls it there.
+  - A skipped week is **pausiert**, **en pause** and **gepauzeerd** in German, French and Dutch,
+    and the unskip buttons use HelloFresh's words in Dutch, Danish, Swedish and Norwegian.
+  - The cookbook is the **Carnet de recettes** in French and the **Receptenboek** in Dutch, account
+    credit is **kredit** or **kreditt** in Danish, Swedish and Norwegian, and a recipe's time is
+    **Zubereitungszeit**, **temps de préparation** and **bereidingstijd**.
+  - Swedish says **matkasse** throughout (no more "låda") and **dessert**.
 
 ## 4.08 — 2026-10-13
 - **Veho deliveries no longer show "Package.Delivered".** Since late September, Veho's tracking

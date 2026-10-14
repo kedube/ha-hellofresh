@@ -197,11 +197,11 @@ class HelloFreshLoginRejectedError(HelloFreshAuthError):
 
 
 class HelloFreshPasswordResetRequiredError(HelloFreshLoginRejectedError):
-    """Raised when /gw/login refuses the password until it is reset on HelloFresh.
+    """Raised when /gw/login refuses the password because it has expired.
 
     HelloFresh answers ``401 {"error": "access_denied_password_must_be_rotated"}``; its Android
-    app then tells the customer to reset their password. Setup shows the same advice instead of
-    "wrong password".
+    app then says the password has expired and to follow the instructions emailed to update it.
+    Setup shows the same advice instead of "wrong password".
     """
 
 

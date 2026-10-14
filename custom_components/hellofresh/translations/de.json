@@ -76,8 +76,8 @@
       "bot_blocked_token": "Der Bot-Schutz von HelloFresh hat diese Anfrage blockiert, dein Token wurde also nicht geprüft. Versuche es in ein paar Minuten erneut.",
       "invalid_auth": "Ungültige Anmeldedaten",
       "email_not_registered": "HelloFresh hat kein Konto mit dieser E-Mail-Adresse im gewählten Land. Prüfe die Adresse und ob das Land dem deines Kontos entspricht.",
-      "password_reset_required": "HelloFresh verlangt, dass du das Passwort dieses Kontos zurücksetzt, bevor du dich damit anmelden kannst. Setze es auf der HelloFresh-Website oder in der App zurück und gib hier das neue Passwort ein.",
-      "too_many_attempts": "HelloFresh hat die Anmeldung nach zu vielen Versuchen vorübergehend gesperrt. Warte ein paar Minuten und versuche es dann erneut.",
+      "password_reset_required": "Dein HelloFresh-Passwort ist abgelaufen. Folge den Anweisungen, die HelloFresh an deine E-Mail-Adresse geschickt hat, um es zu aktualisieren, und gib dann hier das neue Passwort ein.",
+      "too_many_attempts": "Dein HelloFresh-Konto wurde wegen zu vieler Anmeldeversuche vorübergehend gesperrt. Warte ein paar Minuten und versuche es dann erneut.",
       "wrong_password": "HelloFresh hat dieses Passwort nicht akzeptiert. Wenn du dich bei HelloFresh mit Google, Apple oder Facebook anmeldest, hat dein Konto vielleicht kein Passwort; nutze stattdessen die Option „Zugriffstoken (fortgeschritten)“.",
       "invalid_token": "Dieses Token konnte nicht gelesen werden oder wurde abgelehnt"
     },
@@ -103,7 +103,7 @@
           "show_sidebar_panel": "HelloFresh in der Seitenleiste anzeigen",
           "enable_public_menu_fallback": "Öffentliches Menü als Fallback nutzen",
           "enable_favorites": "Favoriten-Herzen anzeigen",
-          "enable_prep_lists": "Vorratslisten erstellen",
+          "enable_prep_lists": "Vorbereitungslisten erstellen",
           "show_data_quality_issues": "Warnungen zur Datenqualität anzeigen",
           "use_curl_cffi_headers": "Integrierte Header von curl_cffi verwenden (experimentell)",
           "log_auth_diagnostics": "Authentifizierungsdiagnose protokollieren"
@@ -129,7 +129,7 @@
             "data": {
               "dinner_start": "Abendessen beginnt um",
               "dinner_minutes": "Dauer des Abendessens (Minuten)",
-              "dinner_use_cooking_time": "HelloFresh-Kochzeit für das Abendessen verwenden",
+              "dinner_use_cooking_time": "HelloFresh-Zubereitungszeit für das Abendessen verwenden",
               "dinner_extra_minutes": "Zusätzliche Zeit nach dem Kochen (Minuten)",
               "always_show_breakfast": "Frühstück immer anzeigen",
               "breakfast_start": "Frühstück beginnt um",
@@ -140,13 +140,13 @@
             },
             "data_description": {
               "dinner_start": "Wann jeder Abendessen-Termin beginnt. Die Uhrzeit eines einzelnen Tages lässt sich auch im Tab „Woche“ ändern.",
-              "dinner_minutes": "Wie lange jeder Abendessen-Termin dauert: Vorbereiten, Kochen, Essen und Aufräumen. Standard 90 Minuten. Mit der HelloFresh-Kochzeit gilt das nur für Abendessen ohne Kochzeit, etwa eine Notiz.",
-              "dinner_use_cooking_time": "Jeder Abendessen-Termin dauert so lange wie die Kochzeit des Gerichts laut HelloFresh (plus die der Vorspeise, falls vorhanden) plus die zusätzliche Zeit unten.",
-              "dinner_extra_minutes": "Wird zur Kochzeit addiert, für Essen und Aufräumen. Nur mit eingeschalteter HelloFresh-Kochzeit. Standard 45 Minuten.",
-              "always_show_breakfast": "Frühstück erscheint in einer Woche nur, wenn du dafür Market-Frühstück gekauft hast. Einschalten, um jede Woche Frühstück zu planen, zum Beispiel mit Notizen.",
+              "dinner_minutes": "Wie lange jeder Abendessen-Termin dauert: Vorbereiten, Kochen, Essen und Aufräumen. Standard 90 Minuten. Mit der HelloFresh-Zubereitungszeit gilt das nur für Abendessen ohne Zubereitungszeit, etwa eine Notiz.",
+              "dinner_use_cooking_time": "Jeder Abendessen-Termin dauert so lange wie die Zubereitungszeit des Gerichts laut HelloFresh (plus die der Vorspeise, falls vorhanden) plus die zusätzliche Zeit unten.",
+              "dinner_extra_minutes": "Wird zur Zubereitungszeit addiert, für Essen und Aufräumen. Nur mit eingeschalteter HelloFresh-Zubereitungszeit. Standard 45 Minuten.",
+              "always_show_breakfast": "Frühstück erscheint in einer Woche nur, wenn du dafür Frühstück aus dem Markt gekauft hast. Einschalten, um jede Woche Frühstück zu planen, zum Beispiel mit Notizen.",
               "breakfast_start": "Wann jeder Frühstückstermin beginnt.",
               "breakfast_minutes": "Wie lange jeder Frühstückstermin dauert. Standard 30 Minuten.",
-              "always_show_lunch": "Mittagessen erscheint in einer Woche nur, wenn du dafür Market-Mittagessen gekauft hast. Einschalten, um jede Woche Mittagessen zu planen.",
+              "always_show_lunch": "Mittagessen erscheint in einer Woche nur, wenn du dafür Mittagessen aus dem Markt gekauft hast. Einschalten, um jede Woche Mittagessen zu planen.",
               "lunch_start": "Wann jeder Mittagessen-Termin beginnt.",
               "lunch_minutes": "Wie lange jeder Mittagessen-Termin dauert. Standard 45 Minuten."
             }
@@ -170,7 +170,7 @@
     },
     "write_actions_unavailable": {
       "title": "HelloFresh-Schreibaktionen sind für {entry_title} nicht bestätigt",
-      "description": "Du hast versucht, eine HelloFresh-Aktion zu nutzen, die Kontodaten für **{entry_title}** ändert, etwa Gerichte auswählen oder eine Woche überspringen. Die Integration hat die bekannten Schreib-Endpunkte für dein Konto versucht, aber keiner hat die Anfrage angenommen. Die Aktion wurde daher blockiert, statt weiter zu raten."
+      "description": "Du hast versucht, eine HelloFresh-Aktion zu nutzen, die Kontodaten für **{entry_title}** ändert, etwa Gerichte auswählen oder eine Woche pausieren. Die Integration hat die bekannten Schreib-Endpunkte für dein Konto versucht, aber keiner hat die Anfrage angenommen. Die Aktion wurde daher blockiert, statt weiter zu raten."
     },
     "removed_classic_cards": {
       "title": "Dashboards verwenden noch entfernte HelloFresh-Karten",
@@ -204,10 +204,10 @@
         "name": "Anzahl Gerichte der nächsten änderbaren Lieferung"
       },
       "selected_market_count": {
-        "name": "Anzahl Market-Artikel der nächsten Lieferung"
+        "name": "Anzahl Markt-Artikel der nächsten Lieferung"
       },
       "next_selectable_delivery_market_count": {
-        "name": "Anzahl Market-Artikel der nächsten änderbaren Lieferung"
+        "name": "Anzahl Markt-Artikel der nächsten änderbaren Lieferung"
       },
       "next_delivery_preselected": {
         "name": "Nächste Lieferung vorausgewählt"
@@ -276,10 +276,10 @@
         "name": "Zustellzeitpunkt"
       },
       "skipped_week_count": {
-        "name": "Anzahl übersprungener Wochen"
+        "name": "Anzahl pausierter Wochen"
       },
       "next_skipped_week": {
-        "name": "Nächste übersprungene Woche"
+        "name": "Nächste pausierte Woche"
       },
       "boxes_received": {
         "name": "Erhaltene Kochboxen"
@@ -390,8 +390,8 @@
               "box_shipped": "Box unterwegs",
               "box_delivered": "Box geliefert",
               "delivery_failed": "Zustellung fehlgeschlagen",
-              "week_skipped": "Woche übersprungen",
-              "week_unskipped": "Woche wiederhergestellt",
+              "week_skipped": "Woche pausiert",
+              "week_unskipped": "Woche wieder aktiviert",
               "selection_locked": "Auswahl gesperrt",
               "menu_published": "Menü veröffentlicht"
             }
@@ -409,7 +409,7 @@
     },
     "switch": {
       "skip_next_modifiable_week": {
-        "name": "Nächste änderbare Lieferwoche überspringen"
+        "name": "Nächste änderbare Lieferwoche pausieren"
       }
     },
     "todo": {
@@ -448,7 +448,7 @@
     },
     "get_menu_courses": {
       "name": "Menü-Gerichte abrufen",
-      "description": "Filtert das Menü einer Lieferwoche über den serverseitigen Filterdienst von HelloFresh (Küche, Gerichtart, zu vermeidende Zutaten, Ernährungspräferenz, Hauptprotein, Gesamtkochzeit). Gibt nur die passenden Rezept-IDs zurück. Nur lesend; liefert eine Antwort.",
+      "description": "Filtert das Menü einer Lieferwoche über den serverseitigen Filterdienst von HelloFresh (Küche, Gerichtart, zu vermeidende Zutaten, Ernährungspräferenz, Hauptprotein, Zubereitungszeit). Gibt nur die passenden Rezept-IDs zurück. Nur lesend; liefert eine Antwort.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -485,14 +485,14 @@
           "description": "Optionale Zuordnung von Rezept-ID zu Portionsanzahl (positive ganze Zahl). Nicht aufgeführte Rezepte erhalten standardmäßig eine Portion; die Mindestanzahl an Gerichten wird anhand der Gesamtportionen geprüft."
         },
         "market_quantities": {
-          "name": "Market-Mengen",
-          "description": "Optionale Zuordnung von Market-Artikel-ID, SKU oder Index zur Menge, gespeichert im selben Warenkorb-Update wie die Gerichte (0 oder nicht aufgeführt entfernt einen Artikel). Weglassen, um die aktuellen Extras der Woche zu behalten."
+          "name": "Markt-Mengen",
+          "description": "Optionale Zuordnung von Markt-Artikel-ID, SKU oder Index zur Menge, gespeichert im selben Warenkorb-Update wie die Gerichte (0 oder nicht aufgeführt entfernt einen Artikel). Weglassen, um die aktuellen Markt-Artikel der Woche zu behalten."
         }
       }
     },
     "select_market_items": {
-      "name": "Market-Artikel auswählen",
-      "description": "Die Auswahl der HelloFresh-Market-Zusatzartikel (Extras) für eine Lieferwoche festlegen.",
+      "name": "Markt-Artikel auswählen",
+      "description": "Die Auswahl der HelloFresh-Markt-Artikel (Add-ons) für eine Lieferwoche festlegen.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -504,13 +504,13 @@
         },
         "quantities": {
           "name": "Mengen",
-          "description": "Zuordnung von Market-Artikel-ID zu Anzahl. Eine Anzahl von 0 entfernt den Artikel."
+          "description": "Zuordnung von Markt-Artikel-ID zu Anzahl. Eine Anzahl von 0 entfernt den Artikel."
         }
       }
     },
     "skip_week": {
-      "name": "Woche überspringen",
-      "description": "Eine bestimmte HelloFresh-Lieferwoche überspringen.",
+      "name": "Woche pausieren",
+      "description": "Eine bestimmte HelloFresh-Lieferwoche pausieren.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -523,8 +523,8 @@
       }
     },
     "unskip_week": {
-      "name": "Überspringen aufheben",
-      "description": "Eine zuvor übersprungene HelloFresh-Lieferwoche wiederherstellen.",
+      "name": "Woche wieder aktivieren",
+      "description": "Eine pausierte HelloFresh-Lieferwoche wieder aktivieren.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -826,7 +826,7 @@
     },
     "set_planned_meal": {
       "name": "Geplante Mahlzeit festlegen",
-      "description": "Plant einen Gang einer Mahlzeit eines Tages im Wochen-Tab: ein Gericht aus deiner Box, einen in dieser Woche gekauften Market-Artikel oder eine Notiz als Freitext. Kann auch ändern, wann diese Mahlzeit an diesem Tag beginnt. Gibt den aktualisierten Plan zurück.",
+      "description": "Plant einen Gang einer Mahlzeit eines Tages im Wochen-Tab: ein Gericht aus deiner Box, einen in dieser Woche gekauften Markt-Artikel oder eine Notiz als Freitext. Kann auch ändern, wann diese Mahlzeit an diesem Tag beginnt. Gibt den aktualisierten Plan zurück.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -849,8 +849,8 @@
           "description": "Ein Gericht, das in einer deiner Boxen gewählt ist."
         },
         "market_item_id": {
-          "name": "Market-Artikel-ID",
-          "description": "Ein Market-Artikel, der in einer deiner Boxen gekauft wurde."
+          "name": "Markt-Artikel-ID",
+          "description": "Ein Markt-Artikel, der in einer deiner Boxen gekauft wurde."
         },
         "text": {
           "name": "Notiz",
@@ -858,7 +858,7 @@
         },
         "week_id": {
           "name": "Wochen-ID",
-          "description": "Die Box, aus der das Gericht oder der Market-Artikel stammt, wenn das Datum allein nicht eindeutig ist."
+          "description": "Die Box, aus der das Gericht oder der Markt-Artikel stammt, wenn das Datum allein nicht eindeutig ist."
         },
         "start_time": {
           "name": "Startzeit",
@@ -911,7 +911,7 @@
       "views": {
         "overview": "Übersicht",
         "menu": "Menü",
-        "market": "Market",
+        "market": "Markt",
         "recipes": "Rezepte",
         "week": "Woche",
         "account": "Konto"
@@ -962,8 +962,8 @@
           "short": "Geliefert"
         },
         "skipped": {
-          "label": "Übersprungen",
-          "short": "Übersprungen"
+          "label": "Pausiert",
+          "short": "Pausiert"
         },
         "locked": {
           "label": "Gesperrt",
@@ -977,7 +977,7 @@
         "running": "Aktiv",
         "cancelled": "Gekündigt",
         "canceled": "Gekündigt",
-        "skipped": "Übersprungen",
+        "skipped": "Pausiert",
         "delivered": "Geliefert",
         "shipped": "Versandt",
         "in_transit": "Unterwegs",
@@ -1014,8 +1014,8 @@
         "ago": "vor {duration}"
       },
       "week": {
-        "skip_this_week": "Diese Woche überspringen",
-        "skip_week": "Woche überspringen",
+        "skip_this_week": "Diese Woche pausieren",
+        "skip_week": "Woche pausieren",
         "holiday_change": "Geänderte Lieferung wegen Feiertag",
         "holiday_schedule": "Feiertagsplan",
         "make_changes_by": "Änderungen bis {date}",
@@ -1026,7 +1026,7 @@
         "choose": "Wählen",
         "change_day": "Tag ändern",
         "unskip": "Wieder aktivieren",
-        "skip": "Überspringen",
+        "skip": "Pausieren",
         "nothing_ships": "Diese Woche wird nichts geliefert.",
         "edit_by": "Änderbar bis {date}",
         "no_box": "Keine Box diese Woche",
@@ -1043,19 +1043,19 @@
         "preselected_title": "HelloFresh hat die Gerichte dieser Woche ausgewählt.",
         "pantry": "Einkaufsliste",
         "unskip_week": "Woche wieder aktivieren",
-        "skipped_title": "Diese Woche ist übersprungen.",
+        "skipped_title": "Diese Woche ist pausiert.",
         "unskip_to_choose": "Aktiviere sie wieder, um Gerichte zu wählen.",
         "autopicked_before": "Behalte sie oder tausche welche vor {date} aus.",
         "closed": "Diese Box kann nicht mehr geändert werden — sie wird wie angezeigt geliefert."
       },
       "skip": {
-        "title": "{date} überspringen?",
+        "title": "{date} pausieren?",
         "body": "In dieser Woche wird keine Box geliefert und nichts berechnet. Du kannst sie bis zur Auswahlfrist wieder aktivieren.",
         "keep": "Box behalten",
-        "skip_failed": "Die Woche konnte nicht übersprungen werden: {error}",
+        "skip_failed": "Die Woche konnte nicht pausiert werden: {error}",
         "unskip_failed": "Die Woche konnte nicht wieder aktiviert werden: {error}",
         "restored": "Woche wieder aktiviert — deine Box kommt wie geplant.",
-        "done": "Woche übersprungen."
+        "done": "Woche pausiert."
       },
       "reschedule": {
         "title": "Liefertag ändern",
@@ -1081,7 +1081,7 @@
         "arriving_today": "Kommt heute",
         "arriving_tomorrow": "Kommt morgen",
         "next_box": "Nächste Box",
-        "skipped_title": "Diese Box ist übersprungen.",
+        "skipped_title": "Diese Box ist pausiert.",
         "skipped_body": "Es wird nichts geliefert und nichts berechnet.",
         "skipped_body_unskip": "Es wird nichts geliefert und nichts berechnet — du kannst sie bis zur Frist wieder aktivieren.",
         "autopicked_body": "Behalte sie oder tausche welche vor Ablauf der Frist aus.",
@@ -1205,8 +1205,8 @@
           "other": "{count} Boxen"
         },
         "skipped": {
-          "one": "{count} übersprungen",
-          "other": "{count} übersprungen"
+          "one": "{count} pausiert",
+          "other": "{count} pausiert"
         },
         "previous_month": "Vorheriger Monat",
         "next_month": "Nächster Monat",
@@ -1306,7 +1306,7 @@
         "all": "Alle",
         "main_protein": "Hauptprotein",
         "dietary": "Ernährungsweise",
-        "cooking_time": "Gesamte Kochzeit",
+        "cooking_time": "Zubereitungszeit",
         "any": "Alle",
         "highlights": "Highlights",
         "clear_all": "Alle Filter entfernen"
@@ -1339,7 +1339,7 @@
         "downsized_body": "Es wurden weniger Artikel gespeichert als gewählt — sieh dir die gespeicherte Box unten an.",
         "kind_label": "Gerichte oder Extras",
         "meals": "Gerichte",
-        "extras": "Extras",
+        "extras": "Add-ons",
         "box_total": "Box gesamt",
         "selected_of_required": "{selected} von {required} Gerichten",
         "deadline_passed": "Die Frist ist abgelaufen — diese Änderungen können nicht gespeichert werden",
@@ -1380,7 +1380,7 @@
         },
         "search": "Extras durchsuchen",
         "none_ordered": "Diese Woche wurden keine Extras bestellt.",
-        "not_open": "Der Market für diese Woche ist noch nicht geöffnet.",
+        "not_open": "Der Markt für diese Woche ist noch nicht geöffnet.",
         "no_match_query": "Keine Extras passen zu „{query}“.",
         "none_in_box": "Noch keine Extras in deiner Box.",
         "no_match_categories": "Keine Extras passen zu diesen Kategorien.",
@@ -1482,7 +1482,7 @@
         "upcoming_boxes": "Anstehende Boxen",
         "need_picks": "Auswahl nötig",
         "tap_to_review": "Zum Prüfen tippen",
-        "next_skipped": "Nächste übersprungene",
+        "next_skipped": "Nächste pausierte",
         "your_plan": "Dein Plan",
         "upcoming": "Demnächst",
         "presets": "Menü-Vorlieben",
@@ -1739,7 +1739,7 @@
         "calendar": {
           "event": "{meal}: {name}",
           "course": "{course}: {name}",
-          "cooking": "Kochzeit: {minutes} Min."
+          "cooking": "Zubereitungszeit: {minutes} Min."
         },
         "load_failed": "Der Essensplan konnte nicht geladen werden: {error}",
         "no_weeks": "Es gibt keine aktuelle oder kommende Box zum Planen.",

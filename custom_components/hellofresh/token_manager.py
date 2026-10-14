@@ -61,7 +61,8 @@ _AUTH_FAILURE_STATUSES = frozenset({401, 403})
 # invalid grant (RFC 6749 section 5.2). A JSON 4xx naming one of these errors counts too.
 _REFRESH_REJECTED_STATUSES = frozenset({400, 401, 403})
 _REFRESH_REJECTED_ERRORS = frozenset({"invalid_grant", "invalid_token", "expired_token"})
-# /gw/login's answer when the account's password must be reset on HelloFresh first.
+# /gw/login's answer when the account's password has expired. HelloFresh emails the customer
+# instructions to update it (its app's `login.error.revokePassword`).
 _PASSWORD_MUST_BE_ROTATED = "access_denied_password_must_be_rotated"
 # HelloFresh locks sign-in for "a few minutes" after too many attempts (HTTP 429). No password
 # is posted for at least this long, or for the server's Retry-After when it is longer.
@@ -934,8 +935,8 @@ class TokenManager:
                 )
                 if _auth_error_code(error_body) == _PASSWORD_MUST_BE_ROTATED:
                     raise HelloFreshPasswordResetRequiredError(
-                        "HelloFresh requires this account's password to be reset before it "
-                        "can sign in"
+                        "HelloFresh says this account's password has expired; follow the "
+                        "instructions HelloFresh emailed to update it"
                     )
                 raise HelloFreshLoginRejectedError(
                     f"HelloFresh login failed: HTTP {response.status}"

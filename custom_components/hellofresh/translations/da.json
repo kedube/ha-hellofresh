@@ -76,8 +76,8 @@
       "bot_blocked_token": "HelloFreshs bot-beskyttelse blokerede denne forespørgsel, så dit token blev ikke kontrolleret. Prøv igen om et par minutter.",
       "invalid_auth": "Ugyldige loginoplysninger",
       "email_not_registered": "HelloFresh har ingen konto med denne e-mailadresse i det valgte land. Kontrollér adressen, og at landet er det, din konto er oprettet i.",
-      "password_reset_required": "HelloFresh kræver, at du nulstiller adgangskoden til denne konto, før du kan logge ind med den. Nulstil den på HelloFreshs hjemmeside eller i appen, og indtast derefter den nye adgangskode her.",
-      "too_many_attempts": "HelloFresh har midlertidigt låst login efter for mange forsøg. Vent et par minutter, og prøv så igen.",
+      "password_reset_required": "Din HelloFresh-adgangskode er udløbet. Følg vejledningen, som HelloFresh har sendt til din e-mail, for at opdatere den, og indtast derefter den nye adgangskode her.",
+      "too_many_attempts": "Din HelloFresh-konto er midlertidigt låst på grund af for mange loginforsøg. Prøv igen om et par minutter.",
       "wrong_password": "HelloFresh godkendte ikke denne adgangskode. Hvis du logger ind på HelloFresh med Google, Apple eller Facebook, har din konto måske ingen adgangskode; brug valgmuligheden \"Adgangstoken (avanceret)\" i stedet.",
       "invalid_token": "Dette token kunne ikke læses eller blev afvist"
     },
@@ -143,10 +143,10 @@
               "dinner_minutes": "Hvor længe hver aftensmadsbegivenhed varer: forberedelse, madlavning, spisning og oprydning. Standard 90 minutter. Med HelloFreshs tilberedningstid slået til gælder det kun aftensmad uden tilberedningstid, f.eks. en note.",
               "dinner_use_cooking_time": "Hver aftensmadsbegivenhed varer rettens tilberedningstid fra HelloFresh (plus forrettens, hvis den har en) plus den ekstra tid nedenfor.",
               "dinner_extra_minutes": "Lægges til tilberedningstiden for spisning og oprydning. Bruges kun, når HelloFreshs tilberedningstid er slået til. Standard 45 minutter.",
-              "always_show_breakfast": "Morgenmad vises kun i en uge, hvis du har købt morgenmad fra Market til den. Slå til for at planlægge morgenmad hver uge, f.eks. med noter.",
+              "always_show_breakfast": "Morgenmad vises kun i en uge, hvis du har købt morgenmad som tillægsprodukt til den. Slå til for at planlægge morgenmad hver uge, f.eks. med noter.",
               "breakfast_start": "Hvornår hver morgenmadsbegivenhed starter.",
               "breakfast_minutes": "Hvor længe hver morgenmadsbegivenhed varer. Standard 30 minutter.",
-              "always_show_lunch": "Frokost vises kun i en uge, hvis du har købt frokost fra Market til den. Slå til for at planlægge frokost hver uge.",
+              "always_show_lunch": "Frokost vises kun i en uge, hvis du har købt frokost som tillægsprodukt til den. Slå til for at planlægge frokost hver uge.",
               "lunch_start": "Hvornår hver frokostbegivenhed starter.",
               "lunch_minutes": "Hvor længe hver frokostbegivenhed varer. Standard 45 minutter."
             }
@@ -204,10 +204,10 @@
         "name": "Antal retter i næste ændrbare levering"
       },
       "selected_market_count": {
-        "name": "Antal Market-varer i næste levering"
+        "name": "Antal tillægsprodukter i næste levering"
       },
       "next_selectable_delivery_market_count": {
-        "name": "Antal Market-varer i næste ændrbare levering"
+        "name": "Antal tillægsprodukter i næste ændrbare levering"
       },
       "next_delivery_preselected": {
         "name": "Næste levering forudvalgt"
@@ -228,7 +228,7 @@
         "name": "Rabat på næste kasse"
       },
       "account_credit": {
-        "name": "Tilgodehavende"
+        "name": "Kredit"
       },
       "selected_plan": {
         "name": "Valgt abonnement"
@@ -391,7 +391,7 @@
               "box_delivered": "Kasse leveret",
               "delivery_failed": "Levering mislykkedes",
               "week_skipped": "Uge sprunget over",
-              "week_unskipped": "Uge genoptaget",
+              "week_unskipped": "Uge bestilt igen",
               "selection_locked": "Valg låst",
               "menu_published": "Menu offentliggjort"
             }
@@ -485,14 +485,14 @@
           "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal). Opskrifter, der udelades, får som standard én portion; minimumsantallet af retter kontrolleres mod det samlede antal portioner."
         },
         "market_quantities": {
-          "name": "Market-antal",
-          "description": "Valgfri sammenkobling af Market-varens id, SKU eller indeks og antal, gemt i samme kurvopdatering som retterne (0 eller udeladt fjerner en vare). Udelad den for at beholde ugens nuværende tilvalg."
+          "name": "Antal tillægsprodukter",
+          "description": "Valgfri sammenkobling af tillægsproduktets id, SKU eller indeks og antal, gemt i samme kurvopdatering som retterne (0 eller udeladt fjerner et produkt). Udelad den for at beholde ugens nuværende tillægsprodukter."
         }
       }
     },
     "select_market_items": {
-      "name": "Vælg Market-varer",
-      "description": "Angiv valget af HelloFresh Market-ekstra varer for en leveringsuge.",
+      "name": "Vælg tillægsprodukter",
+      "description": "Angiv valget af HelloFresh-tillægsprodukter for en leveringsuge.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -504,7 +504,7 @@
         },
         "quantities": {
           "name": "Antal",
-          "description": "Sammenkobling af Market-vare-id og antal. Antallet 0 fjerner varen."
+          "description": "Sammenkobling af tillægsprodukt-id og antal. Antallet 0 fjerner produktet."
         }
       }
     },
@@ -523,8 +523,8 @@
       }
     },
     "unskip_week": {
-      "name": "Fortryd oversprunget uge",
-      "description": "Gendan en tidligere oversprunget HelloFresh-leveringsuge.",
+      "name": "Bestil uge igen",
+      "description": "Bestil en tidligere oversprunget HelloFresh-leveringsuge igen.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -724,7 +724,7 @@
     },
     "get_account_summary": {
       "name": "Hent kontooversigt",
-      "description": "Returnerer de vigtigste konto- og abonnementsværdier (abonnement, tilgodehavende, kommende antal, rabatkode, betalingsdato, helligdagsbesked) i ét kald — de samme værdier, som de tilsvarende sensorer viser. Kun læsning; returnerer et svar.",
+      "description": "Returnerer de vigtigste konto- og abonnementsværdier (abonnement, kredit, kommende antal, rabatkode, betalingsdato, helligdagsbesked) i ét kald — de samme værdier, som de tilsvarende sensorer viser. Kun læsning; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -826,7 +826,7 @@
     },
     "set_planned_meal": {
       "name": "Angiv planlagt måltid",
-      "description": "Planlægger én ret i en dags måltid i Uge-fanen: en ret fra din kasse, en Market-vare købt den uge eller en note i fritekst. Kan også ændre, hvornår måltidet starter den dag. Returnerer den opdaterede plan.",
+      "description": "Planlægger én ret i en dags måltid i Uge-fanen: en ret fra din kasse, et tillægsprodukt købt den uge eller en note i fritekst. Kan også ændre, hvornår måltidet starter den dag. Returnerer den opdaterede plan.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurations-id",
@@ -849,8 +849,8 @@
           "description": "En ret, der er valgt i en af dine kasser."
         },
         "market_item_id": {
-          "name": "Market-vare-id",
-          "description": "En Market-vare købt i en af dine kasser."
+          "name": "Tillægsprodukt-id",
+          "description": "Et tillægsprodukt købt i en af dine kasser."
         },
         "text": {
           "name": "Note",
@@ -858,7 +858,7 @@
         },
         "week_id": {
           "name": "Uge-id",
-          "description": "Den kasse, retten eller Market-varen kommer fra, når datoen alene ikke gør det klart."
+          "description": "Den kasse, retten eller tillægsproduktet kommer fra, når datoen alene ikke gør det klart."
         },
         "start_time": {
           "name": "Starttidspunkt",
@@ -911,7 +911,7 @@
       "views": {
         "overview": "Oversigt",
         "menu": "Menu",
-        "market": "Market",
+        "market": "Tilbehør",
         "recipes": "Opskrifter",
         "week": "Uge",
         "account": "Konto"
@@ -1020,12 +1020,12 @@
         "holiday_schedule": "Helligdagsplan",
         "make_changes_by": "Foretag ændringer senest {date}",
         "autopicked_title": "HelloFresh har valgt disse retter for dig.",
-        "unskip_this_week": "Genoptag denne uge",
+        "unskip_this_week": "Bestil kasse denne uge",
         "review": "Se igennem",
         "edit": "Redigér",
         "choose": "Vælg",
         "change_day": "Skift dag",
-        "unskip": "Genoptag",
+        "unskip": "Bestil igen",
         "skip": "Spring over",
         "nothing_ships": "Intet bliver sendt denne uge.",
         "edit_by": "Redigér senest {date}",
@@ -1042,19 +1042,19 @@
         "next_week": "Næste uge",
         "preselected_title": "HelloFresh har valgt retterne for denne uge.",
         "pantry": "Indkøbsliste",
-        "unskip_week": "Genoptag uge",
+        "unskip_week": "Bestil uge igen",
         "skipped_title": "Denne uge er sprunget over.",
-        "unskip_to_choose": "Genoptag den for at vælge retter.",
+        "unskip_to_choose": "Bestil den igen for at vælge retter.",
         "autopicked_before": "Behold dem, eller byt nogle ud før {date}.",
         "closed": "Der kan ikke længere ændres i denne kasse — den sendes, som den er."
       },
       "skip": {
         "title": "Spring {date} over?",
-        "body": "Der sendes ingen kasse den uge, og du bliver ikke opkrævet for den. Du kan genoptage den indtil valgfristen.",
+        "body": "Der sendes ingen kasse den uge, og du bliver ikke opkrævet for den. Du kan bestille den igen indtil valgfristen.",
         "keep": "Behold min kasse",
         "skip_failed": "Kunne ikke springe ugen over: {error}",
-        "unskip_failed": "Kunne ikke genoptage ugen: {error}",
-        "restored": "Ugen er genoptaget — din kasse kommer som planlagt.",
+        "unskip_failed": "Kunne ikke bestille ugen igen: {error}",
+        "restored": "Ugen er bestilt igen — din kasse kommer som planlagt.",
         "done": "Ugen er sprunget over."
       },
       "reschedule": {
@@ -1083,7 +1083,7 @@
         "next_box": "Næste kasse",
         "skipped_title": "Denne kasse er sprunget over.",
         "skipped_body": "Intet bliver sendt, og du bliver ikke opkrævet.",
-        "skipped_body_unskip": "Intet bliver sendt, og du bliver ikke opkrævet — genoptag den inden fristen.",
+        "skipped_body_unskip": "Intet bliver sendt, og du bliver ikke opkrævet — bestil den igen inden fristen.",
         "autopicked_body": "Behold dem, eller byt nogle ud inden fristen.",
         "unsaved": "Du har ændringer i denne kasse, som ikke er gemt.",
         "finish": "Gør færdig",
@@ -1339,7 +1339,7 @@
         "downsized_body": "Der blev gemt færre varer, end du valgte — tjek den gemte kasse nedenfor.",
         "kind_label": "Retter eller ekstra",
         "meals": "Retter",
-        "extras": "Ekstra",
+        "extras": "Tilbehør",
         "box_total": "Kasse i alt",
         "selected_of_required": "{selected} af {required} retter",
         "deadline_passed": "Fristen er overskredet — disse ændringer kan ikke gemmes",
@@ -1373,14 +1373,14 @@
           "dessert": "Desserter",
           "lunch": "Frokost",
           "protein": "Proteiner",
-          "sides": "Tilbehør",
+          "sides": "Sideretter",
           "donation": "Donationer",
           "lowprices": "Lave priser",
           "modularity": "Ekstra"
         },
         "search": "Søg i ekstravarer",
         "none_ordered": "Der blev ikke bestilt nogen ekstravarer denne uge.",
-        "not_open": "Market for denne uge er ikke åbent endnu.",
+        "not_open": "Tilbehør for denne uge kan ikke vælges endnu.",
         "no_match_query": "Ingen ekstravarer matcher »{query}«.",
         "none_in_box": "Ingen ekstravarer i din kasse endnu.",
         "no_match_categories": "Ingen ekstravarer matcher disse kategorier.",
@@ -1471,7 +1471,7 @@
         "meal_preference": "Måltidspræference",
         "servings": "Portioner",
         "meals_per_box": "Retter pr. kasse",
-        "credit": "Tilgodehavende",
+        "credit": "Kredit",
         "card_on_file": "Registreret kort",
         "card_expiry": "udløber {date}",
         "card_expired": "udløbet",

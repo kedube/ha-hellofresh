@@ -76,8 +76,8 @@
       "bot_blocked_token": "HelloFresh sin bot-beskyttelse blokkerte denne forespørselen, så tokenet ditt ble ikke sjekket. Prøv igjen om noen minutter.",
       "invalid_auth": "Ugyldig innlogging",
       "email_not_registered": "HelloFresh har ingen konto med denne e-postadressen i det valgte landet. Sjekk adressen, og at landet er det kontoen din tilhører.",
-      "password_reset_required": "HelloFresh krever at du tilbakestiller passordet for denne kontoen før du kan logge inn med det. Tilbakestill det på HelloFresh sin nettside eller i appen, og skriv deretter inn det nye passordet her.",
-      "too_many_attempts": "HelloFresh har midlertidig låst innloggingen etter for mange forsøk. Vent noen minutter, og prøv igjen.",
+      "password_reset_required": "HelloFresh-passordet ditt er utløpt. Følg instruksjonene HelloFresh har sendt til e-posten din for å oppdatere det, og skriv deretter inn det nye passordet her.",
+      "too_many_attempts": "HelloFresh-kontoen din er midlertidig låst på grunn av for mange innloggingsforsøk. Prøv igjen om noen minutter.",
       "wrong_password": "HelloFresh godtok ikke dette passordet. Hvis du logger inn på HelloFresh med Google, Apple eller Facebook, har kontoen din kanskje ikke noe passord; bruk alternativet «Tilgangstoken (avansert)» i stedet.",
       "invalid_token": "Dette tokenet kunne ikke leses eller ble avvist"
     },
@@ -143,10 +143,10 @@
               "dinner_minutes": "Hvor lenge hver middagshendelse varer: forberedelse, matlaging, spising og opprydding. Standard 90 minutter. Med HelloFresh sin tilberedningstid slått på gjelder dette bare middager uten tilberedningstid, for eksempel et notat.",
               "dinner_use_cooking_time": "Hver middagshendelse varer like lenge som rettens tilberedningstid fra HelloFresh (pluss forrettens, hvis den har en), pluss ekstratiden nedenfor.",
               "dinner_extra_minutes": "Legges til tilberedningstiden for spising og opprydding. Brukes bare når HelloFresh sin tilberedningstid er slått på. Standard 45 minutter.",
-              "always_show_breakfast": "Frokost vises bare i en uke hvis du har kjøpt frokost fra Market til den. Slå på for å planlegge frokost hver uke, for eksempel med notater.",
+              "always_show_breakfast": "Frokost vises bare i en uke hvis du har kjøpt frokost som tilleggsprodukt til den. Slå på for å planlegge frokost hver uke, for eksempel med notater.",
               "breakfast_start": "Når hver frokosthendelse starter.",
               "breakfast_minutes": "Hvor lenge hver frokosthendelse varer. Standard 30 minutter.",
-              "always_show_lunch": "Lunsj vises bare i en uke hvis du har kjøpt lunsj fra Market til den. Slå på for å planlegge lunsj hver uke.",
+              "always_show_lunch": "Lunsj vises bare i en uke hvis du har kjøpt lunsj som tilleggsprodukt til den. Slå på for å planlegge lunsj hver uke.",
               "lunch_start": "Når hver lunsjhendelse starter.",
               "lunch_minutes": "Hvor lenge hver lunsjhendelse varer. Standard 45 minutter."
             }
@@ -204,10 +204,10 @@
         "name": "Antall retter i neste endringsbare levering"
       },
       "selected_market_count": {
-        "name": "Antall Market-varer i neste levering"
+        "name": "Antall tilleggsprodukter i neste levering"
       },
       "next_selectable_delivery_market_count": {
-        "name": "Antall Market-varer i neste endringsbare levering"
+        "name": "Antall tilleggsprodukter i neste endringsbare levering"
       },
       "next_delivery_preselected": {
         "name": "Neste levering forhåndsvalgt"
@@ -225,10 +225,10 @@
         "name": "Totalpris for neste levering"
       },
       "next_box_discount": {
-        "name": "Rabatt på neste boks"
+        "name": "Rabatt på neste kasse"
       },
       "account_credit": {
-        "name": "Tilgodehavende"
+        "name": "Kreditt"
       },
       "selected_plan": {
         "name": "Valgt abonnement"
@@ -391,7 +391,7 @@
               "box_delivered": "Kasse levert",
               "delivery_failed": "Levering mislyktes",
               "week_skipped": "Uke hoppet over",
-              "week_unskipped": "Uke gjenopptatt",
+              "week_unskipped": "Uke reaktivert",
               "selection_locked": "Valg låst",
               "menu_published": "Meny publisert"
             }
@@ -485,14 +485,14 @@
           "description": "Valgfri kobling mellom oppskrifts-ID og antall porsjoner (positivt heltall). Oppskrifter som utelates får én porsjon som standard; minimumsantallet retter kontrolleres mot det totale antallet porsjoner."
         },
         "market_quantities": {
-          "name": "Market-antall",
-          "description": "Valgfri kobling mellom Market-varens ID, SKU eller indeks og antall, lagret i samme handlekurvoppdatering som rettene (0 eller utelatt fjerner en vare). Utelat den for å beholde ukens nåværende tillegg."
+          "name": "Antall tilleggsprodukter",
+          "description": "Valgfri kobling mellom tilleggsproduktets ID, SKU eller indeks og antall, lagret i samme handlekurvoppdatering som rettene (0 eller utelatt fjerner et produkt). Utelat den for å beholde ukens nåværende tillegg."
         }
       }
     },
     "select_market_items": {
-      "name": "Velg Market-varer",
-      "description": "Angi valget av HelloFresh Market-tilleggsvarer for en leveringsuke.",
+      "name": "Velg tilleggsprodukter",
+      "description": "Angi valget av HelloFresh-tilleggsprodukter for en leveringsuke.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -504,7 +504,7 @@
         },
         "quantities": {
           "name": "Antall",
-          "description": "Kobling mellom Market-vare-ID og antall. Antallet 0 fjerner varen."
+          "description": "Kobling mellom tilleggsprodukt-ID og antall. Antallet 0 fjerner produktet."
         }
       }
     },
@@ -523,8 +523,8 @@
       }
     },
     "unskip_week": {
-      "name": "Angre uke hoppet over",
-      "description": "Gjenopprett en HelloFresh-leveringsuke som tidligere ble hoppet over.",
+      "name": "Reaktiver uke",
+      "description": "Reaktiver en HelloFresh-leveringsuke som tidligere ble hoppet over.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -724,7 +724,7 @@
     },
     "get_account_summary": {
       "name": "Hent kontooversikt",
-      "description": "Returnerer de viktigste konto- og abonnementsverdiene (abonnement, tilgodehavende, kommende antall, rabattkode, betalingsdato, helligdagsmelding) i ett kall — de samme verdiene som de tilsvarende sensorene viser. Kun lesing; returnerer et svar.",
+      "description": "Returnerer de viktigste konto- og abonnementsverdiene (abonnement, kreditt, kommende antall, rabattkode, betalingsdato, helligdagsmelding) i ett kall — de samme verdiene som de tilsvarende sensorene viser. Kun lesing; returnerer et svar.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -826,7 +826,7 @@
     },
     "set_planned_meal": {
       "name": "Angi planlagt måltid",
-      "description": "Planlegger én rett i en dags måltid i Uke-fanen: en rett fra kassen din, en Market-vare kjøpt den uken eller et notat i fritekst. Kan også endre når måltidet starter den dagen. Returnerer den oppdaterte planen.",
+      "description": "Planlegger én rett i en dags måltid i Uke-fanen: en rett fra kassen din, et tilleggsprodukt kjøpt den uken eller et notat i fritekst. Kan også endre når måltidet starter den dagen. Returnerer den oppdaterte planen.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -849,8 +849,8 @@
           "description": "En rett som er valgt i en av kassene dine."
         },
         "market_item_id": {
-          "name": "Market-vare-ID",
-          "description": "En Market-vare kjøpt i en av kassene dine."
+          "name": "Tilleggsprodukt-ID",
+          "description": "Et tilleggsprodukt kjøpt i en av kassene dine."
         },
         "text": {
           "name": "Notat",
@@ -858,7 +858,7 @@
         },
         "week_id": {
           "name": "Uke-ID",
-          "description": "Kassen retten eller Market-varen kom fra, når datoen alene ikke gjør det klart."
+          "description": "Kassen retten eller tilleggsproduktet kom fra, når datoen alene ikke gjør det klart."
         },
         "start_time": {
           "name": "Starttid",
@@ -911,7 +911,7 @@
       "views": {
         "overview": "Oversikt",
         "menu": "Meny",
-        "market": "Market",
+        "market": "Tillegg",
         "recipes": "Oppskrifter",
         "week": "Uke",
         "account": "Konto"
@@ -1020,12 +1020,12 @@
         "holiday_schedule": "Helligdagsplan",
         "make_changes_by": "Gjør endringer innen {date}",
         "autopicked_title": "HelloFresh valgte disse rettene for deg.",
-        "unskip_this_week": "Gjenopprett denne uken",
+        "unskip_this_week": "Reaktiver denne uken",
         "review": "Se over",
         "edit": "Endre",
         "choose": "Velg",
         "change_day": "Endre dag",
-        "unskip": "Gjenopprett",
+        "unskip": "Reaktiver",
         "skip": "Hopp over",
         "nothing_ships": "Ingenting sendes denne uken.",
         "edit_by": "Endre innen {date}",
@@ -1042,19 +1042,19 @@
         "next_week": "Neste uke",
         "preselected_title": "HelloFresh valgte rettene for denne uken.",
         "pantry": "Handleliste",
-        "unskip_week": "Gjenopprett uke",
+        "unskip_week": "Reaktiver uke",
         "skipped_title": "Denne uken er hoppet over.",
-        "unskip_to_choose": "Gjenopprett den for å velge retter.",
+        "unskip_to_choose": "Reaktiver den for å velge retter.",
         "autopicked_before": "Behold dem eller bytt noen før {date}.",
         "closed": "Endringer er stengt for denne kassen — den sendes slik den er."
       },
       "skip": {
         "title": "Hoppe over {date}?",
-        "body": "Ingen kasse sendes den uken, og du belastes ikke for den. Du kan gjenopprette den frem til valgfristen.",
+        "body": "Ingen kasse sendes den uken, og du belastes ikke for den. Du kan reaktivere den frem til valgfristen.",
         "keep": "Behold kassen",
         "skip_failed": "Kunne ikke hoppe over uken: {error}",
-        "unskip_failed": "Kunne ikke gjenopprette uken: {error}",
-        "restored": "Uken er gjenopprettet — kassen din kommer som vanlig.",
+        "unskip_failed": "Kunne ikke reaktivere uken: {error}",
+        "restored": "Uken er reaktivert — kassen din kommer som vanlig.",
         "done": "Uken er hoppet over."
       },
       "reschedule": {
@@ -1083,7 +1083,7 @@
         "next_box": "Neste kasse",
         "skipped_title": "Denne kassen er hoppet over.",
         "skipped_body": "Ingenting sendes, og du belastes ikke.",
-        "skipped_body_unskip": "Ingenting sendes, og du belastes ikke — gjenopprett den før fristen.",
+        "skipped_body_unskip": "Ingenting sendes, og du belastes ikke — reaktiver den før fristen.",
         "autopicked_body": "Behold dem eller bytt noen før fristen.",
         "unsaved": "Du har endringer i denne kassen som ikke er lagret.",
         "finish": "Fullfør",
@@ -1339,7 +1339,7 @@
         "downsized_body": "Færre varer enn du valgte, ble lagret — sjekk den lagrede kassen nedenfor.",
         "kind_label": "Retter eller ekstra",
         "meals": "Retter",
-        "extras": "Ekstra",
+        "extras": "Tillegg",
         "box_total": "Kassetotal",
         "selected_of_required": "{selected} av {required} retter",
         "deadline_passed": "Fristen har gått ut — disse endringene kan ikke lagres",
@@ -1380,7 +1380,7 @@
         },
         "search": "Søk i ekstravarer",
         "none_ordered": "Ingen ekstravarer ble bestilt denne uken.",
-        "not_open": "Market for denne uken er ikke åpen ennå.",
+        "not_open": "Tilleggsproduktene for denne uken kan ikke velges ennå.",
         "no_match_query": "Ingen ekstravarer passer med «{query}».",
         "none_in_box": "Ingen ekstravarer i kassen ennå.",
         "no_match_categories": "Ingen ekstravarer passer med disse kategoriene.",
@@ -1471,7 +1471,7 @@
         "meal_preference": "Måltidspreferanse",
         "servings": "Porsjoner",
         "meals_per_box": "Retter per kasse",
-        "credit": "Tilgodebeløp",
+        "credit": "Kreditt",
         "card_on_file": "Registrert kort",
         "card_expiry": "utløper {date}",
         "card_expired": "utløpt",
