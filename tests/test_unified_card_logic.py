@@ -231,6 +231,39 @@ def test_shipping_is_a_state_of_its_own() -> None:
     assert _run(body) == ["shipping", 1]
 
 
+def test_a_past_week_without_delivery_information_is_delivered() -> None:
+    """HelloFresh keeps a box's progress for a few weeks only; the website still shows it delivered.
+
+    "Locked" is for a box past its deadline that hasn't come yet. A past week reads delivered
+    unless it was skipped, never sent, late, or is still on its way.
+    """
+    body = """
+      const weeks = [
+        week("old", -10, { status: "UNKNOWN", order: { tracking_status: null } }),
+        week("old-running", -6, { status: "RUNNING" }),
+        week("skipped", -3, { status: "PAUSED" }),
+        week("cancelled", -2, { status: "CANCELLED" }),
+        week("late", -1, { status: "RUNNING", sub_status: "DELAYED" }),
+        week("on-the-road", -1, { status: "RUNNING", order: { tracking_status: "in_transit" } }),
+        week("coming", 1, { status: "RUNNING", allowed_actions: { mealSwap: false } }),
+      ];
+      const states = Object.fromEntries(weeks.map((w) => [w.week_id, L.weekState(w)]));
+      return { states, oldStep: L.trackingStep(weeks[0]) };
+    """
+    assert _run(body) == {
+        "states": {
+            "old": "delivered",
+            "old-running": "delivered",
+            "skipped": "skipped",
+            "cancelled": "locked",
+            "late": "locked",
+            "on-the-road": "shipping",
+            "coming": "locked",
+        },
+        "oldStep": 3,
+    }
+
+
 def test_skip_eligibility() -> None:
     body = """
       const weeks = [

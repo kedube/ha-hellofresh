@@ -6,6 +6,14 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+- **Weekly discounts.** HelloFresh refused the weekly-discount lookup ("validation failed"), so
+  the Next box discount sensor stayed unknown. The lookup was missing the plan, country and
+  language that HelloFresh's website sends with it. It now sends them, and asks about every
+  upcoming week, as the website does.
+- **Older boxes show as delivered.** HelloFresh keeps a box's delivery details for about five
+  weeks, and after that the card showed the week as "Locked". Like the website, a week whose
+  delivery day has passed now reads as delivered, unless it was skipped, cancelled, late or still
+  on its way.
 - **A steadier week strip.** Choosing a week in the Menu, Market or Week tab made the row of
   weeks jump back to the oldest week and scroll all the way across again. Choosing a week you can
   see now leaves the row still. The row shows as many weeks as fit, up to seven, with your next box

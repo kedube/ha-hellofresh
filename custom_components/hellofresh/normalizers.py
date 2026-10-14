@@ -146,8 +146,11 @@ def _template_debug_path(path: str) -> str:
 class HelloFreshPayloadNormalizer:
     """Mixin for pure-ish HelloFresh payload normalization methods."""
 
-    @staticmethod
-    def _effective_week_status(raw_week: dict[str, Any]) -> str:
+    # ``subStatus`` phases that follow delivery: the meals are to be cooked, then rated.
+    _DELIVERED_SUB_STATUSES = frozenset({"COOK_IT", "RATING"})
+
+    @classmethod
+    def _effective_week_status(cls, raw_week: dict[str, Any]) -> str:
         """Return the week's status, preferring the live ``state`` lifecycle field.
 
         HelloFresh's top-level ``status`` can be stale: a box still being prepared was
@@ -155,11 +158,21 @@ class HelloFreshPayloadNormalizer:
         field tracks the actual lifecycle (e.g. ``PREPARING``/``RUNNING``/``DELIVERED``),
         so when it says the box has *not* been delivered it takes precedence; otherwise
         fall back to ``status``/``deliveryStatus``.
+
+        HelloFresh keeps a box's progress for a few weeks only. Older weeks come back with
+        ``state="UNKNOWN"``, ``status`` still ``RUNNING`` and no tracking (capture 62, W35-W37),
+        which says nothing. Their ``subStatus`` is still ``RATING``, a phase after delivery, so
+        such a week is delivered, as the website shows it.
         """
+        sub_status = str(raw_week.get("subStatus") or "").strip().upper()
+        if sub_status in cls._DELIVERED_SUB_STATUSES and not cls._raw_week_is_skipped(raw_week):
+            return "DELIVERED"
         state = raw_week.get("state")
-        if isinstance(state, str) and state.strip() and state.strip().upper() != "DELIVERED":
+        state_key = state.strip().upper() if isinstance(state, str) else ""
+        if state_key and state_key not in ("DELIVERED", "UNKNOWN"):
             return state
-        return raw_week.get("status") or raw_week.get("deliveryStatus") or state or "scheduled"
+        status = raw_week.get("status") or raw_week.get("deliveryStatus")
+        return status or (state if state_key not in ("", "UNKNOWN") else "scheduled")
 
     @staticmethod
     def _raw_week_is_skipped(raw_week: dict[str, Any]) -> bool:

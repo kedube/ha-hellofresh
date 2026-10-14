@@ -3329,15 +3329,18 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     ) -> None:
         """Attach the weekly discounts (wallet promises) to their weeks and to ``data``.
 
-        HAR-verified (captures 37-51): the deliveries page POSTs the upcoming weeks to
-        ``/gw/customer-wallet/v2/benefit-distribution?externalPartnerBenefits=true&
-        subscription={id}`` (header ``x-requested-by: upselling``) as ``{"deliveries":
+        HAR-verified (capture 62, October 2026): the deliveries page POSTs every upcoming week
+        to ``/gw/customer-wallet/v2/benefit-distribution?externalPartnerBenefits=true&
+        subscription={id}`` (header ``x-requested-by: deliveries``) as ``{"deliveries":
         [{"delivery": {"hfWeek", "state", "cutoffDateTime"}, "selections": {"mealboxHandle"},
-        "subscriptionId"}]}`` and gets back, per week, the promises available for it
-        (``deliveries[].units[].{promiseId, status}``) plus the promise definitions. A promise
-        (e.g. "$10 off premium meals", unlimited, expiring at a cutoff) is a discount the
-        billing ledger later realizes as a coupon line — the cart-pricing call never shows it.
-        Best-effort per subscription; a failure leaves the sensor unknown.
+        "subscriptionId"}], "planId", "legacyVoucherCode", "legacyVoucherShippedDiscountedBoxes",
+        "systemCountry", "locale"}`` and gets back, per week, the promises available for it
+        (``deliveries[].units[].{promiseId, status}``) plus the promise definitions. Without the
+        top-level fields (the August captures 37-51 had none) HelloFresh answers HTTP 400
+        "validation failed". A promise (e.g. "$10 off premium meals", unlimited, expiring at a
+        cutoff) is a discount the billing ledger later realizes as a coupon line — the
+        cart-pricing call never shows it. Best-effort per subscription; a failure leaves the
+        sensor unknown.
         """
         if self._session is None or not subscriptions:
             return
@@ -3350,12 +3353,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         all_promises: dict[str, dict[str, Any]] = {}
         for subscription in subscriptions:
             sub_id = subscription.subscription_id
-            # Only weeks a discount can apply to: up to the last week with a published menu
-            # (the subscription's ``weekWithLatestMenu``), each with a cutoff and a box. Sent
-            # every upcoming week, three of them past the last published menu, the request was
-            # refused with HTTP 400 "validation failed".
             raw_subscription = subscription.raw if isinstance(subscription.raw, dict) else {}
-            latest_menu_week = self._iso_week_tuple(raw_subscription.get("weekWithLatestMenu"))
             sub_weeks = [
                 week
                 for week in weeks
@@ -3367,12 +3365,11 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             ]
             if not sub_weeks:
                 continue
+            # Every upcoming week with a cutoff and a box, as the website sends them (W43-W51 in
+            # capture 62, past the last published menu too).
             deliveries: list[dict[str, Any]] = []
             for week in sub_weeks:
                 raw = week.raw
-                week_key = self._iso_week_tuple(week.week_id)
-                if latest_menu_week and week_key and week_key > latest_menu_week:
-                    continue
                 cutoff = raw.get("cutoffDate") or raw.get("cutoffDateTime")
                 product = raw.get("product") if isinstance(raw.get("product"), dict) else {}
                 handle = product.get("handle") or week.box_size
@@ -3391,7 +3388,16 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 )
             if not deliveries:
                 continue
-            body = {"deliveries": deliveries}
+            body = {
+                "deliveries": deliveries,
+                "planId": raw_subscription.get("customerPlanId"),
+                # Null in capture 62, for a subscription without a coupon. What fills them
+                # otherwise isn't known.
+                "legacyVoucherCode": None,
+                "legacyVoucherShippedDiscountedBoxes": None,
+                "systemCountry": api_country_code(self._country),
+                "locale": subscription.locale or api_locale(self._country),
+            }
             params = {"externalPartnerBenefits": "true", "subscription": sub_id}
             try:
                 response = await self._async_api_request(
@@ -3399,7 +3405,7 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     self._WALLET_BENEFITS_PATH,
                     params=params,
                     json_payload=body,
-                    extra_headers={"x-requested-by": "upselling"},
+                    extra_headers={"x-requested-by": "deliveries"},
                 )
                 payload = await self._async_response_json(response)
             except HelloFreshAuthError:

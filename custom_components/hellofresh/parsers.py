@@ -591,6 +591,19 @@ def extract_tracking_details(raw_week: dict[str, Any]) -> dict[str, str | None]:
                     return value.strip()
         return None
 
+    tracking_status = pick(
+        "trackingStatus",
+        "shipmentStatus",
+        "tracking_status",
+        "parcelStatus",
+        "carrierStatus",
+        "internal_status",
+        "state",
+    )
+    # HelloFresh's placeholder once it stops keeping a box's progress (older weeks): no status.
+    if tracking_status and tracking_status.upper() == "UNKNOWN":
+        tracking_status = None
+
     return {
         "tracking_url": pick(
             "trackingUrl",
@@ -614,15 +627,7 @@ def extract_tracking_details(raw_week: dict[str, Any]) -> dict[str, str | None]:
             "waybill",
             "consignmentNumber",
         ),
-        "tracking_status": pick(
-            "trackingStatus",
-            "shipmentStatus",
-            "tracking_status",
-            "parcelStatus",
-            "carrierStatus",
-            "internal_status",
-            "state",
-        ),
+        "tracking_status": tracking_status,
         "carrier": normalize_carrier_name(
             pick(
                 "carrier",

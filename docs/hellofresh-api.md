@@ -407,6 +407,9 @@ Notes:
 - A skipped week is `status: "PAUSED"`. There is no `skipped` field.
 - `status` can lag: a box being prepared was seen with `status: "DELIVERED"` and
   `state: "PREPARING"`. `state` follows the box.
+- HelloFresh keeps a box's progress for about five weeks. Older weeks come back with
+  `state: "UNKNOWN"`, `status` still `RUNNING` and no `tracking`, but keep `subStatus: "RATING"`
+  and their `orderId`. The website shows them as delivered. `RATING` and `COOK_IT` follow delivery.
 - Writes send the week's own `deliveryDate`, not `holidayDelivery` (app).
 
 A `tracking` node:
@@ -1053,19 +1056,30 @@ of credit transactions, not card payments: `{transactionType, id, referenceId, c
 
 The website asks HelloFresh's wallet which discounts apply to the upcoming weeks:
 `POST /gw/customer-wallet/v2/benefit-distribution?externalPartnerBenefits=true&subscription=<subscription id>`,
-header `x-requested-by: upselling`.
+header `x-requested-by: deliveries`.
 
 ```json
 {
   "deliveries": [
     {
-      "delivery": {"hfWeek": "2026-W38", "state": "RUNNING", "cutoffDateTime": "2026-09-09T23:59:59-0700"},
+      "delivery": {"hfWeek": "2026-W43", "state": "RUNNING", "cutoffDateTime": "2026-10-14T23:59:59-0700"},
       "selections": {"mealboxHandle": "US-CBU-3-2-0"},
       "subscriptionId": 1234567
     }
-  ]
+  ],
+  "planId": "<customerPlanId>",
+  "legacyVoucherCode": null,
+  "legacyVoucherShippedDiscountedBoxes": null,
+  "systemCountry": "US",
+  "locale": "en-US"
 }
 ```
+
+- `deliveries` has every upcoming week, including weeks after `weekWithLatestMenu` (W43 to W51,
+  with the menu published to W47).
+- Without the top-level fields, HelloFresh answers `400` with `validation failed`. Captures from
+  August and September had no top-level fields and the header `x-requested-by: upselling`.
+- Both legacy voucher fields were null for a subscription without a coupon.
 
 It returns each week's units and the discounts ("promises") they come from:
 
@@ -1351,8 +1365,8 @@ different `/gw` paths in all.
 - Whether the week menu has `meals[].isSoldOut` or `feedback.favorite`, and whether a recipe has
   `userFavorite` and `userRating`, for a signed-in customer.
 - Whether the regional menus' `isSoldOut` follows the customer's own availability.
-- What `benefit-distribution` objects to when it answers `400 validation failed`. It did for a
-  request with every upcoming week, three of them after `weekWithLatestMenu`.
+- What fills `legacyVoucherCode` and `legacyVoucherShippedDiscountedBoxes` in a
+  `benefit-distribution` request when they aren't null.
 - Whether `changePlanDeliveryDetails` accepts a `deliveryInterval`.
 - What the `x-requested-by` and feature headers change, if anything.
 - The address object's full shape outside the address PATCH, and whether the subscription's

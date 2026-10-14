@@ -1228,6 +1228,40 @@ def test_week_status_prefers_live_state_over_stale_status() -> None:
     assert weeks2[0].status == "DELIVERED"
 
 
+def test_an_old_week_without_its_progress_is_delivered() -> None:
+    """HelloFresh drops a box's progress after a few weeks, but subStatus RATING still says delivered.
+
+    Capture 62: W35-W37 came back with status RUNNING, state UNKNOWN, subStatus RATING and no
+    tracking, and the website shows them delivered. They read UNKNOWN, so the card said "Locked".
+    """
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    subscription = HelloFreshSubscription(subscription_id="sub-1", locale="en-US")
+    old = {"status": "RUNNING", "state": "UNKNOWN", "subStatus": "RATING", "tracking": None}
+    payload = {
+        "items": [
+            {"id": "2026-W35", "deliveryDate": "2026-08-24T12:00:00-0700", **old},
+            {"id": "2026-W42", "status": "DELIVERED", "state": "DELIVERED", "subStatus": "COOK_IT"},
+            # A skipped week stays skipped, whatever its subStatus.
+            {"id": "2026-W36", "status": "PAUSED", "state": "PAUSED", "subStatus": "RATING"},
+            # The upcoming box keeps its live state.
+            {"id": "2026-W43", "status": "RUNNING", "state": "RUNNING", "subStatus": "NULL"},
+            # An unknown state alone says nothing: the status stands.
+            {"id": "2026-W34", "status": "RUNNING", "state": "UNKNOWN"},
+        ]
+    }
+    weeks, orders = client._normalize_weeks_payload(payload, subscription=subscription)
+    by_id = {week.week_id: week for week in weeks}
+    assert by_id["2026-W35"].status == "DELIVERED"
+    assert by_id["2026-W35"].delivered_at is None  # no tracking, so the time isn't known
+    assert by_id["2026-W42"].status == "DELIVERED"
+    assert by_id["2026-W36"].status == "PAUSED" and by_id["2026-W36"].is_skipped
+    assert by_id["2026-W43"].status == "RUNNING"
+    assert by_id["2026-W34"].status == "RUNNING"
+    old_order = {order.week_id: order for order in orders}["2026-W35"]
+    # Its order reads delivered too, with no tracking status rather than HelloFresh's UNKNOWN.
+    assert (old_order.status, old_order.tracking_status) == ("DELIVERED", None)
+
+
 def test_next_order_status_reflects_on_the_way_box_today() -> None:
     """End to end: today's 'on the way' box is next_order with the live state, not stale."""
     today = date.today()

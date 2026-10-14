@@ -374,11 +374,27 @@ export function isHistoryWeek(week, graceWeeks = 2, now = new Date()) {
   return parseLocalDate(week.delivery_date).getTime() < startOfToday(now) - graceMs;
 }
 
-export function isDelivered(week) {
+// Statuses that mean the box never came.
+const UNDELIVERED_STATUSES = new Set(["CANCELLED", "PAYMENT_FAILED", "FAILED"]);
+
+// HelloFresh keeps a box's progress for a few weeks only, so an older week can come with none.
+// Like the website, a week whose delivery day has passed counts as delivered, unless it was
+// skipped, never sent, late, or is still on its way: "locked" is for a box past its deadline that
+// hasn't come yet.
+export function isDelivered(week, now = new Date()) {
   if (!week) return false;
   if (week.delivered_at) return true;
   if (upper(week.status) === "DELIVERED") return true;
-  return lower(week.order && week.order.tracking_status) === "delivered";
+  const tracking = lower(week.order && week.order.tracking_status);
+  if (tracking === "delivered") return true;
+  return (
+    isPastWeek(week, now) &&
+    !isSkipped(week) &&
+    !UNDELIVERED_STATUSES.has(upper(week.status)) &&
+    upper(week.sub_status) !== "DELAYED" &&
+    !SHIPPED_WEEK_STATUSES.has(upper(week.status)) &&
+    !SHIPPED_TRACKING_STATUSES.has(tracking)
+  );
 }
 
 export const SHIPPED_WEEK_STATUSES = new Set(["ON_THE_WAY", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);

@@ -119,15 +119,25 @@ def test_wallet_benefits_land_on_weeks_and_the_next_box() -> None:
     client._async_response_json = fake_json  # type: ignore[method-assign]
     data = HelloFreshAccountData(next_delivery_total_currency="USD")
     weeks = _weeks()
-    subscription = HelloFreshSubscription(subscription_id="1000001", raw={})
+    subscription = HelloFreshSubscription(
+        subscription_id="1000001", locale="en-US", raw={"customerPlanId": "plan-uuid"}
+    )
     _run(client._async_enrich_wallet_benefits(data, [subscription], weeks))
 
-    # The request mirrors the site: upcoming weeks only, with state, cutoff and box handle.
+    # The request mirrors the site (capture 62): upcoming weeks only, with state, cutoff and box
+    # handle, and the plan, country and locale at the top.
     assert len(calls) == 1
     method, path, params, body, headers = calls[0]
     assert (method, path) == ("POST", "/gw/customer-wallet/v2/benefit-distribution")
     assert params == {"externalPartnerBenefits": "true", "subscription": "1000001"}
-    assert headers == {"x-requested-by": "upselling"}
+    assert headers == {"x-requested-by": "deliveries"}
+    assert {key: value for key, value in body.items() if key != "deliveries"} == {
+        "planId": "plan-uuid",
+        "legacyVoucherCode": None,
+        "legacyVoucherShippedDiscountedBoxes": None,
+        "systemCountry": "US",
+        "locale": "en-US",
+    }
     assert [d["delivery"]["hfWeek"] for d in body["deliveries"]] == ["2026-W38", "2026-W39"]
     assert body["deliveries"][0] == {
         "delivery": {
@@ -320,11 +330,10 @@ def test_wallet_failure_leaves_the_discount_unknown() -> None:
     assert client._debug_trace["wallet_attempts"][0]["error"] == "wallet down"
 
 
-def test_wallet_sends_only_weeks_a_discount_can_apply_to() -> None:
-    """Weeks past the last published menu, or missing a cutoff or a box, stay out.
+def test_wallet_sends_every_upcoming_week_with_a_cutoff_and_a_box() -> None:
+    """Weeks past the last published menu go too, as the website sends them (capture 62).
 
-    Sent every upcoming week, three of them past the last published menu, the request was
-    refused with HTTP 400 "validation failed".
+    Only a week without a cutoff or a box stays out.
     """
     client = _client()
     bodies: list[dict] = []
@@ -361,17 +370,16 @@ def test_wallet_sends_only_weeks_a_discount_can_apply_to() -> None:
             HelloFreshAccountData(), [subscription], [*weeks, no_cutoff, no_box]
         )
     )
-    assert [d["delivery"]["hfWeek"] for d in bodies[0]["deliveries"]] == ["2026-W38"]
+    assert [d["delivery"]["hfWeek"] for d in bodies[0]["deliveries"]] == ["2026-W38", "2026-W39"]
 
-    # Nothing left to ask about: no request at all.
+    # Nothing left to ask about (only a delivered week): no request at all.
     bodies.clear()
-    subscription.raw["weekWithLatestMenu"] = "2026-W37"
-    _run(client._async_enrich_wallet_benefits(HelloFreshAccountData(), [subscription], weeks))
+    _run(client._async_enrich_wallet_benefits(HelloFreshAccountData(), [subscription], weeks[:1]))
     assert bodies == []
 
 
 def test_a_refused_wallet_request_is_recorded_for_diagnostics() -> None:
-    """Diagnostics show what was sent when HelloFresh refuses it, with the subscription hidden."""
+    """Diagnostics show what was sent when HelloFresh refuses it, with the account's ids hidden."""
     client = _client()
 
     async def fake_request(*_a, **_k):
@@ -381,7 +389,11 @@ def test_a_refused_wallet_request_is_recorded_for_diagnostics() -> None:
     _run(
         client._async_enrich_wallet_benefits(
             HelloFreshAccountData(),
-            [HelloFreshSubscription(subscription_id="1000001", raw={})],
+            [
+                HelloFreshSubscription(
+                    subscription_id="1000001", raw={"customerPlanId": "plan-uuid"}
+                )
+            ],
             _weeks(),
         )
     )
@@ -391,7 +403,9 @@ def test_a_refused_wallet_request_is_recorded_for_diagnostics() -> None:
         "2026-W39",
     ]
     redacted = async_redact_data(client._debug_trace, TO_REDACT)
-    sent = redacted["wallet_attempts"][0]["json_payload"]["deliveries"]
+    body = redacted["wallet_attempts"][0]["json_payload"]
+    assert body["planId"] == "**REDACTED**"
+    sent = body["deliveries"]
     assert {d["subscriptionId"] for d in sent} == {"**REDACTED**"}
     assert sent[0]["selections"] == {"mealboxHandle": "US-CBU-3-2-0"}
 
