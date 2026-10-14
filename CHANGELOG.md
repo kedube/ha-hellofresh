@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.10 — 2026-10-14
 - **New: the Week tab — plan which day you'll make each meal.** The HelloFresh card has a **Week**
   tab after Recipes. It shows the seven days a box covers, from its delivery day: tap a day to
   give it a meal from the box, a Market item you bought that week, or a note such as "Pizza night".
