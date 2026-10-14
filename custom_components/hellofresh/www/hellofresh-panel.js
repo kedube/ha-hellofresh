@@ -22,14 +22,18 @@ const PANEL_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown
 
 // The card is usually here already as a Lovelace resource: the same URL is the same module, so
 // importing it again costs nothing. If a stale resource of another version defined the element
-// first, that one is used rather than defining it twice.
-const cardReady = customElements.get("hellofresh-card")
-  ? Promise.resolve()
-  : import(new URL(`./hellofresh-card.js?v=${encodeURIComponent(PANEL_VERSION)}`, import.meta.url).href).catch(
-      (err) => {
-        if (!customElements.get("hellofresh-card")) throw err;
-      }
-    );
+// first, that one is used rather than defining it twice. The panel then waits for the element
+// itself: WebKit can finish this import while the Lovelace resource is still loading the card
+// (see hellofresh-card.js), before the element exists.
+const cardReady = (
+  customElements.get("hellofresh-card")
+    ? Promise.resolve()
+    : import(new URL(`./hellofresh-card.js?v=${encodeURIComponent(PANEL_VERSION)}`, import.meta.url).href).catch(
+        (err) => {
+          if (!customElements.get("hellofresh-card")) throw err;
+        }
+      )
+).then(() => customElements.whenDefined("hellofresh-card"));
 
 class HelloFreshPanel extends HTMLElement {
   constructor() {

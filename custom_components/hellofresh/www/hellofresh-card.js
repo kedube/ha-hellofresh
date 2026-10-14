@@ -49,17 +49,26 @@ const moduleUrl = (name) =>
   new URL(`./${name}?v=${encodeURIComponent(CARD_VERSION)}`, import.meta.url).href;
 
 // AWAITED at module top level: every view renders synchronously from these on first paint.
-const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { WeekView }, { AccountView }] =
-  await Promise.all([
-    import(moduleUrl("hellofresh-card-logic.js")),
-    import(moduleUrl("hellofresh-card-styles.js")),
-    import(moduleUrl("hellofresh-card-ui.js")),
-    import(moduleUrl("hellofresh-card-deliveries.js")),
-    import(moduleUrl("hellofresh-card-menu.js")),
-    import(moduleUrl("hellofresh-card-recipes.js")),
-    import(moduleUrl("hellofresh-card-week.js")),
-    import(moduleUrl("hellofresh-card-account.js")),
-  ]);
+//
+// The shared modules load one at a time, each before anything else imports it. They all end
+// with a top-level await, and WebKit (Safari, and every browser on an iPad) hands a module that
+// is still in that await straight to a second importer, which then reads exports that aren't
+// set yet: "Cannot access 'esc' before initialization" in hellofresh-card-ui.js, seen on
+// iPadOS 26.7.1. Loaded in order, each has finished before its next importer asks for it. The
+// views share nothing else (only the Account view imports the profile editor), so they can
+// load together.
+await import(moduleUrl("hellofresh-i18n.js"));
+await import(moduleUrl("hellofresh-shared.js"));
+const L = await import(moduleUrl("hellofresh-card-logic.js"));
+const UI = await import(moduleUrl("hellofresh-card-ui.js"));
+const [{ CARD_STYLES }, { OverviewView }, Menu, { RecipesView }, { WeekView }, { AccountView }] = await Promise.all([
+  import(moduleUrl("hellofresh-card-styles.js")),
+  import(moduleUrl("hellofresh-card-deliveries.js")),
+  import(moduleUrl("hellofresh-card-menu.js")),
+  import(moduleUrl("hellofresh-card-recipes.js")),
+  import(moduleUrl("hellofresh-card-week.js")),
+  import(moduleUrl("hellofresh-card-account.js")),
+]);
 
 // The recipe sheet. Only needed once a recipe is opened, so it loads in the background rather
 // than blocking first paint.
