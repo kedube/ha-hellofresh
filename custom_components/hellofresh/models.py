@@ -196,6 +196,23 @@ class HelloFreshLoginRejectedError(HelloFreshAuthError):
     """
 
 
+class HelloFreshPasswordResetRequiredError(HelloFreshLoginRejectedError):
+    """Raised when /gw/login refuses the password until it is reset on HelloFresh.
+
+    HelloFresh answers ``401 {"error": "access_denied_password_must_be_rotated"}``; its Android
+    app then tells the customer to reset their password. Setup shows the same advice instead of
+    "wrong password".
+    """
+
+
+class HelloFreshRateLimitedError(HelloFreshError):
+    """Raised when HelloFresh temporarily locks sign-in after too many attempts (HTTP 429).
+
+    Transient: the integration stops posting the password until the lockout should be over,
+    since each new attempt can extend it.
+    """
+
+
 class HelloFreshBotBlockedError(HelloFreshError):
     """Raised when HelloFresh's bot protection rejects a sign-in before it reaches the login API.
 

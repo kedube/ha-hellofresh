@@ -76,6 +76,8 @@
       "bot_blocked_token": "HelloFreshs bot-skydd blockerade den här begäran, så din token kontrollerades inte. Försök igen om några minuter.",
       "invalid_auth": "Ogiltiga inloggningsuppgifter",
       "email_not_registered": "HelloFresh har inget konto med den här e-postadressen i det valda landet. Kontrollera adressen och att landet är det ditt konto hör till.",
+      "password_reset_required": "HelloFresh kräver att du återställer lösenordet för det här kontot innan du kan logga in med det. Återställ det på HelloFreshs webbplats eller i appen och ange sedan det nya lösenordet här.",
+      "too_many_attempts": "HelloFresh har tillfälligt låst inloggningen efter för många försök. Vänta några minuter och försök sedan igen.",
       "wrong_password": "HelloFresh godkände inte det här lösenordet. Om du loggar in på HelloFresh med Google, Apple eller Facebook har ditt konto kanske inget lösenord; använd alternativet \"Åtkomsttoken (avancerat)\" i stället.",
       "invalid_token": "Denna token kunde inte läsas eller avvisades"
     },

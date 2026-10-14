@@ -39,6 +39,8 @@ from .models import (
     HelloFreshBotBlockedError,
     HelloFreshError,
     HelloFreshLoginRejectedError,
+    HelloFreshPasswordResetRequiredError,
+    HelloFreshRateLimitedError,
 )
 from .parsers import coerce_int, decode_jwt_claims
 from .tls_transport import (
@@ -52,7 +54,19 @@ _LOGGER = logging.getLogger(__name__)
 
 # HTTP status thresholds used when interpreting HelloFresh responses.
 _HTTP_BAD_REQUEST = 400
+_HTTP_TOO_MANY_REQUESTS = 429
 _AUTH_FAILURE_STATUSES = frozenset({401, 403})
+# A dead refresh token. HelloFresh's Android app treats 400, 401 and 403 from /refresh as a
+# rejected refresh token and signs out (NewApiAuthenticator); 400 is OAuth 2's answer for an
+# invalid grant (RFC 6749 section 5.2). A JSON 4xx naming one of these errors counts too.
+_REFRESH_REJECTED_STATUSES = frozenset({400, 401, 403})
+_REFRESH_REJECTED_ERRORS = frozenset({"invalid_grant", "invalid_token", "expired_token"})
+# /gw/login's answer when the account's password must be reset on HelloFresh first.
+_PASSWORD_MUST_BE_ROTATED = "access_denied_password_must_be_rotated"
+# HelloFresh locks sign-in for "a few minutes" after too many attempts (HTTP 429). No password
+# is posted for at least this long, or for the server's Retry-After when it is longer.
+_LOGIN_RATE_LIMIT_MIN_SECONDS = 300
+_LOGIN_RATE_LIMIT_MAX_SECONDS = 3600
 _CF_ERROR_CODE_RE = re.compile(
     r'(?:\bError(?:\s+code)?\s*[:#]?\s*|cf-error-code[^>]*>\s*|["\']code["\']\s*:\s*["\']?)(10\d{2})\b',
     re.IGNORECASE,
@@ -71,8 +85,30 @@ _KNOWN_AUTH_ERRORS = frozenset(
         "invalid_request",
         "invalid_token",
         "unauthorized",
+        _PASSWORD_MUST_BE_ROTATED,
     }
 )
+
+
+def _auth_error_code(body: str) -> str | None:
+    """Return the ``error`` code of a JSON auth error body, or None."""
+    try:
+        payload = json.loads(body) if body else None
+    except ValueError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return error if isinstance(error, str) else None
+
+
+def _retry_after_seconds(response: Any) -> int | None:
+    """Return a ``Retry-After`` header given in seconds, or None."""
+    headers = getattr(response, "headers", None) or {}
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:  # pragma: no cover - defensive
+        return None
+    seconds = coerce_int(value.strip()) if isinstance(value, str) else None
+    return seconds if seconds is not None and seconds >= 0 else None
 
 
 def _safe_auth_error_summary(body: str) -> str:
@@ -424,6 +460,8 @@ class TokenManager:
         # _async_refresh_or_reuse_failure).
         self._refresh_failure: HelloFreshError | None = None
         self._refresh_failure_until = 0.0
+        # monotonic() time before which no password is posted after a 429 lockout.
+        self._login_locked_until = 0.0
         self._block_backoff = _backoff_for_session(session)
         # Auth POSTs use a Chrome-TLS-impersonating transport when curl_cffi is installed,
         # which is what gets past Cloudflare bot-management on stricter regions (e.g. UK).
@@ -735,6 +773,20 @@ class TokenManager:
         """Return True when a username and password are configured for login."""
         return bool(self._username and self._password)
 
+    @staticmethod
+    def _refresh_was_rejected(status: int, error_body: str) -> bool:
+        """Return True when a failed ``/gw/refresh`` means the refresh token is dead.
+
+        400, 401 and 403 count, as in HelloFresh's Android app, and so does any other JSON
+        4xx naming an invalid grant or token. A 429 is a rate limit, never a rejection.
+        Bot-protection blocks are recognised before this is asked.
+        """
+        if status == _HTTP_TOO_MANY_REQUESTS:
+            return False
+        if status in _REFRESH_REJECTED_STATUSES:
+            return True
+        return 400 <= status < 500 and _auth_error_code(error_body) in _REFRESH_REJECTED_ERRORS
+
     async def _async_refresh_with_token(self) -> None:
         """Renew the access token via ``POST {base}/gw/refresh``."""
         self._block_backoff.raise_if_blocked()
@@ -778,7 +830,7 @@ class TokenManager:
                 raise HelloFreshBotBlockedError(
                     f"HelloFresh token refresh blocked by bot protection: HTTP {response.status}"
                 )
-            if response.status in _AUTH_FAILURE_STATUSES:
+            if self._refresh_was_rejected(response.status, error_body):
                 _LOGGER.warning(
                     "HelloFresh token refresh REJECTED HTTP %s: %s (refresh_token fp=%s, "
                     "refresh_token_issued_at=%s)%s",
@@ -793,8 +845,8 @@ class TokenManager:
                 raise HelloFreshAuthError(
                     f"HelloFresh token refresh failed: HTTP {response.status}"
                 )
-            # Treat non-auth server errors as transient: the current access token may still
-            # work until it expires, at which point the reactive 401-retry path surfaces a
+            # Treat everything else (5xx, 408, 429) as transient: the current access token may
+            # still work until it expires, at which point the reactive 401-retry path surfaces a
             # proper auth failure. Raising HelloFreshError (not Auth) avoids a spurious login.
             _LOGGER.warning(
                 "HelloFresh token refresh failed (transient); will retry: HTTP %s (%s)%s",
@@ -825,6 +877,12 @@ class TokenManager:
             return
 
         self._block_backoff.raise_if_blocked()
+        locked_for = math.ceil(self._login_locked_until - monotonic())
+        if locked_for > 0:
+            raise HelloFreshRateLimitedError(
+                "HelloFresh sign-in is temporarily locked after too many attempts; "
+                f"not retrying for {locked_for} seconds"
+            )
         await self._async_fetch_app_token()
 
         try:
@@ -874,8 +932,30 @@ class TokenManager:
                     _safe_auth_error_summary(error_body),
                     self._auth_log_details(response, error_body),
                 )
+                if _auth_error_code(error_body) == _PASSWORD_MUST_BE_ROTATED:
+                    raise HelloFreshPasswordResetRequiredError(
+                        "HelloFresh requires this account's password to be reset before it "
+                        "can sign in"
+                    )
                 raise HelloFreshLoginRejectedError(
                     f"HelloFresh login failed: HTTP {response.status}"
+                )
+            if response.status == _HTTP_TOO_MANY_REQUESTS:
+                # HelloFresh locks sign-in for a few minutes after too many attempts, and each
+                # new attempt can extend the lock, so stop posting the password until it ends.
+                lock = min(
+                    max(_retry_after_seconds(response) or 0, _LOGIN_RATE_LIMIT_MIN_SECONDS),
+                    _LOGIN_RATE_LIMIT_MAX_SECONDS,
+                )
+                self._login_locked_until = monotonic() + lock
+                _LOGGER.warning(
+                    "HelloFresh login RATE-LIMITED (HTTP 429): sign-in is temporarily locked "
+                    "after too many attempts; not retrying for %s seconds%s",
+                    lock,
+                    self._auth_log_details(response, error_body),
+                )
+                raise HelloFreshRateLimitedError(
+                    f"HelloFresh sign-in is temporarily locked; retry in {lock} seconds"
                 )
             if self._log_auth_diagnostics:
                 _LOGGER.warning(

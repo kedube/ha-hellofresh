@@ -448,6 +448,30 @@ def test_other_auth_failures_skip_the_email_check(monkeypatch) -> None:
     assert checks == []
 
 
+@pytest.mark.parametrize(
+    ("exception", "error"),
+    [
+        ("HelloFreshPasswordResetRequiredError", "password_reset_required"),
+        ("HelloFreshRateLimitedError", "too_many_attempts"),
+    ],
+)
+def test_password_reset_and_lockout_get_their_own_messages(monkeypatch, exception, error) -> None:
+    """A required password reset or a sign-in lockout is explained, with no email check."""
+    from custom_components.hellofresh import api  # noqa: PLC0415
+
+    checks = _stub_login_client(monkeypatch, raises=getattr(api, exception)("HTTP 4xx"))
+    flow = _make_flow()
+
+    result = _run(
+        flow.async_step_credentials(
+            {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["errors"] == {"base": error}
+    assert checks == []
+
+
 def test_reauth_explains_a_rejected_login_too(monkeypatch) -> None:
     """The reauth form runs the same check: an unregistered email is named as such."""
     from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415

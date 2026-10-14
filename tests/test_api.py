@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
 import json
 import logging
+import time
 from typing import cast
 
 import pytest
@@ -6181,6 +6182,138 @@ def test_refresh_without_credentials_raises_when_token_rejected() -> None:
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshAuthError):
         loop.run_until_complete(client._async_refresh_access_token(force=True))
+
+
+def _refresh_client(refresh_status: int, refresh_body: str, posts: list[str]) -> HelloFreshClient:
+    """A client with stored credentials whose /gw/refresh answers with the given status."""
+
+    class DummySession:
+        async def post(self, url: str, params=None, json=None, headers=None):
+            posts.append(url)
+            if url.endswith("/gw/refresh"):
+                return _AuthFlowResponse(refresh_status, text=refresh_body, headers=_JSON_HEADERS)
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app-token"})
+            return _AuthFlowResponse(
+                200, {"access_token": "user-token", "refresh_token": "R-new", "expires_in": 1800}
+            )
+
+    return HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        country="us",
+        access_token="stale",
+        refresh_token="R-dead",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+        refresh_expires_in=5184000,
+        username="user@example.com",
+        password="pw",
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (400, '{"error":"invalid_grant"}'),
+        (400, ""),
+        (422, '{"error":"invalid_token"}'),
+    ],
+)
+def test_refresh_rejected_with_400_falls_back_to_login(status: int, body: str) -> None:
+    """A 400 (or a 4xx naming an invalid grant) means the refresh token is dead.
+
+    HelloFresh's Android app signs out on 400, 401 and 403 from /refresh. Treating a 400 as
+    transient re-posted the dead token every few minutes and never used the stored password.
+    """
+    posts: list[str] = []
+    client = _refresh_client(status, body, posts)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_refresh_access_token(force=True))
+
+    assert [url.rsplit("/gw/", 1)[1] for url in posts] == ["refresh", "auth/token", "login"]
+    assert client._access_token == "user-token"
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_refresh_rate_limit_and_server_errors_stay_transient(status: int) -> None:
+    """A 429 or 5xx from /gw/refresh is not a rejection: no password login, no auth error."""
+    posts: list[str] = []
+    client = _refresh_client(status, '{"error":"invalid_grant"}', posts)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError) as excinfo:
+        loop.run_until_complete(client._async_refresh_access_token(force=True))
+
+    assert not isinstance(excinfo.value, HelloFreshAuthError)
+    assert [url.rsplit("/gw/", 1)[1] for url in posts] == ["refresh"]
+
+
+def test_login_requiring_a_password_reset_says_so() -> None:
+    """401 ``access_denied_password_must_be_rotated`` is a password reset, not a wrong password."""
+    from custom_components.hellofresh.api import (  # noqa: PLC0415
+        HelloFreshLoginRejectedError,
+        HelloFreshPasswordResetRequiredError,
+    )
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app"})
+            return _AuthFlowResponse(
+                401,
+                text='{"error":"access_denied_password_must_be_rotated"}',
+                headers=_JSON_HEADERS,
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="old",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshPasswordResetRequiredError):
+        loop.run_until_complete(client._async_login(force=True))
+    assert issubclass(HelloFreshPasswordResetRequiredError, HelloFreshLoginRejectedError)
+
+
+def test_login_rate_limit_stops_posting_the_password() -> None:
+    """A 429 on /gw/login locks sign-in; no password is posted again until it should be over.
+
+    HelloFresh's app reads 429 as "temporarily locked due to too many login attempts", and
+    every further attempt can extend the lock.
+    """
+    from custom_components.hellofresh.api import HelloFreshRateLimitedError  # noqa: PLC0415
+
+    logins: list[str] = []
+
+    class DummySession:
+        async def post(self, url, params=None, json=None, headers=None):
+            if url.endswith("/gw/auth/token"):
+                return _AuthFlowResponse(200, {"access_token": "app"})
+            logins.append(url)
+            return _AuthFlowResponse(
+                429, text="{}", headers={**_JSON_HEADERS, "Retry-After": "900"}
+            )
+
+    client = HelloFreshClient(
+        session=DummySession(),  # type: ignore[arg-type]
+        username="user@example.com",
+        password="pw",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshRateLimitedError):
+        loop.run_until_complete(client._async_login(force=True))
+    with pytest.raises(HelloFreshRateLimitedError, match="not retrying"):
+        loop.run_until_complete(client._async_login(force=True))
+
+    assert len(logins) == 1
+    lock = client._tokens._login_locked_until - time.monotonic()
+    assert 890 < lock <= 900
 
 
 _BOT_BLOCK_HTML = (

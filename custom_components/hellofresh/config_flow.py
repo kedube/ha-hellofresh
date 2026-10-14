@@ -23,6 +23,8 @@ from .api import (
     HelloFreshClient,
     HelloFreshError,
     HelloFreshLoginRejectedError,
+    HelloFreshPasswordResetRequiredError,
+    HelloFreshRateLimitedError,
 )
 from .const import (
     CONF_ACCESS_TOKEN,
@@ -521,6 +523,9 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         try:
             return await client.async_validate_credentials()
+        except HelloFreshPasswordResetRequiredError:
+            errors["base"] = "password_reset_required"
+            return None
         except HelloFreshLoginRejectedError:
             # Tell an unknown email (or the wrong country) from a wrong password when HelloFresh
             # answers; asked only now, so a successful sign-in sends no extra request.
@@ -535,6 +540,9 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return None
         except HelloFreshBotBlockedError:
             errors["base"] = "bot_blocked"
+            return None
+        except HelloFreshRateLimitedError:
+            errors["base"] = "too_many_attempts"
             return None
         except HelloFreshError:
             errors["base"] = "cannot_connect"
