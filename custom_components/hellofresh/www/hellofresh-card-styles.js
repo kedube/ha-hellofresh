@@ -925,6 +925,94 @@ export const CARD_STYLES = `
     .hf-boxbar .hf-actions .hf-btn.ghost { display: none; }
   }
 
+  /* ---- week plan (the Week tab) --------------------------------------------------------- */
+  .hf-tray { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hf-trayitem {
+    display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 6px 14px 6px 6px;
+    border-radius: var(--hf-radius); border: 1px solid var(--hf-border); background: var(--hf-surface);
+    color: var(--hf-text); cursor: pointer; font: inherit; text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .hf-trayitem:hover { border-color: color-mix(in srgb, var(--hf-accent) 50%, var(--hf-border)); background: var(--hf-surface-2); }
+  .hf-trayitem:focus-visible { outline: 2px solid var(--hf-accent); outline-offset: 2px; }
+  .hf-trayitem .hf-thumb, .hf-trayitem .hf-plannoimg { width: 40px; height: 40px; border-radius: 8px; }
+  .hf-trayitem .hf-plantext { max-width: 220px; }
+  .hf-traycount {
+    flex: none; height: 22px; min-width: 22px; padding: 0 7px; border-radius: 11px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.74em; font-weight: 800; background: var(--hf-muted-bg); color: var(--hf-muted);
+  }
+  .hf-plandays .hf-planday {
+    display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; align-items: start;
+    padding: 10px 14px; border-bottom: 1px solid var(--hf-border); background: var(--hf-surface);
+  }
+  .hf-plandays .hf-planday:last-child { border-bottom: none; }
+  .hf-planday.today { box-shadow: inset 3px 0 0 var(--hf-ring); }
+  .hf-plandate { display: flex; flex-direction: column; align-items: center; padding-top: 6px; flex: none; min-width: 36px; }
+  .hf-plandate .hf-pdow { font-size: 0.66em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hf-muted); }
+  .hf-plandate .hf-pnum { font-size: 1.3em; font-weight: 800; line-height: 1.15; }
+  .hf-planday.today .hf-pnum, .hf-planday.today .hf-pdow { color: var(--hf-accent); }
+  :host([dark]) .hf-planday.today .hf-pnum, :host([dark]) .hf-planday.today .hf-pdow { color: var(--hf-ok-fg); }
+  .hf-planday.past .hf-plandate { opacity: 0.55; }
+  .hf-planmeals { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .hf-planline {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+    padding: 6px 8px; margin: 0 -8px; border-radius: var(--hf-radius-sm); cursor: pointer;
+  }
+  .hf-planline:hover { background: var(--hf-surface-2); }
+  .hf-planline:focus-visible { outline: 2px solid var(--hf-accent); outline-offset: 1px; }
+  .hf-planline .hf-thumb, .hf-plannoimg { width: 48px; height: 48px; border-radius: 10px; }
+  .hf-plannoimg {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    background: var(--hf-surface-3); color: var(--hf-muted); border: 1px dashed var(--hf-border);
+  }
+  .hf-planline:not(.empty) .hf-plannoimg { border-style: solid; }
+  .hf-planthumb { padding: 0; border: none; background: none; cursor: zoom-in; border-radius: 10px; line-height: 0; }
+  .hf-planthumb:focus-visible { outline: 2px solid var(--hf-accent); outline-offset: 2px; }
+  .hf-plantext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .hf-planmeal { font-size: 0.66em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hf-muted); }
+  .hf-planname { font-weight: 700; font-size: 0.93em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hf-plansub { font-size: 0.8em; color: var(--hf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hf-planline.empty .hf-planname { font-weight: 600; color: var(--hf-muted); }
+  .hf-planside { display: flex; align-items: center; gap: 8px; color: var(--hf-muted); font-size: 0.84em; white-space: nowrap; }
+  .hf-planside ha-icon { --mdc-icon-size: 18px; }
+  .hf-plantime { font-weight: 600; color: var(--hf-text); }
+  .hf-planline.empty .hf-planside .hf-btn { pointer-events: none; }
+  .hf-planadds { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 4px 0 2px; }
+  @container hfrows (max-width: 460px) {
+    .hf-planline:not(.empty) { grid-template-columns: auto minmax(0, 1fr); }
+    .hf-planline:not(.empty) .hf-planside { grid-column: 2; }
+    .hf-planline:not(.empty) .hf-planside ha-icon { display: none; }
+  }
+  .hf-todayplan { align-items: center; }
+  .hf-todayplan + .hf-hero { margin-top: 14px; }
+  /* The Plan sheet: option lists, the note field and the start time. */
+  .hf-planopts { display: flex; flex-direction: column; gap: 6px; }
+  .hf-planopts .hf-h3 { margin: 2px 0 2px; }
+  .hf-planinput {
+    width: 100%; height: 36px; padding: 0 12px; border-radius: var(--hf-radius-sm);
+    border: 1px solid var(--hf-border); background: var(--hf-surface-2); color: var(--hf-text);
+    font: inherit; font-size: 0.9em; outline: none;
+  }
+  .hf-planinput:focus { border-color: var(--hf-accent); background: var(--hf-surface); }
+  :host([dark]) .hf-planinput { color-scheme: dark; }
+  .hf-planote .hf-planinput { margin-top: 6px; height: 34px; }
+  .hf-planote { cursor: text; }
+  .hf-optrow .hf-plandate { padding-top: 0; }
+  .hf-optimg ha-icon { margin: auto; color: var(--hf-muted); }
+  span.hf-optimg { display: inline-flex; }
+  .hf-planfield { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .hf-planfield .hf-planinput { width: auto; min-width: 130px; }
+  .hf-planmore > summary {
+    cursor: pointer; color: var(--hf-muted); font-weight: 600; font-size: 0.88em; padding: 4px 0;
+    list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  .hf-planmore > summary::-webkit-details-marker { display: none; }
+  .hf-planmore > summary::before { content: "▸"; font-size: 0.9em; transition: transform 0.15s; }
+  .hf-planmore[open] > summary::before { transform: rotate(90deg); }
+  .hf-planmore > summary:hover { color: var(--hf-text); }
+  .hf-planmore .hf-planopts { margin-top: 8px; }
+
   /* ---- sheets, dialogs, toast (outside ha-card) ------------------------------------------ */
   .hf-sheetwrap {
     position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;

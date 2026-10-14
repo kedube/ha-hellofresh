@@ -362,25 +362,6 @@ function renderWeekStrip(card, selected) {
     </div>`;
 }
 
-// Keep the chosen week visible in the strip — but only when the chosen week changed, so a user
-// scrolling the strip isn't yanked back on every re-render.
-function centerStrip(root, view, week) {
-  const strip = root.querySelector(".hf-weekstrip");
-  const chip = strip && strip.querySelector('[aria-pressed="true"]');
-  if (!chip || !week) return;
-  const changed = view._stripWeek !== week.week_id;
-  const first = view._stripWeek === null;
-  view._stripWeek = week.week_id;
-  // Measured against the strip itself: a chip's offsetLeft is relative to the nearest
-  // positioned ancestor, which is the card, not the scroller.
-  const s = strip.getBoundingClientRect();
-  const c = chip.getBoundingClientRect();
-  const visible = c.left >= s.left + 16 && c.right <= s.right - 16;
-  if (!changed && visible) return;
-  const delta = c.left - s.left - (strip.clientWidth - c.width) / 2;
-  strip.scrollTo({ left: Math.max(0, strip.scrollLeft + delta), behavior: changed && !first ? "smooth" : "instant" });
-}
-
 function renderWeekHead(card, week, kind) {
   const state = L.weekState(week);
   const editable = L.isWeekEditable(week);
@@ -717,7 +698,7 @@ export class MealsView {
   }
 
   afterRender(root) {
-    centerStrip(root, this, this.card.selectedWeek());
+    UI.centerStrip(root, this, this.card.selectedWeek());
   }
 
   _renderBody(week) {
@@ -1301,7 +1282,7 @@ export class MarketView {
   }
 
   afterRender(root) {
-    centerStrip(root, this, this.card.selectedWeek());
+    UI.centerStrip(root, this, this.card.selectedWeek());
   }
 
   _renderBody(week) {

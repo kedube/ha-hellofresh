@@ -50,6 +50,7 @@ CARD_MODULES = (
     "hellofresh-card-menu.js",
     "hellofresh-card-account.js",
     "hellofresh-card-recipes.js",
+    "hellofresh-card-week.js",
     "hellofresh-card-profile.js",
     "hellofresh-recipe-detail.js",
     "hellofresh-shared.js",

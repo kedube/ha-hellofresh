@@ -11,12 +11,13 @@ from homeassistant.components.calendar import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .coordinator import HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
+from .meal_plan import MEAL_CALENDAR_KEY, MEALS, MealPlan, async_meal_labels, slot_title
 
 
 def _get_datetime_local(value: datetime | date) -> datetime:
@@ -45,7 +46,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up HelloFresh calendar entities."""
     coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
-    async_add_entities([HelloFreshDeliveryCalendar(coordinator)])
+    entities: list[CalendarEntity] = [HelloFreshDeliveryCalendar(coordinator)]
+    meal_plan = getattr(coordinator, "meal_plan", None)
+    if meal_plan is not None:
+        entities.append(HelloFreshMealsCalendar(coordinator, meal_plan))
+    async_add_entities(entities)
 
 
 class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
@@ -159,4 +164,106 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
                 )
             )
 
+        return events
+
+
+class HelloFreshMealsCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
+    """The Week tab's plan as timed events: one per planned meal.
+
+    Built from the stored plan alone (each course keeps a snapshot), so it changes the moment
+    the plan does and never waits on a poll. Read-only here — the plan is edited in the card's
+    Week tab or with the set/clear services. Titles are in Home Assistant's language, from the
+    card's own words.
+    """
+
+    _attr_translation_key = "meals"
+    _attr_icon = "mdi:silverware-variant"
+
+    def __init__(self, coordinator: HelloFreshDataUpdateCoordinator, meal_plan: MealPlan) -> None:
+        """Initialize the calendar."""
+        super().__init__(coordinator)
+        self._meal_plan = meal_plan
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{MEAL_CALENDAR_KEY}"
+        self._pin_entity_id(ENTITY_ID_FORMAT, MEAL_CALENDAR_KEY)
+        self._labels: dict[str, str] = {}
+        self._events: list[CalendarEvent] = []
+
+    @property
+    def available(self) -> bool:
+        """The plan is local: it stays readable while HelloFresh is down."""
+        return True
+
+    async def async_added_to_hass(self) -> None:
+        """Load the event wording, build the events and follow the plan."""
+        await super().async_added_to_hass()
+        self._labels = await async_meal_labels(self.hass)
+        self._events = self._build_events()
+        self.async_on_remove(self._meal_plan.async_add_listener(self._plan_changed))
+
+    @callback
+    def _plan_changed(self) -> None:
+        self._events = self._build_events()
+        self.async_update_event_listeners()
+        self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """When the plan last changed, so an open card can re-read it."""
+        return {"plan_updated": self._meal_plan.updated.isoformat()}
+
+    @property
+    def event(self) -> CalendarEvent | None:
+        """Return the meal under way, else the next one."""
+        now = dt_util.now()
+        ahead = [event for event in self._events if _get_datetime_local(event.end) > now]
+        return min(ahead, key=lambda event: _get_datetime_local(event.start)) if ahead else None
+
+    async def async_get_events(
+        self,
+        hass: HomeAssistant,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[CalendarEvent]:
+        """Return the planned meals overlapping a datetime range."""
+        window_start = dt_util.as_local(start_date)
+        window_end = dt_util.as_local(end_date)
+        return [
+            event
+            for event in self._events
+            if _get_datetime_local(event.end) > window_start
+            and _get_datetime_local(event.start) < window_end
+        ]
+
+    def _build_events(self) -> list[CalendarEvent]:
+        labels = self._labels
+        events: list[CalendarEvent] = []
+        for key in sorted(self._meal_plan.days):
+            try:
+                day = date.fromisoformat(key)
+            except ValueError:
+                continue
+            for meal in MEALS:
+                slot = self._meal_plan.slot(key, meal)
+                if slot is None:
+                    continue
+                start, end = self._meal_plan.window(day, meal, slot)
+                summary = labels["event"].format(meal=labels[meal], name=slot_title(slot))
+                lines = [
+                    labels["course"].format(course=labels[course], name=slot[course]["name"])
+                    for course in ("appetizer", "dessert")
+                    if isinstance(slot.get(course), dict) and slot.get("main")
+                ]
+                main = slot.get("main")
+                minutes = main.get("minutes") if isinstance(main, dict) else None
+                if isinstance(minutes, int) and minutes > 0:
+                    lines.append(labels["cooking"].format(minutes=minutes))
+                events.append(
+                    CalendarEvent(
+                        summary=summary,
+                        start=start,
+                        end=end,
+                        description="\n".join(lines) or None,
+                        uid=f"{self.coordinator.config_entry.entry_id}_meal_{key}_{meal}",
+                    )
+                )
         return events

@@ -22,21 +22,27 @@ from .client import _token_fingerprint
 from .const import (
     ATTR_COLLECTION,
     ATTR_CONFIG_ENTRY_ID,
+    ATTR_COURSE,
+    ATTR_DATE,
     ATTR_DELIVERY_INTERVAL,
     ATTR_DELIVERY_OPTION,
     ATTR_FILTERS,
     ATTR_GOALS,
     ATTR_HOUSEHOLD,
     ATTR_LIMIT,
+    ATTR_MARKET_ITEM_ID,
     ATTR_MARKET_QUANTITIES,
+    ATTR_MEAL,
     ATTR_PRODUCT_HANDLE,
     ATTR_QUANTITIES,
     ATTR_RECIPE_ID,
     ATTR_RECIPE_IDS,
     ATTR_SEARCH,
     ATTR_SERVINGS,
+    ATTR_START_TIME,
     ATTR_SUBSCRIPTION_ID,
     ATTR_TASTE,
+    ATTR_TEXT,
     ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
@@ -75,12 +81,14 @@ from .const import (
     SERVICE_ADD_FAVORITE,
     SERVICE_CHANGE_DELIVERY_WEEKDAY,
     SERVICE_CHANGE_PLAN,
+    SERVICE_CLEAR_PLANNED_MEAL,
     SERVICE_GET_ACCOUNT_SUMMARY,
     SERVICE_GET_CATALOG_RECIPES,
     SERVICE_GET_DELIVERY_OPTIONS,
     SERVICE_GET_DELIVERY_TRACKING,
     SERVICE_GET_FAVORITES,
     SERVICE_GET_FOOD_PROFILE,
+    SERVICE_GET_MEAL_PLAN,
     SERVICE_GET_MENU_COURSES,
     SERVICE_GET_PLAN_OPTIONS,
     SERVICE_GET_PLANS,
@@ -96,6 +104,7 @@ from .const import (
     SERVICE_SELECT_MARKET_ITEMS,
     SERVICE_SELECT_MEALS,
     SERVICE_SET_FOOD_PROFILE,
+    SERVICE_SET_PLANNED_MEAL,
     SERVICE_SKIP_WEEK,
     SERVICE_UNSKIP_WEEK,
     TRACEY_COUNTRIES,
@@ -113,6 +122,7 @@ from .issues import (
     async_delete_data_quality_issues,
     async_delete_write_actions_issue,
 )
+from .meal_plan import COURSES, MEALS, MealPlan, async_remove_meal_plan
 from .sensor_helpers import sensor_native_value
 from .tls_transport import async_close_shared_session
 from .tracey import HelloFreshTraceyCoordinator
@@ -398,6 +408,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await tracey.async_refresh()
         coordinator.tracey = tracey
 
+    # The Week tab's meal plan. Nothing is written to storage until something is planned.
+    meal_plan = MealPlan(hass, entry, coordinator)
+    await meal_plan.async_load()
+    coordinator.meal_plan = meal_plan
+
     # HA's per-entry storage: platforms, services, diagnostics and intents all read the
     # coordinator from here. HA clears it when the entry unloads.
     entry.runtime_data = coordinator
@@ -434,6 +449,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Curl cookies and pooled connections belong to this entry alone. Home Assistant
         # closes the matching aiohttp session through its config-entry cleanup hook.
         coordinator = getattr(entry, "runtime_data", None)
+        # A plan change still waiting on its delayed save is written now, before a reload's
+        # new plan reads the file.
+        meal_plan = getattr(coordinator, "meal_plan", None)
+        if meal_plan is not None:
+            await meal_plan.async_flush()
         client = getattr(coordinator, "client", None)
         if client is not None:
             await async_close_shared_session(client._session)
@@ -441,12 +461,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Purge the entry's persistent repair issues when it is removed.
+    """Purge the entry's persistent repair issues and its stored meal plan when it is removed.
 
     Without this, issues keyed to the removed entry id survive in the registry
     forever with no owner left to delete them.
     """
     async_delete_data_quality_issues(hass, entry.entry_id)
+    await async_remove_meal_plan(hass, entry.entry_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -774,6 +795,41 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         HelloFresh spend, not just the schedule window. Powers the cost card.
         """
         return await _single_client(service_call).async_get_spending()
+
+    def _meal_plan(service_call: ServiceCall) -> MealPlan:
+        """The target account's meal plan."""
+        return _resolve_single_coordinator(hass, service_call).meal_plan
+
+    async def async_get_meal_plan(service_call: ServiceCall) -> ServiceResponse:
+        """Return the Week tab's meal plan: its settings and every planned day.
+
+        Read-only. Each planned meal carries its computed ``start`` and ``end``.
+        """
+        return _meal_plan(service_call).as_dict()
+
+    async def async_set_planned_meal(service_call: ServiceCall) -> ServiceResponse:
+        """Plan one course of a day's meal (a box meal, a Market item or a note), and/or move
+        that meal's start time for the day. Returns the updated plan."""
+        meal_plan = _meal_plan(service_call)
+        data = service_call.data
+        await meal_plan.async_set(
+            data[ATTR_DATE],
+            data[ATTR_MEAL],
+            data[ATTR_COURSE],
+            recipe_id=data.get(ATTR_RECIPE_ID),
+            market_item_id=data.get(ATTR_MARKET_ITEM_ID),
+            text=data.get(ATTR_TEXT),
+            week_id=data.get(ATTR_WEEK_ID),
+            start_time=data.get(ATTR_START_TIME),
+        )
+        return meal_plan.as_dict()
+
+    async def async_clear_planned_meal(service_call: ServiceCall) -> ServiceResponse:
+        """Clear one course of a day's meal, or the whole meal. Returns the updated plan."""
+        meal_plan = _meal_plan(service_call)
+        data = service_call.data
+        meal_plan.clear(data[ATTR_DATE], data[ATTR_MEAL], data.get(ATTR_COURSE))
+        return meal_plan.as_dict()
 
     def _single_coordinator(service_call: ServiceCall):
         """Resolve the one target coordinator, or raise if ambiguous.
@@ -1382,6 +1438,48 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                 # Map of market item id/sku/index -> quantity (>=1). Items omitted (or set to 0)
                 # are removed from the week's extras.
                 vol.Required(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=0))},
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_MEAL_PLAN,
+        async_get_meal_plan,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_PLANNED_MEAL,
+        async_set_planned_meal,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_DATE): cv.date,
+                vol.Optional(ATTR_MEAL, default="dinner"): vol.In(MEALS),
+                vol.Optional(ATTR_COURSE, default="main"): vol.In(COURSES),
+                # One of these three: a meal from the box, a Market item, or a note.
+                vol.Optional(ATTR_RECIPE_ID): str,
+                vol.Optional(ATTR_MARKET_ITEM_ID): str,
+                vol.Optional(ATTR_TEXT): str,
+                # The box the meal or item came from, when the date alone is ambiguous.
+                vol.Optional(ATTR_WEEK_ID): str,
+                vol.Optional(ATTR_START_TIME): cv.time,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_PLANNED_MEAL,
+        async_clear_planned_meal,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_DATE): cv.date,
+                vol.Optional(ATTR_MEAL, default="dinner"): vol.In(MEALS),
+                vol.Optional(ATTR_COURSE): vol.In(COURSES),
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

@@ -111,14 +111,44 @@
           "delivery_watch_interval_minutes": "Mens en kasse er ventet (leveringsdagen eller dagen efter, indtil fragtfirmaet bekræfter den) eller en forsendelse er undervejs, kontrolleres kun leveringsstatus og pakkesporing så ofte, uafhængigt af opdateringsintervallet, så leveringen vises inden for få minutter. Interval 0–60; standard 15. 0 slår overvågningen fra. Andre dage sendes ingen ekstra forespørgsler.",
           "delivery_tracking_refresh_interval_seconds": "Kun Holland og Tyskland. Mens live last-mile-sporing er aktiv, forespørges HelloFreshs ikke-godkendte Tracey-endpoint så ofte for fase, ETA, antal stop og chaufførens placering. Interval 60–3600 sekunder; standard 300.",
           "history_weeks": "Hvor mange ugers tidligere leveringer der indlæses, så du kan bladre i dem på kortene. Lavere = færre data hentes ved hver opdatering; forøg for at se længere tilbage (ca. 56 for et helt år). Interval 1–104 uger; standard 26 (ca. 6 måneder). Ændring genindlæser integrationen.",
-          "menu_grace_weeks": "Hvor mange uger efter leveringsdatoen en uge beholder hele sin menu i måltidsplanlægger-kortet (dine leverede retter forbliver fremhævet); ældre uger viser kun det, der blev leveret. Interval 0–3 uger; standard 2 (de seneste par måltidskasser kan stadig gennemses). 0 slår det fra. HelloFresh udgiver ikke længere menuen for ældre uger, så uger derudover viser kun de leverede retter. Ændring genindlæser integrationen.",
+          "menu_grace_weeks": "Hvor mange uger efter leveringsdatoen en uge beholder hele sin menu i kortets Menu-fane (dine leverede retter forbliver fremhævet); ældre uger viser kun det, der blev leveret. Interval 0–3 uger; standard 2 (de seneste par måltidskasser kan stadig gennemses). 0 slår det fra. HelloFresh udgiver ikke længere menuen for ældre uger, så uger derudover viser kun de leverede retter. Ændring genindlæser integrationen.",
           "show_sidebar_panel": "Tilføjer et HelloFresh-punkt i Home Assistants sidebjælke, der åbner HelloFresh-kortet i fuld skærm, så du ikke skal bygge et dashboard. Med flere konti får hver sit eget punkt. Slå fra for at fjerne det; du kan stadig tilføje kortet til ethvert dashboard.",
           "enable_public_menu_fallback": "Hvis de indloggede menudata ikke kan indlæses, aflæses den offentlige regionale menuside, så opskriftsnavne stadig vises. Lad den være slået til, medmindre du kun ønsker godkendte data.",
-          "enable_favorites": "Slå ved hver opdatering op, hvilke retter der er gemt som favoritter i din HelloFresh-kogebog, så måltidsplanlægger-kortet kan vise et favorithjerte. Koster én ekstra forespørgsel pr. opdatering: HelloFresh har ingen \"vis mine favoritter\"-endpoint, så menuens opskrifter skal sendes til et filter-endpoint for at finde favoritterne. Slå fra for at springe det over — tjenesterne til at tilføje og fjerne favoritter virker uanset hvad.",
+          "enable_favorites": "Slå ved hver opdatering op, hvilke retter der er gemt som favoritter i din HelloFresh-kogebog, så kortets Menu-fane kan vise et favorithjerte. Koster én ekstra forespørgsel pr. opdatering: HelloFresh har ingen \"vis mine favoritter\"-endpoint, så menuens opskrifter skal sendes til et filter-endpoint for at finde favoritterne. Slå fra for at springe det over — tjenesterne til at tilføje og fjerne favoritter virker uanset hvad.",
           "enable_prep_lists": "Opret en opgaveliste for hver af de næste to leveringer med de ingredienser, dine valgte retter kræver, men som HelloFresh ikke sender med — salt, olie, smør, æg — så du kan købe dem, inden kassen lander. Slå fra for at fjerne begge lister og springe de nødvendige opskriftsopslag over.",
           "show_data_quality_issues": "Vis advarsler på Reparationer-skærmen, når HelloFresh-data er forringede (menureserve aktiv, ukendte dataformater, kontodata utilgængelige, blokerede skrivehandlinger). Data indlæses fortsat uanset hvad. Slå fra for at skjule disse advarsler og fjerne dem, der allerede vises.",
           "use_curl_cffi_headers": "Lad curl_cffi levere Chrome-headere til login, tokenfornyelse og dataanmodninger. Integrationen angiver stadig API-headere og retter fetch-metadata til en XHR-anmodning. Slå fra (anbefalet) for at sende integrationens fulde, ordnede XHR-headere.",
           "log_auth_diagnostics": "Når dette er slået til, logges mislykkede login- og tokenfornyelsesforsøg samt eventuelt Cloudflare-challengeflag, fejlkode og Ray ID. Vellykkede trin logges kun på debug-niveau. De ekstra diagnosefelter indeholder hverken rå svarttekst eller loginoplysninger. Slået til som standard."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Uge-fanen",
+            "description": "Hvornår kalenderbegivenheden for hvert planlagt måltid starter, og hvor længe den varer, og om morgenmad og frokost vises i fanen Uge hver uge.",
+            "data": {
+              "dinner_start": "Aftensmad starter kl.",
+              "dinner_minutes": "Varighed af aftensmad (minutter)",
+              "dinner_use_cooking_time": "Brug HelloFreshs tilberedningstid til aftensmad",
+              "dinner_extra_minutes": "Ekstra tid efter tilberedning (minutter)",
+              "always_show_breakfast": "Vis altid morgenmad",
+              "breakfast_start": "Morgenmad starter kl.",
+              "breakfast_minutes": "Varighed af morgenmad (minutter)",
+              "always_show_lunch": "Vis altid frokost",
+              "lunch_start": "Frokost starter kl.",
+              "lunch_minutes": "Varighed af frokost (minutter)"
+            },
+            "data_description": {
+              "dinner_start": "Hvornår hver aftensmadsbegivenhed starter. Tidspunktet for en enkelt dag kan også ændres i fanen Uge.",
+              "dinner_minutes": "Hvor længe hver aftensmadsbegivenhed varer: forberedelse, madlavning, spisning og oprydning. Standard 90 minutter. Med HelloFreshs tilberedningstid slået til gælder det kun aftensmad uden tilberedningstid, f.eks. en note.",
+              "dinner_use_cooking_time": "Hver aftensmadsbegivenhed varer rettens tilberedningstid fra HelloFresh (plus forrettens, hvis den har en) plus den ekstra tid nedenfor.",
+              "dinner_extra_minutes": "Lægges til tilberedningstiden for spisning og oprydning. Bruges kun, når HelloFreshs tilberedningstid er slået til. Standard 45 minutter.",
+              "always_show_breakfast": "Morgenmad vises kun i en uge, hvis du har købt morgenmad fra Market til den. Slå til for at planlægge morgenmad hver uge, f.eks. med noter.",
+              "breakfast_start": "Hvornår hver morgenmadsbegivenhed starter.",
+              "breakfast_minutes": "Hvor længe hver morgenmadsbegivenhed varer. Standard 30 minutter.",
+              "always_show_lunch": "Frokost vises kun i en uge, hvis du har købt frokost fra Market til den. Slå til for at planlægge frokost hver uge.",
+              "lunch_start": "Hvornår hver frokostbegivenhed starter.",
+              "lunch_minutes": "Hvor længe hver frokostbegivenhed varer. Standard 45 minutter."
+            }
+          }
         }
       }
     }
@@ -308,6 +338,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Leveringschauffør"
+      },
+      "todays_breakfast": {
+        "name": "Dagens morgenmad"
+      },
+      "todays_lunch": {
+        "name": "Dagens frokost"
+      },
+      "tonights_dinner": {
+        "name": "Aftensmad i aften"
       }
     },
     "binary_sensor": {
@@ -335,6 +374,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Leveringsplan"
+      },
+      "meals": {
+        "name": "Måltider"
       }
     },
     "event": {
@@ -769,6 +811,80 @@
           "description": "Kostmål til profilen."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Hent madplan",
+      "description": "Returnerer Uge-fanens madplan: dens indstillinger og hver planlagt dag, hvert måltid med start- og sluttidspunkt. Kun læsning; returnerer et svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Angiv planlagt måltid",
+      "description": "Planlægger én ret i en dags måltid i Uge-fanen: en ret fra din kasse, en Market-vare købt den uge eller en note i fritekst. Kan også ændre, hvornår måltidet starter den dag. Returnerer den opdaterede plan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Dagen, der skal planlægges."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Morgenmad, frokost eller aftensmad. Standard er aftensmad."
+        },
+        "course": {
+          "name": "Ret",
+          "description": "Hovedret, forret eller dessert. Forret og dessert gælder kun aftensmad. Standard er hovedret."
+        },
+        "recipe_id": {
+          "name": "Opskrifts-id",
+          "description": "En ret, der er valgt i en af dine kasser."
+        },
+        "market_item_id": {
+          "name": "Market-vare-id",
+          "description": "En Market-vare købt i en af dine kasser."
+        },
+        "text": {
+          "name": "Note",
+          "description": "Fritekst i stedet for en ret, f.eks. Rester eller Pizzaaften."
+        },
+        "week_id": {
+          "name": "Uge-id",
+          "description": "Den kasse, retten eller Market-varen kommer fra, når datoen alene ikke gør det klart."
+        },
+        "start_time": {
+          "name": "Starttidspunkt",
+          "description": "Hvornår måltidet starter denne dag i stedet for tidspunktet i integrationens indstillinger."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Ryd planlagt måltid",
+      "description": "Rydder én ret i en dags måltid i Uge-fanen eller hele måltidet, hvis der ikke er angivet en ret. Returnerer den opdaterede plan.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-id",
+          "description": "Den HelloFresh-konto, handlingen gælder, når der er konfigureret flere konti."
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Dagen, der skal planlægges."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Morgenmad, frokost eller aftensmad. Standard er aftensmad."
+        },
+        "course": {
+          "name": "Ret",
+          "description": "Hovedret, forret eller dessert. Lad stå tom for at rydde hele måltidet."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +911,7 @@
         "menu": "Menu",
         "market": "Market",
         "recipes": "Opskrifter",
+        "week": "Uge",
         "account": "Konto"
       },
       "card": {
@@ -1605,6 +1722,61 @@
           "default_view": "Lad feltet være tomt for at åbne den senest brugte sektion.",
           "config_entry_id": "Kun nødvendigt med mere end én HelloFresh-konto."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Morgenmad",
+          "lunch": "Frokost",
+          "dinner": "Aftensmad"
+        },
+        "course": {
+          "main": "Hovedret",
+          "appetizer": "Forret",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Tilberedningstid: {minutes} min."
+        },
+        "load_failed": "Madplanen kunne ikke indlæses: {error}",
+        "no_weeks": "Der er ingen aktuel eller kommende kasse at planlægge.",
+        "planned_count": "{planned}/{total} planlagt",
+        "this_week": "Denne uge",
+        "range": "{start} – {end}",
+        "skipped": "Ingen kasse denne uge. Du kan stadig planlægge andre måltider for disse dage.",
+        "pick_first": "Vælg først ugens retter, og planlæg derefter, hvilken dag de skal laves.",
+        "all_planned": "Alt i denne kasse har fået en dag.",
+        "not_planned_yet": "Ikke planlagt endnu",
+        "tray_left": "{count} af {total} tilbage",
+        "days": "Dage",
+        "not_planned": "Ikke planlagt",
+        "plan": "Planlæg",
+        "view_recipe": "Se opskriften på {name}",
+        "no_longer_in_box": "Ikke længere i din kasse",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (valgfri)",
+        "more_from_week": "Mere fra denne uge",
+        "start": "Starter kl.",
+        "clear": "Ryd",
+        "save": "Gem",
+        "planned_on": "Planlagt: {days}",
+        "left": {
+          "one": "{count} tilbage",
+          "other": "{count} tilbage"
+        },
+        "none": "Ingen",
+        "something_else": "Noget andet",
+        "something_else_hint": "Rester, pizzaaften, spise ude …",
+        "saving": "Gemmer planen …",
+        "save_failed": "Planen kunne ikke gemmes: {error}",
+        "saved": "Planen er gemt",
+        "cleared": "Planen er ryddet",
+        "item_title": "Planlæg {name}",
+        "replaces": "Erstatter {name}",
+        "tonight": "I aften: {name} kl. {time}",
+        "today": "I dag: {meals}",
+        "today_item": "{meal} {name} kl. {time}"
       }
     }
   }

@@ -3,8 +3,8 @@
 ![The HelloFresh card in Home Assistant's sidebar: the next box on a desktop, and this week's menu on a phone in dark mode](../images/hero.png)
 
 **`custom:hellofresh-card`** is the whole HelloFresh experience in one card, organised the way
-hellofresh.com is: **Overview**, **Menu**, **Market**, **Recipes** and **Account** tabs over one
-shared set of data. The pieces work together — a week you open from the Overview is the week Menu and
+hellofresh.com is: **Overview**, **Menu**, **Market**, **Recipes**, **Week** and **Account** tabs
+over one shared set of data. The pieces work together — a week you open from the Overview is the week Menu and
 Market show, meals and add-ons for that week are one box with one Save, and the pantry list sits
 with the box it belongs to.
 
@@ -19,7 +19,8 @@ sensor: whole menus with photos, per-item prices, recipes, tracking scans.
 - [In the sidebar](#in-the-sidebar)
 - [Adding the card to a dashboard](#adding-the-card-to-a-dashboard)
 - [Overview](#overview) · [Menu](#menu) · [Market](#market) ·
-  [Your box](#your-box-the-box-bar-and-saving) · [Recipes](#recipes) · [Account](#account)
+  [Your box](#your-box-the-box-bar-and-saving) · [Recipes](#recipes) · [Week](#week) ·
+  [Account](#account)
 - [Phones, tablets and themes](#phones-tablets-and-themes) · [Stays current](#stays-current)
 - [Moving from the classic cards](#moving-from-the-classic-cards)
 
@@ -64,7 +65,7 @@ views:
 
 | Option | Default | Description |
 |---|---|---|
-| `views` | all five | The sections to show, in order: `overview`, `menu`, `market`, `recipes`, `account`. One section gives a focused card with no tab bar. |
+| `views` | all six | The sections to show, in order: `overview`, `menu`, `market`, `recipes`, `week`, `account`. One section gives a focused card with no tab bar. |
 | `default_view` | the last one used | The section the card opens on. |
 | `accent` | `brand` | `brand` is HelloFresh green; `theme` uses your Home Assistant theme's primary colour. |
 | `title` | `HelloFresh` | Header title; `""` hides it. |
@@ -99,6 +100,9 @@ title: Recipes
 
 ![The Overview: the next box with its deadline countdown, meals, price and discount, a notice that HelloFresh picked the meals, another week needing picks, and the pantry checklist](../images/card-overview.png)
 
+- **Tonight** — when a meal is planned for today on the [Week](#week) tab, a line at the top names
+  it and when it starts (or, with breakfast or lunch planned too, today's meals still to come). It
+  opens the Week tab.
 - **Next box** — the nearest box that ships (or, with everything skipped, the next skipped week;
   with nothing upcoming, the last box). Its date, how far off it is, the delivery window, the box
   name and any holiday change; a **Make changes by** line with a live countdown (red under 24
@@ -262,6 +266,36 @@ your subscription.
 > The recipe listing and categories come from HelloFresh's website rather than a stable API, so
 > they are less robust than the rest of the card; they recover by themselves when HelloFresh
 > deploys a new site build. Search and recipe detail use plain APIs and are unaffected.
+
+## Week
+
+![The Week tab: the week's chips counting what's planned, the one meal not planned yet, and each day's dinner with its photo, cooking time and start and end times — one with an appetizer and a dessert, one a "Pizza night" note](../images/card-week.png)
+
+Which day each meal gets made. The tab shows the seven days a box covers, starting on its delivery
+day, for the box you're eating now and each one after it.
+
+- **Not planned yet** — the box's meals (and any Market breakfast or lunch) that don't have a day
+  yet. Tap one to pick its day.
+- **Each day** — its dinner, with the meal's photo (tap it for the recipe), cooking time, and when
+  it starts and ends. Tap the day to plan it: a meal from the box, a Market item bought that week,
+  or **Something else** — a note such as "Leftovers" or "Pizza night". Dinner can add an
+  **appetizer** and a **dessert** from that week's Market items, and a day's meal can start at its
+  own time.
+- **Breakfast and lunch** show in a week only when you bought Market breakfast or lunch items for
+  it, or already planned one; otherwise each day offers a small **+ Breakfast** / **+ Lunch**. The
+  integration's options can show them every week.
+- A meal can be planned as many times as it's in the box (a double portion twice), and a Market
+  item as many times as you bought it. If you swap a meal on the Menu after planning it, its day
+  says **No longer in your box**. Skipped weeks stay listed, for notes and Market items.
+
+![Planning a dinner: the week's meals with one already planned on Monday, a protein from the Market, a "Something else" note field, the appetizer and dessert from that week's Market items, and the start time](../images/card-week-plan.png)
+
+The plan is kept in Home Assistant, not at HelloFresh, so every device shows the same one and a
+change on your phone appears on the kitchen tablet straight away. It is also the **Meals**
+calendar, with a timed event for each planned meal, and the **Tonight's dinner** sensor (see
+[Week tab entities](entities.md#week-tab)). When those events start and how long they last are
+set in the integration's options, under **Week tab**: dinner at 5:30 PM for 90 minutes by default,
+or the meal's HelloFresh cooking time plus extra time for eating and clean-up.
 
 ## Account
 

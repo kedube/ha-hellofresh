@@ -688,7 +688,7 @@ await check("in Norwegian: the card asks Home Assistant for its text once and re
   const ws = await page.evaluate(() => window.__calls.filter((c) => c.ws === "frontend/get_translations").map((c) => c.data));
   assert(ws.length === 1 && ws[0].language === "nb" && ws[0].category === "config_panel", JSON.stringify(ws));
   const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-tab > span:not(.hf-count)")].map((e) => e.textContent.trim()));
-  assert(JSON.stringify(tabs) === JSON.stringify(["Oversikt", "Meny", "Market", "Oppskrifter", "Konto"]), JSON.stringify(tabs));
+  assert(JSON.stringify(tabs) === JSON.stringify(["Oversikt", "Meny", "Market", "Oppskrifter", "Uke", "Konto"]), JSON.stringify(tabs));
   const eyebrow = await text(page, ".hf-eyebrow");
   assert(["Neste kasse", "Kommer i dag", "Kommer i morgen", "Forrige kasse"].includes(eyebrow.trim()), `eyebrow: ${eyebrow}`);
   const heroDate = await text(page, ".hf-herodate");
@@ -735,6 +735,112 @@ await check("in Norwegian: the recipe sheet, the delivery details and the accoun
   assert(tabs[0] === "Abonnement og betaling" && tabs[1] === "Matpreferanser" && tabs[2] === "Utgifter", JSON.stringify(tabs));
   const plan = await text(page, ".hf-kv");
   assert(/Retter per kasse/.test(plan), `plan: ${plan}`);
+  await page.close();
+});
+
+// ---- the Week tab -----------------------------------------------------------------------------
+// A Wednesday afternoon in the week whose box arrived on Monday; mealplan=1 has that week half
+// planned already (Mon a meal, Tue "Pizza night", Wed a meal with an appetizer and a dessert,
+// Thu a Market breakfast), with one box meal still to place.
+const WEEK_CLOCK = "2026-10-14T15:00:00";
+const openWeek = (params = {}) => open({ view: "week", mealplan: "1", now: WEEK_CLOCK, ...params });
+const line = (day, meal = "dinner") => `.hf-planline[data-day="${day}"][data-meal="${meal}"]`;
+
+await check("week tab: a tray meal goes on the day picked, in one set_planned_meal", async () => {
+  const page = await openWeek();
+  const tray = await page.evaluate(() => window.__card.shadowRoot.querySelectorAll(".hf-trayitem").length);
+  assert(tray === 1, `tray items: ${tray}`);
+  await click(page, ".hf-trayitem", 300);
+  await click(page, '[data-action="plan-day"][data-day="2026-10-16"]', 600);
+  const sets = await calls(page, "hellofresh.set_planned_meal");
+  assert(sets.length === 1, `set calls: ${sets.length}`);
+  const data = sets[0].data;
+  assert(data.date === "2026-10-16" && data.meal === "dinner" && data.course === "main" && data.recipe_id && data.week_id, JSON.stringify(data));
+  assert(!(await q(page, ".hf-sheet")), "the sheet closes");
+  assert(await q(page, ".hf-notice.tone-ok"), "the tray says everything has a day");
+  assert(/Greek Diner/.test(await text(page, `${line("2026-10-16")} .hf-planname`)), "Friday shows the meal");
+  await page.close();
+});
+
+await check("week tab: a note with its own start time saves in one call", async () => {
+  const page = await openWeek();
+  await click(page, line("2026-10-17"), 300);
+  await click(page, '[data-action="pick-note"]', 100);
+  await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    root.querySelector("[data-note-input]").value = "Eating out";
+    root.querySelector("[data-start-input]").value = "19:00";
+  });
+  await click(page, '[data-action="save-slot"]', 600);
+  const sets = await calls(page, "hellofresh.set_planned_meal");
+  assert(sets.length === 1, `set calls: ${sets.length}`);
+  const data = sets[0].data;
+  assert(data.text === "Eating out" && data.start_time === "19:00" && data.date === "2026-10-17", JSON.stringify(data));
+  assert(/Eating out/.test(await text(page, line("2026-10-17"))), "Saturday shows the note");
+  assert(/^7:00/.test(await text(page, `${line("2026-10-17")} .hf-plantime`)), "at 7 PM");
+  await page.close();
+});
+
+await check("week tab: dropping a course clears only it; a used-up meal can't be picked", async () => {
+  const page = await openWeek();
+  await click(page, line("2026-10-14"), 300);
+  const used = await page.evaluate(() =>
+    [...window.__card.shadowRoot.querySelectorAll('.hf-optrow[data-kind="meal"]')].map((b) => ({ on: b.classList.contains("on"), disabled: b.disabled }))
+  );
+  // Monday's meal is used up; Wednesday's own pick stays selectable; the tray meal is free.
+  assert(used.filter((b) => b.disabled).length === 1 && used.filter((b) => b.on).length === 1, JSON.stringify(used));
+  await click(page, '[data-action="pick-none"][data-course="dessert"]', 100);
+  await click(page, '[data-action="save-slot"]', 600);
+  const clears = await calls(page, "hellofresh.clear_planned_meal");
+  const sets = await calls(page, "hellofresh.set_planned_meal");
+  assert(clears.length === 1 && clears[0].data.course === "dessert" && clears[0].data.date === "2026-10-14", JSON.stringify(clears));
+  assert(sets.length === 0, "nothing else written");
+  const sub = await text(page, `${line("2026-10-14")} .hf-plansub`);
+  assert(/Gyoza/.test(sub) && !/Lava/.test(sub), `Wednesday: ${sub}`);
+  await page.close();
+});
+
+await check("week tab: Clear removes a whole meal; the photo opens the recipe", async () => {
+  const page = await openWeek();
+  await click(page, line("2026-10-15", "breakfast"), 300);
+  await click(page, '[data-action="clear-slot"]', 600);
+  const clears = await calls(page, "hellofresh.clear_planned_meal");
+  assert(clears.length === 1 && clears[0].data.meal === "breakfast" && !clears[0].data.course, JSON.stringify(clears));
+  assert(await q(page, '.hf-planadds [data-day="2026-10-15"][data-meal="breakfast"]'), "breakfast is a + link again");
+  await click(page, `${line("2026-10-14")} .hf-planthumb`, 600);
+  assert((await calls(page, "hellofresh.get_recipe_detail")).length === 1, "the recipe sheet opened");
+  assert(!(await q(page, ".hf-sheet .hf-planopts")), "not the plan sheet");
+  await page.close();
+});
+
+await check("week tab: a plan changed elsewhere shows without a refresh", async () => {
+  const page = await openWeek();
+  await page.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 1100)); // a later stamp than the first one
+    window.__fx.mealPlan.set({ date: "2026-10-18", text: "Grandma's" });
+    window.__fx.touchMealPlan();
+    window.__card.hass = window.__hass;
+  });
+  await sleep(500);
+  assert(/Grandma/.test(await text(page, line("2026-10-18"))), "Sunday shows the change");
+  await page.close();
+});
+
+await check("week tab: always there; empty without a plan; the Overview shows tonight", async () => {
+  let page = await open({ now: WEEK_CLOCK });
+  const tabs = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-tab")].map((t) => t.dataset.view));
+  assert(tabs.join() === "overview,menu,market,recipes,week,account", JSON.stringify(tabs));
+  assert(!(await q(page, ".hf-todayplan")), "no Tonight line without a plan");
+  await click(page, '.hf-tab[data-view="week"]', 300);
+  const empty = await page.evaluate(() => window.__card.shadowRoot.querySelectorAll(".hf-planline.empty").length);
+  assert(empty === 7, `empty dinners: ${empty}`);
+  await page.close();
+
+  page = await open({ mealplan: "1", now: WEEK_CLOCK });
+  const tonight = await text(page, ".hf-todayplan");
+  assert(/Tonight: Romesco/.test(tonight) && /5:30/.test(tonight), `tonight: ${tonight}`);
+  await click(page, '.hf-todayplan [data-action="goto"]', 300);
+  assert((await page.evaluate(() => window.__card.view)) === "week", "the line opens the Week tab");
   await page.close();
 });
 

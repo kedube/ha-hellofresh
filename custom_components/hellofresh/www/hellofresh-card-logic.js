@@ -1412,6 +1412,199 @@ export function preferenceName(slug, presets) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// ---- week plan (the Week tab) -------------------------------------------------------------------
+//
+// The plan itself is the integration's (get_meal_plan): days keyed by date, each holding up to
+// three meals, each meal its courses plus a computed start and end. These helpers decide what
+// the Week tab offers and shows; the integration validates every write again.
+
+export const PLAN_MEALS = ["breakfast", "lunch", "dinner"];
+export const PLAN_COURSES = ["main", "appetizer", "dessert"];
+// Market groups that are not food for the household: pet food and charity donations.
+export const PLAN_EXCLUDED_GROUPS = new Set(["petstable", "donation"]);
+// Where a Market group is offered first; anything else (proteins, Good Chop, …) is a dinner main.
+const PLAN_GROUP_SLOTS = {
+  breakfast: { meal: "breakfast", course: "main" },
+  lunch: { meal: "lunch", course: "main" },
+  appetizer: { meal: "dinner", course: "appetizer" },
+  dessert: { meal: "dinner", course: "dessert" },
+};
+
+// "2026-10-12" for a local date.
+export function isoDay(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+// The seven days a week's box covers, starting on its delivery day.
+export function planDays(week) {
+  if (!week || !week.delivery_date) return [];
+  const start = parseLocalDate(week.delivery_date);
+  return Array.from({ length: 7 }, (_, i) => isoDay(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)));
+}
+
+// The weeks the Week tab plans: the box being eaten now and every later one.
+export function planWeeks(weeks, now = new Date()) {
+  const today = isoDay(now);
+  return (weeks || []).filter((w) => {
+    const days = planDays(w);
+    return days.length && days[6] >= today;
+  });
+}
+
+// The week the tab opens on: the one whose seven days include today, else the next one.
+export function defaultPlanWeek(weeks, now = new Date()) {
+  const today = isoDay(now);
+  const list = weeks || [];
+  return list.find((w) => planDays(w).includes(today)) || list[0] || null;
+}
+
+// The cooking time HelloFresh shows on a tile (prep_time_minutes carries it; see matchesDietFilter).
+export function headlineMinutes(item) {
+  if (!item) return null;
+  for (const value of [item.prep_time_minutes, item.total_time_minutes, item.minutes]) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+// What a week offers the plan: its chosen meals and the Market items bought, each with how many
+// times it can be planned. Pet food and donations never appear.
+export function planItems(week) {
+  if (!week) return [];
+  const items = [];
+  const seen = new Set();
+  for (const r of week.recipes || []) {
+    if (!isRecipeSelected(r) || !r.recipe_id || seen.has(r.recipe_id)) continue;
+    seen.add(r.recipe_id);
+    items.push({
+      kind: "meal",
+      id: r.recipe_id,
+      week_id: week.week_id,
+      name: r.name,
+      image_url: r.image_url,
+      minutes: headlineMinutes(r),
+      quantity: recipeQuantity(r),
+    });
+  }
+  for (const m of week.market_items || []) {
+    const quantity = marketItemQuantity(m);
+    if (quantity <= 0 || PLAN_EXCLUDED_GROUPS.has(m.group_type || "")) continue;
+    items.push({
+      kind: "market",
+      id: m.item_id,
+      week_id: week.week_id,
+      name: m.name,
+      image_url: m.image_url,
+      minutes: null,
+      quantity,
+      group: m.group_type || null,
+      recipe_id: m.recipe_id || null,
+    });
+  }
+  return items;
+}
+
+// The meal and course an item is offered in first.
+export function suggestedSlot(item) {
+  if (item && item.kind === "market" && PLAN_GROUP_SLOTS[item.group]) return PLAN_GROUP_SLOTS[item.group];
+  return { meal: "dinner", course: "main" };
+}
+
+// Whether an item belongs in a slot's first list (the rest sit under "More from this week").
+export function itemFits(item, meal, course) {
+  const slot = suggestedSlot(item);
+  return slot.meal === meal && slot.course === course;
+}
+
+export function sameItem(a, b) {
+  return Boolean(a && b) && a.kind !== "note" && a.kind === b.kind && a.id === b.id && a.week_id === b.week_id;
+}
+
+// A planned meal on a day, or null.
+export function planSlot(plan, day, meal) {
+  const meals = plan && plan.days && plan.days[day];
+  return (meals && meals[meal]) || null;
+}
+
+// Every planned course, as { day, meal, course, item }.
+export function plannedCourses(plan) {
+  const out = [];
+  for (const [day, meals] of Object.entries((plan && plan.days) || {})) {
+    for (const meal of PLAN_MEALS) {
+      const slot = meals && meals[meal];
+      if (!slot) continue;
+      for (const course of PLAN_COURSES) if (slot[course]) out.push({ day, meal, course, item: slot[course] });
+    }
+  }
+  return out;
+}
+
+// How often an item is already planned, and on which days — leaving out one slot (the one
+// being edited, whose own choice must not count against it).
+export function itemUses(plan, item, skip = null) {
+  const days = [];
+  for (const c of plannedCourses(plan)) {
+    if (skip && c.day === skip.day && c.meal === skip.meal && c.course === skip.course) continue;
+    if (sameItem(c.item, item)) days.push(c.day);
+  }
+  return { count: days.length, days: days.sort() };
+}
+
+// What a meal is called: its main, else whatever courses it has.
+export function slotTitle(slot) {
+  if (!slot) return "";
+  if (slot.main && slot.main.name) return slot.main.name;
+  return PLAN_COURSES.map((c) => slot[c] && slot[c].name).filter(Boolean).join(", ");
+}
+
+// The meals a week shows: dinner always; breakfast and lunch when the options always show them,
+// when Market items for them were bought, or when something is already planned for them.
+export function planMealsShown(week, plan) {
+  const items = planItems(week);
+  const days = planDays(week);
+  const always = (plan && plan.always_show) || {};
+  return PLAN_MEALS.filter((meal) => {
+    if (meal === "dinner" || always[meal]) return true;
+    if (items.some((i) => i.kind === "market" && i.group === meal)) return true;
+    return days.some((day) => planSlot(plan, day, meal));
+  });
+}
+
+// Box meals (and breakfast or lunch items) not planned as often as they were ordered, with
+// how many are left. Appetizers, desserts and proteins stay in the Dinner sheet.
+export function trayItems(week, plan) {
+  return planItems(week)
+    .filter((item) => item.kind === "meal" || item.group === "breakfast" || item.group === "lunch")
+    .map((item) => ({ ...item, left: item.quantity - itemUses(plan, item).count }))
+    .filter((item) => item.left > 0);
+}
+
+// Whether a planned box meal is still chosen in its box. Market items and notes always are; a
+// week no longer loaded can't be checked, so it counts as fine.
+export function stillInBox(item, weeks) {
+  if (!item || item.kind !== "meal") return true;
+  const week = (weeks || []).find((w) => w.week_id === item.week_id);
+  if (!week) return true;
+  return (week.recipes || []).some((r) => r.recipe_id === item.id && isRecipeSelected(r));
+}
+
+// Today's planned meals still to come, as { meal, slot }.
+export function todayPlan(plan, now = new Date()) {
+  const today = isoDay(now);
+  return PLAN_MEALS.map((meal) => ({ meal, slot: planSlot(plan, today, meal) })).filter(
+    ({ slot }) => slot && (!slot.end || new Date(slot.end).getTime() > now.getTime())
+  );
+}
+
+// "17:30" from a planned meal's ISO start, in the viewer's clock (for a time input).
+export function hhmm(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 // ---- Home Assistant entities -------------------------------------------------------------------
 
 // This integration's entity for a translation key (e.g. "prep_list", "box_size"), found through

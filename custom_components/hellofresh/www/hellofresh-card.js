@@ -9,6 +9,8 @@
  *               build the box with + Add / servings steppers.
  *   Market    — the same week's add-ons.
  *   Recipes   — the public catalog and your cookbook.
+ *   Week      — which day each meal in the box gets eaten: a meal plan the integration turns
+ *               into a calendar and sensors.
  *   Account   — plan & billing (with the recurring plan controls), food preferences, spending.
  *
  * Menu and Market edit ONE pending box per week. The sticky box bar at the bottom shows what is
@@ -23,7 +25,7 @@
  *   config_entry_id: <optional>   # only with more than one HelloFresh account
  *   title: HelloFresh             # header title ("" hides it)
  *   logo: true                    # bundled logo (false hides it, or a URL)
- *   views: [overview, menu, market, recipes, account]   # which sections, in order
+ *   views: [overview, menu, market, recipes, week, account]   # which sections, in order
  *   default_view: overview        # where the card opens (else the last section used)
  *   accent: brand                 # brand (HelloFresh green) | theme (HA primary colour)
  *   image_width: 400              # recipe image resize width
@@ -47,7 +49,7 @@ const moduleUrl = (name) =>
   new URL(`./${name}?v=${encodeURIComponent(CARD_VERSION)}`, import.meta.url).href;
 
 // AWAITED at module top level: every view renders synchronously from these on first paint.
-const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { AccountView }] =
+const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { WeekView }, { AccountView }] =
   await Promise.all([
     import(moduleUrl("hellofresh-card-logic.js")),
     import(moduleUrl("hellofresh-card-styles.js")),
@@ -55,6 +57,7 @@ const [L, { CARD_STYLES }, UI, { OverviewView }, Menu, { RecipesView }, { Accoun
     import(moduleUrl("hellofresh-card-deliveries.js")),
     import(moduleUrl("hellofresh-card-menu.js")),
     import(moduleUrl("hellofresh-card-recipes.js")),
+    import(moduleUrl("hellofresh-card-week.js")),
     import(moduleUrl("hellofresh-card-account.js")),
   ]);
 
@@ -72,6 +75,7 @@ export const VIEWS = [
   { key: "menu", icon: "mdi:silverware-fork-knife" },
   { key: "market", icon: "mdi:storefront-outline" },
   { key: "recipes", icon: "mdi:book-open-page-variant-outline" },
+  { key: "week", icon: "mdi:calendar-week" },
   { key: "account", icon: "mdi:account-circle-outline" },
 ].map((view) => Object.defineProperty(view, "label", { enumerable: true, get: () => t(`views.${view.key}`) }));
 const VIEW_KEYS = VIEWS.map((v) => v.key);
@@ -102,6 +106,10 @@ class HelloFreshCard extends HTMLElement {
     this._weeks = null;
     this._account = null;
     this._summary = null;
+    // The Week tab's meal plan (get_meal_plan).
+    this._mealPlan = null;
+    this._mealPlanError = null;
+    this._mealPlanLoading = false;
     this._loading = false;
     this._summaryLoading = false;
     this._error = null;
@@ -332,6 +340,37 @@ class HelloFreshCard extends HTMLElement {
     return Boolean(this._config && this._config.views.includes(key));
   }
 
+  // ---- meal plan (the Week tab) ----------------------------------------------------------
+
+  get mealPlan() {
+    return this._mealPlan;
+  }
+
+  get mealPlanError() {
+    return this._mealPlanError;
+  }
+
+  async loadMealPlan() {
+    if (!this._hass || this._mealPlanLoading) return;
+    this._mealPlanLoading = true;
+    try {
+      this._mealPlan = await this.call("get_meal_plan");
+      this._mealPlanError = null;
+    } catch (err) {
+      this._mealPlanError = (err && err.message) || String(err);
+    } finally {
+      this._mealPlanLoading = false;
+      if (this._view === "week" || this._view === "overview") this.renderView();
+    }
+  }
+
+  // A write answered with the updated plan: show it without another round trip.
+  setMealPlan(plan) {
+    this._mealPlan = plan;
+    this._mealPlanError = null;
+    this.renderView();
+  }
+
   // ---- services --------------------------------------------------------------------------
 
   _serviceData(data) {
@@ -368,6 +407,7 @@ class HelloFreshCard extends HTMLElement {
 
   async refresh({ quiet = false } = {}) {
     await Promise.all([this._fetchWeeks({ quiet }), this._fetchSummary()]);
+    await this.loadMealPlan();
     const view = this._views[this._view];
     if (view && view.onRefresh) view.onRefresh();
   }
@@ -556,6 +596,8 @@ class HelloFreshCard extends HTMLElement {
       // Live tracking, only for accounts where HelloFresh drives its own vans (the Netherlands, Germany).
       trackingPhase: find("delivery_tracking_phase", "sensor"),
       trackingEta: find("delivery_tracking_eta", "sensor"),
+      // The Week tab's Meals calendar: its plan_updated attribute moves with every plan change.
+      meals: find("meals", "calendar"),
     };
     this._entityIdsFor = hass.entities;
     return this._entityIds;
@@ -581,6 +623,7 @@ class HelloFreshCard extends HTMLElement {
       plan: sign([ids.boxSize, ids.deliveryDay]),
       health: sign([ids.accessToken, ids.refreshToken, ids.writeActions, ids.payloadShape]),
       tracking: sign([ids.trackingPhase, ids.trackingEta]),
+      mealplan: sign([ids.meals]),
     };
   }
 
@@ -595,6 +638,8 @@ class HelloFreshCard extends HTMLElement {
       if (this._view === "overview" || this._view === "menu") this.renderView();
     }
     if (this._view === "account" && (groups.has("plan") || groups.has("health"))) this.renderView();
+    // The plan changed somewhere else (another device, an automation): re-read it.
+    if (groups.has("mealplan")) this.loadMealPlan();
     if (groups.has("tracking")) {
       if (this._view === "overview") this.renderView();
       if (this.sheetKind === "delivery") this.renderSheet();
@@ -1042,6 +1087,7 @@ class HelloFreshCard extends HTMLElement {
         menu: () => new Menu.MealsView(this),
         market: () => new Menu.MarketView(this),
         recipes: () => new RecipesView(this),
+        week: () => new WeekView(this),
         account: () => new AccountView(this),
       };
       this._views[key] = (factories[key] || factories.overview)();

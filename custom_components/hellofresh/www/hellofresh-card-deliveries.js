@@ -48,12 +48,41 @@ export class OverviewView {
     }
     const { week: next, upcoming } = L.nextBoxWeek(weeks);
     return [
+      this._todayPlan(),
       this._hero(next, upcoming),
       this._attention(next),
       this._pantry(next),
       this._comingUp(next),
       this._past(),
     ].join("");
+  }
+
+  // ---- today's meals (the Week tab's plan) -------------------------------------------------
+
+  // "Tonight: Creamy Tuscan Chicken at 5:30 PM" — what's still to come today, linking to Week.
+  _todayPlan() {
+    const card = this.card;
+    if (!card.hasView("week") || !card.mealPlan) return "";
+    const today = L.todayPlan(card.mealPlan);
+    if (!today.length) return "";
+    // The time stays on one line ("5:30 PM", never "5:30" then "PM").
+    const when = (slot) => html(`<span style="white-space:nowrap">${esc(slot.start ? L.fmtTime(new Date(slot.start)) : "")}</span>`);
+    const text =
+      today.length === 1 && today[0].meal === "dinner"
+        ? ht("weekplan.tonight", { name: strong(L.slotTitle(today[0].slot)), time: when(today[0].slot) })
+        : ht("weekplan.today", {
+            meals: html(
+              today
+                .map(({ meal, slot }) =>
+                  ht("weekplan.today_item", { meal: t(`weekplan.meal.${meal}`), name: strong(L.slotTitle(slot)), time: when(slot) })
+                )
+                .join(" · ")
+            ),
+          });
+    return `<div class="hf-notice tone-ok hf-todayplan">${icon("mdi:silverware-variant")}
+        <div class="hf-noticebody">${text}</div>
+        <button class="hf-btn sm" data-action="goto" data-view="week">${icon("mdi:calendar-week")}${ht("views.week")}</button>
+      </div>`;
   }
 
   // ---- next box ----------------------------------------------------------------------------

@@ -16,9 +16,12 @@ import pytest
 from custom_components.hellofresh.config_flow import HelloFreshConfigFlow, HelloFreshOptionsFlow
 from custom_components.hellofresh.const import (
     CONF_ACCESS_TOKEN,
+    CONF_BREAKFAST_MINUTES,
     CONF_COUNTRY,
     CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
     CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
+    CONF_DINNER_MINUTES,
+    CONF_DINNER_START,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
@@ -45,6 +48,7 @@ from custom_components.hellofresh.const import (
     DEFAULT_SHOW_DATA_QUALITY_ISSUES,
     DEFAULT_SHOW_SIDEBAR_PANEL,
     DEFAULT_USE_CURL_CFFI_HEADERS,
+    OPTIONS_SECTION_WEEK_TAB,
 )
 
 
@@ -190,6 +194,44 @@ def test_options_can_disable_auth_diagnostics() -> None:
         flow.async_step_init({**_default_options_payload(), CONF_LOG_AUTH_DIAGNOSTICS: False})
     )
     assert result["data"][CONF_LOG_AUTH_DIAGNOSTICS] is False
+
+
+def _week_tab_section(schema):
+    """The options form's collapsible Week tab section."""
+    for key, value in schema.schema.items():
+        if key.schema == OPTIONS_SECTION_WEEK_TAB:
+            return value
+    raise AssertionError("no Week tab section")
+
+
+def test_options_week_tab_settings_are_folded_away_and_saved_flat() -> None:
+    """The Week tab's settings sit in one collapsed section and are stored flat."""
+    flow = _make_options_flow("us")
+    section = _week_tab_section(_run(flow.async_step_init())["data_schema"])
+    assert section.options["collapsed"] is True
+    assert _schema_default(section.schema, CONF_DINNER_START) == "17:30:00"
+    assert _schema_default(section.schema, CONF_DINNER_MINUTES) == 90
+
+    result = _run(
+        flow.async_step_init(
+            {
+                **_default_options_payload(),
+                OPTIONS_SECTION_WEEK_TAB: {
+                    CONF_DINNER_START: "18:00:00",
+                    CONF_DINNER_MINUTES: 75.0,  # NumberSelector hands back a float
+                },
+            }
+        )
+    )
+    data = result["data"]
+    assert OPTIONS_SECTION_WEEK_TAB not in data
+    assert data[CONF_DINNER_START] == "18:00:00"
+    assert data[CONF_DINNER_MINUTES] == 75 and isinstance(data[CONF_DINNER_MINUTES], int)
+    assert data[CONF_BREAKFAST_MINUTES] == 30  # a field left alone keeps its default
+
+    saved = _make_options_flow("us", data)
+    section = _week_tab_section(_run(saved.async_step_init())["data_schema"])
+    assert _schema_default(section.schema, CONF_DINNER_START) == "18:00:00"
 
 
 def test_options_show_delivery_tracking_interval_for_netherlands() -> None:

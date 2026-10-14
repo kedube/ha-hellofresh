@@ -220,6 +220,44 @@ combining them would lose which trip an amount belongs to.
 swap meals — they can be checked off but not added to or deleted from. Each entity exposes
 `week_id` and `delivery_date` attributes for dashboard headings or automations.
 
+## Week tab
+
+The card's [Week tab](dashboard.md#week) plans which day each meal gets made. The plan is kept in
+Home Assistant and becomes these entities, which update the moment it changes (they never wait on
+a HelloFresh poll, and stay available while HelloFresh is down):
+
+| Name | Entity | Description |
+| --- | --- | --- |
+| Meals | `calendar.meals` | One timed event per planned meal: "Dinner: Creamy Tuscan Chicken", "Breakfast: Pancake kit", "Dinner: Pizza night". A dinner's appetizer, dessert and cooking time go in the event's description. Events start at the meal's time from the options (or the day's own time, set in the Week tab) and last its length — or, for dinner with **Use HelloFresh's cooking time** on, the main's cooking time plus the appetizer's plus the extra time. Read-only here; the plan is edited in the Week tab or with the [plan services](services.md#week-tab). |
+| Tonight's dinner | `sensor.tonights_dinner` | What's planned for dinner today (a meal, a Market item or a note), or **`None`**. Attributes: `date`, `start`, `end`, `kind` (`meal`, `market` or `note`), `recipe_id` or `market_item_id`, `image_url`, `cooking_minutes`, `appetizer`, `dessert`, and `tomorrow` — tomorrow's dinner, for a "take the chicken out of the freezer" reminder. |
+| Today's breakfast | `sensor.todays_breakfast` | The same for breakfast (without appetizer and dessert). **Disabled by default**; enable it in the entity's settings. |
+| Today's lunch | `sensor.todays_lunch` | The same for lunch. **Disabled by default**. |
+
+The sensors move to the next day's plan at midnight. Nothing is stored until something is planned,
+and days older than **Past delivery history** are forgotten. The plan is deleted when the
+integration entry is removed.
+
+```yaml
+automation:
+  - alias: Tonight's HelloFresh dinner
+    triggers:
+      - trigger: time
+        at: "16:00:00"
+    conditions:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: sensor.hellofresh_us_tonights_dinner
+            state: "None"
+    actions:
+      - action: notify.mobile_app_phone
+        data:
+          message: >-
+            Tonight: {{ states('sensor.hellofresh_us_tonights_dinner') }} at
+            {{ as_timestamp(state_attr('sensor.hellofresh_us_tonights_dinner', 'start'))
+               | timestamp_custom('%-I:%M %p') }}
+```
+
 ## Notes
 
 Order, week, menu, subscription, capability, and tracking details are exposed as entity attributes. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit — see [Recorder attribute sizes](../README.md#recorder-attribute-sizes)) and read on demand via `hellofresh.get_weeks`.

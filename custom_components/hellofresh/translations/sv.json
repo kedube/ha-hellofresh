@@ -111,14 +111,44 @@
           "delivery_watch_interval_minutes": "Medan en låda väntas (leveransdagen, eller dagen efter tills transportören bekräftar den) eller en försändelse är på väg, kontrolleras bara leveransstatus och spårning så här ofta, oberoende av uppdateringsintervallet, så att leveransen syns inom några minuter. Intervall 0–60; standard 15. 0 stänger av bevakningen. Övriga dagar görs inga extra anrop.",
           "delivery_tracking_refresh_interval_seconds": "Endast Nederländerna och Tyskland. Medan live-spårning för sista delen av leveransen är aktiv frågas HelloFreshs oautentiserade Tracey-endpoint så här ofta efter fas, ETA, antal stopp och förarens position. Intervall 60–3600 sekunder; standard 300.",
           "history_weeks": "Hur många veckors tidigare leveranser som läses in så att du kan bläddra i dem i korten. Lägre = mindre data per uppdatering; höj för att se längre tillbaka (cirka 56 för ett helt år). Intervall 1–104 veckor; standard 26 (cirka 6 månader). En ändring läser in integrationen på nytt.",
-          "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i måltidsplanerarkortet (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
+          "menu_grace_weeks": "Hur många veckor efter leveransdatumet en vecka behåller hela sin meny i kortets Meny-flik (dina levererade rätter förblir markerade); äldre veckor visar bara det som levererades. Intervall 0–3 veckor; standard 2 (de senaste matkassarna går fortfarande att bläddra i). 0 stänger av det. HelloFresh publicerar inte längre menyn för äldre veckor, så veckor därutöver visar endast de levererade rätterna. En ändring läser in integrationen på nytt.",
           "show_sidebar_panel": "Lägger till en HelloFresh-post i Home Assistants sidofält som öppnar HelloFresh-kortet i helskärm, så att du inte behöver bygga någon instrumentpanel. Med flera konton får vart och ett en egen post. Stäng av för att ta bort den; du kan fortfarande lägga till kortet på valfri instrumentpanel.",
           "enable_public_menu_fallback": "Om de inloggade menydata inte kan läsas in hämtas den offentliga regionala menysidan så att receptnamn ändå visas. Låt detta vara påslaget om du inte enbart vill ha autentiserade data.",
-          "enable_favorites": "Slå vid varje uppdatering upp vilka rätter som sparats som favoriter i din HelloFresh-kokbok, så att måltidsplanerarkortet kan visa ett favorithjärta. Kostar en extra förfrågan per uppdatering: HelloFresh har ingen \"visa mina favoriter\"-slutpunkt, så menyns recept måste skickas till en filterslutpunkt för att ta reda på vilka som är favoriter. Stäng av för att hoppa över det — tjänsterna för att lägga till och ta bort favoriter fungerar ändå.",
+          "enable_favorites": "Slå vid varje uppdatering upp vilka rätter som sparats som favoriter i din HelloFresh-kokbok, så att kortets Meny-flik kan visa ett favorithjärta. Kostar en extra förfrågan per uppdatering: HelloFresh har ingen \"visa mina favoriter\"-slutpunkt, så menyns recept måste skickas till en filterslutpunkt för att ta reda på vilka som är favoriter. Stäng av för att hoppa över det — tjänsterna för att lägga till och ta bort favoriter fungerar ändå.",
           "enable_prep_lists": "Skapa en uppgiftslista för var och en av de två nästa leveranserna med de ingredienser dina valda rätter behöver men som HelloFresh inte skickar med — salt, olja, smör, ägg — så att du kan köpa dem innan lådan kommer. Stäng av för att ta bort båda listorna och hoppa över de receptuppslag de kräver.",
           "show_data_quality_issues": "Visa varningar i Reparationer-vyn när HelloFresh-data är försämrade (menyreserv aktiv, okända dataformat, kontodata otillgängliga, blockerade skrivåtgärder). Data läses in ändå. Stäng av för att dölja dessa varningar och rensa dem som redan visas.",
           "use_curl_cffi_headers": "Låt curl_cffi skicka Chrome-headers för inloggning, tokenförnyelse och dataanrop. Integrationen anger fortfarande API-headers och korrigerar fetch-metadata för ett XHR-anrop. Av (rekommenderas) skickar integrationens fullständiga, ordnade XHR-headers.",
           "log_auth_diagnostics": "När detta är aktiverat loggas misslyckade inloggningar och tokenförnyelser samt eventuell Cloudflare-utmaningsflagga, felkod och Ray ID. Lyckade steg loggas endast på debugnivå. De extra diagnostikfälten innehåller varken rått svarsinnehåll eller inloggningsuppgifter. På som standard."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Fliken Vecka",
+            "description": "När kalenderhändelsen för varje planerad måltid börjar och hur länge den varar, och om frukost och lunch visas i fliken Vecka varje vecka.",
+            "data": {
+              "dinner_start": "Middagen börjar kl.",
+              "dinner_minutes": "Middagens längd (minuter)",
+              "dinner_use_cooking_time": "Använd HelloFreshs tillagningstid för middagen",
+              "dinner_extra_minutes": "Extra tid efter tillagningen (minuter)",
+              "always_show_breakfast": "Visa alltid frukost",
+              "breakfast_start": "Frukosten börjar kl.",
+              "breakfast_minutes": "Frukostens längd (minuter)",
+              "always_show_lunch": "Visa alltid lunch",
+              "lunch_start": "Lunchen börjar kl.",
+              "lunch_minutes": "Lunchens längd (minuter)"
+            },
+            "data_description": {
+              "dinner_start": "När varje middagshändelse börjar. Tiden för en enskild dag kan också ändras i fliken Vecka.",
+              "dinner_minutes": "Hur länge varje middagshändelse varar: förberedelser, matlagning, måltid och disk. Standard 90 minuter. Med HelloFreshs tillagningstid aktiverad gäller det bara middagar utan tillagningstid, till exempel en anteckning.",
+              "dinner_use_cooking_time": "Varje middagshändelse varar lika länge som rättens tillagningstid enligt HelloFresh (plus förrättens, om den har en), plus den extra tiden nedan.",
+              "dinner_extra_minutes": "Läggs till tillagningstiden för måltid och disk. Används bara när HelloFreshs tillagningstid är aktiverad. Standard 45 minuter.",
+              "always_show_breakfast": "Frukost visas bara en vecka om du har köpt frukost från Market till den. Aktivera för att planera frukost varje vecka, till exempel med anteckningar.",
+              "breakfast_start": "När varje frukosthändelse börjar.",
+              "breakfast_minutes": "Hur länge varje frukosthändelse varar. Standard 30 minuter.",
+              "always_show_lunch": "Lunch visas bara en vecka om du har köpt lunch från Market till den. Aktivera för att planera lunch varje vecka.",
+              "lunch_start": "När varje lunchhändelse börjar.",
+              "lunch_minutes": "Hur länge varje lunchhändelse varar. Standard 45 minuter."
+            }
+          }
         }
       }
     }
@@ -308,6 +338,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Leveransförare"
+      },
+      "todays_breakfast": {
+        "name": "Dagens frukost"
+      },
+      "todays_lunch": {
+        "name": "Dagens lunch"
+      },
+      "tonights_dinner": {
+        "name": "Kvällens middag"
       }
     },
     "binary_sensor": {
@@ -335,6 +374,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Leveransschema"
+      },
+      "meals": {
+        "name": "Måltider"
       }
     },
     "event": {
@@ -769,6 +811,80 @@
           "description": "Kostmål för profilen."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Hämta måltidsplan",
+      "description": "Returnerar måltidsplanen för fliken Vecka: dess inställningar och varje planerad dag, varje måltid med start- och sluttid. Endast läsning; returnerar ett svar.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Ange planerad måltid",
+      "description": "Planerar en rätt i en dags måltid i fliken Vecka: en rätt från din matkasse, en Market-vara som köptes den veckan eller en anteckning i fritext. Kan också ändra när måltiden börjar den dagen. Returnerar den uppdaterade planen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Dagen som ska planeras."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Frukost, lunch eller middag. Standard är middag."
+        },
+        "course": {
+          "name": "Rätt",
+          "description": "Huvudrätt, förrätt eller efterrätt. Förrätt och efterrätt gäller bara middag. Standard är huvudrätt."
+        },
+        "recipe_id": {
+          "name": "Recept-ID",
+          "description": "En rätt som är vald i någon av dina matkassar."
+        },
+        "market_item_id": {
+          "name": "Market-vara-ID",
+          "description": "En Market-vara som köpts i någon av dina matkassar."
+        },
+        "text": {
+          "name": "Anteckning",
+          "description": "Fritext i stället för en rätt, till exempel Rester eller Pizzakväll."
+        },
+        "week_id": {
+          "name": "Vecko-ID",
+          "description": "Matkassen som rätten eller Market-varan kom från, när datumet ensamt inte räcker."
+        },
+        "start_time": {
+          "name": "Starttid",
+          "description": "När måltiden börjar den här dagen, i stället för tiden i integrationens alternativ."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Rensa planerad måltid",
+      "description": "Rensar en rätt i en dags måltid i fliken Vecka, eller hela måltiden när ingen rätt anges. Returnerar den uppdaterade planen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurations-ID",
+          "description": "Det HelloFresh-konto som åtgärden gäller när flera konton är konfigurerade."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Dagen som ska planeras."
+        },
+        "meal": {
+          "name": "Måltid",
+          "description": "Frukost, lunch eller middag. Standard är middag."
+        },
+        "course": {
+          "name": "Rätt",
+          "description": "Huvudrätt, förrätt eller efterrätt. Lämna tomt för att rensa hela måltiden."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +911,7 @@
         "menu": "Meny",
         "market": "Market",
         "recipes": "Recept",
+        "week": "Vecka",
         "account": "Konto"
       },
       "card": {
@@ -1605,6 +1722,61 @@
           "default_view": "Lämna tomt för att öppna det senast använda avsnittet.",
           "config_entry_id": "Behövs bara med mer än ett HelloFresh-konto."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Frukost",
+          "lunch": "Lunch",
+          "dinner": "Middag"
+        },
+        "course": {
+          "main": "Huvudrätt",
+          "appetizer": "Förrätt",
+          "dessert": "Efterrätt"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Tillagningstid: {minutes} min"
+        },
+        "load_failed": "Det gick inte att läsa in måltidsplanen: {error}",
+        "no_weeks": "Det finns ingen aktuell eller kommande matkasse att planera.",
+        "planned_count": "{planned}/{total} planerade",
+        "this_week": "Den här veckan",
+        "range": "{start} – {end}",
+        "skipped": "Ingen matkasse den här veckan. Du kan ändå planera andra måltider för de här dagarna.",
+        "pick_first": "Välj veckans rätter först och planera sedan vilken dag de ska lagas.",
+        "all_planned": "Allt i den här matkassen har fått en dag.",
+        "not_planned_yet": "Inte planerat än",
+        "tray_left": "{count} av {total} kvar",
+        "days": "Dagar",
+        "not_planned": "Inte planerat",
+        "plan": "Planera",
+        "view_recipe": "Visa receptet för {name}",
+        "no_longer_in_box": "Inte längre i din matkasse",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (valfritt)",
+        "more_from_week": "Mer från den här veckan",
+        "start": "Börjar kl.",
+        "clear": "Rensa",
+        "save": "Spara",
+        "planned_on": "Planerad: {days}",
+        "left": {
+          "one": "{count} kvar",
+          "other": "{count} kvar"
+        },
+        "none": "Ingen",
+        "something_else": "Något annat",
+        "something_else_hint": "Rester, pizzakväll, äta ute …",
+        "saving": "Sparar planen …",
+        "save_failed": "Det gick inte att spara planen: {error}",
+        "saved": "Planen har sparats",
+        "cleared": "Planen har rensats",
+        "item_title": "Planera {name}",
+        "replaces": "Ersätter {name}",
+        "tonight": "I kväll: {name} kl. {time}",
+        "today": "I dag: {meals}",
+        "today_item": "{meal} {name} kl. {time}"
       }
     }
   }

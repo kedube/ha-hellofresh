@@ -559,8 +559,121 @@ async function translations(origin, language, category) {
   return { resources: { ...english, ...own } };
 }
 
-export function buildHass(origin, { dark = false, scenario = "default", latency = 250, fail = "", language = "en" } = {}) {
+// The Week tab's plan, empty unless ?mealplan=1: then the week being eaten now gets a few Market
+// items bought (an appetizer, two desserts, a breakfast kit) and a plan already half filled in.
+// Mirrors meal_plan.py: one item per course, each box meal or Market item planned no more often
+// than it was ordered, and each meal's start and end from its default time and length.
+function fakeMealPlan(fx, { sample = false } = {}) {
+  const today = iso(new Date());
+  const lastDay = (w) => {
+    const d = new Date(`${w.delivery_date}T00:00`);
+    d.setDate(d.getDate() + 6);
+    return iso(d);
+  };
+  const current = fx.weeks.find((w) => w.delivery_date <= today && lastDay(w) >= today && w.recipes.length);
+  const settings = {
+    always_show: { breakfast: false, lunch: false },
+    meals: {
+      breakfast: { start: "07:30", minutes: 30 },
+      lunch: { start: "12:00", minutes: 45 },
+      dinner: { start: "17:30", minutes: 90, use_cooking_time: false, extra_minutes: 45 },
+    },
+  };
+  const days = {};
+  const uses = (item, skip) => {
+    let n = 0;
+    for (const [day, meals] of Object.entries(days)) {
+      for (const [meal, slot] of Object.entries(meals)) {
+        for (const course of ["main", "appetizer", "dessert"]) {
+          const c = slot[course];
+          if (!c || (skip && skip.day === day && skip.meal === meal && skip.course === course)) continue;
+          if (c.kind === item.kind && c.id === item.id && c.week_id === item.week_id) n += 1;
+        }
+      }
+    }
+    return n;
+  };
+  const snapshot = (kind, id, weekId) => {
+    for (const w of fx.weeks.filter((x) => !weekId || x.week_id === weekId)) {
+      if (kind === "meal") {
+        const r = w.recipes.find((x) => x.recipe_id === id && x.is_selected);
+        if (r) return [{ kind, id, week_id: w.week_id, name: r.name, image_url: r.image_url, minutes: r.prep_time_minutes }, r.selected_quantity || 1];
+      } else {
+        const m = w.market_items.find((x) => x.item_id === id && x.selected_quantity > 0);
+        if (m) return [{ kind, id, week_id: w.week_id, name: m.name, image_url: m.image_url, minutes: null, group: m.group_type }, m.selected_quantity];
+      }
+    }
+    throw new Error(`${id} isn't in any of your boxes, so it can't be planned.`);
+  };
+  const set = ({ date, meal = "dinner", course = "main", recipe_id, market_item_id, text, week_id, start_time }) => {
+    const slot = { ...((days[date] || {})[meal] || {}) };
+    let item = null;
+    let quantity = 0;
+    if (recipe_id) [item, quantity] = snapshot("meal", recipe_id, week_id);
+    else if (market_item_id) [item, quantity] = snapshot("market", market_item_id, week_id);
+    else if (text) item = { kind: "note", name: text.trim() };
+    if (item && item.kind !== "note" && uses(item, { day: date, meal, course }) >= quantity) {
+      throw new Error(`${item.name} is already planned as many times as your box has.`);
+    }
+    if (item) slot[course] = item;
+    if (start_time) {
+      const start = start_time.slice(0, 5);
+      if (start === settings.meals[meal].start) delete slot.start;
+      else slot.start = start;
+    }
+    (days[date] = days[date] || {})[meal] = slot;
+  };
+  const clear = ({ date, meal = "dinner", course }) => {
+    const meals = days[date];
+    if (!meals || !meals[meal]) return;
+    if (course) delete meals[meal][course];
+    if (!course || !["main", "appetizer", "dessert"].some((c) => meals[meal][c])) delete meals[meal];
+    if (!Object.keys(meals).length) delete days[date];
+  };
+  const view = () => {
+    const out = {};
+    for (const [day, meals] of Object.entries(days)) {
+      for (const [meal, slot] of Object.entries(meals)) {
+        const [h, m] = (slot.start || settings.meals[meal].start).split(":").map(Number);
+        const [y, mo, d] = day.split("-").map(Number);
+        const start = new Date(y, mo - 1, d, h, m);
+        const end = new Date(start.getTime() + settings.meals[meal].minutes * 60000);
+        (out[day] = out[day] || {})[meal] = { ...slot, start: start.toISOString(), end: end.toISOString(), custom_start: Boolean(slot.start) };
+      }
+    }
+    return JSON.parse(JSON.stringify({ ...settings, days: out }));
+  };
+
+  if (sample && current) {
+    const buy = { m2: 1, m5: 2, m11: 1, m8: 1 }; // gyoza, lava cakes, pancake kit, chicken breasts
+    for (const item of current.market_items) {
+      if (buy[item.item_id]) {
+        item.is_selected = true;
+        item.selected_quantity = buy[item.item_id];
+      }
+    }
+    const meals = current.recipes.filter((r) => r.is_selected);
+    const day = (n) => {
+      const d = new Date(`${current.delivery_date}T00:00`);
+      d.setDate(d.getDate() + n);
+      return iso(d);
+    };
+    // Counted from the delivery day, so the plan is the same whatever day the page thinks it is.
+    if (meals[0]) set({ date: day(0), recipe_id: meals[0].recipe_id });
+    set({ date: day(1), text: "Pizza night", start_time: "18:30" });
+    if (meals[1]) {
+      set({ date: day(2), recipe_id: meals[1].recipe_id });
+      set({ date: day(2), course: "appetizer", market_item_id: "m2" });
+      set({ date: day(2), course: "dessert", market_item_id: "m5" });
+    }
+    set({ date: day(3), meal: "breakfast", market_item_id: "m11" });
+  }
+  return { set, clear, view };
+}
+
+export function buildHass(origin, { dark = false, scenario = "default", latency = 250, fail = "", language = "en", mealPlan = false } = {}) {
   const fx = buildFixtures(origin, { scenario });
+  const plan = fakeMealPlan(fx, { sample: mealPlan });
   const calls = [];
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const upcoming = fx.weeks.filter((w) => new Date(w.delivery_date) >= new Date(new Date().toDateString()) && !w.is_skipped && w.recipes.length);
@@ -596,6 +709,12 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     reg("binary_sensor.hellofresh_us_payload_shape_changed", "payload_shape_changed"),
   ]);
   const devices = { dev1: { id: "dev1", config_entries: ["entry1"], name: "HelloFresh (US)" } };
+  // The Meals calendar's plan_updated moves with every plan change, wherever it was made.
+  const touchMealPlan = () => setState("calendar.hellofresh_us_meals", "off", { plan_updated: new Date().toISOString() });
+  Object.assign(entities, Object.fromEntries([reg("calendar.hellofresh_us_meals", "meals")]));
+  touchMealPlan();
+  fx.mealPlan = plan;
+  fx.touchMealPlan = touchMealPlan;
 
   // ?scenario=live: a box on the road in the Netherlands, where HelloFresh drives its own vans and
   // the integration turns the live tracker behind hftrack.nl into sensors. The next box's order
@@ -638,6 +757,19 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     },
     async get_account_summary() {
       return fx.summary;
+    },
+    async get_meal_plan() {
+      return plan.view();
+    },
+    async set_planned_meal(data) {
+      plan.set(data);
+      touchMealPlan();
+      return plan.view();
+    },
+    async clear_planned_meal(data) {
+      plan.clear(data);
+      touchMealPlan();
+      return plan.view();
     },
     async get_menu_courses({ week_id, filters }) {
       const w = week(week_id);

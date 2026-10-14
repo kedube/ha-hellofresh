@@ -111,14 +111,44 @@
           "delivery_watch_interval_minutes": "Solange eine Box fällig ist (Liefertag oder der Folgetag, bis der Zusteller sie bestätigt) oder eine Sendung unterwegs ist, werden nur Lieferstatus und Sendungsverfolgung in diesem Abstand neu abgefragt – unabhängig vom Aktualisierungsintervall, damit Zustellungen innerhalb von Minuten erscheinen. Bereich 0–60; Standard 15. 0 schaltet die Überwachung aus. An anderen Tagen entstehen keine zusätzlichen Anfragen.",
           "delivery_tracking_refresh_interval_seconds": "Nur Niederlande und Deutschland. Solange Live-Last-Mile-Tracking aktiv ist, wird HelloFreshs nicht authentifizierter Tracey-Endpunkt in diesem Abstand nach Phase, ETA, Stoppzahl und Fahrerposition abgefragt. Bereich 60–3600 Sekunden; Standard 300.",
           "history_weeks": "Wie viele Wochen vergangener Lieferungen geladen werden, damit du sie in den Karten durchsehen kannst. Niedriger = weniger Daten pro Aktualisierung; erhöhe den Wert, um weiter zurückzublicken (etwa 56 für ein ganzes Jahr). Bereich 1–104 Wochen; Standard 26 (etwa 6 Monate). Eine Änderung lädt die Integration neu.",
-          "menu_grace_weeks": "Wie viele Wochen nach ihrem Lieferdatum eine Woche ihr vollständiges durchblätterbares Menü in der Menüplaner-Karte behält (deine gelieferten Gerichte bleiben hervorgehoben); ältere Wochen zeigen nur, was geliefert wurde. Bereich 0–3 Wochen; Standard 2 (die letzten paar Kochboxen bleiben durchblätterbar). 0 schaltet das Zeitfenster ab. HelloFresh veröffentlicht für ältere Wochen kein Menü mehr, daher zeigen Wochen darüber hinaus nur noch die gelieferten Gerichte. Eine Änderung lädt die Integration neu.",
+          "menu_grace_weeks": "Wie viele Wochen nach ihrem Lieferdatum eine Woche ihr vollständiges durchblätterbares Menü im Menü-Tab der Karte behält (deine gelieferten Gerichte bleiben hervorgehoben); ältere Wochen zeigen nur, was geliefert wurde. Bereich 0–3 Wochen; Standard 2 (die letzten paar Kochboxen bleiben durchblätterbar). 0 schaltet das Zeitfenster ab. HelloFresh veröffentlicht für ältere Wochen kein Menü mehr, daher zeigen Wochen darüber hinaus nur noch die gelieferten Gerichte. Eine Änderung lädt die Integration neu.",
           "show_sidebar_panel": "Fügt der Seitenleiste von Home Assistant einen HelloFresh-Eintrag hinzu, der die HelloFresh-Karte im Vollbild öffnet – ganz ohne eigenes Dashboard. Bei mehreren Konten erhält jedes einen eigenen Eintrag. Ausschalten, um ihn zu entfernen; die Karte lässt sich weiterhin jedem Dashboard hinzufügen.",
           "enable_public_menu_fallback": "Wenn die angemeldeten Menüdaten nicht geladen werden können, wird die öffentliche regionale Menüseite ausgelesen, damit Rezeptnamen weiterhin erscheinen. Lass dies aktiviert, außer du möchtest ausschließlich authentifizierte Daten.",
-          "enable_favorites": "Bei jeder Aktualisierung nachschlagen, welche Gerichte in deinem HelloFresh-Kochbuch als Favoriten markiert sind, damit die Menüplaner-Karte ein Favoriten-Herz anzeigen kann. Kostet eine zusätzliche Anfrage pro Aktualisierung: HelloFresh bietet keinen Endpunkt \"meine Favoriten auflisten\", daher müssen die Rezepte des Menüs an einen Filter-Endpunkt gesendet werden, um die Favoriten zu ermitteln. Deaktiviere dies, um den Schritt zu überspringen — die Dienste zum Hinzufügen und Entfernen von Favoriten funktionieren in beiden Fällen weiter.",
+          "enable_favorites": "Bei jeder Aktualisierung nachschlagen, welche Gerichte in deinem HelloFresh-Kochbuch als Favoriten markiert sind, damit der Menü-Tab der Karte ein Favoriten-Herz anzeigen kann. Kostet eine zusätzliche Anfrage pro Aktualisierung: HelloFresh bietet keinen Endpunkt \"meine Favoriten auflisten\", daher müssen die Rezepte des Menüs an einen Filter-Endpunkt gesendet werden, um die Favoriten zu ermitteln. Deaktiviere dies, um den Schritt zu überspringen — die Dienste zum Hinzufügen und Entfernen von Favoriten funktionieren in beiden Fällen weiter.",
           "enable_prep_lists": "Für jede der nächsten beiden Lieferungen eine Aufgabenliste mit den Zutaten erstellen, die deine gewählten Gerichte benötigen und die HelloFresh nicht mitliefert — Salz, Öl, Butter, Eier — damit du sie vor Ankunft der Box besorgen kannst. Deaktiviere dies, um beide Listen zu entfernen und die dafür nötigen Rezeptabfragen zu überspringen.",
           "show_data_quality_issues": "Warnungen im Reparaturen-Bildschirm anzeigen, wenn HelloFresh-Daten eingeschränkt sind (Menü-Fallback aktiv, unbekannte Datenformate, Kontodaten nicht verfügbar, blockierte Schreibaktionen). Die Daten werden in beiden Fällen weiter geladen. Deaktiviere dies, um diese Warnungen zu unterdrücken und bereits angezeigte zu entfernen.",
           "use_curl_cffi_headers": "curl_cffi stellt Chrome-Header für Anmeldung, Token-Erneuerung und Datenabrufe bereit. Die Integration setzt weiterhin API-Header und korrigiert die Fetch-Metadaten für eine XHR-Anfrage. Deaktiviert (empfohlen) sendet die vollständigen, geordneten XHR-Header der Integration.",
           "log_auth_diagnostics": "Wenn aktiviert, werden fehlgeschlagene Anmeldungen und Token-Erneuerungen samt möglichem Cloudflare-Challenge-Flag, Fehlercode und Ray-ID protokolliert. Erfolgreiche Schritte werden nur auf Debug-Ebene protokolliert. Die zusätzlichen Diagnosefelder enthalten weder rohe Antwortinhalte noch Zugangsdaten. Standardmäßig aktiviert."
+        },
+        "sections": {
+          "week_tab": {
+            "name": "Wochen-Tab",
+            "description": "Wann der Kalendertermin jeder geplanten Mahlzeit beginnt und wie lange er dauert, und ob Frühstück und Mittagessen jede Woche im Wochen-Tab erscheinen.",
+            "data": {
+              "dinner_start": "Abendessen beginnt um",
+              "dinner_minutes": "Dauer des Abendessens (Minuten)",
+              "dinner_use_cooking_time": "HelloFresh-Kochzeit für das Abendessen verwenden",
+              "dinner_extra_minutes": "Zusätzliche Zeit nach dem Kochen (Minuten)",
+              "always_show_breakfast": "Frühstück immer anzeigen",
+              "breakfast_start": "Frühstück beginnt um",
+              "breakfast_minutes": "Dauer des Frühstücks (Minuten)",
+              "always_show_lunch": "Mittagessen immer anzeigen",
+              "lunch_start": "Mittagessen beginnt um",
+              "lunch_minutes": "Dauer des Mittagessens (Minuten)"
+            },
+            "data_description": {
+              "dinner_start": "Wann jeder Abendessen-Termin beginnt. Die Uhrzeit eines einzelnen Tages lässt sich auch im Tab „Woche“ ändern.",
+              "dinner_minutes": "Wie lange jeder Abendessen-Termin dauert: Vorbereiten, Kochen, Essen und Aufräumen. Standard 90 Minuten. Mit der HelloFresh-Kochzeit gilt das nur für Abendessen ohne Kochzeit, etwa eine Notiz.",
+              "dinner_use_cooking_time": "Jeder Abendessen-Termin dauert so lange wie die Kochzeit des Gerichts laut HelloFresh (plus die der Vorspeise, falls vorhanden) plus die zusätzliche Zeit unten.",
+              "dinner_extra_minutes": "Wird zur Kochzeit addiert, für Essen und Aufräumen. Nur mit eingeschalteter HelloFresh-Kochzeit. Standard 45 Minuten.",
+              "always_show_breakfast": "Frühstück erscheint in einer Woche nur, wenn du dafür Market-Frühstück gekauft hast. Einschalten, um jede Woche Frühstück zu planen, zum Beispiel mit Notizen.",
+              "breakfast_start": "Wann jeder Frühstückstermin beginnt.",
+              "breakfast_minutes": "Wie lange jeder Frühstückstermin dauert. Standard 30 Minuten.",
+              "always_show_lunch": "Mittagessen erscheint in einer Woche nur, wenn du dafür Market-Mittagessen gekauft hast. Einschalten, um jede Woche Mittagessen zu planen.",
+              "lunch_start": "Wann jeder Mittagessen-Termin beginnt.",
+              "lunch_minutes": "Wie lange jeder Mittagessen-Termin dauert. Standard 45 Minuten."
+            }
+          }
         }
       }
     }
@@ -308,6 +338,15 @@
       },
       "delivery_tracking_driver": {
         "name": "Lieferfahrer"
+      },
+      "todays_breakfast": {
+        "name": "Heutiges Frühstück"
+      },
+      "todays_lunch": {
+        "name": "Heutiges Mittagessen"
+      },
+      "tonights_dinner": {
+        "name": "Heutiges Abendessen"
       }
     },
     "binary_sensor": {
@@ -335,6 +374,9 @@
     "calendar": {
       "delivery_schedule": {
         "name": "Lieferplan"
+      },
+      "meals": {
+        "name": "Mahlzeiten"
       }
     },
     "event": {
@@ -769,6 +811,80 @@
           "description": "Ernährungsziele für das Profil."
         }
       }
+    },
+    "get_meal_plan": {
+      "name": "Essensplan abrufen",
+      "description": "Gibt den Essensplan des Wochen-Tabs zurück: seine Einstellungen und jeden geplanten Tag, jede Mahlzeit mit Beginn und Ende. Nur lesend; liefert eine Antwort.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        }
+      }
+    },
+    "set_planned_meal": {
+      "name": "Geplante Mahlzeit festlegen",
+      "description": "Plant einen Gang einer Mahlzeit eines Tages im Wochen-Tab: ein Gericht aus deiner Box, einen in dieser Woche gekauften Market-Artikel oder eine Notiz als Freitext. Kann auch ändern, wann diese Mahlzeit an diesem Tag beginnt. Gibt den aktualisierten Plan zurück.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Der zu planende Tag."
+        },
+        "meal": {
+          "name": "Mahlzeit",
+          "description": "Frühstück, Mittagessen oder Abendessen. Standard: Abendessen."
+        },
+        "course": {
+          "name": "Gang",
+          "description": "Hauptgericht, Vorspeise oder Dessert. Vorspeise und Dessert gibt es nur beim Abendessen. Standard: Hauptgericht."
+        },
+        "recipe_id": {
+          "name": "Rezept-ID",
+          "description": "Ein Gericht, das in einer deiner Boxen gewählt ist."
+        },
+        "market_item_id": {
+          "name": "Market-Artikel-ID",
+          "description": "Ein Market-Artikel, der in einer deiner Boxen gekauft wurde."
+        },
+        "text": {
+          "name": "Notiz",
+          "description": "Freitext statt eines Gerichts, zum Beispiel Reste oder Pizzaabend."
+        },
+        "week_id": {
+          "name": "Wochen-ID",
+          "description": "Die Box, aus der das Gericht oder der Market-Artikel stammt, wenn das Datum allein nicht eindeutig ist."
+        },
+        "start_time": {
+          "name": "Startzeit",
+          "description": "Wann diese Mahlzeit an diesem Tag beginnt, statt der Uhrzeit aus den Optionen der Integration."
+        }
+      }
+    },
+    "clear_planned_meal": {
+      "name": "Geplante Mahlzeit entfernen",
+      "description": "Entfernt einen Gang einer Mahlzeit eines Tages im Wochen-Tab oder die ganze Mahlzeit, wenn kein Gang angegeben ist. Gibt den aktualisierten Plan zurück.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        },
+        "date": {
+          "name": "Datum",
+          "description": "Der zu planende Tag."
+        },
+        "meal": {
+          "name": "Mahlzeit",
+          "description": "Frühstück, Mittagessen oder Abendessen. Standard: Abendessen."
+        },
+        "course": {
+          "name": "Gang",
+          "description": "Hauptgericht, Vorspeise oder Dessert. Leer lassen, um die ganze Mahlzeit zu entfernen."
+        }
+      }
     }
   },
   "config_panel": {
@@ -795,6 +911,7 @@
         "menu": "Menü",
         "market": "Market",
         "recipes": "Rezepte",
+        "week": "Woche",
         "account": "Konto"
       },
       "card": {
@@ -1605,6 +1722,61 @@
           "default_view": "Leer lassen, um den zuletzt genutzten Bereich zu öffnen.",
           "config_entry_id": "Nur nötig bei mehr als einem HelloFresh-Konto."
         }
+      },
+      "weekplan": {
+        "meal": {
+          "breakfast": "Frühstück",
+          "lunch": "Mittagessen",
+          "dinner": "Abendessen"
+        },
+        "course": {
+          "main": "Hauptgericht",
+          "appetizer": "Vorspeise",
+          "dessert": "Dessert"
+        },
+        "calendar": {
+          "event": "{meal}: {name}",
+          "course": "{course}: {name}",
+          "cooking": "Kochzeit: {minutes} Min."
+        },
+        "load_failed": "Der Essensplan konnte nicht geladen werden: {error}",
+        "no_weeks": "Es gibt keine aktuelle oder kommende Box zum Planen.",
+        "planned_count": "{planned}/{total} geplant",
+        "this_week": "Diese Woche",
+        "range": "{start} – {end}",
+        "skipped": "Diese Woche keine Box. Du kannst trotzdem andere Mahlzeiten für diese Tage planen.",
+        "pick_first": "Wähle zuerst die Gerichte dieser Woche und plane dann, an welchem Tag du sie kochst.",
+        "all_planned": "Alles in dieser Box hat einen Tag.",
+        "not_planned_yet": "Noch nicht geplant",
+        "tray_left": "{count} von {total} übrig",
+        "days": "Tage",
+        "not_planned": "Nicht geplant",
+        "plan": "Planen",
+        "view_recipe": "Rezept für {name} ansehen",
+        "no_longer_in_box": "Nicht mehr in deiner Box",
+        "sheet_title": "{meal} · {date}",
+        "optional": "{course} (optional)",
+        "more_from_week": "Mehr aus dieser Woche",
+        "start": "Beginnt um",
+        "clear": "Entfernen",
+        "save": "Speichern",
+        "planned_on": "Geplant: {days}",
+        "left": {
+          "one": "{count} übrig",
+          "other": "{count} übrig"
+        },
+        "none": "Keine",
+        "something_else": "Etwas anderes",
+        "something_else_hint": "Reste, Pizzaabend, auswärts essen …",
+        "saving": "Plan wird gespeichert …",
+        "save_failed": "Der Plan konnte nicht gespeichert werden: {error}",
+        "saved": "Plan gespeichert",
+        "cleared": "Plan entfernt",
+        "item_title": "{name} planen",
+        "replaces": "Ersetzt {name}",
+        "tonight": "Heute Abend: {name} um {time}",
+        "today": "Heute: {meals}",
+        "today_item": "{meal} {name} um {time}"
       }
     }
   }

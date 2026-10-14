@@ -15,7 +15,7 @@
  * address in place, so a reload or bookmark comes back to the same one.
  */
 
-const SECTIONS = ["overview", "menu", "market", "recipes", "account"];
+const SECTIONS = ["overview", "menu", "market", "recipes", "week", "account"];
 const WEEK_ID = /^\d{4}-W\d{2}$/;
 
 const PANEL_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";

@@ -55,7 +55,7 @@ MAX_HISTORY_WEEKS = 104
 # this window the validated per-week menu stays visible (with the delivered meals overlaid
 # as the selection); older weeks show only what shipped, since their "menu" from the API is
 # an unusable multi-week aggregate. User option like history_weeks; 0 disables the grace
-# entirely (past weeks always delivered-only). The meal-planner card reads the configured
+# entirely (past weeks always delivered-only). The card's Menu reads the configured
 # value from the get_weeks account payload. Values past ~2 weeks buy little: HelloFresh
 # stops serving a real menu for older weeks, whose fetch then fails validation and the week
 # falls back to delivered-only anyway.
@@ -78,7 +78,7 @@ CONF_SHOW_DATA_QUALITY_ISSUES = "show_data_quality_issues"
 DEFAULT_SHOW_DATA_QUALITY_ISSUES = True
 
 # Whether each poll should resolve which meals are bookmarked in the customer's cookbook, so
-# the meal-planner card can show a favorite heart. Costs one extra batched request per refresh
+# the card's Menu can show a favorite heart. Costs one extra batched request per refresh
 # (HelloFresh has no "list my favorites" endpoint — the ids on the menu must be sent to a
 # filter endpoint to learn which are bookmarked). Turn off to skip that request entirely; the
 # add/remove favorite services keep working either way.
@@ -99,6 +99,37 @@ DEFAULT_ENABLE_PREP_LISTS = True
 # sidebar.
 CONF_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
 DEFAULT_SHOW_SIDEBAR_PANEL = True
+
+# The Week tab: plan which day each meal in the box (and each Market item bought) gets cooked,
+# shown as timed events on a Meals calendar and as today's-meal sensors. Always there; nothing
+# is stored until something is planned. These settings time the calendar's events. Changing
+# any of them reloads the entry. The options form groups them in one collapsible section
+# (OPTIONS_SECTION_WEEK_TAB); they are stored flat in entry.options like the rest.
+OPTIONS_SECTION_WEEK_TAB = "week_tab"
+# Breakfast and lunch appear in a week only when it has Market breakfast/lunch items (or
+# something already planned for them); these show them every week, for free-text plans.
+CONF_ALWAYS_SHOW_BREAKFAST = "always_show_breakfast"
+CONF_ALWAYS_SHOW_LUNCH = "always_show_lunch"
+# When each meal's calendar event starts ("HH:MM:SS", the TimeSelector's format) and how long
+# it lasts. Dinner can instead last the main's HelloFresh cooking time plus the extra time.
+CONF_BREAKFAST_START = "breakfast_start"
+CONF_BREAKFAST_MINUTES = "breakfast_minutes"
+CONF_LUNCH_START = "lunch_start"
+CONF_LUNCH_MINUTES = "lunch_minutes"
+CONF_DINNER_START = "dinner_start"
+CONF_DINNER_MINUTES = "dinner_minutes"
+CONF_DINNER_USE_COOKING_TIME = "dinner_use_cooking_time"
+CONF_DINNER_EXTRA_MINUTES = "dinner_extra_minutes"
+DEFAULT_BREAKFAST_START = "07:30:00"
+DEFAULT_BREAKFAST_MINUTES = 30
+DEFAULT_LUNCH_START = "12:00:00"
+DEFAULT_LUNCH_MINUTES = 45
+DEFAULT_DINNER_START = "17:30:00"
+DEFAULT_DINNER_MINUTES = 90
+DEFAULT_DINNER_EXTRA_MINUTES = 45
+MIN_MEAL_MINUTES = 5
+MAX_MEAL_MINUTES = 480
+MAX_EXTRA_MINUTES = 240
 
 # Platforms set up for every entry. The to-do platform is conditional (see
 # CONF_ENABLE_PREP_LISTS) and is appended by `_entry_platforms` at setup/unload time rather
@@ -160,6 +191,9 @@ SERVICE_PREVIEW_MEAL_PRICE = "preview_meal_price"
 SERVICE_GET_RECIPE_DETAIL = "get_recipe_detail"
 SERVICE_GET_DELIVERY_TRACKING = "get_delivery_tracking"
 SERVICE_GET_MENU_COURSES = "get_menu_courses"
+SERVICE_GET_MEAL_PLAN = "get_meal_plan"
+SERVICE_SET_PLANNED_MEAL = "set_planned_meal"
+SERVICE_CLEAR_PLANNED_MEAL = "clear_planned_meal"
 
 ATTR_WEEK_ID = "week_id"
 ATTR_TASTE = "taste"
@@ -179,6 +213,12 @@ ATTR_DELIVERY_INTERVAL = "delivery_interval"
 ATTR_PRODUCT_HANDLE = "product_handle"
 ATTR_SUBSCRIPTION_ID = "subscription_id"
 ATTR_FILTERS = "filters"
+ATTR_DATE = "date"
+ATTR_MEAL = "meal"
+ATTR_COURSE = "course"
+ATTR_MARKET_ITEM_ID = "market_item_id"
+ATTR_TEXT = "text"
+ATTR_START_TIME = "start_time"
 
 INTENT_GET_NEXT_DELIVERY = "HelloFreshGetNextDeliveryIntent"
 INTENT_GET_MEAL_SELECTION = "HelloFreshGetMealSelectionIntent"

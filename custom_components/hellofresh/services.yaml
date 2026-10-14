@@ -474,3 +474,104 @@ get_recipe_detail:
           min: 1
           max: 12
           mode: box
+
+get_meal_plan:
+  name: Get meal plan
+  description: >-
+    Return the Week tab's meal plan: its settings and every planned day, each
+    meal with its start and end time. Read-only; returns a response.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+
+set_planned_meal:
+  name: Set planned meal
+  description: >-
+    Plan one course of a day's meal in the Week tab: a meal from your box, a
+    Market item bought that week, or a free-text note. It can also change when
+    that meal starts on that day. Returns the updated plan.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    date:
+      required: true
+      example: "2026-10-13"
+      selector:
+        date:
+    meal:
+      required: false
+      default: dinner
+      selector:
+        select:
+          options:
+            - breakfast
+            - lunch
+            - dinner
+    course:
+      required: false
+      default: main
+      selector:
+        select:
+          options:
+            - main
+            - appetizer
+            - dessert
+    recipe_id:
+      required: false
+      selector:
+        text:
+    market_item_id:
+      required: false
+      selector:
+        text:
+    text:
+      required: false
+      example: Pizza night
+      selector:
+        text:
+    week_id:
+      required: false
+      selector:
+        text:
+    start_time:
+      required: false
+      example: "18:30"
+      selector:
+        time:
+
+clear_planned_meal:
+  name: Clear planned meal
+  description: >-
+    Clear one course of a day's meal in the Week tab, or the whole meal when no
+    course is given. Returns the updated plan.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        text:
+    date:
+      required: true
+      example: "2026-10-13"
+      selector:
+        date:
+    meal:
+      required: false
+      default: dinner
+      selector:
+        select:
+          options:
+            - breakfast
+            - lunch
+            - dinner
+    course:
+      required: false
+      selector:
+        select:
+          options:
+            - main
+            - appetizer
+            - dessert
