@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.12 — 2026-10-14
 - **A new reference for HelloFresh's API.** [docs/hellofresh-api.md](docs/hellofresh-api.md)
   describes each endpoint, what it takes and what it returns, and what isn't known yet. It
   replaces `HELLOFRESH_API.md` and `ANDROID_APP_FINDINGS.md`.
