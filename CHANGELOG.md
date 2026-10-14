@@ -61,6 +61,8 @@ version heading and publishes it as the release's Highlights.
     - A meal sold out for you stays marked sold out.
     - A week whose box was changed for that week only keeps its box when you change meals.
     - Skipping still works when a week has no cutoff date.
+    - No menu requests for weeks HelloFresh hasn't published yet. The two furthest weeks
+      failed with "not found" on every refresh.
 - **Translations use HelloFresh's own words.** Checked against HelloFresh's app in each language:
   - The **Market** tab is now **Markt** in German and Dutch, **Extras** in French, **Tilbehør**
     in Danish, **Tillbehör** in Swedish and **Tillegg** in Norwegian, as HelloFresh calls it there.

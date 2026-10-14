@@ -3695,6 +3695,14 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         return cursor if isinstance(cursor, str) and cursor else None
 
     @staticmethod
+    def _iso_week_tuple(value: Any) -> tuple[int, int] | None:
+        """Return ``(year, week)`` for a ``YYYY-Www`` ISO week, or None when it isn't one."""
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(r"(\d{4})-W(\d{1,2})", value.strip())
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    @staticmethod
     def _iso_week_sort_key(week_id: str) -> tuple[int, int]:
         """Order an ISO ``YYYY-Www`` week chronologically.
 
@@ -3888,11 +3896,35 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             subscription_weeks: list[HelloFreshWeek] = []
             seen_week_ids: set[str] = set()
 
-            fetch_weeks = [
-                account_week
-                for account_week in weeks_by_subscription.get(subscription_id, [])
-                if _needs_menu_fetch(account_week)
-            ]
+            # Also skip weeks HelloFresh hasn't published a menu for yet. The subscription
+            # names the last week that has one (``weekWithLatestMenu``); asking for a later
+            # week answers 404 NOT_FOUND on every poll. HelloFresh's Android app skips them
+            # the same way (``MenuDelegate.isWeekWithoutMenu``). Without a readable value,
+            # every week is fetched as before.
+            raw_latest = (
+                subscription.raw.get("weekWithLatestMenu")
+                if isinstance(subscription.raw, dict)
+                else None
+            )
+            latest_menu_week = self._iso_week_tuple(raw_latest)
+            fetch_weeks: list[HelloFreshWeek] = []
+            for account_week in weeks_by_subscription.get(subscription_id, []):
+                if not _needs_menu_fetch(account_week):
+                    continue
+                week_key = self._iso_week_tuple(account_week.week_id)
+                if latest_menu_week and week_key and week_key > latest_menu_week:
+                    self._record_debug_attempt(
+                        "menu_attempts",
+                        {
+                            "subscription_id": subscription_id,
+                            "path": "/gw/my-deliveries/menu",
+                            "week_id": account_week.week_id,
+                            "skipped": "menu_not_published",
+                            "latest_menu_week": raw_latest,
+                        },
+                    )
+                    continue
+                fetch_weeks.append(account_week)
             # Fetch the eligible weeks concurrently (bounded) instead of one round-trip at a
             # time — the poll's critical path was ~N sequential TLS round-trips per subscription.
             menu_week_lists = await self._async_gather_bounded(

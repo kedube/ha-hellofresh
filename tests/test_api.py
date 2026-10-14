@@ -2818,6 +2818,64 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
     assert "2026-old" not in fetched_weeks
 
 
+@pytest.mark.parametrize(
+    ("latest", "expected"),
+    [
+        # Weeks after the last published menu are skipped; the latest week itself is fetched.
+        ("2026-W33", ["2026-W32", "2026-W33"]),
+        # The comparison is (year, week), so a new year's weeks sort after December's.
+        ("2026-W52", ["2026-W32", "2026-W33", "2026-W34", "2026-W52"]),
+        # Without a readable value every week is fetched, as before.
+        (None, ["2026-W32", "2026-W33", "2026-W34", "2026-W52", "2027-W01"]),
+        ("not-a-week", ["2026-W32", "2026-W33", "2026-W34", "2026-W52", "2027-W01"]),
+    ],
+)
+def test_account_menu_data_skips_weeks_without_a_published_menu(latest, expected) -> None:
+    """No menu request for a week after the subscription's ``weekWithLatestMenu``.
+
+    HelloFresh answers those with 404 NOT_FOUND; a diagnostics export showed the two furthest
+    weeks failing on every poll. HelloFresh's Android app skips them the same way.
+    """
+    from datetime import timedelta
+
+    client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    raw = {"customerPlanId": "plan-123"}
+    if latest is not None:
+        raw["weekWithLatestMenu"] = latest
+    subscription = HelloFreshSubscription(subscription_id="1000001", raw=raw)
+    today = date.today()
+    weeks = [
+        HelloFreshWeek(
+            week_id=week_id,
+            display_name=week_id,
+            subscription_id="1000001",
+            delivery_date=today + timedelta(weeks=offset),
+        )
+        for offset, week_id in enumerate(
+            ["2026-W32", "2026-W33", "2026-W34", "2026-W52", "2027-W01"], start=1
+        )
+    ]
+    fetched: list[str] = []
+
+    async def fake_fetch(subscription, account_week):  # noqa: ARG001
+        fetched.append(account_week.week_id)
+        return []
+
+    client._async_get_delivery_menu_week_data = fake_fetch  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(client._async_get_account_menu_data([subscription], weeks))
+
+    assert fetched == expected
+    skipped = [
+        attempt["week_id"]
+        for attempt in client._debug_trace.get("menu_attempts", [])
+        if attempt.get("skipped") == "menu_not_published"
+    ]
+    assert skipped == [week.week_id for week in weeks if week.week_id not in expected]
+
+
 def test_past_delivery_purchased_addons_become_market_items() -> None:
     """A shipped week's lowercase ``addons`` array must become its market items.
 
