@@ -1240,9 +1240,20 @@ class HelloFreshRecipeDetail:
             amount = entry.get("amount")
             if not isinstance(label, str) or amount is None:
                 continue
-            nutrition[label] = f"{amount}{entry.get('unit') or ''}"
-            if label.lower() == "calories":
-                calories = _coerce_number(amount)
+            unit = entry.get("unit") or ""
+            # ``name`` is a translated label, so two rows can share one (energy in kJ and kcal);
+            # the second keeps its unit in the key instead of overwriting the first.
+            key = f"{label} ({unit})" if label in nutrition and unit else label
+            nutrition[key] = f"{amount}{unit}"
+            # Calories are the ``kcal`` row, as in HelloFresh's Android app
+            # (``DefaultRecipeMapper``); the English label is only a fallback, because outside
+            # English markets it is "Energie", "Énergie" and so on.
+            if str(unit).strip().lower() == "kcal" or (
+                calories is None and label.lower() == "calories"
+            ):
+                value = _coerce_number(amount)
+                if value is not None and (value > 0 or calories is None):
+                    calories = value
 
         category = raw.get("category")
         return cls(

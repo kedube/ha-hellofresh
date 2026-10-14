@@ -1190,9 +1190,10 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
     # A SECOND, separate favorites service HelloFresh also runs (`cfs`), backing its
     # /recipes/favorites page. It is NOT the cookbook: different service, different paging
     # (skip/take/total rather than a cursor), and in captured traffic it reported total=0 while
-    # the cookbook held six bookmarks — so the two stores are not synchronized. Only ever seen
-    # returning an empty list, so the row shape is unconfirmed; treated as a read-only
-    # supplement that must never override cookbook state.
+    # the cookbook held six bookmarks — so the two stores are not synchronized. HelloFresh's
+    # Android app keeps its favorite "heart" here (it writes PUT/DELETE
+    # `cfs/v2/favorites/recipe/{id}`), with rows `{object_id: <recipe id>}` under `items` (or
+    # `data`/`result`). Read-only here; it never overrides cookbook state.
     _CFS_FAVORITES_PATH = "/gw/cfs/v2/favorites/recipe"
 
     async def async_get_cfs_favorites(
@@ -1209,8 +1210,9 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             "country": api_country_code(self._country),
             "locale": self._locale_for_country(),
             # The website always sends `ids`, empty when it is not filtering to specific
-            # recipes; mirroring that keeps the request shape identical to a real one.
-            "ids": ",".join(str(r).split("-", 1)[0] for r in recipe_ids) if recipe_ids else "",
+            # recipes; mirroring that keeps the request shape identical to a real one. Several
+            # ids are joined with "|", as HelloFresh's Android app sends them.
+            "ids": "|".join(str(r).split("-", 1)[0] for r in recipe_ids) if recipe_ids else "",
         }
         try:
             response = await self._async_api_get(self._CFS_FAVORITES_PATH, params=params)
@@ -1221,15 +1223,28 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             self._record_debug_attempt(
                 "cookbook_attempts", {"path": self._CFS_FAVORITES_PATH, "error": str(err)}
             )
-            return {"total": 0, "count": 0, "items": [], "available": False}
+            return {"total": 0, "count": 0, "items": [], "recipe_ids": [], "available": False}
 
-        items = payload.get("items") if isinstance(payload, dict) else None
+        items = (
+            next(
+                (
+                    value
+                    for key in ("items", "data", "result")
+                    if isinstance(value := payload.get(key), list)
+                ),
+                None,
+            )
+            if isinstance(payload, dict)
+            else None
+        )
+        rows = [item for item in items if isinstance(item, dict)] if items else []
         return {
             "total": payload.get("total") if isinstance(payload, dict) else 0,
             "count": payload.get("count") if isinstance(payload, dict) else 0,
-            "items": [item for item in items if isinstance(item, dict)]
-            if isinstance(items, list)
-            else [],
+            "items": rows,
+            "recipe_ids": [
+                str(row["object_id"]) for row in rows if isinstance(row.get("object_id"), str)
+            ],
             "available": True,
         }
 
@@ -2502,13 +2517,20 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         )
 
         boxes_received: int | None = None
+        # HelloFresh's Android app asks the attributes service for one customer
+        # (``customer_id``, the ``id`` from ``/info``), with country and locale as on every call.
+        customer_id: Any = next(
+            (s.account_id for s in (self._cached_subscriptions or []) if s.account_id), None
+        )
         for path in candidate_paths:
             try:
-                params = (
-                    {"country": api_country_code(self._country), "locale": locale}
-                    if path == "/gw/api/customers/me/info"
-                    else None
-                )
+                regional = {"country": api_country_code(self._country), "locale": locale}
+                if path == "/gw/api/customers/me/info":
+                    params: dict[str, Any] | None = regional
+                elif customer_id is not None:
+                    params = {"customer_id": str(customer_id), **regional}
+                else:
+                    params = None
                 extra_headers = (
                     {"x-requested-by": "client-platform"}
                     if path == "/gw/api/customers/me/info"
@@ -2528,6 +2550,8 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                 )
                 continue
 
+            if path == "/gw/api/customers/me/info" and isinstance(payload, dict):
+                customer_id = payload.get("id") or customer_id
             if boxes_received is None:
                 boxes_received = coerce_int(
                     payload.get("boxesReceived")

@@ -934,8 +934,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def async_remove_favorite(service_call: ServiceCall) -> ServiceResponse:
         """Remove a recipe bookmark.
 
-        The delete endpoint is inferred rather than HAR-confirmed, so this can fail even when
-        the recipe is genuinely favorited; the error explains that when it happens.
+        The delete (``DELETE /gw/cookbook/v1/external-recipes/{id}``) is HAR-verified, and
+        HelloFresh's app uses the same route. A failure is explained in the error.
         """
         coordinator = _single_coordinator(service_call)
         removed = await coordinator.client.async_remove_favorite(service_call.data[ATTR_RECIPE_ID])

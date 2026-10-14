@@ -9,6 +9,7 @@ this module only gives the area its own file. ``token_manager.py`` and
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 import logging
 from typing import Any
 
@@ -241,6 +242,11 @@ class FavoritesClientMixin:
         """
         favorites: list[HelloFreshFavorite] = []
         seen: set[str] = set()
+        seen_rows: set[str] = set()
+        # Rows that are not HelloFresh bookmarks: the cookbook also stores recipes imported from
+        # other sites and social media (HelloFresh's app imports them), which have no
+        # bookmark id.
+        other_rows = 0
         cursor: str | None = None
         total_count: int | None = None
         for _page in range(self._COOKBOOK_LIST_MAX_PAGES):
@@ -267,13 +273,20 @@ class FavoritesClientMixin:
                 break
             new_rows = 0
             for row in rows:
+                # Progress is counted in raw rows, not parsed bookmarks: a page holding only
+                # imported recipes still advances. Belt and braces: if the cursor were ever
+                # ignored and page one re-served, this stops duplicates up to the page cap.
+                row_key = self._cookbook_row_key(row)
+                if row_key in seen_rows:
+                    continue
+                seen_rows.add(row_key)
+                new_rows += 1
                 favorite = HelloFreshFavorite.from_api(row)
-                # Belt and braces: if the cursor were ever ignored and page one re-served,
-                # this stops duplicates accumulating up to the page cap.
-                if favorite is not None and favorite.bookmark_id not in seen:
+                if favorite is None:
+                    other_rows += 1
+                elif favorite.bookmark_id not in seen:
                     seen.add(favorite.bookmark_id)
                     favorites.append(favorite)
-                    new_rows += 1
             pagination = payload.get("pagination") if isinstance(payload, dict) else None
             if isinstance(pagination, dict):
                 if isinstance(pagination.get("total_count"), int):
@@ -297,10 +310,11 @@ class FavoritesClientMixin:
             {
                 "path": self._COOKBOOK_LIST_PATH,
                 "listed": len(favorites),
+                "other_rows": other_rows,
                 "total_count": total_count,
             },
         )
-        if total_count is not None and limit is None and len(favorites) < total_count:
+        if total_count is not None and limit is None and len(favorites) + other_rows < total_count:
             # Surfaces a paging contract change instead of silently under-reporting.
             _LOGGER.warning(
                 "HelloFresh cookbook listing returned %d of %d bookmarks; "
@@ -309,6 +323,16 @@ class FavoritesClientMixin:
                 total_count,
             )
         return favorites
+
+    @staticmethod
+    def _cookbook_row_key(row: Any) -> str:
+        """Return a stable identity for a raw cookbook listing row."""
+        if isinstance(row, dict):
+            for key in ("id", "bookmark_id"):
+                value = row.get(key)
+                if isinstance(value, (str, int)) and str(value):
+                    return f"{key}:{value}"
+        return json.dumps(row, sort_keys=True, default=str)
 
     async def async_remove_favorite(self, recipe_id: str) -> bool:
         """Remove a bookmark. Returns True when HelloFresh accepted the delete.

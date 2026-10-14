@@ -9986,6 +9986,47 @@ def test_list_favorites_stops_when_cursor_replays_the_same_page() -> None:
     assert calls["n"] == 2
 
 
+def test_list_favorites_pages_past_a_page_of_imported_recipes(caplog) -> None:
+    """A page of recipes imported from other sites (no ``bookmark_id``) must not end the listing.
+
+    The cookbook also stores imports. Paging used to stop at a page that parsed to no
+    bookmarks, then warn that pagination may have changed.
+    """
+    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    pages = [
+        {
+            "data": [{"id": "imp-1", "title": "Grandma's Lasagna", "source_url": "https://x"}],
+            "pagination": {"has_more": True, "total_count": 2, "next_cursor": "c2"},
+        },
+        {
+            "data": [{"id": "row-2", "bookmark_id": "bbb-en-US", "title": "Shrimp Skewers"}],
+            "pagination": {"has_more": False, "total_count": 2},
+        },
+    ]
+    call = {"n": 0}
+
+    async def fake_api_request(*_args, **_kwargs):
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        page = pages[call["n"]]
+        call["n"] += 1
+        return page
+
+    client._COOKBOOK_LIST_PAGE = 1
+    client._async_api_request = fake_api_request  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    favorites = loop.run_until_complete(client.async_list_favorites())
+
+    assert [f.recipe_id for f in favorites] == ["bbb"]
+    assert call["n"] == 2
+    assert "pagination may have changed" not in caplog.text
+    assert client._debug_trace["cookbook_attempts"][-1]["other_rows"] == 1
+
+
 def test_catalog_rows_are_extracted_from_dehydrated_query_cache() -> None:
     """Catalog recipes live under a foodContentHubRecipe query whose `pages` is the flat list."""
     payload = {
@@ -11220,11 +11261,11 @@ def test_cfs_favorites_reports_unavailable_rather_than_empty_on_failure() -> Non
     asyncio.set_event_loop(loop)
     result = loop.run_until_complete(client.async_get_cfs_favorites())
 
-    assert result == {"total": 0, "count": 0, "items": [], "available": False}
+    assert result == {"total": 0, "count": 0, "items": [], "recipe_ids": [], "available": False}
 
 
 def test_cfs_favorites_passes_through_rows_and_mirrors_the_ids_param() -> None:
-    """Row shape is unconfirmed (only ever seen empty), so rows pass through unmodelled."""
+    """Rows are ``{object_id: <recipe id>}`` (HelloFresh's Android app); ids are joined with "|"."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     captured: dict[str, object] = {}
 
@@ -11234,7 +11275,7 @@ def test_cfs_favorites_passes_through_rows_and_mirrors_the_ids_param() -> None:
         return _StubResponse(200)
 
     async def fake_response_json(_response):
-        return {"skip": 0, "take": 50, "total": 1, "count": 1, "items": [{"id": "x"}]}
+        return {"skip": 0, "take": 50, "total": 1, "count": 1, "data": [{"object_id": "abc"}]}
 
     client._async_api_get = fake_api_get  # type: ignore[method-assign]
     client._async_response_json = fake_response_json  # type: ignore[method-assign]
@@ -11245,9 +11286,10 @@ def test_cfs_favorites_passes_through_rows_and_mirrors_the_ids_param() -> None:
 
     assert captured["path"] == "/gw/cfs/v2/favorites/recipe"
     # The website always sends `ids`; locale suffixes are stripped to bare recipe ids.
-    assert captured["params"]["ids"] == "abc,def"
+    assert captured["params"]["ids"] == "abc|def"
     assert result["available"] is True
-    assert result["items"] == [{"id": "x"}]
+    assert result["items"] == [{"object_id": "abc"}]
+    assert result["recipe_ids"] == ["abc"]
 
 
 def test_past_delivery_meal_fields_survive_an_empty_recipe_dict() -> None:
@@ -11960,3 +12002,54 @@ def test_customer_uuid_is_read_from_the_customer_object_first() -> None:
     fallback = HelloFreshSubscription(subscription_id="sub-2", raw={"owner": {"uuid": "deep"}})
     assert client._customer_uuid([fallback]) == "deep"
     assert client._customer_uuid([HelloFreshSubscription(subscription_id="sub-3")]) is None
+
+
+def test_recipe_detail_calories_come_from_the_kcal_row_in_any_language() -> None:
+    """German recipes call both energy rows "Energie"; calories are the ``kcal`` one.
+
+    The English label "Calories" was the only match before, so non-English recipe detail had
+    no calories, and the kJ and kcal rows overwrote each other.
+    """
+    from custom_components.hellofresh.models import HelloFreshRecipeDetail
+
+    payload = _recipe_detail_payload()
+    payload["nutrition"] = [
+        {"type": "57b42a48b7e8697d4b30530d", "name": "Energie", "amount": 2870, "unit": "kJ"},
+        {"type": "57b42a48b7e8697d4b305304", "name": "Energie", "amount": 686, "unit": "kcal"},
+        {"type": "57b42a48b7e8697d4b305309", "name": "Eiweiß", "amount": 38, "unit": "g"},
+    ]
+
+    detail = HelloFreshRecipeDetail.from_api(payload)
+
+    assert detail.calories_kcal == 686
+    assert detail.nutrition == {"Energie": "2870kJ", "Energie (kcal)": "686kcal", "Eiweiß": "38g"}
+
+
+def test_attributes_fallback_asks_for_this_customer() -> None:
+    """When ``/info`` has no box count, the attributes service is asked with ``customer_id``.
+
+    HelloFresh's Android app always sends it; the call went out without one.
+    """
+    client = _make_client()
+    client._cached_subscriptions = [HelloFreshSubscription(subscription_id="s", account_id="42")]
+    calls: list[tuple[str, dict | None]] = []
+
+    async def fake_api_get(path, params=None, extra_headers=None):
+        calls.append((path, params))
+        return _StubResponse(200)
+
+    async def fake_response_json(_response):
+        if calls[-1][0].endswith("/info"):
+            return {"id": 20000001}
+        return {"boxes_received": 31}
+
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    client._async_response_json = fake_response_json  # type: ignore[method-assign]
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    assert loop.run_until_complete(client._async_get_boxes_received()) == 31
+    assert calls[1] == (
+        "/gw/customer-attributes-service/attributes",
+        {"customer_id": "20000001", "country": "US", "locale": "en-US"},
+    )
