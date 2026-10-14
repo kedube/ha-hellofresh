@@ -1,40 +1,33 @@
 name: Release
 
+# Releases go out only when someone runs this workflow: Actions → Release → Run workflow, or
+# `gh workflow run release.yml`. A push to main runs CI and nothing else.
 on:
   workflow_dispatch:
     inputs:
       bump:
         description: "Version bump (none = re-release current manifest version)"
         required: true
-        default: "none"
+        default: "minor"
         type: choice
         options:
-          - none
           - minor
           - major
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
+          - none
 
 permissions:
   contents: write
+  # Reads CI's runs, to release only a commit CI passed.
+  actions: read
 
 concurrency:
   group: release-main
-  cancel-in-progress: true
+  # A second run waits for the first instead of cancelling it partway through a release.
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Bump manifest and publish release
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main'
-      )
     runs-on: ubuntu-latest
 
     steps:
@@ -44,43 +37,40 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Skip stale workflow runs
+      # Only a commit CI passed is released. A release commit skips CI and changes nothing but
+      # the version and the changelog, so for one of those the commit before it must have passed.
+      - name: Check main is ready to release
         id: head_check
         env:
-          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          BUMP_INPUT: ${{ inputs.bump || 'none' }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUMP_INPUT: ${{ inputs.bump }}
         run: |
-          current_sha="$(git rev-parse origin/main)"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$BUMP_INPUT" = "none" ]; then
-              echo "release_action=existing" >> "$GITHUB_OUTPUT"
-            else
-              echo "release_action=bump" >> "$GITHUB_OUTPUT"
-            fi
-            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$current_sha" = "$EXPECTED_SHA" ]; then
-            echo "release_action=bump" >> "$GITHUB_OUTPUT"
-            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          previous_sha="$(git rev-parse "$current_sha^")"
+          current_sha="$(git rev-parse HEAD)"
+          tested_sha="$current_sha"
           latest_subject="$(git log -1 --format=%s "$current_sha")"
-          if [ "$previous_sha" = "$EXPECTED_SHA" ] && [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]; then
-            echo "release_action=existing" >> "$GITHUB_OUTPUT"
-            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]; then
+            if [ "$BUMP_INPUT" != "none" ]; then
+              echo "::error::Nothing to release: main hasn't changed since \"$latest_subject\"."
+              exit 1
+            fi
+            tested_sha="$(git rev-parse "$current_sha^")"
           fi
 
-          echo "Skipping stale run for $EXPECTED_SHA because main is already at $current_sha."
-          echo "release_action=skip" >> "$GITHUB_OUTPUT"
+          passed="$(gh run list --workflow ci.yml --commit "$tested_sha" --status success --json databaseId --jq length)"
+          if [ "$passed" = "0" ]; then
+            echo "::error::CI hasn't passed on $tested_sha. Run the release again once it has."
+            exit 1
+          fi
+
+          if [ "$BUMP_INPUT" = "none" ]; then
+            echo "release_action=existing" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_action=bump" >> "$GITHUB_OUTPUT"
+          fi
+          echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
-        if: steps.head_check.outputs.release_action != 'skip'
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -89,7 +79,7 @@ jobs:
         if: steps.head_check.outputs.release_action == 'bump'
         id: bump
         env:
-          BUMP_TYPE: ${{ inputs.bump || 'minor' }}
+          BUMP_TYPE: ${{ inputs.bump }}
         run: |
           new_version="$(python .github/scripts/bump_manifest_version.py --bump "$BUMP_TYPE")"
           python .github/scripts/update_changelog.py "$new_version"
@@ -122,13 +112,11 @@ jobs:
       # out empty. Build the body ourselves: Highlights from CHANGELOG.md (rotated from its
       # Unreleased section during the bump) plus the commit list since the previous tag.
       - name: Generate release notes
-        if: steps.head_check.outputs.release_action != 'skip'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version || steps.current_version.outputs.new_version }}
         run: python .github/scripts/generate_release_notes.py "$NEW_VERSION" release_notes.md
 
       - name: Create GitHub release
-        if: steps.head_check.outputs.release_action != 'skip'
         uses: actions/github-script@v9
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version || steps.current_version.outputs.new_version }}

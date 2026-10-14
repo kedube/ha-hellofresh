@@ -44,9 +44,8 @@ def _bump_minor(version: str) -> str:
 def _bump_major(version: str) -> str:
     """Return the next major version with the minor reset to ``00``.
 
-    Used for deliberate breaking-change releases via the release workflow's
-    manual dispatch (``bump: major``); the automatic release-on-green path
-    always bumps minor.
+    Used for deliberate breaking-change releases (the release workflow's
+    ``bump: major``); a normal release bumps minor.
     """
     parts = version.split(".")
     if not parts or not parts[0].isdigit():
@@ -69,7 +68,7 @@ def main() -> int:
         "--bump",
         choices=("minor", "major"),
         default="minor",
-        help="Bump type: minor (default, the automatic release path) or major",
+        help="Bump type: minor (default, a normal release) or major",
     )
     args = parser.parse_args()
     manifest_path = args.manifest

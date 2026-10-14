@@ -153,4 +153,12 @@ class HelloFreshPanel extends HTMLElement {
   }
 }
 
-customElements.define("hellofresh-panel", HelloFreshPanel);
+// After an update Home Assistant loads the new release's panel (a new ?v=) into a page that may
+// already have the old one, and an element can only be defined once: defining it again threw
+// (#15). The old panel carries on until the page is reloaded.
+if (customElements.get("hellofresh-panel")) {
+  // eslint-disable-next-line no-console
+  console.info("hellofresh: this page already has the HelloFresh panel, so version", PANEL_VERSION, "takes over when the page is reloaded");
+} else {
+  customElements.define("hellofresh-panel", HelloFreshPanel);
+}

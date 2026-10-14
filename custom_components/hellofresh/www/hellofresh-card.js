@@ -1353,7 +1353,11 @@ class HelloFreshCard extends HTMLElement {
   }
 }
 
-customElements.define("hellofresh-card", HelloFreshCard);
+// A page can load the card from two addresses (a dashboard resource that isn't this release's, and
+// the sidebar panel's import), and an element can only be defined once (#15): the copy that came
+// first is kept until the page is reloaded.
+const DEFINED_BEFORE = Boolean(customElements.get("hellofresh-card"));
+if (!DEFINED_BEFORE) customElements.define("hellofresh-card", HelloFreshCard);
 
 // ---- visual config editor --------------------------------------------------------------------
 
@@ -1451,20 +1455,28 @@ class HelloFreshCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("hellofresh-card-editor", HelloFreshCardEditor);
+if (!customElements.get("hellofresh-card-editor")) {
+  customElements.define("hellofresh-card-editor", HelloFreshCardEditor);
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "hellofresh-card",
-  name: "HelloFresh",
-  description:
-    "Your whole HelloFresh account in one card: next box, menu and Market with one save, recipes, plan and spending.",
-  preview: false,
-  documentationURL: "https://github.com/kedube/ha-hellofresh",
-});
+if (!window.customCards.some((card) => card.type === "hellofresh-card")) {
+  window.customCards.push({
+    type: "hellofresh-card",
+    name: "HelloFresh",
+    description:
+      "Your whole HelloFresh account in one card: next box, menu and Market with one save, recipes, plan and spending.",
+    preview: false,
+    documentationURL: "https://github.com/kedube/ha-hellofresh",
+  });
+}
 
-console.info(
-  `%c HELLOFRESH-CARD %c v${CARD_VERSION} `,
-  "color:#fff;background:#91c11e;font-weight:700",
-  "color:#91c11e;background:#fff"
-);
+if (DEFINED_BEFORE) {
+  console.info("hellofresh: this page already has the HelloFresh card, so version", CARD_VERSION, "takes over when the page is reloaded");
+} else {
+  console.info(
+    `%c HELLOFRESH-CARD %c v${CARD_VERSION} `,
+    "color:#fff;background:#91c11e;font-weight:700",
+    "color:#91c11e;background:#fff"
+  );
+}

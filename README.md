@@ -481,7 +481,7 @@ It also includes:
 - a full [entity reference](docs/entities.md) under `docs/`
 - a documented [quality-scale target](QUALITY_SCALE.md)
 
-Version history: each push to `main` publishes a tagged release with generated notes — see the [Releases page](https://github.com/kedube/ha-hellofresh/releases). The installed version appears in `manifest.json`, under **Settings → Devices & services → HelloFresh**, and stamped as `?v=` on the card resource URLs (see [Diagnostics](#diagnostics)).
+Version history: each release is tagged and published with generated notes — see the [Releases page](https://github.com/kedube/ha-hellofresh/releases). The installed version appears in `manifest.json`, under **Settings → Devices & services → HelloFresh**, and stamped as `?v=` on the card resource URLs (see [Diagnostics](#diagnostics)).
 
 ## References
 

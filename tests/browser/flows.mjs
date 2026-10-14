@@ -609,6 +609,52 @@ await check("sidebar panel: hosts the card, pins its account, and on a phone ope
   await page.close();
 });
 
+// #15: after an update Home Assistant loads the new release's panel (a new ?v=) into a page that
+// already has the old one, and a page can load the card from a second address. Neither may throw:
+// the copy that came first carries on until a reload.
+await check("sidebar panel: a second copy of the panel or card loads without an error", async () => {
+  const page = await open({ panel: "1" });
+  const notes = [];
+  page.on("console", (msg) => msg.type() === "info" && notes.push(msg.text()));
+  const seen = errors.length;
+  const outcome = await page.evaluate(async () => {
+    const names = ["hellofresh-panel", "hellofresh-card", "hellofresh-card-editor"];
+    const before = names.map((name) => customElements.get(name));
+    // Home Assistant's loadModule(url), as for a panel's module_url or a dashboard resource.
+    for (const src of ["/hellofresh/hellofresh-panel.js?v=next", "/hellofresh/hellofresh-card.js?v=next"]) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.type = "module";
+        script.onload = resolve;
+        script.onerror = reject;
+        script.src = src;
+        document.body.appendChild(script);
+      });
+    }
+    // Then the element Home Assistant creates for the updated panel.
+    const panel = document.createElement("hellofresh-panel");
+    panel.panel = window.__panel.panel;
+    panel.hass = window.__hass;
+    document.getElementById("main").replaceChildren(panel);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      kept: names.every((name, i) => before[i] && customElements.get(name) === before[i]),
+      pickerEntries: window.customCards.filter((card) => card.type === "hellofresh-card").length,
+      mounted: Boolean(panel.shadowRoot.querySelector("hellofresh-card")),
+    };
+  });
+  await sleep(200);
+  assert(errors.length === seen, errors.slice(seen).join("; "));
+  assert(outcome.kept, "the panel, card and editor defined first stay");
+  assert(outcome.pickerEntries === 1, `card picker entries: ${outcome.pickerEntries}`);
+  assert(outcome.mounted, "the new panel element mounts the card");
+  for (const what of ["panel", "card"]) {
+    const noted = notes.some((note) => note.includes(`HelloFresh ${what}, so version next takes over`));
+    assert(noted, `no reload note for the ${what}: ${JSON.stringify(notes)}`);
+  }
+  await page.close();
+});
+
 await check("live tracking (NL): the next box shows the van, ETA, stops and driver, and follows the sensors", async () => {
   const page = await open({ view: "overview", scenario: "live" });
   const live = await page.evaluate(() => {

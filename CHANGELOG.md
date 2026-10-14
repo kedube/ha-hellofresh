@@ -5,6 +5,16 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **No error after updating with Home Assistant open** ([#15](https://github.com/kedube/ha-hellofresh/issues/15)).
+  Updating the integration and restarting Home Assistant while a browser tab had used the
+  HelloFresh sidebar logged "the name "hellofresh-panel" has already been used with this
+  registry". That tab now keeps the version it started with, without the error, until the page is
+  reloaded. The card is guarded the same way, for a page that loads it from two addresses.
+- **Fewer, larger releases.** Every change pushed to `main` used to go out as its own release,
+  sometimes several a day. Releases are now published by hand, only from a commit that passed
+  CI, so changes collect into one release.
+
 ## 4.14 — 2026-10-14
 - **Exact box prices.** HelloFresh refused the exact price check for every week, so box totals
   still came from a rougher estimate without premium surcharges or Market extras, and the
