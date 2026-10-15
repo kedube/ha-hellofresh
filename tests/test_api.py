@@ -11926,6 +11926,50 @@ def test_menu_availability_never_clears_the_customers_own_sold_out_flag() -> Non
     assert recipe.is_sold_out is True
 
 
+def test_a_meal_already_in_the_box_is_never_sold_out() -> None:
+    """A meal the customer has chosen stays theirs once it sells out.
+
+    HelloFresh holds it for them, and its website shows it as usual. Sold out means a meal
+    can't be added, so a chosen meal must not carry the flag, whether it came from the
+    regional catalog or from the customer's own menu (``meals[].isSoldOut``).
+    """
+    chosen = HelloFreshRecipe(recipe_id="r-1", name="In the box", course_index=1, is_selected=True)
+    flagged = HelloFreshRecipe(
+        recipe_id="r-2",
+        name="Flagged, in the box",
+        course_index=2,
+        is_selected=True,
+        is_sold_out=True,
+    )
+    other = HelloFreshRecipe(recipe_id="r-3", name="Not chosen", course_index=3)
+    week = _editable_week(recipes=[chosen, flagged, other])
+    payload = _menus_service_payload(
+        "2026-W39",
+        [
+            {
+                "id": "c1",
+                "isSoldOut": True,
+                "isHidden": True,
+                "recipe": {"id": "r-1", "name": "In the box"},
+            },
+            {"id": "c3", "isSoldOut": True, "recipe": {"id": "r-3", "name": "Not chosen"}},
+        ],
+    )
+    client = _availability_client(payload)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(
+        client._async_apply_menu_availability(
+            subscriptions=[HelloFreshSubscription(subscription_id="sub-1")], weeks=[week]
+        )
+    )
+
+    assert (chosen.is_sold_out, chosen.is_hidden) == (False, False)  # flagged by the catalog
+    assert flagged.is_sold_out is False  # flagged by the customer's menu, absent from the catalog
+    assert other.is_sold_out is True
+
+
 def test_menu_availability_preserves_the_primary_endpoints_fields() -> None:
     """The overlay must touch ONLY availability — never swap the recipe list wholesale.
 
@@ -11940,10 +11984,14 @@ def test_menu_availability_preserves_the_primary_endpoints_fields() -> None:
         is_selected=True,
         delivered_count=2,
     )
-    week = _editable_week(recipes=[recipe])
+    other = HelloFreshRecipe(recipe_id="r-2", name="Pork Tacos", course_index=2, price_cents=1199)
+    week = _editable_week(recipes=[recipe, other])
     payload = _menus_service_payload(
         "2026-W39",
-        [{"id": "c1", "isSoldOut": True, "recipe": {"id": "r-1", "name": "Different Name"}}],
+        [
+            {"id": "c1", "isSoldOut": True, "recipe": {"id": "r-1", "name": "Different Name"}},
+            {"id": "c2", "isSoldOut": True, "recipe": {"id": "r-2", "name": "Another Name"}},
+        ],
     )
     client = _availability_client(payload)
 
@@ -11955,8 +12003,12 @@ def test_menu_availability_preserves_the_primary_endpoints_fields() -> None:
         )
     )
 
-    assert week.recipes[0] is recipe
-    assert recipe.is_sold_out is True
+    assert week.recipes == [recipe, other]
+    assert other.is_sold_out is True
+    assert (other.name, other.price_cents) == ("Pork Tacos", 1199)
+    # The chosen meal keeps everything the primary endpoint gave it, and, being in the box,
+    # no sold-out flag.
+    assert recipe.is_sold_out is False
     assert recipe.name == "Cajun Garlic Shrimp"
     assert recipe.price_cents == 1798
     assert recipe.delivered_count == 2

@@ -304,7 +304,8 @@ class HelloFreshRecipe:
     # alongside it — the website drops such meals from the grid rather than showing them
     # greyed out. Surfaced rather than silently dropped so a card can explain why a meal it
     # previously showed has gone, and so a selection write can refuse it up front instead of
-    # being rejected by the server.
+    # being rejected by the server. Neither flag is set on a meal already in the customer's
+    # box, which HelloFresh holds for them.
     is_sold_out: bool = False
     is_hidden: bool = False
     # Actual per-serving price of the meal, from the delivery menu's `itemPrice` (distinct

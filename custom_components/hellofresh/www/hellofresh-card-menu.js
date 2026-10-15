@@ -175,12 +175,13 @@ export class BoxStore {
     return true;
   }
 
-  // Market stepper, clamped to the item's cap; a sold-out item can only go down.
+  // Market stepper, clamped to the item's cap. A sold-out item can't go above what the saved box
+  // holds (HelloFresh keeps that for the customer): an unsaved removal can be put back, no more.
   changeMarket(week, item, delta) {
     if (!this.canEdit(week)) return false;
-    if (delta > 0 && item.is_sold_out === true) return false;
     const pending = this._pendingMarket(week);
     const current = pending.get(item.item_id) || 0;
+    if (delta > 0 && item.is_sold_out === true && current >= L.marketItemQuantity(item)) return false;
     const next = Math.max(0, Math.min(L.marketCap(item), current + delta));
     if (next === current) return false;
     if (next === 0) pending.delete(item.item_id);
@@ -881,7 +882,9 @@ export class MealsView {
     const key = esc(String(L.selKey(r)));
     const selected = ctx.sel(r);
     const qty = selected ? L.tileQuantity(ctx.selection, r) : 0;
-    const soldOut = r.is_sold_out === true && ctx.showSoldOut;
+    // A meal already in the saved box stays the customer's once it sells out (HelloFresh holds
+    // it, and its website shows it as usual), so it gets no ribbon.
+    const soldOut = r.is_sold_out === true && ctx.showSoldOut && !L.isRecipeSelected(r);
     const img = L.resizedImage(r.image_url, ctx.imageWidth);
     const video = L.safeMediaUrl(r.video_url);
     const meta = [];
@@ -1040,7 +1043,7 @@ export class MealsView {
       .map((m) => {
         const key = String(L.selKey(m));
         const on = key === state.choice;
-        const soldOut = m.is_sold_out === true && L.isWeekEditable(week);
+        const soldOut = m.is_sold_out === true && L.isWeekEditable(week) && !L.isRecipeSelected(m);
         // Another tile already holds this option (two versions of the dish in one box).
         const taken = m !== current && L.tileSelected(selection, m);
         const note = soldOut ? t("menu.sold_out") : taken ? t("customize.taken") : "";
@@ -1339,18 +1342,22 @@ export class MarketView {
 
   _tile(item, qty, editable, currency, past) {
     const id = esc(String(item.item_id));
-    const soldOut = item.is_sold_out === true;
+    // Sold out stops adding, but what the saved box holds stays the customer's: it can be put
+    // back after an unsaved removal (changeMarket), and it shows no ribbon or greyed photo.
+    const saved = L.marketItemQuantity(item);
+    const noMore = item.is_sold_out === true && qty >= saved;
+    const soldOut = item.is_sold_out === true && saved === 0;
     const img = L.resizedImage(item.image_url, this.card.config.image_width);
     const cap = L.marketCap(item);
     let control = "";
     if (editable && qty === 0) {
-      control = `<button class="hf-add" data-action="market-qty" data-delta="1" data-id="${id}" ${soldOut ? "disabled" : ""}
+      control = `<button class="hf-add" data-action="market-qty" data-delta="1" data-id="${id}" ${noMore ? "disabled" : ""}
         aria-label="${ht("market.add_aria", { name: item.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
     } else if (editable) {
       control = `<span class="hf-stepper wide" role="group" aria-label="${ht("market.quantity_of", { name: item.name })}">
           <button data-action="market-qty" data-delta="-1" data-id="${id}" aria-label="${ht(qty === 1 ? "market.remove" : "common.fewer")}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
           <span class="hf-qty">${qty} <span class="hf-unit">${ht("market.in_box_unit")}</span></span>
-          <button data-action="market-qty" data-delta="1" data-id="${id}" aria-label="${ht("common.more")}" ${qty >= cap || soldOut ? "disabled" : ""}>${icon("mdi:plus")}</button>
+          <button data-action="market-qty" data-delta="1" data-id="${id}" aria-label="${ht("common.more")}" ${qty >= cap || noMore ? "disabled" : ""}>${icon("mdi:plus")}</button>
         </span>`;
     } else if (qty > 0) {
       control = `<span class="hf-ordered">${icon("mdi:check")} ${past ? ht("market.ordered", { count: qty }) : `${ht("menu.in_box")}${qty > 1 ? ` · ${qty}×` : ""}`}</span>`;

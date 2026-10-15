@@ -257,6 +257,33 @@ await check("week strip: a page of weeks; choosing one keeps it still; the arrow
   }
 });
 
+// A meal already in the saved box stays the customer's once it sells out (HelloFresh holds it,
+// and its website shows it as usual), so it gets no "Sold out" ribbon; a meal outside the box does.
+await check("a meal in the box never shows as sold out", async () => {
+  const page = await open({ view: "menu" });
+  const state = await page.evaluate(() => {
+    const card = window.__card;
+    const root = card.shadowRoot;
+    const week = card.selectedWeek();
+    const keyOf = (r) => String(r.course_index != null ? r.course_index : r.recipe_id);
+    const recipeOf = (tile) => week.recipes.find((r) => keyOf(r) === tile.getAttribute("data-key"));
+    const inBox = recipeOf(root.querySelector('.hf-tile.selected[data-action="open-recipe"]'));
+    const outside = recipeOf(root.querySelector('.hf-tile:not(.selected):not(.soldout)[data-action="open-recipe"]'));
+    inBox.is_sold_out = true;
+    outside.is_sold_out = true;
+    card.renderView();
+    const look = (r) => {
+      const tile = root.querySelector(`.hf-tile[data-action="open-recipe"][data-key="${keyOf(r)}"]`);
+      return { greyed: tile.classList.contains("soldout"), ribbon: Boolean(tile.querySelector(".hf-soldout")) };
+    };
+    return { saved: inBox.is_selected === true, inBox: look(inBox), outside: look(outside) };
+  });
+  assert(state.saved, "the meal picked is in the saved box");
+  assert(!state.inBox.greyed && !state.inBox.ribbon, `meal in the box: ${JSON.stringify(state.inBox)}`);
+  assert(state.outside.greyed && state.outside.ribbon, `meal outside the box: ${JSON.stringify(state.outside)}`);
+  await page.close();
+});
+
 await check("skip asks first, then skips; unskip is immediate", async () => {
   const page = await open({ view: "overview" });
   await click(page, '.hf-hero [data-action="skip"]', 300);

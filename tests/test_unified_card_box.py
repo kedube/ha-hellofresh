@@ -176,6 +176,24 @@ def test_steppers_clamp_and_sold_out_items_only_go_down() -> None:
     assert _run(body) == [4, 2, False]
 
 
+def test_a_sold_out_extra_in_the_saved_box_can_be_put_back_but_not_added_to() -> None:
+    """HelloFresh keeps a sold-out add-on the saved box already holds for the customer.
+
+    So taking it out without saving and putting it back works, but going above the saved
+    quantity doesn't.
+    """
+    body = """
+      const week = makeWeek();
+      week.market_items[0].is_sold_out = true;  // Bread: 1 in the saved box, max 2
+      const box = new M.BoxStore(makeCard([week]));
+      const out = box.changeMarket(week, week.market_items[0], -1);
+      const back = box.changeMarket(week, week.market_items[0], 1);
+      const more = box.changeMarket(week, week.market_items[0], 1);
+      return [out, back, more, box.displayMarket(week).get("m1")];
+    """
+    assert _run(body) == [True, True, False, 1]
+
+
 def test_a_locked_week_or_a_busy_card_takes_no_edits() -> None:
     body = """
       const locked = makeWeek({ allowed_actions: { mealSwap: false } });

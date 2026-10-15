@@ -4147,6 +4147,13 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
         for week in weeks:
             delivered = week.delivery_date is not None and week.delivery_date < today
             if week.is_editable and not delivered:
+                # A meal already in the box stays the customer's once it sells out: HelloFresh
+                # holds it for them and its website shows it as usual. Sold out (and hidden)
+                # means it can't be added, so neither the customer's menu nor the catalog may
+                # flag it.
+                for recipe in week.recipes:
+                    if recipe.is_selected:
+                        recipe.is_sold_out = recipe.is_hidden = False
                 if week.week_id and week.recipes:
                     editable_weeks.append(week)
                 continue
@@ -4202,9 +4209,11 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     # payloads can disagree on membership. Leave the recipe untouched.
                     continue
                 # The customer's own menu can flag `meals[].isSoldOut` (HelloFresh's Android
-                # app models and enforces it); the regional catalog must not clear that.
-                sold_out, recipe.is_hidden = flags
-                recipe.is_sold_out = recipe.is_sold_out or sold_out
+                # app models and enforces it); the regional catalog must not clear that. Nor
+                # flag a meal the customer already has (see above).
+                sold_out, hidden = flags
+                recipe.is_sold_out = not recipe.is_selected and (recipe.is_sold_out or sold_out)
+                recipe.is_hidden = not recipe.is_selected and hidden
                 if recipe.is_sold_out:
                     marked += 1
 
