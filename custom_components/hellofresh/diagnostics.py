@@ -29,6 +29,11 @@ TO_REDACT = {
     "delivery_address",
     "tracking_number",
     "tracking_url",
+    # HelloFresh order numbers (9 digits once an order is placed; the week id before that).
+    # week_id beside them keeps the order-to-week mapping readable.
+    "order_id",
+    "orderId",
+    "recent_order_id",
     # PII / stable account identifiers that leak through debug_trace request params
     # (menu_attempts / history_attempts record the full query params). These are not in the
     # serialized models but ride along in the captured params, so redact them by key name.
@@ -70,9 +75,15 @@ TO_REDACT = {
     "payment_gateway",
     "paymentGateway",
     # The card's last four digits (binary_sensor attribute / account summary) are fine on a
-    # private dashboard but have no place in a shared export.
+    # private dashboard but have no place in a shared export. Same for the brand and expiry,
+    # which payment_attempts records as card_brand / card_expiry; the is_token_expiring /
+    # is_token_expired flags beside them already carry the diagnostic signal.
     "payment_card_last4",
     "card_last4",
+    "payment_card_brand",
+    "card_brand",
+    "payment_card_expiry",
+    "card_expiry",
     # Defensive: street/region fields if a raw address ever rides along in a param or payload.
     "region",
     "address1",

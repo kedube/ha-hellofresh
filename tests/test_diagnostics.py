@@ -193,6 +193,49 @@ def test_payment_descriptors_redacted() -> None:
     assert redacted["paymentGateway"] == "**REDACTED**"
 
 
+def test_payment_card_details_redacted() -> None:
+    """Card brand and expiry from the payment trace never reach a shared export."""
+    diagnostics = {
+        "debug_trace": {
+            "payment_attempts": [
+                {
+                    "path": "/gw/payments/v1/checktokenstatus",
+                    "status": 200,
+                    "is_token_expiring": False,
+                    "is_token_expired": False,
+                    "card_type": "credit_card",
+                    "card_brand": "mastercard",
+                    "card_expiry": "2031-08",
+                }
+            ]
+        },
+        "account": {"payment_card_brand": "mastercard", "payment_card_expiry": "2031-08"},
+    }
+
+    redacted = _redact(diagnostics)
+    attempt = redacted["debug_trace"]["payment_attempts"][0]
+    assert attempt["card_brand"] == "**REDACTED**"
+    assert attempt["card_expiry"] == "**REDACTED**"
+    assert redacted["account"]["payment_card_brand"] == "**REDACTED**"
+    assert redacted["account"]["payment_card_expiry"] == "**REDACTED**"
+    # The health flags and generic token type stay: they are what diagnoses a card problem.
+    assert attempt["is_token_expiring"] is False
+    assert attempt["card_type"] == "credit_card"
+
+
+def test_order_numbers_redacted() -> None:
+    """Real order numbers never reach a shared export; the week each belongs to does."""
+    diagnostics = {
+        "orders": [{"order_id": "100000001", "week_id": "2026-W40", "status": "DELIVERED"}],
+        "account": {"recent_order_id": "100000002"},
+    }
+
+    redacted = _redact(diagnostics)
+    assert redacted["orders"][0]["order_id"] == "**REDACTED**"
+    assert redacted["orders"][0]["week_id"] == "2026-W40"
+    assert redacted["account"]["recent_order_id"] == "**REDACTED**"
+
+
 def test_proof_of_delivery_redacted() -> None:
     """A photo of the customer's door and the signer's name never reach a shared export."""
     diagnostics = {
