@@ -639,7 +639,10 @@ export function nextBoxDiscount(account) {
   const breakdown = account && account.next_delivery_price_breakdown;
   const amount = breakdown ? Number(breakdown.discount_amount) : NaN;
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  return fmtPrice(amount, account.next_delivery_total_currency);
+  const currency = account.next_delivery_total_currency
+    || account.selected_plan_total_price_currency
+    || (account.next_box_discount && account.next_box_discount.currency);
+  return fmtPrice(amount, currency);
 }
 
 // Normalize HelloFresh's surcharge label ("+7.99/serving", "+7,99/portion") to "+$7.99" in the

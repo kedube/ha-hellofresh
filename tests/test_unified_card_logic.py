@@ -320,6 +320,27 @@ def test_prices_counts_and_vouchers() -> None:
     }
 
 
+def test_next_box_discount_uses_account_currency_when_delivery_total_has_none() -> None:
+    amounts = _run("""
+      const account = {
+        next_delivery_price_breakdown: { discount_amount: 239 },
+        next_delivery_total_currency: null,
+        selected_plan_total_price_currency: "DKK",
+        next_box_discount: { currency: "DKK" },
+      };
+      return [
+        L.nextBoxDiscount(account),
+        L.nextBoxDiscount({ ...account, next_delivery_total_currency: "EUR" }),
+        L.nextBoxDiscount({ ...account, selected_plan_total_price_currency: null }),
+        L.nextBoxDiscount({ ...account, next_delivery_price_breakdown: { discount_amount: 0 } }),
+      ];
+    """)
+    assert "DKK" in amounts[0]
+    assert "€" in amounts[1]
+    assert "DKK" in amounts[2]
+    assert amounts[3] is None
+
+
 def test_dense_months() -> None:
     """Twelve months ending at the latest, gaps filled with empty months, junk dropped."""
     body = """

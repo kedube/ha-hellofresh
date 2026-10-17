@@ -1496,6 +1496,17 @@ class HelloFreshPayloadNormalizer:
                 raw_subscription, ("status", "subscriptionStatus", "state")
             )
         )
+        if isinstance(explicit, list):
+            # Some regions return a status history instead of a single status. The final
+            # nonempty entry is the one to show, rather than the Python repr of the list.
+            explicit = next(
+                (
+                    status.strip()
+                    for status in reversed(explicit)
+                    if isinstance(status, str) and status.strip()
+                ),
+                None,
+            )
         if explicit:
             return str(explicit)
 

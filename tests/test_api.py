@@ -8965,6 +8965,16 @@ def test_subscription_status_derived_from_real_payload_fields() -> None:
     )
     # An explicit status field (other regions / future drift) still wins.
     assert _status_for({"id": "s", "status": "ACTIVE", "isActive": False}) == "ACTIVE"
+    # Some markets report a status history: use its latest nonempty value, which the
+    # subscription sensor then presents as a single readable state.
+    raw = {"id": "s", "status": ["ec cancelled", "new", " "]}
+    status = _status_for(raw)
+    assert status == "new"
+    data = HelloFreshAccountData(
+        subscriptions=[HelloFreshSubscription(subscription_id="s", status=status)]
+    ).finalize()
+    assert sensor_native_value("subscription_status", data, "https://example") == "New"
+    assert _status_for({"id": "s", "status": [" ", None], "isActive": True}) == "active"
     # Nothing usable -> None (sensor shows Unknown, as before).
     assert _status_for({"id": "s"}) is None
 
