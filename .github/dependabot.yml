@@ -24,9 +24,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
-    labels:
-      - "dependencies"
-      - "github-actions"
     groups:
       # One PR for the routine first-party bumps instead of four; they land together and are
       # verified by the same CI run.
