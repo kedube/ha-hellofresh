@@ -163,14 +163,17 @@ class HelloFreshPayloadNormalizer:
         ``state="UNKNOWN"``, ``status`` still ``RUNNING`` and no tracking (capture 62, W35-W37),
         which says nothing. Their ``subStatus`` is still ``RATING``, a phase after delivery, so
         such a week is delivered, as the website shows it.
+
+        A live ``state`` still outranks that ``subStatus``: ``COOK_IT`` can come on the morning
+        of delivery day, before the box arrives (issue #18).
         """
-        sub_status = str(raw_week.get("subStatus") or "").strip().upper()
-        if sub_status in cls._DELIVERED_SUB_STATUSES and not cls._raw_week_is_skipped(raw_week):
-            return "DELIVERED"
         state = raw_week.get("state")
         state_key = state.strip().upper() if isinstance(state, str) else ""
         if state_key and state_key not in ("DELIVERED", "UNKNOWN"):
             return state
+        sub_status = str(raw_week.get("subStatus") or "").strip().upper()
+        if sub_status in cls._DELIVERED_SUB_STATUSES and not cls._raw_week_is_skipped(raw_week):
+            return "DELIVERED"
         status = raw_week.get("status") or raw_week.get("deliveryStatus")
         return status or (state if state_key not in ("", "UNKNOWN") else "scheduled")
 

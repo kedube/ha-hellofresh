@@ -410,6 +410,9 @@ Notes:
 - HelloFresh keeps a box's progress for about five weeks. Older weeks come back with
   `state: "UNKNOWN"`, `status` still `RUNNING` and no `tracking`, but keep `subStatus: "RATING"`
   and their `orderId`. The website shows them as delivered. `RATING` and `COOK_IT` follow delivery.
+- A week can read delivered too early. A UK week read delivered at 08:40 on delivery day while DPD
+  still had the box out for delivery, its `tracking.delivery_date` still the noon placeholder
+  (issue #18). Which field ran ahead isn't known yet, so the carrier's status overrules the week.
 - Writes send the week's own `deliveryDate`, not `holidayDelivery` (app).
 
 A `tracking` node:

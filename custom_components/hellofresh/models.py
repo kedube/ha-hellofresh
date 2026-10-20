@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from html.parser import HTMLParser
 import re
 from typing import Any
@@ -1637,6 +1637,10 @@ class HelloFreshFoodProfile:
         return {}
 
 
+# The carrier's coarse statuses for a box that has not reached the door yet.
+_CARRIER_EN_ROUTE_STATUSES = frozenset({"pre_transit", "in_transit", "out_for_delivery"})
+
+
 def _tracked_order_sort_key(
     order: HelloFreshOrder,
 ) -> tuple[bool, bool, bool, bool, bool, date]:
@@ -1920,8 +1924,59 @@ class HelloFreshAccountData:
             return None
         return max(candidates, key=_tracked_order_sort_key)
 
+    def reconcile_premature_deliveries(self) -> None:
+        """Take "delivered" back from a box that has not arrived yet.
+
+        On delivery day HelloFresh can call a week DELIVERED before the box comes, while its
+        ``tracking.delivery_date`` is still the scheduled-noon placeholder: a UK box out for
+        delivery at 08:40 read "Delivered 13:00" (issue #18). Such a week and its order go back
+        to the box's progress when the carrier says it is still coming, or when the arrival
+        time is in the future. The carrier has that say until the day after the delivery day,
+        so one that never posts its last scan can't hold a box back for good.
+        """
+        now = datetime.now(UTC)
+        earliest = date.today() - timedelta(days=1)
+        for week in self.weeks:
+            delivered_at = week.delivered_at
+            if delivered_at is None and (week.status or "").strip().upper() != "DELIVERED":
+                continue
+            orders = [
+                order
+                for order in self.orders
+                if order.week_id == week.week_id
+                and (
+                    order.subscription_id is None
+                    or week.subscription_id is None
+                    or order.subscription_id == week.subscription_id
+                )
+            ]
+            tracked = max(orders, key=_tracked_order_sort_key, default=None)
+            carrier = (tracked.tracking_status or "").strip().lower() if tracked else ""
+            if carrier == "delivered":
+                continue
+            en_route = (
+                carrier in _CARRIER_EN_ROUTE_STATUSES
+                and week.delivery_date is not None
+                and week.delivery_date >= earliest
+            )
+            # A carrier timestamp without an offset is UTC.
+            arrives_later = (
+                delivered_at is not None
+                and (delivered_at if delivered_at.tzinfo else delivered_at.replace(tzinfo=UTC))
+                > now
+            )
+            if not (en_route or arrives_later):
+                continue
+            progress = "PREPARING" if carrier == "pre_transit" else "ON_THE_WAY"
+            week.delivered_at = None
+            week.status = progress
+            for order in orders:
+                if (order.status or "").strip().upper() == "DELIVERED":
+                    order.status = progress
+
     def finalize(self) -> HelloFreshAccountData:
         """Populate serialized views used by entities and diagnostics."""
+        self.reconcile_premature_deliveries()
         self.orders.sort(key=lambda order: order.delivery_date or date.max)
         self.weeks.sort(
             key=lambda week: (

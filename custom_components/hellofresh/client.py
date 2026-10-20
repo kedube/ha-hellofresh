@@ -550,17 +550,26 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
             for order in orders:
                 fresh_orders[order.order_id] = order
 
-        changed = False
         week_fields = ("status", "is_skipped", "delivered_at", "delivery_state", "sub_status")
+        order_fields = ("status", "tracking_url", "tracking_number", "tracking_status", "carrier")
+
+        def _state() -> list[tuple[Any, ...]]:
+            return [
+                *(tuple(getattr(week, name) for name in week_fields) for week in data.weeks),
+                *(
+                    (*(getattr(order, name) for name in order_fields), order.estimated_delivery)
+                    for order in data.orders
+                ),
+            ]
+
+        before = _state()
+        changed = False
         for week in data.weeks:
             fresh = fresh_weeks.get((week.week_id, week.subscription_id))
             if fresh is None:
                 continue
             for name in week_fields:
-                value = getattr(fresh, name)
-                if value != getattr(week, name):
-                    setattr(week, name, value)
-                    changed = True
+                setattr(week, name, getattr(fresh, name))
             # The cards read the carrier node straight off the raw week; keep it current.
             if isinstance(week.raw, dict) and isinstance(fresh.raw, dict):
                 tracking = fresh.raw.get("tracking")
@@ -568,32 +577,20 @@ class HelloFreshClient(FavoritesClientMixin, PricingClientMixin, HelloFreshPaylo
                     week.raw["tracking"] = tracking
                     changed = True
 
-        order_fields = ("status", "tracking_url", "tracking_number", "tracking_status", "carrier")
         for order in data.orders:
             fresh_order = fresh_orders.get(order.order_id)
             if fresh_order is None:
                 continue
             for name in order_fields:
                 value = getattr(fresh_order, name)
-                if value is not None and value != getattr(order, name):
+                if value is not None:
                     setattr(order, name, value)
-                    changed = True
 
-        def _tracking_state() -> list[tuple[Any, ...]]:
-            return [
-                (
-                    order.order_id,
-                    order.tracking_status,
-                    order.carrier,
-                    order.tracking_number,
-                    order.estimated_delivery,
-                )
-                for order in data.orders
-            ]
-
-        before = _tracking_state()
         await self._async_enrich_order_tracking(data.subscriptions, data.orders)
-        if _tracking_state() != before:
+        # Compared only after this: a box HelloFresh calls delivered too early comes back
+        # DELIVERED from every re-read, which must not count as a change each time.
+        data.reconcile_premature_deliveries()
+        if _state() != before:
             changed = True
 
         if changed:

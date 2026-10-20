@@ -144,7 +144,7 @@ A few conventions used in the tables:
 | `event_type` | Fires when | Extra attributes |
 | --- | --- | --- |
 | `box_shipped` | A week's lifecycle state turns to on-the-way, or its carrier status becomes in transit / out for delivery | `tracking_status`, `carrier`, `tracking_number`, `tracking_url`, `estimated_delivery` |
-| `box_delivered` | The carrier reports the box delivered (`tracking.delivery_date` appears, or the state turns `DELIVERED`) | `delivered_at`, `carrier` |
+| `box_delivered` | The box arrives: the state turns `DELIVERED` (or `tracking.delivery_date` appears) and the carrier no longer has it on the road | `delivered_at`, `carrier` |
 | `delivery_failed` | The week's state turns `FAILED` | |
 | `week_skipped` / `week_unskipped` | A week is skipped, or restored | |
 | `selection_locked` | A week you could still edit passes its cutoff | |
