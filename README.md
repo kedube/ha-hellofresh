@@ -1,6 +1,6 @@
 # (Unofficial) HelloFresh Integration for Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-hellofresh&category=integration)
 [![GitHub Release](https://img.shields.io/github/v/release/kedube/ha-hellofresh?sort=semver)](https://github.com/kedube/ha-hellofresh/releases)
 [![CI](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml/badge.svg)](https://github.com/kedube/ha-hellofresh/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/kedube/ha-hellofresh)](LICENSE)
@@ -98,14 +98,15 @@ calendars, pantry to-do lists and **29 services** for your own automations.
 >
 > - Home Assistant Core with support for config flows, diagnostics, and custom integrations
 
-### Method 1: HACS custom repository
+### Method 1: HACS (recommended)
 
-1. In Home Assistant, open **HACS**.
-2. Open the menu in the top-right corner (**⋮**) and select **Custom repositories**.
-3. Paste this repository's URL: `https://github.com/kedube/ha-hellofresh`
-4. Set the category to **Integration** and click **Add**.
-5. Search for **HelloFresh** in HACS, open it, and click **Download**.
-6. Restart Home Assistant.
+HelloFresh is in the HACS default store, so there is no repository to add.
+
+[![Open your Home Assistant instance and open the HelloFresh repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-hellofresh&category=integration)
+
+1. In Home Assistant, open **HACS**, or use the button above to go straight to HelloFresh.
+2. Search for **HelloFresh**, open it, and click **Download**.
+3. Restart Home Assistant.
 
 After restart, add the integration from Home Assistant:
 
@@ -114,7 +115,22 @@ After restart, add the integration from Home Assistant:
 Once your account is connected, **HelloFresh** appears in the sidebar (see
 [The HelloFresh card](#the-hellofresh-card)).
 
-### Method 2: Manual installation
+If you added this repository to HACS by hand before it was in the default store, you don't need
+to change anything. HACS keeps tracking the same repository and its updates.
+
+### Method 2: HACS custom repository
+
+If HelloFresh doesn't come up in a HACS search, for example because your HACS hasn't refreshed its
+list of default repositories yet, add the repository by hand:
+
+1. In Home Assistant, open **HACS**.
+2. Open the menu in the top-right corner (**⋮**) and select **Custom repositories**.
+3. Paste this repository's URL: `https://github.com/kedube/ha-hellofresh`
+4. Set the category to **Integration** and click **Add**.
+5. Search for **HelloFresh** in HACS, open it, and click **Download**.
+6. Restart Home Assistant, then add the integration as in Method 1.
+
+### Method 3: Manual installation
 
 1. Copy `custom_components/hellofresh` into your Home Assistant `config/custom_components` directory.
 2. Restart Home Assistant.
