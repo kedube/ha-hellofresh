@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.22 — 2026-10-20
 - **Boxes don't show as delivered before they arrive.** On delivery day HelloFresh can mark a
   box delivered while the carrier still has it out for delivery, and the card then showed
   "Delivered" with the scheduled time (issue #18). The `box_delivered` event fired early too,
