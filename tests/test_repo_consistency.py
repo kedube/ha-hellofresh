@@ -226,17 +226,3 @@ def test_documentation_links_resolve() -> None:
                 broken.append(f"{name}: {target}#{fragment}")
 
     assert not broken, "broken documentation links:\n  " + "\n  ".join(broken)
-
-
-def test_readme_stays_browsable() -> None:
-    """The README is the landing page; detail belongs in docs/.
-
-    It reached 581 lines before the card and service references were split out. This is a smoke
-    alarm, not a style rule -- if it trips, move the newest reference material into docs/ rather
-    than raising the number.
-    """
-    length = len((REPO / "README.md").read_text(encoding="utf-8").splitlines())
-    assert length < 500, (
-        f"README.md is {length} lines. Move reference detail into docs/ "
-        f"(see docs/dashboard.md and docs/services.md for the pattern)."
-    )

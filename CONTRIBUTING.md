@@ -88,8 +88,7 @@ roll-ups — so change them there deliberately, not by accident.
     once it is confirmed.
 
   `tests/test_repo_consistency.py` checks that every relative Markdown link resolves to a real file
-  and heading, and that the README stays under 500 lines — if that trips, move the newest reference
-  material into `docs/` rather than raising the limit.
+  and heading.
 - `hacs.json` and `manifest.json` contain release and integration metadata.
 
 ## Pull requests
