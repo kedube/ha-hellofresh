@@ -661,6 +661,28 @@ def test_entities_are_found_by_translation_key_and_account() -> None:
     assert _run(body) == ["todo.home_prep_list", "todo.cabin_prep_list", None, None, None]
 
 
+def test_entities_are_found_by_the_device_config_entry_id() -> None:
+    """Home Assistant 2026.8 gave devices a single config_entry_id and deprecated the
+    config_entries list, which a later release drops; either shape finds the account."""
+    body = """
+      const entities = {
+        "todo.home_prep_list": { entity_id: "todo.home_prep_list", platform: "hellofresh", translation_key: "prep_list", device_id: "d1" },
+        "todo.cabin_prep_list": { entity_id: "todo.cabin_prep_list", platform: "hellofresh", translation_key: "prep_list", device_id: "d2" },
+      };
+      const current = { entities, devices: {
+        d1: { config_entry_id: "entry-home", config_entries: ["entry-home"] },
+        d2: { config_entry_id: "entry-cabin", config_entries: ["entry-cabin"] },
+      } };
+      const future = { entities, devices: { d1: { config_entry_id: "entry-home" }, d2: { config_entry_id: "entry-cabin" } } };
+      return [
+        L.findEntity(current, "prep_list", { configEntryId: "entry-cabin" }),
+        L.findEntity(future, "prep_list", { configEntryId: "entry-cabin" }),
+        L.findEntity(future, "prep_list", { configEntryId: "entry-gone" }),
+      ];
+    """
+    assert _run(body) == ["todo.cabin_prep_list", "todo.cabin_prep_list", None]
+
+
 def test_countdown_and_deadline_tone() -> None:
     body = """
       const now = Date.now();

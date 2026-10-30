@@ -8341,39 +8341,8 @@ def test_token_refresh_timer_never_lets_token_expire() -> None:
                 issued = now
 
 
-def test_async_unload_entry_clears_token_only_flag() -> None:
-    """Unloading an entry must drop its coordinator and any pending token-only flag.
-
-    Without the discard, an entry removed while a token-only refresh write was pending
-    would leave its id in the TOKEN_ONLY_UPDATE_KEY set forever (slow per-entry leak).
-    """
-    from types import SimpleNamespace
-
-    from custom_components.hellofresh import TOKEN_ONLY_UPDATE_KEY, async_unload_entry
-
-    entry_id = "entry-xyz"
-
-    async def _unload_platforms(_entry, _platforms) -> bool:
-        return True
-
-    hass = SimpleNamespace(
-        data={TOKEN_ONLY_UPDATE_KEY: {entry_id, "other-entry"}},
-        config_entries=SimpleNamespace(async_unload_platforms=_unload_platforms),
-    )
-    entry = SimpleNamespace(entry_id=entry_id)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(async_unload_entry(hass, entry))  # type: ignore[arg-type]
-
-    assert result is True
-    assert entry_id not in hass.data[TOKEN_ONLY_UPDATE_KEY]
-    # Unrelated entries in the set are untouched.
-    assert "other-entry" in hass.data[TOKEN_ONLY_UPDATE_KEY]
-
-
-def test_async_unload_entry_handles_absent_token_only_set() -> None:
-    """Unload must not fail when no token-only flag set exists yet."""
+def test_async_unload_entry_without_a_coordinator() -> None:
+    """Unload must not fail for an entry that never got a coordinator (no runtime_data)."""
     from types import SimpleNamespace
 
     from custom_components.hellofresh import async_unload_entry

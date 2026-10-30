@@ -1,4 +1,7 @@
 beautifulsoup4>=4.12.3
+# The integration depends on frontend, so tests/test_ha_lifecycle.py, which loads it through
+# Home Assistant, needs the frontend's files.
+home-assistant-frontend
 pytest>=8.2.0
 pytest-homeassistant-custom-component>=0.13.218
 # Used by tests/test_repo_consistency.py to parse services.yaml. Available transitively via

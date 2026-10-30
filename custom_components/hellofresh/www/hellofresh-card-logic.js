@@ -1660,7 +1660,8 @@ export function findEntity(hass, translationKey, { configEntryId = null, domain 
     if (domain && !String(entry.entity_id || "").startsWith(`${domain}.`)) continue;
     if (configEntryId) {
       const device = entry.device_id ? devices[entry.device_id] : null;
-      const entries = (device && device.config_entries) || [];
+      // config_entry_id since Home Assistant 2026.8; the deprecated config_entries list before.
+      const entries = !device ? [] : device.config_entry_id ? [device.config_entry_id] : device.config_entries || [];
       if (!entries.includes(configEntryId)) continue;
     }
     return entry.entity_id;

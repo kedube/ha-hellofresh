@@ -5,7 +5,8 @@ Thanks for helping improve the HelloFresh Home Assistant integration.
 ## Development setup
 
 1. Fork the repository and create a feature branch.
-2. Create a virtual environment.
+2. Create a Python 3.14 virtual environment (Home Assistant has required 3.14 since 2026.3; an
+   older Python installs an old Home Assistant to test against).
 3. Install test dependencies:
 
 ```bash

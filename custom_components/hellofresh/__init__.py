@@ -130,9 +130,6 @@ from .tracey import HelloFreshTraceyCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 INTENTS_REGISTERED_KEY = f"{DOMAIN}_intents_registered"
-# Tracks entry IDs whose most recent config-entry write was a token-only refresh, so the
-# update listener can skip a full reload for those writes.
-TOKEN_ONLY_UPDATE_KEY = f"{DOMAIN}_token_only_update"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
@@ -307,17 +304,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Write a refreshed/rotated token back to the config entry so it survives restarts.
 
         Credentials live in entry.data only. The live client already holds the new token
-        in memory, so this token-only write must not trigger a full reload — flag it so the
-        update listener skips the reload. The write to HA's in-memory store is synchronous,
-        which closes most of the rotation-vs-crash window; HA flushes it to disk shortly
-        after.
+        in memory, and a data write never reloads the entry (it has no update listener; see
+        the note after the platforms are set up below), so the entities stay up. The write
+        to HA's in-memory store is synchronous, which closes most of the rotation-vs-crash
+        window; HA flushes it to disk shortly after.
 
-        If the write fails, the flag is cleared (so a later reload isn't wrongly skipped)
-        and the error is logged loudly: the in-memory client keeps working, but the rotated
-        token won't survive a restart until the next successful persist.
+        If the write fails, the error is logged loudly: the in-memory client keeps working,
+        but the rotated token won't survive a restart until the next successful persist.
         """
-        token_only = hass.data.setdefault(TOKEN_ONLY_UPDATE_KEY, set())
-        token_only.add(entry.entry_id)
         new_refresh = token_data.get(CONF_REFRESH_TOKEN)
         new_fp = _token_fingerprint(new_refresh)
         try:
@@ -326,7 +320,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data={**entry.data, **token_data},
             )
         except Exception:  # noqa: BLE001 - persistence must never crash the refresh path
-            token_only.discard(entry.entry_id)
             _LOGGER.exception(
                 "HelloFresh could not persist the refreshed token for %s; it will work "
                 "until the next restart and retry on the next refresh",
@@ -418,7 +411,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, _entry_platforms(entry))
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # No update listener: the options flow (OptionsFlowWithReload) and the reauth/reconfigure
+    # steps (async_update_reload_and_abort) each schedule the one reload their change needs,
+    # and token writes need none. A listener on top would reload twice, which Home Assistant
+    # deprecated in 2026.6 and rejects from 2026.12.
     # The sidebar entry that opens the HelloFresh card full screen (when the option is on).
     await async_add_entry_panel(hass, entry)
     return True
@@ -441,11 +437,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, [*PLATFORMS, Platform.TODO])
     if unload_ok:
         await async_remove_entry_panel(hass, entry)
-        # The coordinator lives in entry.runtime_data, which HA clears on unload.
-        # Drop any pending token-only flag so a removed entry's id can't linger in the set.
-        token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)
-        if token_only is not None:
-            token_only.discard(entry.entry_id)
         # Curl cookies and pooled connections belong to this entry alone. Home Assistant
         # closes the matching aiohttp session through its config-entry cleanup hook.
         coordinator = getattr(entry, "runtime_data", None)
@@ -468,17 +459,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
     async_delete_data_quality_issues(hass, entry.entry_id)
     await async_remove_meal_plan(hass, entry.entry_id)
-
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry, unless the change was a token-only refresh write."""
-    token_only = hass.data.get(TOKEN_ONLY_UPDATE_KEY)
-    if token_only and entry.entry_id in token_only:
-        # A proactive token refresh persisted new credentials; the running client already
-        # uses them, so skip the costly reload that would tear down all entities.
-        token_only.discard(entry.entry_id)
-        return
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _loaded_coordinators(hass: HomeAssistant) -> list[HelloFreshDataUpdateCoordinator]:

@@ -141,10 +141,12 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      # Home Assistant has required Python 3.14 since 2026.3. On an older Python, pip quietly
+      # resolves the last Home Assistant that supports it, and the suite tests a stale release.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: requirements_test.txt
 

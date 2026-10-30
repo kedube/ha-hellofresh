@@ -1,8 +1,10 @@
 {
   "domain": "hellofresh",
   "name": "HelloFresh",
+  "categories": ["productivity_information.shopping_groceries"],
   "codeowners": ["@kedube"],
   "config_flow": true,
+  "connectivity": ["cloud"],
   "dependencies": ["frontend", "http", "panel_custom"],
   "documentation": "https://github.com/kedube/ha-hellofresh",
   "integration_type": "service",

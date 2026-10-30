@@ -619,11 +619,12 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return HelloFreshOptionsFlow()
 
 
-class HelloFreshOptionsFlow(config_entries.OptionsFlow):
+class HelloFreshOptionsFlow(config_entries.OptionsFlowWithReload):
     """Handle HelloFresh options.
 
     ``config_entry`` is provided by Home Assistant on the base class; it must not be set
-    here (it is a read-only property on current HA versions).
+    here (it is a read-only property on current HA versions). Saving changed options
+    reloads the entry so they take effect; saving them unchanged does not.
     """
 
     async def async_step_init(self, user_input: dict[str, str] | None = None):

@@ -40,10 +40,9 @@ class HelloFreshPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `<style>
-        :host {
-          display: block; height: 100%; overflow-y: auto; box-sizing: border-box;
-          background: var(--primary-background-color);
-        }
+        /* No background of its own: Home Assistant paints the theme's panel background behind
+           every panel (2026.11+) and the page background before that, so a theme shows through. */
+        :host { display: block; height: 100%; overflow-y: auto; box-sizing: border-box; }
         .page { box-sizing: border-box; max-width: 1480px; min-height: 100%; margin: 0 auto; padding: 16px; }
         :host([narrow]) .page { padding: 0; }
         .error { padding: 32px 16px; color: var(--error-color, #db4437); }
