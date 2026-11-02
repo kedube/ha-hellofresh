@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.24 — 2026-11-02
 - **Percentage discounts read as a percentage.** A voucher such as "10% off your box" showed
   on the Next box discount sensor as £10.00, because the sensor always used your account's
   currency (issue #19). A percentage voucher now reads 10%, and a voucher for a fixed amount
