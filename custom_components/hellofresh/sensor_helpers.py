@@ -166,15 +166,35 @@ def _last_delivery_day(data: HelloFreshAccountData) -> date | None:
     return dt_util.as_local(delivered_at).date()
 
 
+def next_box_discount_is_percent(data: HelloFreshAccountData) -> bool:
+    """Return True when the next box's discount is a percentage off rather than an amount.
+
+    A wallet budget is ``fixed`` (money in the account currency) or ``percent``/``percentage``
+    (see ``HelloFreshClient._benefit_label``), so "10% off your box" reads 10, not £10.
+    """
+    discount = data.next_box_discount or {}
+    return discount.get("amount_type") in ("percent", "percentage")
+
+
+def _next_box_discount_value(data: HelloFreshAccountData) -> float | int | None:
+    """Return the next box's discount amount, with a whole percentage as an int.
+
+    With no display precision the frontend keeps a state's trailing zeros, so a float 10.0
+    would show as "10.0%"; the int reads "10%", as HelloFresh words it.
+    """
+    amount = (data.next_box_discount or {}).get("amount")
+    if next_box_discount_is_percent(data) and isinstance(amount, float) and amount.is_integer():
+        return int(amount)
+    return amount
+
+
 VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     "next_delivery_date": _sub_value("next_delivery"),
     "next_order_status": _next_order_value("status"),
     "next_box_total_price": lambda data: data.next_delivery_total,
     # The weekly discount HelloFresh's wallet will apply to the next box (a fixed amount, or a
     # percentage for that kind of voucher); unknown when no promise covers it.
-    "next_box_discount": lambda data: (
-        data.next_box_discount.get("amount") if data.next_box_discount else None
-    ),
+    "next_box_discount": _next_box_discount_value,
     "account_credit": lambda data: data.account_credit,
     "selected_plan_total_price": lambda data: data.selected_plan_total_price,
     "next_delivery_subscription": _next_order_value("subscription_id"),

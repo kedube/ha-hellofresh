@@ -372,6 +372,48 @@ def test_selected_plan_total_price_sensor_handles_missing_price() -> None:
     assert sensor.native_unit_of_measurement is None
 
 
+def test_next_box_discount_sensor_reports_percent_vouchers_in_percent() -> None:
+    """A "10% off your box" voucher reads 10%, not £10.00 (issue #19); fixed ones stay money."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "next_box_discount")
+
+    def _sensor(amount_type: str, amount: float = 10.0) -> HelloFreshSensor:
+        data = HelloFreshAccountData(
+            next_box_discount={
+                "applies_to": "mealbox",
+                "amount": amount,
+                "amount_type": amount_type,
+                "currency": "GBP",
+                "week_id": "2026-W46",
+            }
+        ).finalize()
+        coordinator = SimpleNamespace(
+            data=data,
+            config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+            client=SimpleNamespace(base_url="https://www.hellofresh.co.uk"),
+            last_update_success=True,
+        )
+        sensor = HelloFreshSensor(coordinator, description)
+        sensor.coordinator = coordinator
+        return sensor
+
+    fixed = _sensor("fixed")
+    assert fixed.native_value == 10.0
+    assert fixed.device_class == "monetary"
+    assert fixed.native_unit_of_measurement == "GBP"
+    assert fixed.suggested_display_precision == 2
+
+    for amount_type in ("percent", "percentage"):
+        percent = _sensor(amount_type)
+        # A whole percentage is an int: with no display precision the frontend keeps a state's
+        # trailing zeros, so 10.0 would show as "10.0%".
+        assert percent.native_value == 10
+        assert isinstance(percent.native_value, int)
+        assert percent.device_class is None
+        assert percent.native_unit_of_measurement == "%"
+        assert percent.suggested_display_precision is None
+    assert _sensor("percent", 12.5).native_value == 12.5
+
+
 def test_static_sensor_icons_match_entity_purpose() -> None:
     """Static icons should remain distinct and aligned with entity meaning."""
     assert _sensor_for("required_meal_count").icon == "mdi:numeric"

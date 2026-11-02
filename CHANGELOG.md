@@ -5,6 +5,12 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **Percentage discounts read as a percentage.** A voucher such as "10% off your box" showed
+  on the Next box discount sensor as £10.00, because the sensor always used your account's
+  currency (issue #19). A percentage voucher now reads 10%, and a voucher for a fixed amount
+  still shows as money.
+
 ## 4.22 — 2026-10-20
 - **Boxes don't show as delivered before they arrive.** On delivery day HelloFresh can mark a
   box delivered while the carrier still has it out for delivery, and the card then showed

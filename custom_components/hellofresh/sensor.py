@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
@@ -22,6 +22,7 @@ from .entity import HelloFreshCoordinatorEntity
 from .meal_plan import KIND_MARKET, KIND_MEAL, MEAL_SENSOR_KEYS, MEALS, MealPlan, slot_title
 from .sensor_helpers import (
     humanize_status,
+    next_box_discount_is_percent,
     sensor_extra_state_attributes,
     sensor_icon,
     sensor_native_value,
@@ -417,11 +418,22 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
         )
 
     @property
+    def device_class(self) -> SensorDeviceClass | None:
+        """Return the device class; a percentage voucher is not an amount of money."""
+        if self.entity_description.key == "next_box_discount" and next_box_discount_is_percent(
+            self.coordinator.data
+        ):
+            return None
+        return super().device_class
+
+    @property
     def native_unit_of_measurement(self) -> str | None:
         """Return the unit of measurement."""
         if self.entity_description.key == "next_box_total_price":
             return self.coordinator.data.next_delivery_total_currency
         if self.entity_description.key == "next_box_discount":
+            if next_box_discount_is_percent(self.coordinator.data):
+                return PERCENTAGE
             discount = self.coordinator.data.next_box_discount
             return discount.get("currency") if discount else None
         if self.entity_description.key == "account_credit":
@@ -433,6 +445,11 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
     @property
     def suggested_display_precision(self) -> int | None:
         """Return the suggested display precision where supported by Home Assistant."""
+        # Money shows cents; a percentage shows as HelloFresh words it ("10%", not "10.00%").
+        if self.entity_description.key == "next_box_discount" and next_box_discount_is_percent(
+            self.coordinator.data
+        ):
+            return None
         if self.entity_description.key in (
             "next_box_total_price",
             "next_box_discount",
