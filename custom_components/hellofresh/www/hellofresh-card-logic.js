@@ -377,10 +377,20 @@ export function isHistoryWeek(week, graceWeeks = 2, now = new Date()) {
 // Statuses that mean the box never came.
 const UNDELIVERED_STATUSES = new Set(["CANCELLED", "PAYMENT_FAILED", "FAILED"]);
 
+export const SHIPPED_WEEK_STATUSES = new Set(["ON_THE_WAY", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);
+// A carrier says "delayed" only for a box it already has (Veho: delayed_in_transit), and the
+// website's tracking page puts that step after "shipped".
+export const SHIPPED_TRACKING_STATUSES = new Set(["in_transit", "out_for_delivery", "shipped", "on_the_way", "delayed"]);
+
+// HelloFresh's own states for a box it is still packing or sending.
+const PRE_ARRIVAL_STATUSES = new Set(["PREPARING", ...SHIPPED_WEEK_STATUSES]);
+
 // HelloFresh keeps a box's progress for a few weeks only, so an older week can come with none.
-// Like the website, a week whose delivery day has passed counts as delivered, unless it was
-// skipped, never sent, late, or is still on its way: "locked" is for a box past its deadline that
-// hasn't come yet.
+// Like the website, a week whose delivery day has passed then counts as delivered, unless it was
+// skipped, never sent or late: "locked" is for a box past its deadline that hasn't come yet.
+// That guess is only for a week with nothing live left. While the carrier has a status, the
+// carrier decides, so a box it calls delayed, damaged or still on the road is not delivered
+// whatever the date; nor is one HelloFresh says it is still preparing or shipping.
 export function isDelivered(week, now = new Date()) {
   if (!week) return false;
   if (week.delivered_at) return true;
@@ -389,16 +399,13 @@ export function isDelivered(week, now = new Date()) {
   if (tracking === "delivered") return true;
   return (
     isPastWeek(week, now) &&
+    !tracking &&
     !isSkipped(week) &&
     !UNDELIVERED_STATUSES.has(upper(week.status)) &&
-    upper(week.sub_status) !== "DELAYED" &&
-    !SHIPPED_WEEK_STATUSES.has(upper(week.status)) &&
-    !SHIPPED_TRACKING_STATUSES.has(tracking)
+    !PRE_ARRIVAL_STATUSES.has(upper(week.status)) &&
+    upper(week.sub_status) !== "DELAYED"
   );
 }
-
-export const SHIPPED_WEEK_STATUSES = new Set(["ON_THE_WAY", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);
-export const SHIPPED_TRACKING_STATUSES = new Set(["in_transit", "out_for_delivery", "shipped", "on_the_way"]);
 
 // A box that has left HelloFresh but not arrived.
 export function isShipping(week) {

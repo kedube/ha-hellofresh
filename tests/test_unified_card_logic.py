@@ -264,6 +264,42 @@ def test_a_past_week_without_delivery_information_is_delivered() -> None:
     }
 
 
+def test_the_carrier_decides_once_the_delivery_day_has_passed() -> None:
+    """A Veho box that never came (2026-11-03): the day after delivery day it read delivered.
+
+    HelloFresh still had the week PREPARING and Veho had it delayed in transit (it was later
+    discarded as damaged), but the card counted the past date alone. A past date only stands
+    in for delivery when nothing live is left to say otherwise.
+    """
+    body = """
+      const yesterday = iso(new Date(Date.now() - DAY));
+      const box = (status, tracking, extra = {}) => week("w", 0, {
+        delivery_date: yesterday,
+        status,
+        sub_status: "COOK_IT",
+        allowed_actions: { mealSwap: false },
+        order: { tracking_status: tracking, tracking_number: "HF00000000000000", ...extra },
+      });
+      const cases = {
+        delayed: box("PREPARING", "delayed", { tracking_status_detail: "delayed_in_transit" }),
+        exception: box("RUNNING", "exception", { tracking_status_detail: "damaged" }),
+        label_only: box("RUNNING", "pre_transit"),
+        preparing: week("p", 0, { delivery_date: yesterday, status: "PREPARING" }),
+        carrier_delivered: box("PREPARING", "delivered"),
+      };
+      return Object.fromEntries(
+        Object.entries(cases).map(([k, w]) => [k, [L.isDelivered(w), L.weekState(w), L.trackingStep(w)]])
+      );
+    """
+    assert _run(body) == {
+        "delayed": [False, "shipping", 1],
+        "exception": [False, "locked", 0],
+        "label_only": [False, "locked", 0],
+        "preparing": [False, "locked", -1],
+        "carrier_delivered": [True, "delivered", 3],
+    }
+
+
 def test_skip_eligibility() -> None:
     body = """
       const weeks = [

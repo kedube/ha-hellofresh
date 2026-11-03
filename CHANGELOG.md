@@ -5,6 +5,14 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+- **A late or lost box no longer shows as delivered.** Once its delivery day had passed, the
+  card called a box delivered by its date alone, even while the carrier had it delayed in
+  transit and HelloFresh still had it as preparing. The date now stands in for delivery only
+  when nothing live is left to say otherwise. While the carrier has a status, the carrier
+  decides: a delayed box shows as on the way with its delay, and a damaged or lost one is not
+  delivered.
+
 ## 4.24 — 2026-11-02
 - **Percentage discounts read as a percentage.** A voucher such as "10% off your box" showed
   on the Next box discount sensor as £10.00, because the sensor always used your account's
