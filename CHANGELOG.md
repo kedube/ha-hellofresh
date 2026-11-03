@@ -5,7 +5,7 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-## Unreleased
+## 4.25 — 2026-11-03
 - **A late or lost box no longer shows as delivered.** Once its delivery day had passed, the
   card called a box delivered by its date alone, even while the carrier had it delayed in
   transit and HelloFresh still had it as preparing. The date now stands in for delivery only
