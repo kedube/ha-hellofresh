@@ -7,10 +7,13 @@ import json
 from pathlib import Path
 import re
 
-# A beta of the next release, e.g. ``3.8b1`` for 3.08. The minor is NOT zero-padded here:
-# Home Assistant refuses to load a custom integration versioned ``3.08b1`` (it matches none
-# of the version formats HA accepts), while ``3.8b1`` is valid PEP 440.
-_PRERELEASE = re.compile(r"(\d+)\.(\d+)(?:a|b|rc)\d+")
+# A beta of the next release, e.g. ``4.26.0b1`` for 4.26 or ``3.8.0b1`` for 3.08. The minor is
+# NOT zero-padded: Home Assistant refuses to load a custom integration versioned ``3.08b1`` (it
+# matches none of the version formats HA accepts). Keep the ``.0``: Home Assistant and HACS
+# compare versions with AwesomeVersion, which ranks ``4.26b1`` equal to ``4.26``, so anyone on
+# that beta would never be offered the release. ``4.26.0b1`` ranks between 4.25 and 4.26. The
+# older spelling without the ``.0`` is still read.
+_PRERELEASE = re.compile(r"(\d+)\.(\d+)(?:\.0)?(?:a|b|rc)\d+")
 
 
 def _bump_minor(version: str) -> str:
@@ -21,7 +24,7 @@ def _bump_minor(version: str) -> str:
     ``1.00``.
 
     A beta is already numbered for the release it previews, so bumping one only drops the
-    suffix: ``3.8b1`` releases as ``3.08``.
+    suffix: ``4.26.0b1`` releases as ``4.26``, and ``3.8.0b1`` as ``3.08``.
     """
     if prerelease := _PRERELEASE.fullmatch(version):
         return f"{int(prerelease[1])}.{int(prerelease[2]):02d}"

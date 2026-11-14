@@ -166,6 +166,8 @@ version heading and publishes it as the release's Highlights.
   modules by concern (`client_core.py`, `client_cart.py`, `client_menus.py`, …; CONTRIBUTING
   lists them), and the client reads every response through one helper that keeps sign-in
   failures, blocks and rate limits from being swallowed.
+- Betas are numbered like `4.26.0b1`. Home Assistant and HACS rank `4.26b1` equal to `4.26`,
+  so anyone on a beta spelled that way would never have been offered the release.
 
 ## 4.25 — 2026-11-03
 - **A late or lost box no longer shows as delivered.** Once its delivery day had passed, the

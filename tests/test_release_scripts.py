@@ -47,12 +47,31 @@ def test_bump_minor_releases_a_beta_as_its_final_version() -> None:
     assert bump_manifest_version._bump_minor("3.8rc2") == "3.08"
     assert bump_manifest_version._bump_minor("3.10b1") == "3.10"
     assert bump_manifest_version._bump_minor("4.0b2") == "4.00"
+    assert bump_manifest_version._bump_minor("4.26.0b1") == "4.26"
+    assert bump_manifest_version._bump_minor("3.8.0rc2") == "3.08"
+
+
+def test_a_beta_ranks_between_the_releases_around_it() -> None:
+    """HACS offers a beta over the release before it, and the release over the beta.
+
+    Both comparisons use AwesomeVersion, which ranks `4.26b1` equal to `4.26`, so anyone on
+    that beta would never be offered 4.26. The `.0` spelling ranks where it should, and a beta
+    in the manifest has to as well.
+    """
+    assert AwesomeVersion("4.25") < AwesomeVersion("4.26.0b1") < AwesomeVersion("4.26")
+    assert AwesomeVersion("4.08") < AwesomeVersion("4.9.0b1") < AwesomeVersion("4.09")
+    version = json.loads(
+        (REPO_ROOT / "custom_components" / "hellofresh" / "manifest.json").read_text()
+    )["version"]
+    if bump_manifest_version._PRERELEASE.fullmatch(version):
+        release = bump_manifest_version._bump_minor(version)
+        assert AwesomeVersion(version) < AwesomeVersion(release)
 
 
 def test_manifest_version_is_one_home_assistant_loads() -> None:
     """HA blocks a custom integration whose version matches none of these formats.
 
-    The trap is a hand-cut beta: `3.08b1` is rejected, so betas are numbered `3.8b1`.
+    The trap is a hand-cut beta: `3.08b1` is rejected, so betas are numbered `3.8.0b1`.
     """
     manifest = REPO_ROOT / "custom_components" / "hellofresh" / "manifest.json"
     AwesomeVersion(
@@ -166,11 +185,18 @@ def test_changelog_only_rotates_the_real_unreleased_heading() -> None:
 
 
 def test_every_tagged_release_has_a_changelog_section() -> None:
-    """The manifest's own version is always in the changelog (the release workflow adds it)."""
+    """The manifest's own version is always in the changelog (the release workflow adds it).
+
+    A beta is cut by hand and previews the Unreleased section, so it needs that one instead.
+    """
     version = json.loads(
         (REPO_ROOT / "custom_components" / "hellofresh" / "manifest.json").read_text()
     )["version"]
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
+    if bump_manifest_version._PRERELEASE.fullmatch(version):
+        unreleased = update_changelog.UNRELEASED_RE.search(changelog)
+        assert unreleased is not None and unreleased[1].strip()
+        return
     assert f"## {version} — " in changelog
     assert generate_release_notes._changelog_section(version)
