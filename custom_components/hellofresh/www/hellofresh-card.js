@@ -17,8 +17,10 @@
  * in it, a live price estimate, and saves meals and extras together in a single write.
  *
  * It replaced the seven classic single-purpose cards (since removed) and kept their filter
- * preferences and week selection. Everything here reads the integration's services on demand;
- * it adds no polling of its own.
+ * preferences and week selection. Everything here reads the integration's services. The card
+ * reads again on the integration's own refresh interval (and its delivery-day watch) — sooner
+ * would only return the same cached data — and sooner than that only after a load that failed,
+ * or when Home Assistant comes back from a restart.
  *
  * Config:
  *   type: custom:hellofresh-card
@@ -92,6 +94,18 @@ const VIEW_KEYS = VIEWS.map((v) => v.key);
 // Views that edit a week's box, and so carry the sticky box bar.
 const BOX_VIEWS = new Set(["menu", "market"]);
 
+// A control's name for putting focus back after a render (L.focusKey; a data-focus-key the
+// view gave it wins), with a selector that finds the controls that could share it.
+function focusName(el) {
+  const keyed = el.getAttribute("data-focus-key");
+  if (keyed) return { name: `key|${keyed}`, selector: `[data-focus-key="${CSS.escape(keyed)}"]` };
+  const attributes = [...el.attributes].map((a) => [a.name, a.value]);
+  const name = L.focusKey(el.localName, attributes);
+  if (!name) return null;
+  const selector = el.localName + L.focusNaming(attributes).map(([n, v]) => `[${n}="${CSS.escape(v)}"]`).join("");
+  return { name, selector };
+}
+
 // Keep only known section keys, in the order given; nothing valid means every section.
 export function normalizeViews(value) {
   const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
@@ -113,19 +127,31 @@ class HelloFreshCard extends HTMLElement {
     // Data. `_weeks` is the browsable list (see logic.browsableWeeks); `_account` the get_weeks
     // account payload; `_summary` get_account_summary (header, banners, Account view).
     this._weeks = null;
+    this._rawWeeks = null; // get_weeks as it came; a re-read week is merged in here
     this._account = null;
     this._summary = null;
     // The Week tab's meal plan (get_meal_plan).
     this._mealPlan = null;
     this._mealPlanError = null;
     this._mealPlanLoading = false;
+    this._mealPlanQueued = false;
+    this._mealPlanStamp = 0; // moves when a write hands the plan over (setMealPlan)
     this._loading = false;
     this._summaryLoading = false;
+    this._refreshing = 0; // refresh() calls under way
     this._error = null;
     this._fetched = false;
-    this._lastFetched = 0;
-    this._refetchQueued = false;
+    this._lastFetched = 0; // the last load that worked
+    this._lastAttempt = 0; // the last load that started
+    this._failCount = 0; // loads failed in a row (see L.loadDelayMs)
+    this._retryTimer = null;
+    this._recoverTimer = null;
+    this._queuedWeek = undefined; // what the queued get_weeks reads: one week's id, or null for all
     this._fetchSeq = 0; // start number of the latest get_weeks (see BoxStore.committed)
+    this._dataGen = 0; // moves when the card is given another account; older answers are dropped
+    this._written = undefined; // the week written since the last read (see L.noteWrite)
+    this._connected = true;
+    this._unavailable = 0;
     this._busy = false;
     // UI state.
     this._view = "overview";
@@ -133,9 +159,20 @@ class HelloFreshCard extends HTMLElement {
     this._views = {};
     this._sheetState = null;
     this._toastState = null;
+    this._toastHolds = new Set(); // what keeps the toast up: "pointer" over it, "focus" in it
+    this._toastReturn = null; // where the keyboard came from to reach the toast's Undo
     this._saving = null;
     this._deliveryOptions = null;
+    this._deliveryLoading = false;
+    this._planOptions = null; // get_plan_options: {status, options, error} once asked for
     this._pantry = {};
+    // Rendering: the markup last written to each region (compared before writing again), the
+    // parts waiting for the next frame, the open sheet's dialog and where focus goes back to.
+    this._html = {};
+    this._wanted = new Set();
+    this._frame = 0;
+    this._sheetDialog = null;
+    this._sheetReturn = null;
     this._entityIds = null;
     this._entityIdsFor = null;
     this._entitySig = {};
@@ -150,10 +187,11 @@ class HelloFreshCard extends HTMLElement {
     this._onDataChanged = (ev) => this._receiveDataChanged(ev);
     this._onVisibility = () => this._onBecameVisible();
     this._onDocKeydown = (ev) => {
-      if (ev.key !== "Escape" || !this._sheetState) return;
-      // The recipe sheet handles its own Escape; don't close the sheet underneath it too.
+      if (ev.key !== "Escape") return;
+      // The recipe sheet handles its own Escape; don't close what is underneath it too.
       if (this._detail && this._detail.isOpen) return;
-      this.closeSheet();
+      if (this._sheetState) this.closeSheet();
+      else if (this._toastState && !this._saving) this._clearToast();
     };
   }
 
@@ -161,6 +199,7 @@ class HelloFreshCard extends HTMLElement {
 
   setConfig(config) {
     if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    const before = this._config;
     const views = normalizeViews(config.views);
     this._config = {
       title: "HelloFresh",
@@ -178,15 +217,75 @@ class HelloFreshCard extends HTMLElement {
     else if (views.includes(stored)) this._view = stored;
     else this._view = views[0];
     this._entityIds = null;
+    // The sidebar panel (and Lovelace) hand a live card its new config. For another account,
+    // nothing of the old one may stay.
+    if (before && L.accountKey(before) !== L.accountKey(this._config)) this._resetAccount();
     this._render();
-    if (this._hass && !this._fetched) {
+    if (!this._hass) return;
+    if (!this._fetched) {
       this._fetched = true;
+      this.refresh({ quiet: true });
+    } else if (this._needs().weeks && !this._weeks && !this._loading && !this._error) {
+      // A section that reads the weeks was added to a card that had none.
       this.refresh({ quiet: true });
     }
   }
 
+  // The card now shows another account: drop the old one's weeks and summary, the box edits
+  // pending against its weeks (Save would send them to the new account), every view's caches,
+  // the selected week and whatever was open, then load the new account from scratch. Answers
+  // still on their way for the old account are ignored (_dataGen).
+  _resetAccount() {
+    this._dataGen += 1;
+    clearTimeout(this._retryTimer);
+    clearTimeout(this._recoverTimer);
+    this._retryTimer = null;
+    this._recoverTimer = null;
+    if (this._sheetState) this.closeSheet();
+    if (this._detail) this._detail.close();
+    clearTimeout(this.box._previewTimer);
+    this.box = new Menu.BoxStore(this);
+    this._views = {};
+    this._renderedView = null;
+    this._weeks = null;
+    this._rawWeeks = null;
+    this._account = null;
+    this._summary = null;
+    this._mealPlan = null;
+    this._mealPlanError = null;
+    this._pantry = {};
+    this._deliveryOptions = null;
+    this._deliveryLoading = false;
+    this._planOptions = null;
+    // An Undo still on offer would write the old account's change into the new one.
+    if (this._toastState) this._clearToast();
+    this._error = null;
+    this._weekId = null;
+    this._loading = false;
+    this._summaryLoading = false;
+    this._summaryQueued = false;
+    this._mealPlanLoading = false;
+    this._mealPlanQueued = false;
+    const waiting = this._resolveQueuedFetch;
+    this._queuedFetch = null;
+    this._resolveQueuedFetch = null;
+    this._queuedWeek = undefined;
+    if (waiting) waiting(false);
+    this._busy = false;
+    this._saving = null;
+    this._written = undefined;
+    this._lastFetched = 0;
+    this._lastAttempt = 0;
+    this._failCount = 0;
+    this._entitySig = {};
+    this._unavailable = 0;
+    this._fetched = false;
+  }
+
   set hass(hass) {
+    const wasConnected = this._connected;
     this._hass = hass;
+    this._connected = !hass || hass.connected !== false;
     const textLoaded = L.I18n.useHass(hass);
     if (textLoaded !== this._textLoaded) {
       this._textLoaded = textLoaded;
@@ -197,15 +296,25 @@ class HelloFreshCard extends HTMLElement {
     if (hass && !this._fetched && this._config) {
       this._fetched = true;
       this.refresh({ quiet: true });
+    } else if (hass && this._fetched && this._connected && !wasConnected) {
+      // Home Assistant is back after a restart or a dropped connection.
+      this._recover();
     }
     // hass is reassigned on EVERY state change in Home Assistant. Only the handful of this
     // integration's entities the card shows (prep lists, plan selects, health sensors) may
     // trigger work, only when their state actually moved, and only for the view showing them.
-    const sig = this._entitySignature();
-    const changed = Object.keys(sig).filter((group) => sig[group] !== this._entitySig[group]);
-    const first = !this._entitySig.pantry && !this._entitySig.plan && !this._entitySig.health && !this._entitySig.tracking;
+    const ids = this.entities();
+    const stateOf = (id) => this.entityState(id);
+    const sig = L.entitySignature(ids, stateOf);
+    const changed = L.changedEntityGroups(this._entitySig, sig);
     this._entitySig = sig;
-    if (changed.length && !first) this._onEntitiesChanged(new Set(changed));
+    // Every entity is unavailable while the integration sets up or reloads; fewer of them
+    // unavailable than a moment ago means it is ready, and the load that failed meanwhile
+    // can be tried again now.
+    const unavailable = L.unavailableEntities(ids, stateOf);
+    if (unavailable < this._unavailable && this._fetched) this._recover();
+    this._unavailable = unavailable;
+    if (changed.length) this._onEntitiesChanged(new Set(changed));
   }
 
   get hass() {
@@ -237,7 +346,11 @@ class HelloFreshCard extends HTMLElement {
     document.addEventListener("visibilitychange", this._onVisibility);
     document.addEventListener("keydown", this._onDocKeydown);
     this._startTick();
-    if (this._weeks && !this._refreshIfStale()) this._render();
+    // A card taken out of the page and put back (Home Assistant keeps a dashboard around; edit
+    // mode re-parents its cards) has lost its scroll offsets, so the next render treats its
+    // view as just opened and the week strip goes back to the chosen week (see syncStrip).
+    this._renderedView = null;
+    if (this._fetched && !this._refreshIfStale()) this._render();
   }
 
   disconnectedCallback() {
@@ -249,13 +362,25 @@ class HelloFreshCard extends HTMLElement {
     document.removeEventListener("keydown", this._onDocKeydown);
     this._stopTick();
     clearTimeout(this._toastTimer);
+    clearTimeout(this._retryTimer);
+    clearTimeout(this._recoverTimer);
+    this._retryTimer = null;
+    this._recoverTimer = null;
+    if (this._frame) cancelAnimationFrame(this._frame);
+    this._frame = 0;
+    this._wanted.clear();
     this._toastState = null;
+    this._toastHolds.clear();
+    this._toastReturn = null;
     this._sheetState = null;
+    this._sheetDialog = null;
+    this._sheetReturn = null;
     if (this._shell) {
-      this._shell.sheet.innerHTML = "";
-      this._shell.toast.innerHTML = "";
+      this._shell.sheet.replaceChildren();
+      this._write(this._shell.toast, "toast", "");
     }
     if (this._detail) this._detail.close();
+    this._syncModal();
   }
 
   // The text arrived (or changed language): draw everything again in it.
@@ -332,6 +457,10 @@ class HelloFreshCard extends HTMLElement {
     return this._weekId;
   }
 
+  get planOptions() {
+    return this._planOptions;
+  }
+
   weekById(weekId) {
     return (this._weeks || []).find((w) => w.week_id === weekId) || null;
   }
@@ -359,22 +488,46 @@ class HelloFreshCard extends HTMLElement {
     return this._mealPlanError;
   }
 
-  async loadMealPlan() {
-    if (!this._hass || this._mealPlanLoading) return;
+  // Re-read the plan. A second request while one is in flight is queued behind it rather than
+  // dropped: the one in flight began before whatever prompted the second (the plan changed on
+  // another device), so its answer may not have it.
+  async loadMealPlan(fresh = false) {
+    if (!this._hass) return;
+    if (this._mealPlanLoading) {
+      this._mealPlanQueued = true;
+      return;
+    }
+    const gen = this._dataGen;
+    const stamp = this._mealPlanStamp;
     this._mealPlanLoading = true;
+    let plan = null;
+    let failed = null;
     try {
-      this._mealPlan = await this.call("get_meal_plan");
-      this._mealPlanError = null;
+      plan = await this._load("meal-plan", fresh, () => this.call("get_meal_plan"));
     } catch (err) {
-      this._mealPlanError = (err && err.message) || String(err);
-    } finally {
-      this._mealPlanLoading = false;
-      if (this._view === "week" || this._view === "overview") this.renderView();
+      failed = (err && err.message) || String(err);
+    }
+    if (gen !== this._dataGen) return;
+    this._mealPlanLoading = false;
+    if (stamp !== this._mealPlanStamp) {
+      // A write handed over a newer plan while this read was in flight: keep that one.
+      this._mealPlanQueued = true;
+    } else if (failed) {
+      this._mealPlanError = failed;
+    } else {
+      this._mealPlan = plan;
+      this._mealPlanError = null;
+    }
+    if (this._view === "week" || this._view === "overview") this._invalidate("view");
+    if (this._mealPlanQueued) {
+      this._mealPlanQueued = false;
+      this.loadMealPlan(true);
     }
   }
 
   // A write answered with the updated plan: show it without another round trip.
   setMealPlan(plan) {
+    this._mealPlanStamp += 1;
     this._mealPlan = plan;
     this._mealPlanError = null;
     this.renderView();
@@ -390,33 +543,77 @@ class HelloFreshCard extends HTMLElement {
     return payload;
   }
 
-  // A response-returning hellofresh.* service.
+  // A response-returning hellofresh.* service. Home Assistant's own error toast is turned off
+  // (the 5th argument): every caller shows the failure itself, once.
   async call(service, data) {
-    const result = await this._hass.callService(
-      "hellofresh",
-      service,
-      this._serviceData(data),
-      undefined,
-      false,
-      true
-    );
-    return (result && result.response) || {};
+    try {
+      const result = await this._hass.callService(
+        "hellofresh",
+        service,
+        this._serviceData(data),
+        undefined,
+        false,
+        true
+      );
+      return (result && result.response) || {};
+    } finally {
+      if (!L.isReadService(service)) this._noteWrite(service, data);
+    }
   }
 
   // A hellofresh.* action without a response (skip, unskip, reschedule, refresh).
   async callAction(service, data) {
-    await this._hass.callService("hellofresh", service, this._serviceData(data));
+    try {
+      await this._hass.callService("hellofresh", service, this._serviceData(data), undefined, false);
+    } finally {
+      this._noteWrite(service, data);
+    }
   }
 
-  broadcastDataChanged() {
-    L.broadcastDataChanged(this._config, this._instanceId);
+  // A write went out. Even one that failed may have gone through in part, so either way: no
+  // card joins a read that began before it, and the next reload knows what to re-read.
+  _noteWrite(service, data) {
+    L.bumpDataEpoch(this._config);
+    this._written = L.noteWrite(this._written, service, data);
+  }
+
+  // Tell sibling cards a write changed the account. When the writes since the last read were
+  // all to one week's box (or `weekId` names it), they re-read that week alone.
+  broadcastDataChanged({ weekId = null } = {}) {
+    const noted = typeof this._written === "string" && this._written !== "all" ? this._written : null;
+    L.bumpDataEpoch(this._config);
+    L.broadcastDataChanged(this._config, this._instanceId, weekId || noted);
   }
 
   // ---- data --------------------------------------------------------------------------------
 
+  _needs() {
+    return L.dataNeeds(this._config ? this._config.views : []);
+  }
+
+  // A read shared with the other HelloFresh cards on the page (see L.sharedLoad).
+  _load(what, fresh, start) {
+    return L.sharedLoad(this._config, what, start, { fresh });
+  }
+
+  // Read everything the configured sections show.
   async refresh({ quiet = false } = {}) {
-    await Promise.all([this._fetchWeeks({ quiet }), this._fetchSummary()]);
-    await this.loadMealPlan();
+    if (!this._hass || !this._config) return;
+    const gen = this._dataGen;
+    // The day names and prices in "Change day" follow the plan: read them again when it next
+    // opens, or now if it is open (it would otherwise lose its names the next time it is drawn).
+    this._deliveryOptions = null;
+    if (this.sheetKind === "reschedule") this._ensureDeliveryOptions();
+    this._refreshing += 1;
+    this._syncBusy();
+    try {
+      await Promise.all([this._fetchWeeks({ quiet }), this._fetchSummary()]);
+      if (gen === this._dataGen && this._needs().mealPlan) await this.loadMealPlan();
+    } finally {
+      this._refreshing -= 1;
+      this._syncBusy();
+    }
+    if (gen !== this._dataGen) return;
     const view = this._views[this._view];
     if (view && view.onRefresh) view.onRefresh();
   }
@@ -424,10 +621,12 @@ class HelloFreshCard extends HTMLElement {
   // Resolves once the card holds data at least as new as this call: when a fetch is already in
   // flight (whose response may predate a write that just happened), one more fetch is queued
   // and the caller waits for THAT — so "save, then show what's saved" never shows the old box.
-  _fetchWeeks({ quiet = false } = {}) {
-    if (!this._hass) return Promise.resolve();
+  // `weekId` re-reads that week alone.
+  _fetchWeeks({ quiet = false, weekId = null } = {}) {
+    if (!this._hass || !this._needs().weeks) return Promise.resolve(true);
     if (this._loading) {
-      this._refetchQueued = true;
+      // Two callers wanting different weeks get every week.
+      this._queuedWeek = this._queuedFetch && this._queuedWeek !== weekId ? null : weekId;
       if (!this._queuedFetch) {
         this._queuedFetch = new Promise((resolve) => {
           this._resolveQueuedFetch = resolve;
@@ -435,66 +634,135 @@ class HelloFreshCard extends HTMLElement {
       }
       return this._queuedFetch;
     }
-    return this._runFetchWeeks(quiet);
+    return this._runFetchWeeks(quiet, weekId);
   }
 
-  async _runFetchWeeks(quiet) {
+  async _runFetchWeeks(quiet, weekId = null, fresh = false) {
+    const gen = this._dataGen;
     const seq = ++this._fetchSeq;
+    // One week can only be merged into a list that is already here.
+    const only = weekId && this._rawWeeks ? weekId : null;
+    if (!only || this._written === only) this._written = undefined;
     this._loading = true;
     this._quietLoad = quiet;
-    this._renderChrome();
-    this._markReloading();
+    this._lastAttempt = Date.now();
+    this._syncBusy();
+    let ok = false;
+    let failed = null;
     try {
-      const response = await this.call("get_weeks");
-      this._weeks = L.browsableWeeks(response.weeks || []);
+      let response = await this._load(only ? `week:${only}` : "weeks", fresh, () =>
+        this.call("get_weeks", only ? { week_id: only } : undefined)
+      );
+      const week = only ? (response.weeks || []).find((w) => w && w.week_id === only) : null;
+      if (only && !week && gen === this._dataGen) {
+        // The week is no longer on the account; only the whole list says what is.
+        response = await this._load("weeks", true, () => this.call("get_weeks"));
+      }
+      if (gen !== this._dataGen) return false;
+      this._rawWeeks = week ? L.mergeWeek(this._rawWeeks, week) : response.weeks || [];
+      this._weeks = L.browsableWeeks(this._rawWeeks);
       this._account = response.account || null;
       this._error = null;
       this.box.reconcile(this._weeks, seq);
       for (const view of Object.values(this._views)) if (view.onData) view.onData();
       this._ensureWeek();
+      ok = true;
     } catch (err) {
-      this._error = (err && err.message) || String(err);
-    } finally {
-      this._loading = false;
-      this._lastFetched = Date.now();
-      this._render();
-      if (this._refetchQueued) {
-        this._refetchQueued = false;
-        const resolve = this._resolveQueuedFetch;
-        this._queuedFetch = null;
-        this._resolveQueuedFetch = null;
-        this._runFetchWeeks(true).then(resolve, resolve);
-      }
+      failed = (err && err.message) || String(err);
     }
+    if (gen !== this._dataGen) return false;
+    if (failed) this._error = failed;
+    this._loading = false;
+    this._noteLoad(ok);
+    this._syncBusy();
+    this._invalidate("chrome");
+    // Only a section drawn from the weeks has anything to redraw (L.viewShowsWeeks).
+    if (L.viewShowsWeeks(this._view)) this._invalidate("view");
+    if (this._queuedFetch) {
+      const next = this._queuedWeek;
+      const resolve = this._resolveQueuedFetch;
+      this._queuedFetch = null;
+      this._resolveQueuedFetch = null;
+      this._queuedWeek = undefined;
+      this._runFetchWeeks(true, next, true).then(resolve, resolve);
+    }
+    return ok;
   }
 
-  // A quiet re-read after a write (views call this; the refresh icon spins, nothing dims).
-  async reloadWeeks() {
-    await this._fetchWeeks({ quiet: true });
+  // The outcome of the load the card stands on (its weeks; the summary for a card that shows no
+  // weeks). A failure is not stamped as a load: it is tried again soon (L.RETRY_DELAYS_MS), and
+  // once those tries are used up, at the usual interval by the tick.
+  _noteLoad(ok) {
+    clearTimeout(this._retryTimer);
+    this._retryTimer = null;
+    if (ok) {
+      this._failCount = 0;
+      this._lastFetched = Date.now();
+      return;
+    }
+    this._failCount += 1;
+    if (this._failCount > L.RETRY_DELAYS_MS.length) return;
+    this._retryTimer = setTimeout(() => {
+      this._retryTimer = null;
+      // A hidden page, or a card no longer on it, waits: becoming visible or being put back runs
+      // _refreshIfStale, which this failure makes due.
+      if (document.visibilityState === "hidden" || !this.isConnected || this._loading || this._refreshing) return;
+      this.refresh({ quiet: true });
+    }, L.loadDelayMs(this._failCount, this._refetchIntervalMs()));
+  }
+
+  // Home Assistant reconnected, or the integration's entities came back: read now instead of at
+  // the next interval. Entities return one at a time, so this waits a moment for the last.
+  _recover() {
+    clearTimeout(this._recoverTimer);
+    this._recoverTimer = setTimeout(() => {
+      this._recoverTimer = null;
+      if (this.isConnected && this._hass && this._connected) this.refresh({ quiet: true });
+    }, 1000);
+  }
+
+  // A quiet re-read after a write (views call this; the refresh icon spins, nothing dims). After
+  // a write to one week's box, that week alone (`weekId`, or the week the card saw written).
+  async reloadWeeks({ weekId = null } = {}) {
+    const noted = typeof this._written === "string" && this._written !== "all" ? this._written : null;
+    await this._fetchWeeks({ quiet: true, weekId: weekId || noted });
     this._fetchSummary();
   }
 
-  async _fetchSummary() {
+  async _fetchSummary(fresh = false) {
     if (!this._hass) return;
     if (this._summaryLoading) {
       this._summaryQueued = true; // same reasoning as the weeks queue: the in-flight one is older
       return;
     }
+    const gen = this._dataGen;
+    // A card without weeks (just Recipes, just Account) stands on its summary instead.
+    const primary = !this._needs().weeks;
     this._summaryLoading = true;
+    if (primary) this._lastAttempt = Date.now();
+    let ok = false;
+    const before = this._summary;
     try {
-      this._summary = await this.call("get_account_summary");
+      const summary = await this._load("summary", fresh, () => this.call("get_account_summary"));
+      if (gen !== this._dataGen) return;
+      this._summary = summary;
+      ok = true;
     } catch (err) {
+      if (gen !== this._dataGen) return;
       // The summary only decorates (header, banners, Account); the weeks error covers outages.
       // eslint-disable-next-line no-console
       console.warn("hellofresh: account summary unavailable", err);
-    } finally {
-      this._summaryLoading = false;
-      this._renderChrome();
-      if (this._view === "account") this.renderView();
-      if (this._summaryQueued) {
-        this._summaryQueued = false;
-        this._fetchSummary();
-      }
+    }
+    this._summaryLoading = false;
+    if (primary) this._noteLoad(ok);
+    this._invalidate("chrome");
+    // Account shows the summary. The Menu's week head falls back on its number of people for a
+    // week that doesn't say its own, so it is redrawn when that number arrives or changes.
+    const people = L.weekServings(null, this._summary) !== L.weekServings(null, before);
+    if (this._view === "account" || (this._view === "menu" && people)) this._invalidate("view");
+    if (this._summaryQueued) {
+      this._summaryQueued = false;
+      this._fetchSummary(true);
     }
   }
 
@@ -523,9 +791,12 @@ class HelloFreshCard extends HTMLElement {
     return L.refetchIntervalMs(this._account || this._summary);
   }
 
+  // Read again when the data is due: a refresh interval after the last load that worked, or the
+  // retry delay after the last attempt when that one failed.
   _refreshIfStale() {
-    if (!this._hass || !this._fetched || this._loading) return false;
-    if (Date.now() - this._lastFetched < this._refetchIntervalMs()) return false;
+    if (!this._hass || !this._fetched || this._loading || this._refreshing) return false;
+    const since = this._failCount ? this._lastAttempt : this._lastFetched;
+    if (Date.now() - since < L.loadDelayMs(this._failCount, this._refetchIntervalMs())) return false;
     this.refresh({ quiet: true });
     return true;
   }
@@ -537,13 +808,15 @@ class HelloFreshCard extends HTMLElement {
       if (this._refreshIfStale()) return;
       this._updateCountdowns();
       // A deadline passing is the one change a tick can cause on its own: the week's Add
-      // buttons, steppers and Save must go away without waiting for the next poll.
-      if (this._renderedEditable !== this._currentEditability()) this.renderView();
+      // buttons, steppers, Save and Skip must go away without waiting for the next poll.
+      let actions = this._renderedActions;
+      try {
+        actions = L.actionsKey(this._weeks);
+      } catch (_err) {
+        /* weeks it can't read: renderView shows that, once */
+      }
+      if (this._renderedActions !== actions) this.renderView();
     }, 60000);
-  }
-
-  _currentEditability() {
-    return (this._weeks || []).map((w) => (L.isWeekEditable(w) ? "1" : "0")).join("");
   }
 
   _stopTick() {
@@ -583,6 +856,12 @@ class HelloFreshCard extends HTMLElement {
     const detail = (ev && ev.detail) || {};
     if (detail.source === this._instanceId) return;
     if (!L.eventMatchesAccount(detail, this._config) || !this._fetched) return;
+    if (detail.weekId && this._rawWeeks) {
+      // A sibling changed one week's box: that week and the figures around it, not every
+      // week's whole menu again.
+      this.reloadWeeks({ weekId: String(detail.weekId) });
+      return;
+    }
     this.refresh({ quiet: true });
   }
 
@@ -607,6 +886,8 @@ class HelloFreshCard extends HTMLElement {
       trackingEta: find("delivery_tracking_eta", "sensor"),
       // The Week tab's Meals calendar: its plan_updated attribute moves with every plan change.
       meals: find("meals", "calendar"),
+      // The HelloFresh site the account is on (its API base URL is the website's address).
+      site: find("api_base_url", "sensor"),
     };
     this._entityIdsFor = hass.entities;
     return this._entityIds;
@@ -616,26 +897,15 @@ class HelloFreshCard extends HTMLElement {
     return (entityId && this._hass && this._hass.states && this._hass.states[entityId]) || null;
   }
 
-  // One signature per group of entities, so a token-countdown tick never re-renders the menu.
-  _entitySignature() {
-    const ids = this.entities();
-    const sign = (list) =>
-      list
-        .filter(Boolean)
-        .map((id) => {
-          const s = this.entityState(id);
-          return s ? `${id}=${s.state}@${s.last_updated}` : `${id}=-`;
-        })
-        .join("|");
-    return {
-      pantry: sign(ids.prep || []),
-      plan: sign([ids.boxSize, ids.deliveryDay]),
-      health: sign([ids.accessToken, ids.refreshToken, ids.writeActions, ids.payloadShape]),
-      tracking: sign([ids.trackingPhase, ids.trackingEta]),
-      mealplan: sign([ids.meals]),
-    };
+  // The account's HelloFresh website ("https://www.hellofresh.de"), for "do this on HelloFresh"
+  // links; "" when Home Assistant doesn't have it.
+  siteUrl() {
+    const state = this.entityState(this.entities().site);
+    return state ? L.safeUrl(state.state, { httpsOnly: true }) : "";
   }
 
+  // What a change in the card's entities means for what is on screen (the groups are
+  // L.entitySignature's). Drawn in the next frame: several entities often move together.
   _onEntitiesChanged(groups) {
     if (groups.has("pantry")) {
       // A prep list changed underneath us (a meal swap, a tick from another device): re-read it.
@@ -644,14 +914,19 @@ class HelloFreshCard extends HTMLElement {
         const s = this.entityState(id);
         if (st && st.items && s && st.sig !== s.last_updated) this.loadPantry(id, { force: true });
       }
-      if (this._view === "overview" || this._view === "menu") this.renderView();
+      if (this._view === "overview" || this._view === "menu") this._invalidate("view");
     }
-    if (this._view === "account" && (groups.has("plan") || groups.has("health"))) this.renderView();
-    // The plan changed somewhere else (another device, an automation): re-read it.
-    if (groups.has("mealplan")) this.loadMealPlan();
+    if (this._view === "account" && (groups.has("plan") || groups.has("health"))) this._invalidate("view");
+    if (groups.has("mealplan")) {
+      // The plan changed somewhere else (another device, an automation): re-read it, and not by
+      // joining a read that began before the change. Every card sees this same change; the
+      // signature lets them still share the one read it starts.
+      L.bumpDataEpoch(this._config, "mealplan", this._entitySig.mealplan);
+      if (this._needs().mealPlan) this.loadMealPlan();
+    }
     if (groups.has("tracking")) {
-      if (this._view === "overview") this.renderView();
-      if (this.sheetKind === "delivery") this.renderSheet();
+      if (this._view === "overview") this._invalidate("view");
+      if (this.sheetKind === "delivery") this._invalidate("sheet");
     }
   }
 
@@ -680,7 +955,12 @@ class HelloFreshCard extends HTMLElement {
     const st = this._pantry[entityId] || (this._pantry[entityId] = { items: null, loading: false, error: null, sig: null });
     const s = this.entityState(entityId);
     const sig = s ? s.last_updated : null;
-    if (st.loading || (!force && st.items && st.sig === sig)) return;
+    if (st.loading) {
+      // The read in flight began before whatever asked for this one: read once more after it.
+      if (force) st.queued = true;
+      return;
+    }
+    if (!force && st.items && st.sig === sig) return;
     st.loading = true;
     try {
       const result = await this._hass.callService(
@@ -700,8 +980,13 @@ class HelloFreshCard extends HTMLElement {
       st.items = st.items || [];
     } finally {
       st.loading = false;
-      this.renderView();
-      if (this._sheetState && this._sheetState.kind === "pantry") this.renderSheet();
+      // Only what shows the list: the Overview's and the Menu's pantry button, and the sheet.
+      if (this._view === "overview" || this._view === "menu") this._invalidate("view");
+      if (this.sheetKind === "pantry") this._invalidate("sheet");
+      if (st.queued) {
+        st.queued = false;
+        this.loadPantry(entityId, { force: true });
+      }
     }
   }
 
@@ -714,11 +999,13 @@ class HelloFreshCard extends HTMLElement {
     this.renderView();
     if (this._sheetState && this._sheetState.kind === "pantry") this.renderSheet();
     try {
+      // No Home Assistant error toast on top of the card's own (the 5th argument).
       await this._hass.callService(
         "todo",
         "update_item",
         { item: uid, status: item.status },
-        { entity_id: entityId }
+        { entity_id: entityId },
+        false
       );
     } catch (err) {
       item.status = previous;
@@ -779,8 +1066,7 @@ class HelloFreshCard extends HTMLElement {
       narrow: true,
       label: t("week.skip_this_week"),
       render: () => `
-        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("skip.title", { date })}</h2></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+        ${UI.sheetHead(t("skip.title", { date }))}
         <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">${ht("skip.body")}</p></div>
         <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>${ht("skip.keep")}</button>
           <button class="hf-btn primary" data-action="confirm-skip">${ht("week.skip_week")}</button></div>`,
@@ -793,41 +1079,79 @@ class HelloFreshCard extends HTMLElement {
     });
   }
 
-  async toggleSkip(week) {
+  toggleSkip(week) {
+    if (week) return this._setSkipped(week, !L.isSkipped(week));
+    return undefined;
+  }
+
+  // Skip a week, or unskip it. Its toast offers Undo, which writes the other one back; the undo
+  // itself (`undoing`) shows "Undoing…" while it runs and offers nothing further.
+  async _setSkipped(week, skip, { undoing = false } = {}) {
     if (this._busy || !week) return;
-    const unskip = L.isSkipped(week);
-    const service = unskip ? "unskip_week" : "skip_week";
-    this._busy = true;
+    const service = skip ? "skip_week" : "unskip_week";
+    this._startWrite(undoing);
     this.renderView();
-    this._renderBoxBar();
     let failed = null;
     try {
       await this.callAction(service, { week_id: week.week_id });
     } catch (err) {
       failed = (err && err.message) || String(err);
     }
-    this._busy = false;
-    await this._fetchWeeks({ quiet: true });
-    this._fetchSummary();
-    if (failed) this.toast(t(unskip ? "skip.unskip_failed" : "skip.skip_failed", { error: failed }), true);
+    this._endWrite(undoing);
+    // Siblings first, so their re-read of this week and ours are one request.
+    if (!failed) this.broadcastDataChanged({ weekId: week.week_id });
+    await this.reloadWeeks({ weekId: week.week_id });
+    if (undoing) this.undoResult(failed);
+    else if (failed) this.toast(t(skip ? "skip.skip_failed" : "skip.unskip_failed", { error: failed }), true);
     else {
-      this.toast(t(unskip ? "skip.restored" : "skip.done"));
-      this.broadcastDataChanged();
+      const weekId = week.week_id;
+      this.toast(t(skip ? "skip.done" : "skip.restored"), false, {
+        undo: this.weekUndo(weekId, () => this._setSkipped(this.weekById(weekId) || week, !skip, { undoing: true })),
+      });
     }
   }
 
+  // The names and prices of the delivery days ("Tuesday 8AM - 8PM", +$2.99), by handle. null
+  // until read. A read that fails leaves it null, so the sheet shows dates alone this time and
+  // the next time it opens asks again; refresh() forgets it, since both follow the plan.
   async _ensureDeliveryOptions() {
-    if (this._deliveryOptions !== null) return;
-    this._deliveryOptions = {};
+    if (this._deliveryOptions !== null || this._deliveryLoading) return;
+    const gen = this._dataGen;
+    this._deliveryLoading = true;
+    let byHandle = null;
     try {
-      const response = await this.call("get_delivery_options");
-      const byHandle = {};
+      const response = await this._load("delivery-options", false, () => this.call("get_delivery_options"));
+      byHandle = {};
       for (const o of response.delivery_options || []) if (o && o.handle) byHandle[o.handle] = o;
-      this._deliveryOptions = byHandle;
-    } catch (_err) {
-      this._deliveryOptions = {}; // date-only labels still work
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: delivery options unavailable", err);
     }
-    if (this._sheetState && this._sheetState.kind === "reschedule") this.renderSheet();
+    if (gen !== this._dataGen) return;
+    this._deliveryLoading = false;
+    this._deliveryOptions = byHandle;
+    if (byHandle && this.sheetKind === "reschedule") this.renderSheet();
+  }
+
+  // The box sizes on offer (hellofresh.get_plan_options), for changing one week's number of
+  // people. Read once and kept for as long as the card shows this account: they follow the plan,
+  // not the week. A read that failed is made again the next time they are asked for.
+  async loadPlanOptions() {
+    const current = this._planOptions;
+    if (!this._hass || (current && current.status !== "failed")) return;
+    const gen = this._dataGen;
+    this._planOptions = { status: "loading", options: null, error: null };
+    if (this.sheetKind === "servings") this.renderSheet();
+    let next;
+    try {
+      const response = await this._load("plan-options", false, () => this.call("get_plan_options"));
+      next = { status: "ok", options: Array.isArray(response.options) ? response.options : [], error: null };
+    } catch (err) {
+      next = { status: "failed", options: null, error: (err && err.message) || String(err) };
+    }
+    if (gen !== this._dataGen) return;
+    this._planOptions = next;
+    if (this.sheetKind === "servings") this.renderSheet();
   }
 
   openReschedule(week) {
@@ -837,28 +1161,19 @@ class HelloFreshCard extends HTMLElement {
       narrow: true,
       label: t("reschedule.title"),
       render: () => {
-        const catalog = this._deliveryOptions || {};
         const currency = this._account && this._account.selected_plan_total_price_currency;
-        const options = (week.available_one_off_options || []).filter((o) => o && o.handle);
-        const buttons = options
-          .map((o) => {
-            const current = o.delivery_date && o.delivery_date === week.delivery_date;
-            const meta = catalog[o.handle];
-            const name = (meta && meta.delivery_name) || (o.delivery_date ? L.fmtLongDate(o.delivery_date) : o.handle);
-            const date = o.delivery_date && meta && meta.delivery_name ? L.fmtDate(o.delivery_date) : "";
-            const price = meta && Number(meta.price) > 0 ? `+${L.fmtPrice(meta.price, currency)}` : "";
-            return `<button class="hf-controlrow hf-btn ghost" style="height:auto;border-radius:12px;justify-content:space-between;padding:12px 14px;width:100%"
-                data-action="pick-day" data-handle="${esc(o.handle)}" ${current || this._busy ? "disabled" : ""}>
-                <span style="text-align:left"><span class="hf-controllabel">${esc(name)}</span>
-                  ${date ? `<span class="hf-controlhint">${esc(date)}</span>` : ""}</span>
-                <span>${current ? UI.pill(t("reschedule.current"), "ok") : price ? `<span class="hf-muted hf-small">${esc(price)}</span>` : ""}</span>
-              </button>`;
-          })
+        const buttons = L.rescheduleOptions(week, this._deliveryOptions, currency)
+          .map(
+            (o) => `<button class="hf-controlrow hf-btn ghost" style="height:auto;border-radius:12px;justify-content:space-between;padding:12px 14px;width:100%"
+                data-action="pick-day" data-handle="${esc(o.handle)}" ${o.current || this._busy ? "disabled" : ""}>
+                <span style="text-align:left"><span class="hf-controllabel">${esc(o.name)}</span>
+                  ${o.date ? `<span class="hf-controlhint">${esc(o.date)}</span>` : ""}</span>
+                <span>${o.current ? UI.pill(t("reschedule.current"), "ok") : o.price ? `<span class="hf-muted hf-small">${esc(o.price)}</span>` : ""}</span>
+              </button>`
+          )
           .join("");
         return `
-          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("reschedule.title")}</h2>
-            <div class="hf-sheetsub">${ht("reschedule.only_this_box", { date: L.fmtLongDate(week.delivery_date) })}</div></div>
-            <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+          ${UI.sheetHead(t("reschedule.title"), t("reschedule.only_this_box", { date: L.fmtLongDate(week.delivery_date) }))}
           <div class="hf-sheetbody" style="gap:4px">${buttons || `<div class="hf-empty">${ht("reschedule.none")}</div>`}</div>`;
       },
       onClick: (_ev, el) => {
@@ -872,9 +1187,13 @@ class HelloFreshCard extends HTMLElement {
     this._ensureDeliveryOptions();
   }
 
-  async reschedule(week, handle) {
+  // Move one week's box to another of its delivery options. Undo moves it back to the option it
+  // was on (the one for its date before the change).
+  async reschedule(week, handle, { undoing = false } = {}) {
     if (this._busy || !week || !handle) return;
-    this._busy = true;
+    const backDate = undoing ? null : week.delivery_date;
+    const back = undoing ? null : L.currentDeliveryOption(week);
+    this._startWrite(undoing);
     this.renderView();
     let failed = null;
     try {
@@ -882,12 +1201,21 @@ class HelloFreshCard extends HTMLElement {
     } catch (err) {
       failed = (err && err.message) || String(err);
     }
-    this._busy = false;
-    await this._fetchWeeks({ quiet: true });
-    if (failed) this.toast(t("reschedule.failed", { error: failed }), true);
+    this._endWrite(undoing);
+    if (!failed) this.broadcastDataChanged({ weekId: week.week_id });
+    // The week, and the summary with it: the header and the next delivery follow the new day.
+    await this.reloadWeeks({ weekId: week.week_id });
+    if (undoing) this.undoResult(failed);
+    else if (failed) this.toast(t("reschedule.failed", { error: failed }), true);
     else {
-      this.toast(t("reschedule.done"));
-      this.broadcastDataChanged();
+      const weekId = week.week_id;
+      // HelloFresh offers a week's other days, so the old day is normally among the re-read
+      // week's options rather than among those from before the move.
+      const target = L.deliveryOptionForDate(this.weekById(weekId), backDate) || back;
+      const undo = target && target !== handle
+        ? this.weekUndo(weekId, () => this.reschedule(this.weekById(weekId) || week, target, { undoing: true }))
+        : null;
+      this.toast(t("reschedule.done"), false, { undo });
     }
   }
 
@@ -907,9 +1235,7 @@ class HelloFreshCard extends HTMLElement {
             ? UI.pantryList(entityId, items)
             : `<div class="hf-empty">${icon("mdi:check-all")}${ht("pantry.nothing")}</div>`;
         return `
-          <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("pantry.title")}</h2>
-            <div class="hf-sheetsub">${ht("pantry.sub", { date: L.fmtLongDate(week && week.delivery_date), count: open })}</div></div>
-            <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+          ${UI.sheetHead(t("pantry.title"), t("pantry.sub", { date: L.fmtLongDate(week && week.delivery_date), count: open }))}
           <div class="hf-sheetbody">${body}</div>`;
       },
       onClick: (_ev, el) => {
@@ -933,6 +1259,11 @@ class HelloFreshCard extends HTMLElement {
           getRoot: () => this.shadowRoot,
           callService: (service, data) => this.call(service, data),
           getSelection: () => (this._detailSelection ? this._detailSelection() : null),
+          // The card knows which control opened the sheet and can find it again after its own
+          // re-renders; it also puts everything behind the sheet out of reach while it is open.
+          captureFocus: () => this._captureFocus(),
+          returnFocus: (state) => this._returnFocus(state),
+          onToggle: () => this._syncModal(),
         });
       }
       await this._detail.open(recipeId);
@@ -951,8 +1282,7 @@ class HelloFreshCard extends HTMLElement {
       kind: "video",
       label: recipe.name,
       render: () => `
-        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${esc(recipe.name)}</h2></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("video.close")}">${icon("mdi:close")}</button></div>
+        ${UI.sheetHead(recipe.name, "", "", { close: t("video.close") })}
         <div class="hf-videobox">
           <video controls autoplay playsinline><source src="${esc(url)}" type="video/mp4"></video>
           <div class="hf-videoerr" hidden>${ht("video.error")}</div>
@@ -972,74 +1302,220 @@ class HelloFreshCard extends HTMLElement {
   }
 
   // ---- sheets & toast ------------------------------------------------------------------------
+  //
+  // A sheet is { kind, label, narrow, render(), onClick(ev, el), onChange(ev), onInput(ev),
+  // onClose() }. Its dialog is built once when it opens; renderSheet() replaces what is inside.
 
   openSheet(sheet) {
+    this._ensureShell();
+    // Where focus goes back to: the control that opened the first sheet (one can open another).
+    if (!this._sheetState) this._sheetReturn = this._captureFocus();
     this._sheetState = sheet;
-    this._returnFocus = this.shadowRoot.activeElement;
+    this._sheetDialog = null;
     this.renderSheet();
-    const box = this._shell.sheet.querySelector(".hf-sheet");
-    if (box) box.focus({ preventScroll: true });
+    if (this._sheetDialog) this._sheetDialog.focus({ preventScroll: true });
   }
 
   renderSheet() {
     this._ensureShell();
+    this._wanted.delete("sheet");
     const host = this._shell.sheet;
     const sheet = this._sheetState;
     if (!sheet) {
-      host.innerHTML = "";
+      host.replaceChildren();
+      this._sheetDialog = null;
+      this._syncModal();
       return;
     }
-    const scroller = host.querySelector(".hf-sheetbody");
-    const top = scroller ? scroller.scrollTop : 0;
-    host.innerHTML = `<div class="hf-sheetwrap"><div class="hf-sheet${sheet.narrow ? " narrow" : ""}${
-      sheet.kind === "video" ? " hf-videobox" : ""
-    }" role="dialog" aria-modal="true" aria-label="${esc(sheet.label || "")}" tabindex="-1">${sheet.render()}</div></div>`;
-    const next = host.querySelector(".hf-sheetbody");
+    let dialog = this._sheetDialog;
+    if (!dialog || !dialog.isConnected) {
+      // Once per open. Rebuilding the backdrop and dialog on every update replayed their
+      // entrance (they flashed with each pantry tick and each price that arrived) and threw
+      // away whatever had focus inside.
+      const wrap = document.createElement("div");
+      wrap.className = "hf-sheetwrap";
+      dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      dialog.setAttribute("aria-modal", "true");
+      dialog.tabIndex = -1;
+      wrap.append(dialog);
+      host.replaceChildren(wrap);
+      this._sheetDialog = dialog;
+      this._syncModal();
+    }
+    dialog.className = `hf-sheet${sheet.narrow ? " narrow" : ""}${sheet.kind === "video" ? " hf-videobox" : ""}`;
+    dialog.setAttribute("aria-label", sheet.label || "");
+    const hadFocus = dialog.contains(this.shadowRoot.activeElement);
+    const focus = this._captureFocus();
+    const scroll = this._captureScroll(dialog);
+    const body = dialog.querySelector(".hf-sheetbody");
+    const top = body ? body.scrollTop : 0;
+    dialog.innerHTML = sheet.render();
+    const next = dialog.querySelector(".hf-sheetbody");
     if (next) next.scrollTop = top;
+    this._restoreScroll(dialog, scroll);
+    this._restoreFocus(focus);
+    // The control that had focus is gone (a button that only shows while there is something to
+    // pick): focus stays in the dialog rather than falling to the page behind it.
+    if (hadFocus && !this.shadowRoot.activeElement) dialog.focus({ preventScroll: true });
   }
 
   closeSheet() {
     if (!this._sheetState) return;
     const sheet = this._sheetState;
+    const back = this._sheetReturn;
     this._sheetState = null;
-    if (this._shell) this._shell.sheet.innerHTML = "";
+    this._sheetReturn = null;
+    this._sheetDialog = null;
+    if (this._shell) this._shell.sheet.replaceChildren();
+    this._syncModal();
     if (sheet.onClose) sheet.onClose();
-    if (this._returnFocus && this._returnFocus.isConnected) this._returnFocus.focus({ preventScroll: true });
-    this._returnFocus = null;
+    this._returnFocus(back);
   }
 
   get sheetKind() {
     return this._sheetState ? this._sheetState.kind : null;
   }
 
-  toast(message, isError = false) {
-    this._toastState = { message, isError };
+  // While a sheet or the recipe sheet is open, everything behind it is inert: out of reach of
+  // Tab, clicks and screen readers, which is what the dialogs' aria-modal says.
+  _syncModal() {
+    if (!this._shell) return;
+    const recipe = Boolean(this._detail && this._detail.isOpen);
+    this._shell.card.inert = recipe || Boolean(this._sheetState);
+    this._shell.sheet.inert = recipe;
+  }
+
+  // A message at the bottom of the card. A change that can be taken back passes `undo`
+  // ({weekId, run}, from weekUndo): the toast then offers Undo for L.UNDO_MS, and pressing it
+  // runs `run`, the reverse write. The toast is a status region; its Undo is an ordinary button
+  // in the Tab order (after the card's own controls) that never takes focus by itself, and
+  // Escape dismisses it.
+  toast(message, isError = false, { undo = null } = {}) {
+    const offer = undo && !isError ? { ...undo, gen: this._dataGen } : null;
+    this._toastState = {
+      message,
+      isError,
+      undo: offer,
+      ends: Date.now() + (offer ? L.UNDO_MS : isError ? 6000 : 3500),
+    };
     this._renderToast();
+    this._armToast();
+  }
+
+  // An Undo for a change to one week, or null once that week's deadline has passed: HelloFresh
+  // would refuse the reverse write.
+  weekUndo(weekId, run) {
+    return L.undoWindowOpen(this.weekById(weekId)) ? { weekId, run } : null;
+  }
+
+  // How an undo went, said in its own toast (which offers no further undo).
+  undoResult(failed) {
+    if (failed) this.toast(t("undo.failed", { error: failed }), true);
+    else this.toast(t("undo.done"));
+  }
+
+  // (Re)start the toast's clock for the time it has left, `least` at the least. It stands still
+  // while the pointer is on the toast or keyboard focus is in it: its Undo must not vanish under
+  // the hand about to press it.
+  _armToast(least = 0) {
     clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => {
-      this._toastState = null;
-      this._renderToast();
-    }, isError ? 6000 : 3500);
+    this._toastTimer = null;
+    const toast = this._toastState;
+    if (!toast || this._toastHolds.size) return;
+    this._toastTimer = setTimeout(() => this._clearToast(), Math.max(least, toast.ends - Date.now()));
+  }
+
+  // Take the toast away. Keyboard focus that was on it goes back to where it came from.
+  _clearToast() {
+    clearTimeout(this._toastTimer);
+    this._toastTimer = null;
+    this._toastState = null;
+    this._toastHolds.clear();
+    this._renderToast();
+  }
+
+  // A write is starting: an Undo still on offer goes, since it would no longer take back the
+  // latest change.
+  _dropUndo() {
+    if (this._toastState && this._toastState.undo) this._clearToast();
+  }
+
+  // The toast's Undo. One press takes the offer (it can't run twice), and only while the card is
+  // free to write, for the account it was made in, and while the week can still be changed.
+  _takeUndo() {
+    const offer = this._toastState && this._toastState.undo;
+    if (!offer || this._busy) return;
+    this._clearToast();
+    if (offer.gen !== this._dataGen) return;
+    if (offer.weekId && !L.undoWindowOpen(this.weekById(offer.weekId))) {
+      this.toast(t("undo.closed"), true);
+      return;
+    }
+    offer.run();
+  }
+
+  // Skip, unskip and a new delivery day run without the saving banner (their buttons just go
+  // quiet while the card is busy); undoing one shows "Undoing…" like any other undo.
+  _startWrite(undoing) {
+    if (undoing) this.setSaving(t("undo.undoing"));
+    else {
+      this._dropUndo();
+      this._busy = true;
+    }
+  }
+
+  _endWrite(undoing) {
+    if (undoing) this.setSaving(null);
+    else this._busy = false;
   }
 
   setSaving(text) {
+    if (text) this._dropUndo();
     this._saving = text;
     this._busy = Boolean(text);
     this._renderToast();
   }
 
+  // Written only when it changed, so a render while the toast is up (a load landing) leaves its
+  // Undo, and the keyboard on it, alone.
   _renderToast() {
     if (!this._shell) return;
+    const host = this._shell.toast;
+    let markup = "";
+    const toast = this._toastState;
     if (this._saving) {
-      this._shell.toast.innerHTML = `<div class="hf-toast saving" role="status"><span class="hf-spinner"></span>${esc(this._saving)}</div>`;
-      return;
+      markup = `<div class="hf-toast saving" role="status"><span class="hf-spinner"></span>${esc(this._saving)}</div>`;
+    } else if (toast) {
+      const undo = toast.undo
+        ? `<button class="hf-toastbtn" data-action="undo" data-focus-key="toast-undo">${ht("undo.action")}</button>`
+        : "";
+      markup = `<div class="hf-toast${toast.isError ? " error" : ""}" role="${toast.isError ? "alert" : "status"}">${icon(
+        toast.isError ? "mdi:alert-circle-outline" : "mdi:check-circle-outline"
+      )}<span class="hf-toasttext">${esc(toast.message)}</span>${undo}</div>`;
     }
-    const t = this._toastState;
-    this._shell.toast.innerHTML = t
-      ? `<div class="hf-toast${t.isError ? " error" : ""}" role="${t.isError ? "alert" : "status"}">${icon(
-          t.isError ? "mdi:alert-circle-outline" : "mdi:check-circle-outline"
-        )}${esc(t.message)}</div>`
-      : "";
+    const focus = host.contains(this.shadowRoot.activeElement) ? this._captureFocus() : null;
+    if (!this._write(host, "toast", markup)) return;
+    if (focus) {
+      // The toast that had the keyboard was replaced: the same control in the new one, else
+      // back to where the keyboard came from.
+      this._restoreFocus(focus);
+      if (!this.shadowRoot.activeElement) this._returnFocus(this._toastReturn);
+    }
+    // A focused control taken out of the page sends no focusout, so the hold goes here.
+    if (!host.contains(this.shadowRoot.activeElement)) this._toastHolds.delete("focus");
+  }
+
+  // Say something to a screen reader without showing it ("12 more recipes"). One status region
+  // that stays in the card: a live region added along with its words is often not read out.
+  announce(message) {
+    this._ensureShell();
+    const node = this._shell.live;
+    node.textContent = "";
+    // Emptied first and filled a moment later, so the same words twice are read twice.
+    setTimeout(() => {
+      node.textContent = String(message || "");
+    }, 50);
   }
 
   // ---- rendering ----------------------------------------------------------------------------
@@ -1057,11 +1533,18 @@ class HelloFreshCard extends HTMLElement {
       </div>`;
     const sheet = document.createElement("div");
     const toast = document.createElement("div");
-    this.shadowRoot.append(card, sheet, toast);
+    const live = document.createElement("div");
+    live.className = "sr-only";
+    live.setAttribute("role", "status");
+    live.setAttribute("aria-live", "polite");
+    // After the card and its sheet: Tab from the card's last control (Save, say) reaches the
+    // toast's Undo next.
+    this.shadowRoot.append(card, sheet, toast, live);
     this._shell = {
       card,
       sheet,
       toast,
+      live,
       app: card.querySelector(".hf-app"),
       appbar: card.querySelector(".js-appbar"),
       tabs: card.querySelector(".js-tabs"),
@@ -1069,6 +1552,28 @@ class HelloFreshCard extends HTMLElement {
       main: card.querySelector(".js-main"),
       boxbar: card.querySelector(".js-boxbar"),
     };
+    toast.addEventListener("click", (ev) => {
+      if (ev.target.closest('[data-action="undo"]')) this._takeUndo();
+    });
+    // The toast holds still while it has the pointer or the keyboard (_armToast), and notes where
+    // the keyboard came from, to send it back there when the toast goes.
+    const hold = (what) => {
+      this._toastHolds.add(what);
+      this._armToast();
+    };
+    const release = (what) => {
+      if (!this._toastHolds.delete(what)) return;
+      if (!this._toastHolds.size) this._armToast(3000);
+    };
+    toast.addEventListener("pointerenter", () => hold("pointer"));
+    toast.addEventListener("pointerleave", () => release("pointer"));
+    toast.addEventListener("focusin", (ev) => {
+      if (!toast.contains(ev.relatedTarget)) this._toastReturn = this._captureFocus(ev.relatedTarget);
+      hold("focus");
+    });
+    toast.addEventListener("focusout", (ev) => {
+      if (!toast.contains(ev.relatedTarget)) release("focus");
+    });
     card.addEventListener("click", (ev) => this._onClick(ev));
     card.addEventListener("keydown", (ev) => this._onKeydown(ev));
     card.addEventListener("input", (ev) => this._activeView().onInput && this._activeView().onInput(ev));
@@ -1085,6 +1590,16 @@ class HelloFreshCard extends HTMLElement {
     sheet.addEventListener("change", (ev) => {
       const current = this._sheetState;
       if (current && current.onChange) current.onChange(ev);
+    });
+    sheet.addEventListener("input", (ev) => {
+      const current = this._sheetState;
+      if (current && current.onInput) current.onInput(ev);
+    });
+    sheet.addEventListener("keydown", (ev) => {
+      // Tab stays inside the open sheet; rows that are role="button" work with Enter and Space
+      // here as they do in the card.
+      L.keepTabInside(ev, this._sheetDialog, this.shadowRoot.activeElement);
+      this._onKeydown(ev);
     });
   }
 
@@ -1116,54 +1631,137 @@ class HelloFreshCard extends HTMLElement {
     this._renderToast();
   }
 
+  // Draw a part of the card ("chrome", "view", "sheet") in the next frame. Loads that land
+  // together — a summary on the heels of the weeks, a to-do list re-read while its sheet is open
+  // — then cost one render between them, and a render a click does itself meanwhile covers the
+  // part it draws.
+  _invalidate(part) {
+    this._wanted.add(part);
+    if (this._frame) return;
+    this._frame = requestAnimationFrame(() => {
+      this._frame = 0;
+      const wanted = this._wanted;
+      this._wanted = new Set();
+      if (wanted.has("chrome")) this._renderChrome();
+      if (wanted.has("view")) this.renderView();
+      if (wanted.has("sheet") && this._sheetState) this.renderSheet();
+    });
+  }
+
   // Before hass (and its language's text) arrives: the loading skeleton alone, no words.
   _renderWaiting() {
     const shell = this._shell;
+    this._html = {};
     shell.appbar.hidden = true;
     shell.tabs.hidden = true;
+    shell.appbar.innerHTML = "";
+    shell.tabs.innerHTML = "";
     shell.banners.innerHTML = "";
     shell.boxbar.innerHTML = "";
     shell.main.innerHTML = `<div class="hf-skeletons" aria-busy="true"><div class="hf-skeleton"></div>
       <div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
   }
 
+  // Write a region's markup, unless it is what was written there last. Compared against that
+  // string and not the DOM: innerHTML reads back re-serialised (`disabled` as `disabled=""`, a
+  // non-breaking space as `&nbsp;`), so it never equals the markup that produced it and a
+  // comparison with it rewrote the region every time. Returns whether it wrote.
+  _write(el, name, markup) {
+    if (this._html[name] === markup) return false;
+    el.innerHTML = markup;
+    this._html[name] = markup;
+    return true;
+  }
+
+  // The header, tabs and banners. Each is only rewritten when its markup changed, so a fetch
+  // or a summary landing leaves a focused tab alone; when one is rewritten (the current tab
+  // moved), focus goes back to the same control.
   _renderChrome() {
     if (!this._shell || !this._config || !this._textLoaded) return;
-    this._shell.tabs.setAttribute("aria-label", t("card.sections"));
-    this._shell.appbar.innerHTML = this._renderAppbar();
-    this._shell.appbar.hidden = !this._shell.appbar.innerHTML.trim();
-    this._shell.tabs.innerHTML = this._renderTabs();
-    this._shell.tabs.hidden = !this._shell.tabs.innerHTML.trim();
-    this._shell.banners.innerHTML = this._renderBanners();
+    this._wanted.delete("chrome");
+    const shell = this._shell;
+    shell.tabs.setAttribute("aria-label", t("card.sections"));
+    const focus = this._captureFocus();
+    const appbar = this._renderAppbar();
+    const tabs = this._renderTabs();
+    this._write(shell.appbar, "appbar", appbar);
+    shell.appbar.hidden = !appbar.trim();
+    this._write(shell.tabs, "tabs", tabs);
+    shell.tabs.hidden = !tabs.trim();
+    this._write(shell.banners, "banners", this._renderBanners());
+    this._syncBusy();
+    this._restoreFocus(focus);
+  }
+
+  // A load running: the refresh button spins and stops taking clicks, and the view dims unless
+  // the load is a quiet one. Patched in place, so a load starting or ending rebuilds nothing.
+  // The button is aria-disabled rather than disabled, which would drop keyboard focus from it.
+  _syncBusy() {
+    if (!this._shell) return;
+    const busy = this._loading || this._refreshing > 0;
+    for (const button of this._shell.appbar.querySelectorAll('[data-action="refresh"]')) {
+      button.classList.toggle("spin", busy);
+      if (busy) button.setAttribute("aria-disabled", "true");
+      else button.removeAttribute("aria-disabled");
+    }
+    this._shell.main.classList.toggle("reloading", this._loading && !this._quietLoad);
   }
 
   // Re-render the active view (and the box bar), keeping focus, caret and rail scroll positions.
   renderView() {
     if (!this._shell || !this._config || !this._textLoaded) return;
+    this._wanted.delete("view");
     const main = this._shell.main;
     const view = this._activeView();
-    const ui = this._captureUi(main);
+    const focus = this._captureFocus();
+    const scroll = this._captureScroll(main);
     // A view rendered right after another one was showing (a tab switch, the first render).
     const entered = this._renderedView !== view;
     this._renderedView = view;
-    this._renderedEditable = this._currentEditability();
-    main.innerHTML = view.render();
+    // One section failing to draw (a payload shape nobody has seen) must not take the card down
+    // with it, nor leave whoever awaits the load that triggered the render waiting.
+    let failed = null;
+    try {
+      this._renderedActions = L.actionsKey(this._weeks);
+      main.innerHTML = view.render();
+    } catch (err) {
+      failed = err;
+      main.innerHTML = this._viewError(err);
+      // eslint-disable-next-line no-console
+      console.error("hellofresh: this section could not be shown", err);
+    }
     main.classList.toggle("reloading", this._loading && !this._quietLoad);
-    this._restoreUi(main, ui);
-    if (view.afterRender) view.afterRender(main, { entered });
+    this._restoreScroll(main, scroll);
+    this._restoreFocus(focus);
+    if (!failed && view.afterRender) {
+      try {
+        view.afterRender(main, { entered });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("hellofresh: this section could not finish drawing", err);
+      }
+    }
     this._renderBoxBar();
   }
 
-  _markReloading() {
-    if (this._shell) this._shell.main.classList.toggle("reloading", this._loading && !this._quietLoad);
+  _viewError(err) {
+    return `<div class="hf-empty" role="alert">${icon("mdi:alert-circle-outline")}${ht("card.view_failed", {
+      error: (err && err.message) || String(err),
+    })}
+      <div class="hf-actions" style="justify-content:center;margin-top:12px">
+      <button class="hf-btn" data-action="refresh">${ht("common.try_again")}</button></div></div>`;
   }
 
   _renderBoxBar() {
     if (!this._shell) return;
     const week = this.selectedWeek();
-    const html = BOX_VIEWS.has(this._view) && week ? Menu.renderBoxBar(this, week) : "";
-    const bar = this._shell.boxbar;
-    if (bar.innerHTML !== html) bar.innerHTML = html;
+    const markup = BOX_VIEWS.has(this._view) && week ? Menu.renderBoxBar(this, week) : "";
+    if (this._html.boxbar === markup) return;
+    // The bar is rewritten while it is in use (the price estimate lands a moment after an edit):
+    // Save or Discard keeps the keyboard's focus.
+    const focus = this._captureFocus();
+    this._write(this._shell.boxbar, "boxbar", markup);
+    this._restoreFocus(focus);
   }
 
   // Public so views can refresh just the bar during a selection edit.
@@ -1171,26 +1769,102 @@ class HelloFreshCard extends HTMLElement {
     this._renderBoxBar();
   }
 
-  _captureUi(root) {
-    const active = this.shadowRoot.activeElement;
-    const keyed = active && active.closest && active.closest("[data-focus-key]");
-    const state = {
-      focusKey: keyed ? keyed.getAttribute("data-focus-key") : null,
-      selection:
-        active && typeof active.selectionStart === "number"
-          ? [active.selectionStart, active.selectionEnd]
-          : null,
-      scroll: {},
-    };
-    for (const el of root.querySelectorAll("[data-scroll-key]")) {
-      state.scroll[el.getAttribute("data-scroll-key")] = [el.scrollLeft, el.scrollTop];
-    }
-    return state;
+  // ---- focus and scroll across a re-render ----------------------------------------------------
+  //
+  // Rendering replaces markup, and with it the focused control. Before a render the card notes
+  // which control has focus by a name its replacement will share (focusName above); after it,
+  // if focus was lost, it goes back to the control of that name. This covers every button a
+  // view draws, not just the ones a view gave a data-focus-key.
+
+  // The parts of the card that are re-rendered separately.
+  _regions() {
+    const shell = this._shell;
+    return [shell.appbar, shell.tabs, shell.banners, shell.main, shell.boxbar, this._sheetDialog, shell.toast].filter(Boolean);
   }
 
-  _restoreUi(root, state) {
+  // Every control in a region going by a name (two can: the header's refresh and a banner's
+  // Retry), in page order.
+  _named(region, target) {
+    return [...region.querySelectorAll(target.selector)].filter((el) => {
+      const other = focusName(el);
+      return Boolean(other) && other.name === target.name;
+    });
+  }
+
+  // `active` is the focused control unless given (where the keyboard was before it moved on).
+  _captureFocus(active = this._shell ? this.shadowRoot.activeElement : null) {
+    if (!active || !this._shell) return null;
+    const region = this._regions().find((el) => el.contains(active));
+    if (!region) return null;
+    // The control itself, then the focusable things around it (the tile around its Add button):
+    // when a render takes the control away, focus lands on the nearest one still there instead
+    // of dropping to the top of the page.
+    const names = [];
+    for (let el = active; el && el !== region; el = el.parentElement) {
+      if (el !== active && el.tabIndex < 0 && !el.hasAttribute("data-focus-key")) continue;
+      const target = focusName(el);
+      if (target) names.push({ ...target, index: this._named(region, target).indexOf(el) });
+    }
+    let selection = null;
+    try {
+      if (typeof active.selectionStart === "number") selection = [active.selectionStart, active.selectionEnd];
+    } catch (_e) {
+      /* input types without a caret */
+    }
+    return { active, region, names, selection };
+  }
+
+  // After a render: put focus back if the render took it away. Focus that is still somewhere in
+  // the card — the control survived, or the view moved it — is left where it is.
+  _restoreFocus(state) {
+    if (!state || this.shadowRoot.activeElement) return;
+    this._focusNamed(state);
+  }
+
+  _focusNamed(state) {
+    for (const [i, target] of (state.names || []).entries()) {
+      const peers = this._named(state.region, target);
+      const el = peers[target.index] || peers[0];
+      if (!el || el.disabled) continue;
+      el.focus({ preventScroll: true });
+      if (this.shadowRoot.activeElement !== el) continue;
+      if (i === 0 && state.selection && typeof el.setSelectionRange === "function") {
+        try {
+          el.setSelectionRange(state.selection[0], state.selection[1]);
+        } catch (_e) {
+          /* input types without a caret */
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // Closing a sheet: back to the control that opened it. A render while the sheet was open has
+  // usually replaced that element, so it is found again by name.
+  _returnFocus(state) {
+    if (!state) return;
+    if (state.active && state.active.isConnected && !state.active.disabled) {
+      state.active.focus({ preventScroll: true });
+      if (this.shadowRoot.activeElement === state.active) return;
+    }
+    this._focusNamed(state);
+  }
+
+  _captureScroll(root) {
+    const scroll = {};
+    // A card out of the page has no layout: every offset reads 0, and putting that back would
+    // count as a position the user chose (see syncStrip).
+    if (!this.isConnected) return scroll;
     for (const el of root.querySelectorAll("[data-scroll-key]")) {
-      const saved = state.scroll[el.getAttribute("data-scroll-key")];
+      scroll[el.getAttribute("data-scroll-key")] = [el.scrollLeft, el.scrollTop];
+    }
+    return scroll;
+  }
+
+  _restoreScroll(root, scroll) {
+    for (const el of root.querySelectorAll("[data-scroll-key]")) {
+      const saved = scroll[el.getAttribute("data-scroll-key")];
       if (saved) {
         // At once: the element is new and starts at its beginning, so a smooth scroll would
         // glide back from there after every re-render.
@@ -1198,43 +1872,13 @@ class HelloFreshCard extends HTMLElement {
         el.setAttribute("data-scroll-restored", "");
       }
     }
-    if (!state.focusKey) return;
-    const el = root.querySelector(`[data-focus-key="${CSS.escape(state.focusKey)}"]`);
-    if (!el || el.disabled) return;
-    el.focus({ preventScroll: true });
-    if (state.selection && typeof el.setSelectionRange === "function") {
-      try {
-        el.setSelectionRange(state.selection[0], state.selection[1]);
-      } catch (_e) {
-        /* input types without a caret */
-      }
-    }
-  }
-
-  _subtitle() {
-    const s = this._summary;
-    const parts = [];
-    if (s) {
-      if (s.selected_plan) parts.push(s.selected_plan);
-      const meals = Number(s.required_meal_count);
-      const people = Number(s.number_of_people);
-      if (meals && people) parts.push(t("card.plan_size", { count: meals, people: t("card.people", { count: people }) }));
-      if (s.subscription_status && String(s.subscription_status).toLowerCase() !== "active") {
-        parts.push(L.statusLabel(s.subscription_status));
-      }
-    }
-    if (!parts.length && this._weeks && this._weeks.length) {
-      const next = L.nextBoxWeek(this._weeks).week;
-      if (next && next.display_name) parts.push(next.display_name);
-    }
-    return parts.join(" · ");
   }
 
   _renderAppbar() {
     const cfg = this._config;
     const logo = cfg.logo === false || cfg.logo === "" ? "" : cfg.logo === true || cfg.logo == null ? LOGO_URL : String(cfg.logo);
     const title = cfg.title;
-    const sub = this._subtitle();
+    const sub = L.cardSubtitle(this._summary, this._weeks);
     const menu = this._wantsMenuButton();
     this._menuShown = menu;
     if (!menu && !logo && !title && cfg.views.length < 2) return "";
@@ -1243,8 +1887,8 @@ class HelloFreshCard extends HTMLElement {
       ${logo ? `<img class="hf-logo" src="${esc(logo)}" alt="">` : ""}
       <div class="hf-apptitle">${title ? `<h1>${esc(title)}</h1>` : ""}${sub ? `<div class="hf-sub">${esc(sub)}</div>` : ""}</div>
       <div class="hf-appactions">
-        <button class="hf-iconbtn${this._loading ? " spin" : ""}" data-action="refresh" title="${ht("common.refresh")}"
-          aria-label="${ht("common.refresh")}" ${this._loading ? "disabled" : ""}>${icon("mdi:refresh")}</button>
+        <button class="hf-iconbtn" data-action="refresh" title="${ht("common.refresh")}"
+          aria-label="${ht("common.refresh")}">${icon("mdi:refresh")}</button>
       </div>`;
   }
 
@@ -1290,6 +1934,11 @@ class HelloFreshCard extends HTMLElement {
       out.push(`<div class="hf-notice tone-info">${icon("mdi:calendar-star")}
         <div class="hf-noticebody">${esc(s.next_holiday_message)}${date}</div></div>`);
     }
+    // A payment HelloFresh couldn't collect heads the two sections about the account's state of
+    // play: the Overview and Account.
+    if (this._view === "overview" || this._view === "account") {
+      out.push(UI.paymentBanner(L.paymentProblem(s, this._weeks), this.siteUrl()));
+    }
     return out.join("");
   }
 
@@ -1312,7 +1961,8 @@ class HelloFreshCard extends HTMLElement {
     const action = el ? el.getAttribute("data-action") : null;
     if (el && el.disabled) return;
     if (action === "nav") return this.navigate(el.getAttribute("data-view"));
-    if (action === "refresh") return this.refresh();
+    // One load at a time: the button shows the one already running (_syncBusy).
+    if (action === "refresh") return this._loading || this._refreshing ? undefined : this.refresh();
     if (action === "sidebar") {
       // Home Assistant's own menu button fires this; its main view opens the sidebar drawer.
       return this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
@@ -1440,7 +2090,12 @@ class HelloFreshCardEditor extends HTMLElement {
     ev.stopPropagation();
     const value = (ev.detail && ev.detail.value) || {};
     const config = { ...this._config };
-    config.title = value.title != null ? value.title : "HelloFresh";
+    // Home Assistant's text field reports an emptied optional field as undefined. The form always
+    // carries a title, so a missing one is the user clearing it ("" hides the title), not a
+    // request for the default.
+    const title = value.title == null ? "" : String(value.title);
+    if (title === "HelloFresh") delete config.title;
+    else config.title = title;
     if (value.logo === false) config.logo = false;
     else if (typeof this._config.logo === "string") config.logo = this._config.logo;
     else delete config.logo;
@@ -1477,8 +2132,10 @@ if (!window.customCards.some((card) => card.type === "hellofresh-card")) {
 }
 
 if (DEFINED_BEFORE) {
+  // eslint-disable-next-line no-console -- says why a new version isn't running yet
   console.info("hellofresh: this page already has the HelloFresh card, so version", CARD_VERSION, "takes over when the page is reloaded");
 } else {
+  // eslint-disable-next-line no-console -- the version banner, for bug reports
   console.info(
     `%c HELLOFRESH-CARD %c v${CARD_VERSION} `,
     "color:#fff;background:#91c11e;font-weight:700",

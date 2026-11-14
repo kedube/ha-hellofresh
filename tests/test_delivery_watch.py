@@ -8,13 +8,15 @@ re-finalizes so every derived view (``last_delivery_week``, ``tracked_order``) f
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
+    HelloFreshAuthError,
     HelloFreshClient,
+    HelloFreshError,
     HelloFreshOrder,
     HelloFreshSubscription,
     HelloFreshWeek,
@@ -23,8 +25,9 @@ from custom_components.hellofresh.coordinator import (
     EVENT_BOX_DELIVERED,
     HelloFreshDataUpdateCoordinator,
 )
+from custom_components.hellofresh.parsers import local_today
 
-TODAY = date.today()
+TODAY = local_today()
 ARRIVED = datetime(2026, 9, 9, 18, 20, tzinfo=UTC)
 
 
@@ -128,9 +131,12 @@ def _coordinator(data: HelloFreshAccountData, client) -> HelloFreshDataUpdateCoo
     coordinator.data = data
     coordinator.client = client
     coordinator.hass = None
-    coordinator.config_entry = SimpleNamespace(entry_id="entry-1", title="HelloFresh")
-    coordinator._refresh_in_progress = False
+    coordinator.config_entry = SimpleNamespace(
+        entry_id="entry-1", title="HelloFresh", async_start_reauth=mock.Mock()
+    )
+    coordinator._refresh_lock = asyncio.Lock()
     coordinator._last_full_refresh = None
+    coordinator._cancel_delivery_watch = None
     coordinator._delivery_watch_interval = timedelta(minutes=15)
     coordinator.delivery_events = []
     coordinator._event_serial = 0
@@ -184,14 +190,106 @@ def test_watch_tick_skips_while_a_full_poll_runs_or_just_ran() -> None:
     data = _data()
     client = SimpleNamespace(async_refresh_delivery_status=mock.AsyncMock(return_value=True))
     coordinator = _coordinator(data, client)
-    coordinator._refresh_in_progress = True
-    _run(coordinator._async_delivery_watch_tick())
+
+    async def _tick_during_a_poll() -> None:
+        async with coordinator._refresh_lock:  # what a full poll holds while it runs
+            await coordinator._async_delivery_watch_tick()
+
+    _run(_tick_during_a_poll())
     client.async_refresh_delivery_status.assert_not_called()
 
-    coordinator._refresh_in_progress = False
     coordinator._last_full_refresh = datetime.now(UTC)
     _run(coordinator._async_delivery_watch_tick())
     client.async_refresh_delivery_status.assert_not_called()
+
+
+def test_watch_stops_itself_and_asks_for_reauth_when_the_sign_in_is_rejected() -> None:
+    """A rejected sign-in cannot heal by itself, so the watch must not keep asking.
+
+    It used to start reauth and carry on ticking, repeating the rejected request every
+    15 minutes for as long as a box was due.
+    """
+    client = SimpleNamespace(
+        async_refresh_delivery_status=mock.AsyncMock(side_effect=HelloFreshAuthError("expired"))
+    )
+    coordinator = _coordinator(_data(), client)
+    cancel = mock.Mock()
+    coordinator._cancel_delivery_watch = cancel
+
+    _run(coordinator._async_delivery_watch_tick())
+
+    cancel.assert_called_once_with()
+    assert coordinator._cancel_delivery_watch is None
+    coordinator.config_entry.async_start_reauth.assert_called_once_with(None)
+    coordinator.async_update_listeners.assert_not_called()
+
+
+def test_watch_keeps_running_through_a_passing_failure() -> None:
+    client = SimpleNamespace(
+        async_refresh_delivery_status=mock.AsyncMock(side_effect=HelloFreshError("timeout"))
+    )
+    coordinator = _coordinator(_data(), client)
+    cancel = mock.Mock()
+    coordinator._cancel_delivery_watch = cancel
+
+    _run(coordinator._async_delivery_watch_tick())
+
+    cancel.assert_not_called()
+    coordinator.config_entry.async_start_reauth.assert_not_called()
+
+
+def test_a_poll_waits_for_a_running_tick_so_an_event_is_recorded_once() -> None:
+    """A poll that starts in the middle of a tick must not record the same delivery again.
+
+    The tick changes the data in place. A poll that took its "before" snapshot ahead of that
+    change, and finished after it, saw the box go from running to delivered as well: two
+    ``box_delivered`` events for one box.
+    """
+    data = _data()
+    tick_is_fetching = asyncio.Event()
+    carrier_answers = asyncio.Event()
+
+    async def slow_refresh(live: HelloFreshAccountData) -> bool:
+        tick_is_fetching.set()
+        await carrier_answers.wait()
+        live.weeks[0].status = "DELIVERED"
+        live.weeks[0].delivered_at = ARRIVED
+        live.finalize()
+        return True
+
+    async def full_poll() -> HelloFreshAccountData:
+        fresh = _data()
+        fresh.weeks[0].status = "DELIVERED"
+        fresh.weeks[0].delivered_at = ARRIVED
+        return fresh.finalize()
+
+    client = SimpleNamespace(
+        async_refresh_delivery_status=slow_refresh, async_get_account_data=full_poll
+    )
+    coordinator = _coordinator(data, client)
+    coordinator.config_entry.options = {"show_data_quality_issues": False}
+
+    async def scenario() -> None:
+        tick = asyncio.ensure_future(coordinator._async_delivery_watch_tick())
+        await tick_is_fetching.wait()
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await asyncio.sleep(0)  # the poll has started and is waiting its turn
+        carrier_answers.set()
+        await asyncio.gather(tick, poll)
+
+    with (
+        mock.patch("custom_components.hellofresh.coordinator.async_delete_account_data_issue"),
+        mock.patch(
+            "custom_components.hellofresh.coordinator.async_delete_account_menu_fallback_issue"
+        ),
+        mock.patch(
+            "custom_components.hellofresh.coordinator.async_delete_payload_shape_changed_issue"
+        ),
+        mock.patch("custom_components.hellofresh.coordinator.async_delete_write_actions_issue"),
+    ):
+        _run(scenario())
+
+    assert [kind for _, kind, _ in coordinator.delivery_events] == [EVENT_BOX_DELIVERED]
 
 
 def test_watch_interval_follows_the_option_and_zero_disables_it() -> None:

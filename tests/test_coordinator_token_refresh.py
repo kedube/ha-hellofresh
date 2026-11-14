@@ -21,6 +21,8 @@ import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.hellofresh.api import HelloFreshAuthError, HelloFreshError
 from custom_components.hellofresh.coordinator import (
     DEFAULT_TOKEN_LIFETIME_SECONDS,
@@ -43,6 +45,7 @@ def _coordinator(refresh_error: Exception | None) -> tuple[object, dict]:
     coordinator = HelloFreshDataUpdateCoordinator.__new__(HelloFreshDataUpdateCoordinator)
     coordinator.client = SimpleNamespace(async_ensure_token_fresh=fake_ensure_fresh)
     coordinator.hass = object()
+    coordinator._token_listeners = []
     coordinator.config_entry = SimpleNamespace(
         async_start_reauth=lambda _hass: calls.__setitem__("reauth", calls["reauth"] + 1)
     )
@@ -86,6 +89,30 @@ def test_successful_refresh_is_silent() -> None:
     _run(coordinator._async_refresh_token())
 
     assert calls == {"reauth": 0, "stopped": 0, "refresh": 1}
+
+
+@pytest.mark.parametrize(
+    "refresh_error",
+    [None, HelloFreshError("connection reset"), HelloFreshAuthError("refresh token expired")],
+)
+def test_every_timer_tick_tells_the_token_sensors(refresh_error: Exception | None) -> None:
+    """The "time remaining" sensors are rewritten on each tick, whatever the tick did.
+
+    They read the clock, but nothing rewrote them between polls that changed account data, so
+    they showed a value hours old. They must also count down when refreshing stops working,
+    which is when the number matters.
+    """
+    coordinator, _calls = _coordinator(refresh_error)
+    notified: list[str] = []
+    remove = coordinator.async_add_token_listener(lambda: notified.append("access"))
+    coordinator.async_add_token_listener(lambda: notified.append("refresh"))
+
+    _run(coordinator._async_refresh_token())
+    assert notified == ["access", "refresh"]
+
+    remove()  # an entity that was removed is no longer called
+    coordinator.async_token_updated()
+    assert notified == ["access", "refresh", "refresh"]
 
 
 def test_refresh_interval_ticks_before_a_real_token_can_expire() -> None:

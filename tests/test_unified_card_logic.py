@@ -8,7 +8,8 @@ Two kinds of test:
   month's cost rolls up. Parity tests once ran both side by side; the expected values here are
   what both produced. Deliberate differences are asserted explicitly, not left implicit.
 * **Behaviour** — what is new: the combined week list, the shipping state and tracker steps,
-  the box write payloads, search, entity discovery.
+  the box write payloads, search, entity discovery, and the decisions behind Undo, a week's
+  number of people, Recipes' Load more, payment problems, credit and boxes HelloFresh moved.
 
 The module is real ESM and imported directly under Node.
 """
@@ -47,7 +48,8 @@ const passed = new Date(Date.now() - DAY).toISOString();
 """
 
 
-def _run(body: str) -> object:
+def _run(body: str, tz: str = "America/New_York") -> object:
+    """Run `body` under Node with the logic module as `L`; `tz` is the "browser's" time zone."""
     script = f"""
     globalThis.window = {{ localStorage: {{ getItem: () => null, setItem() {{}} }}, dispatchEvent() {{ return true; }} }};
     globalThis.CustomEvent = class {{ constructor(t, i) {{ this.type = t; this.detail = (i || {{}}).detail; }} }};
@@ -56,7 +58,7 @@ def _run(body: str) -> object:
     const result = await (async () => {{ {body} }})();
     console.log(JSON.stringify(result));
     """
-    env = {**os.environ, "TZ": "America/New_York"}
+    env = {**os.environ, "TZ": tz}
     out = subprocess.run(
         [NODE, "--input-type=module", "-e", script],
         capture_output=True,
@@ -172,6 +174,39 @@ def test_tile_chips_and_surcharges() -> None:
     ]
     # In the account's currency, a decimal comma read as one; a label with no amount kept.
     assert result["surcharges"] == ["+€7.99", "+€7.99", "Premium"]
+
+
+def test_a_surcharge_is_its_cents_and_the_label_only_without_them() -> None:
+    """The payload carries the amount as `surcharge_cents`; re-reading it out of the display
+    label turned "-2.00" into "+$2.00", "2x +3.99" into "+$2.00" and "+1,299.00" into "+$1.30".
+    The cents win; without them the label's signed number is read, minus and all."""
+    body = """
+      return {
+        cents: [
+          L.fmtSurcharge("+7.99/serving", "USD", 499),
+          L.fmtSurcharge({ surcharge_label: "2x +3.99", surcharge_cents: 399 }, "USD"),
+          L.fmtSurcharge({ surcharge_label: "discount", surcharge_cents: -250 }, "USD"),
+          L.fmtSurcharge({ surcharge_label: "+7.99/serving", surcharge_cents: null }, "USD"),
+          L.fmtSurcharge("+7.99/serving", "USD", "799"),
+        ],
+        labels: ["-2.00", "2x +3.99", "+1,299.00", "+1.299,00", "\u22121,50/portion", "Premium", ""].map(
+          (label) => L.fmtSurcharge(label, "USD")
+        ),
+        missing: [L.fmtSurcharge(null, "USD"), L.fmtSurcharge(undefined, "USD")],
+      };
+    """
+    result = _run(body)
+    assert result["cents"] == ["+$4.99", "+$3.99", "-$2.50", "+$7.99", "+$7.99"]
+    assert result["labels"] == [
+        "-$2.00",
+        "+$3.99",
+        "+$1,299.00",
+        "+$1,299.00",
+        "-$1.50",
+        "Premium",
+        "",
+    ]
+    assert result["missing"] == ["", ""]
 
 
 def test_a_dish_listed_twice_has_one_signature() -> None:
@@ -939,7 +974,9 @@ def test_plan_flags_a_swapped_meal_and_shows_what_is_still_to_come_today() -> No
     inbox, swapped, unknown, note, today, start = _run(
         PLAN_WEEK
         + """
-      const at = (h, m = 0) => new Date(2026, 9, 14, h, m).toISOString();
+      // As the integration writes them: Home Assistant's wall clock with its offset.
+      const pad = (n) => String(n).padStart(2, "0");
+      const at = (h, m = 0) => `2026-10-14T${pad(h)}:${pad(m)}:00-04:00`;
       const plan = { days: { "2026-10-14": {
         breakfast: { main: { kind: "note", name: "Eggs" }, start: at(7, 30), end: at(8) },
         dinner: { main: meal("a"), start: at(17, 30), end: at(19) },
@@ -981,3 +1018,887 @@ def test_payment_brands_use_their_names_not_their_codes() -> None:
         "Credit card",
         "Jcb",
     ]
+
+
+# ---- Home Assistant's clock ------------------------------------------------------------------
+
+
+def test_plan_times_and_today_follow_home_assistants_clock_not_the_browsers() -> None:
+    """The integration writes a planned meal's start as Home Assistant's wall clock and reads an
+    edited time back the same way. A browser three hours west used to prefill 15:00 for an 18:00
+    dinner; changing it to 15:30 then moved dinner to 15:30 in Home Assistant's zone. "Today"
+    drifted the same way around midnight."""
+    body = """
+      const start = "2026-11-13T18:00:00-05:00";
+      // 01:30 on the 14th in New York (Home Assistant), 22:30 on the 13th in Los Angeles (browser).
+      const night = new Date("2026-11-14T06:30:00Z");
+      const plan = { days: {
+        "2026-11-13": { dinner: { main: { kind: "note", name: "Friday" }, end: "2026-11-13T19:30:00-05:00" } },
+        "2026-11-14": { dinner: { main: { kind: "note", name: "Saturday" }, start: "2026-11-14T18:00:00-05:00",
+          end: "2026-11-14T19:30:00-05:00" } },
+      } };
+      // Delivered Saturday the 7th: its seven days end on Friday the 13th.
+      const over = { week_id: "over", delivery_date: "2026-11-07" };
+      const next = { week_id: "next", delivery_date: "2026-11-14" };
+      const read = () => ({
+        zone: L.haTimeZone(),
+        input: L.hhmm(start),
+        shown: L.fmtHaTime(start),
+        fromDate: L.fmtHaTime(new Date(start)),
+        today: L.haToday(night),
+        tonight: L.todayPlan(plan, night).map((entry) => entry.slot.main.name),
+        weeks: L.planWeeks([over, next], night).map((w) => w.week_id),
+        opens: L.defaultPlanWeek([over, next], night).week_id,
+      });
+      const before = read();
+      L.I18n.useHass({ language: "en", config: { time_zone: "America/New_York" } });
+      const after = read();
+      L.I18n.useHass({ language: "en", config: { time_zone: "Not/AZone" } });
+      const unknown = read();
+      return { before, after, unknown, bad: [L.hhmm(null), L.hhmm("2026-11-13"), L.fmtHaTime("nonsense")] };
+    """
+    out = _run(body, tz="America/Los_Angeles")
+    # The time field reads the string's own wall clock, whatever zone anything is in.
+    assert {out[k]["input"] for k in ("before", "after", "unknown")} == {"18:00"}
+    # With Home Assistant's zone known, its day and its clock are used...
+    assert out["after"] == {
+        "zone": "America/New_York",
+        "input": "18:00",
+        "shown": "6:00 PM",
+        "fromDate": "6:00 PM",
+        "today": "2026-11-14",
+        "tonight": ["Saturday"],
+        "weeks": ["next"],
+        "opens": "next",
+    }
+    # ...and until it is known (or when the browser doesn't know it), the browser's stand in.
+    for key in ("before", "unknown"):
+        assert out[key]["shown"] == "3:00 PM"
+        assert out[key]["today"] == "2026-11-13"
+        assert out[key]["weeks"] == ["over", "next"]
+    assert out["before"]["zone"] is None
+    assert out["bad"] == ["", "", ""]
+
+
+def test_week_state_honours_the_clock_it_is_given() -> None:
+    """weekState(week, now) passed `now` to its deadline checks but not to "has this box been
+    delivered", so a state asked for another moment mixed two clocks."""
+    body = """
+      const delivered = week("past", -1, { allowed_actions: {} });
+      const before = Date.now() - 14 * DAY; // a moment before that box's delivery day
+      return [
+        L.weekState(delivered),
+        L.weekState(delivered, before),
+        L.isShipping({ ...delivered, status: "SHIPPED" }),
+        L.isShipping({ ...delivered, status: "SHIPPED", order: { tracking_status: "in_transit" } }, before),
+      ];
+    """
+    # Past its day with nothing live left: delivered. Seen from before its day: not yet.
+    assert _run(body) == ["delivered", "locked", True, True]
+
+
+# ---- the card's own bookkeeping ----------------------------------------------------------------
+
+
+def test_a_card_fetches_only_what_its_sections_show() -> None:
+    """A Recipes-only or Account-only card reads neither every week's menu nor the meal plan;
+    the Overview reads the plan only beside the Week tab (its "Tonight" line)."""
+    body = """
+      const needs = (views) => { const n = L.dataNeeds(views); return [n.weeks, n.summary, n.mealPlan]; };
+      return {
+        all: needs(["overview", "menu", "market", "recipes", "week", "account"]),
+        recipes: needs(["recipes"]),
+        account: needs(["account"]),
+        overview: needs(["overview"]),
+        overviewAndWeek: needs(["overview", "week"]),
+        market: needs(["market", "recipes"]),
+        none: needs(undefined),
+      };
+    """
+    assert _run(body) == {
+        "all": [True, True, True],
+        "recipes": [False, True, False],
+        "account": [False, True, False],
+        "overview": [True, True, False],
+        "overviewAndWeek": [True, True, True],
+        "market": [True, True, False],
+        "none": [False, True, False],
+    }
+
+
+def test_a_weeks_read_redraws_only_a_section_drawn_from_the_weeks() -> None:
+    """Toggling a favourite on Recipes re-reads the weeks for the Menu's hearts; the Recipes grid
+    shows no week, so that read must not redraw it (up to 200 photos). Account does show weeks
+    (its counters open them)."""
+    body = """
+      return ["overview", "menu", "market", "week", "account", "recipes", "", null].map(L.viewShowsWeeks);
+    """
+    assert _run(body) == [True, True, True, True, True, False, False, False]
+
+
+def test_a_failed_load_is_retried_soon_then_at_the_usual_pace() -> None:
+    """15 seconds, a minute, five minutes, then the refresh interval; never longer than the
+    interval itself (the delivery-day watch can be shorter than a retry delay)."""
+    body = """
+      const hours3 = 180 * 60000;
+      return {
+        delays: [0, 1, 2, 3, 4, 9].map((failures) => L.loadDelayMs(failures, hours3)),
+        capped: [1, 2, 3].map((failures) => L.loadDelayMs(failures, 2 * 60000)),
+        steps: L.RETRY_DELAYS_MS,
+      };
+    """
+    out = _run(body)
+    hours3 = 180 * 60000
+    assert out["steps"] == [15000, 60000, 300000]
+    assert out["delays"] == [hours3, 15000, 60000, 300000, hours3, hours3]
+    assert out["capped"] == [15000, 60000, 120000]
+
+
+def test_after_a_write_only_the_week_written_is_reread() -> None:
+    """A save, skip or reschedule changes one week's box; anything else, or two different weeks,
+    means every week. The Week tab's plan writes leave the weeks alone."""
+    body = """
+      const run = (...writes) => writes.reduce((noted, [service, data]) => L.noteWrite(noted, service, data), undefined);
+      const w = (week_id) => ({ week_id });
+      return {
+        save: run(["select_meals", w("2026-W41")]),
+        twice: run(["select_meals", w("2026-W41")], ["select_market_items", w("2026-W41")]),
+        two: run(["select_meals", w("2026-W41")], ["skip_week", w("2026-W42")]),
+        favourite: run(["add_favorite", { recipe_id: "r" }]),
+        saveThenFavourite: run(["select_meals", w("2026-W41")], ["add_favorite", {}]),
+        plan: run(["set_planned_meal", { date: "2026-10-14", week_id: "2026-W41" }]) === undefined,
+        planThenSave: run(["set_planned_meal", w("2026-W40")], ["reschedule_week", w("2026-W41")]),
+        noWeek: run(["skip_week", {}]),
+        servings: run(["change_week_servings", { week_id: "2026-W41", servings: 4 }]),
+        servingsThenUndo: run(["change_week_servings", w("2026-W41")], ["change_week_servings", w("2026-W41")]),
+        reads: ["get_weeks", "get_meal_plan", "preview_meal_price", "select_meals", "refresh_data", ""].map(L.isReadService),
+        planOptions: L.isReadService("get_plan_options"),
+      };
+    """
+    assert _run(body) == {
+        "save": "2026-W41",
+        "twice": "2026-W41",
+        "two": "all",
+        "favourite": "all",
+        "saveThenFavourite": "all",
+        "plan": True,
+        "planThenSave": "2026-W41",
+        "noWeek": "all",
+        # One week's number of people is that week's box alone.
+        "servings": "2026-W41",
+        "servingsThenUndo": "2026-W41",
+        "reads": [True, True, True, False, False, False],
+        "planOptions": True,
+    }
+
+
+def test_a_reread_week_goes_back_into_the_list() -> None:
+    body = """
+      const weeks = [week("a", -1), week("b", 1), week("c", 2)];
+      const skipped = { ...week("b", 1), is_skipped: true, recipes: [] };
+      const merged = L.mergeWeek(weeks, skipped);
+      const added = L.mergeWeek(weeks, week("d", 3));
+      return {
+        ids: merged.map((w) => w.week_id),
+        replaced: merged[1] === skipped && weeks[1] !== skipped,
+        browsable: L.browsableWeeks(merged).map((w) => [w.week_id, L.isSkipped(w)]),
+        added: L.browsableWeeks(added).map((w) => w.week_id),
+        empty: L.mergeWeek(null, skipped).length,
+      };
+    """
+    assert _run(body) == {
+        "ids": ["a", "b", "c"],
+        "replaced": True,  # a new list; the old one is the sibling cards' too
+        "browsable": [["a", False], ["b", True], ["c", False]],
+        "added": ["a", "b", "c", "d"],
+        "empty": 1,
+    }
+
+
+def test_cards_share_one_request_unless_something_changed_since_it_began() -> None:
+    """Three cards loading the same account at the same moment are one request. A read that
+    began before a write (or before a change seen in Home Assistant) is never joined: its answer
+    may predate the change. The same change seen by several cards moves the epoch once."""
+    body = """
+      const account = { config_entry_id: "a" };
+      let started = 0;
+      const gates = [];
+      const start = () => { started += 1; return new Promise((resolve, reject) => gates.push({ resolve, reject })); };
+      const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+      const out = {};
+
+      const one = L.sharedLoad(account, "weeks", start);
+      const two = L.sharedLoad(account, "weeks", start);
+      const other = L.sharedLoad({ config_entry_id: "b" }, "weeks", start);
+      const summary = L.sharedLoad(account, "summary", start);
+      await tick();
+      out.shared = [one === two, one === other, one === summary, started];
+
+      // A write: the read in flight is older than it.
+      L.bumpDataEpoch(account);
+      const afterWrite = L.sharedLoad(account, "weeks", start);
+      await tick();
+      out.afterWrite = [afterWrite === one, started];
+
+      // The same entity change seen by two cards.
+      const before = L.dataEpoch(account);
+      L.bumpDataEpoch(account, "mealplan", "calendar=off@t1");
+      L.bumpDataEpoch(account, "mealplan", "calendar=off@t1");
+      const once = L.dataEpoch(account) - before;
+      L.bumpDataEpoch(account, "mealplan", "calendar=off@t2");
+      out.tokens = [once, L.dataEpoch(account) - before, L.dataEpoch({ config_entry_id: "b" })];
+
+      // A load queued behind another never joins one.
+      const a = L.sharedLoad(account, "plan", start);
+      const fresh = L.sharedLoad(account, "plan", start, { fresh: true });
+      const joinsFresh = L.sharedLoad(account, "plan", start);
+      await tick();
+      out.fresh = [a === fresh, fresh === joinsFresh];
+
+      // Finished (or failed) loads are forgotten; the answer reaches everyone who joined.
+      for (const gate of gates.slice(0, -1)) gate.resolve({ ok: true });
+      gates[gates.length - 1].reject(new Error("down"));
+      out.answers = [(await one).ok, (await two).ok, await fresh.then(() => "ok", (err) => err.message)];
+      const count = started;
+      const again = L.sharedLoad(account, "plan", start);
+      await tick();
+      out.again = [again === fresh, started - count];
+      return out;
+    """
+    assert _run(body) == {
+        "shared": [True, False, False, 3],
+        "afterWrite": [False, 4],
+        "tokens": [1, 2, 0],
+        "fresh": [False, True],
+        "answers": [True, True, "down"],
+        "again": [False, 1],
+    }
+
+
+def test_the_header_line_names_the_plan() -> None:
+    body = """
+      const weeks = [{ ...week("w", 1), display_name: "Oct 5 - Oct 11" }];
+      return [
+        L.cardSubtitle({ selected_plan: "Classic Plan", required_meal_count: 3, number_of_people: 2,
+          subscription_status: "active" }, weeks),
+        L.cardSubtitle({ selected_plan: "Classic Plan", required_meal_count: "1", number_of_people: "1",
+          subscription_status: "PAUSED" }, weeks),
+        L.cardSubtitle({}, weeks),
+        L.cardSubtitle(null, weeks),
+        L.cardSubtitle(null, null),
+      ];
+    """
+    assert _run(body) == [
+        "Classic Plan · 3 meals for 2 people",
+        "Classic Plan · 1 meal for 1 person · Paused",
+        "Oct 5 - Oct 11",
+        "Oct 5 - Oct 11",
+        "",
+    ]
+
+
+def test_entity_changes_are_told_apart_by_group() -> None:
+    """Home Assistant hands the card `hass` on every state change anywhere. Only a change in one
+    of the card's own entity groups causes work; the first reading is not a change, whichever
+    entities exist (a setup with only the Meals calendar never noticed a plan change)."""
+    body = """
+      const ids = { prep: ["todo.a", "todo.b"], boxSize: "select.size", deliveryDay: null,
+        accessToken: "sensor.token", meals: "calendar.meals", trackingPhase: null, trackingEta: null };
+      const states = {
+        "todo.a": { state: "3", last_updated: "t1" },
+        "select.size": { state: "3 meals", last_updated: "t1" },
+        "sensor.token": { state: "42", last_updated: "t1" },
+        "calendar.meals": { state: "off", last_updated: "t1" },
+      };
+      const sign = (s = states, of = ids) => L.entitySignature(of, (id) => s[id] || null);
+      const first = sign();
+      const token = sign({ ...states, "sensor.token": { state: "41", last_updated: "t2" } });
+      const plan = sign({ ...states, "calendar.meals": { state: "off", last_updated: "t2" } });
+      const onlyMeals = { meals: "calendar.meals" };
+      const mealsFirst = sign(states, onlyMeals);
+      const mealsNext = sign({ "calendar.meals": { state: "off", last_updated: "t2" } }, onlyMeals);
+      const down = (s) => L.unavailableEntities(ids, (id) => s[id] || null);
+      return {
+        first,
+        firstReading: [L.changedEntityGroups({}, first), L.changedEntityGroups(L.entitySignature({}, () => null), first)],
+        token: L.changedEntityGroups(first, token),
+        plan: L.changedEntityGroups(first, plan),
+        same: L.changedEntityGroups(first, sign()),
+        mealsOnly: [L.changedEntityGroups({}, mealsFirst), L.changedEntityGroups(mealsFirst, mealsNext)],
+        unavailable: [
+          down(states),
+          down({ ...states, "todo.a": { state: "unavailable" }, "calendar.meals": { state: "unavailable" } }),
+          L.unavailableEntities(null, () => null),
+        ],
+      };
+    """
+    out = _run(body)
+    assert out["first"] == {
+        "pantry": "todo.a=3@t1|todo.b=-",
+        "plan": "select.size=3 meals@t1",
+        "health": "sensor.token=42@t1",
+        "tracking": "",
+        "mealplan": "calendar.meals=off@t1",
+    }
+    assert out["firstReading"] == [[], []]
+    assert out["token"] == ["health"]
+    assert out["plan"] == ["mealplan"]
+    assert out["same"] == []
+    assert out["mealsOnly"] == [[], ["mealplan"]]
+    assert out["unavailable"] == [0, 2, 0]
+
+
+def test_the_tick_notices_a_deadline_passing() -> None:
+    """Time alone changes one thing: a deadline goes by, and the Add buttons, Save and
+    Skip/Unskip must go with it."""
+    body = """
+      const soon = new Date(Date.now() + 60000).toISOString();
+      const weeks = [
+        week("edit", 1, { allowed_actions: { mealSwap: true }, selection_deadline: soon }),
+        week("skipped", 2, { is_skipped: true, selection_deadline: soon }),
+        week("locked", 0, { allowed_actions: { mealSwap: false } }),
+      ];
+      return [L.actionsKey(weeks), L.actionsKey(weeks, Date.now() + 120000), L.actionsKey(null)];
+    """
+    assert _run(body) == ["es-s--", "------", ""]
+
+
+def test_change_day_rows_use_the_delivery_options_when_they_are_known() -> None:
+    body = """
+      const w = { delivery_date: "2026-10-05", available_one_off_options: [
+        { handle: "mon", delivery_date: "2026-10-05" },
+        { handle: "tue", delivery_date: "2026-10-06" },
+        { handle: "wed", delivery_date: "2026-10-07" },
+        { handle: "odd" },
+        { delivery_date: "2026-10-09" },
+        null,
+      ] };
+      const catalog = {
+        mon: { delivery_name: "Monday 8AM - 8PM", price: 0 },
+        wed: { delivery_name: "Wednesday 8AM - 8PM", price: "2.99" },
+      };
+      return {
+        named: L.rescheduleOptions(w, catalog, "USD"),
+        bare: L.rescheduleOptions(w, null, "USD").map((o) => [o.handle, o.name, o.date, o.price]),
+        none: L.rescheduleOptions({}, catalog, "USD"),
+      };
+    """
+    out = _run(body)
+    assert out["named"] == [
+        {
+            "handle": "mon",
+            "current": True,
+            "name": "Monday 8AM - 8PM",
+            "date": "Mon, Oct 5",
+            "price": "",
+        },
+        # No entry for it in the catalog: the date alone.
+        {"handle": "tue", "current": False, "name": "Tuesday, October 6", "date": "", "price": ""},
+        {
+            "handle": "wed",
+            "current": False,
+            "name": "Wednesday 8AM - 8PM",
+            "date": "Wed, Oct 7",
+            "price": "+$2.99",
+        },
+        {"handle": "odd", "current": False, "name": "odd", "date": "", "price": ""},
+    ]
+    # The options couldn't be read: every row still has its date.
+    assert out["bare"] == [
+        ["mon", "Monday, October 5", "", ""],
+        ["tue", "Tuesday, October 6", "", ""],
+        ["wed", "Wednesday, October 7", "", ""],
+        ["odd", "odd", "", ""],
+    ]
+    assert out["none"] == []
+
+
+def test_a_pantry_summary_splits_into_name_and_amount() -> None:
+    body = """
+      return ["Butter — 2 tablespoon (tbsp)", "Salt", "Oil — 1 tablespoon (tbsp) + 1 teaspoon (tsp)", null]
+        .map((summary) => L.pantryParts(summary));
+    """
+    assert _run(body) == [
+        {"name": "Butter", "amount": "2 tablespoon (tbsp)", "short": "2 tbsp"},
+        {"name": "Salt", "amount": "", "short": ""},
+        {
+            "name": "Oil",
+            "amount": "1 tablespoon (tbsp) + 1 teaspoon (tsp)",
+            "short": "1 tbsp + 1 tsp",
+        },
+        {"name": "", "amount": "", "short": ""},
+    ]
+
+
+def test_a_control_is_named_by_what_it_does() -> None:
+    """Focus goes back to "the same" control after a re-render by a name both share: its data
+    attributes (the action and its arguments), in any order; without any, what identifies it."""
+    body = """
+      const key = (tag, attrs) => L.focusKey(tag, Object.entries(attrs));
+      return [
+        key("BUTTON", { class: "hf-tab", "data-action": "nav", "data-view": "menu", "aria-current": "page" }),
+        key("button", { "data-view": "menu", "data-action": "nav", class: "hf-tab" }),
+        key("button", { "data-action": "qty", "data-key": "12", "data-delta": "-1", disabled: "" }),
+        key("div", { "data-scroll-key": "weekstrip", "data-scroll-restored": "" }),
+        key("button", { "data-focus-key": "x", "data-action": "fp-step" }),
+        key("select", { id: "fp-diet", class: "hf-select" }),
+        key("a", { href: "https://example.com/a?b=1", target: "_blank" }),
+        key("button", { class: "hf-btn" }),
+        L.focusNaming(Object.entries({ class: "x", "data-action": "nav", "data-view": "menu" })),
+      ];
+    """
+    assert _run(body) == [
+        "button|data-action=nav|data-view=menu",
+        "button|data-action=nav|data-view=menu",
+        "button|data-action=qty|data-delta=-1|data-key=12",
+        "div|data-scroll-key=weekstrip",
+        "button|data-action=fp-step",
+        "select|id=fp-diet",
+        "a|href=https://example.com/a?b=1",
+        "",
+        [["data-action", "nav"], ["data-view", "menu"]],
+    ]
+
+
+def test_payload_urls_come_back_as_urls_https_only_for_delivery_photos() -> None:
+    """One URL check everywhere: plain http(s) or nothing, returned as the URL (escaped where it
+    enters markup). Delivery photos load from whatever host a carrier names, so those are https
+    only."""
+    body = """
+      const w = { order: { delivery_photo_urls: [
+        "https://cdn.carrier.example/p1.jpg?a=1&b=2",
+        "http://cdn.carrier.example/p2.jpg",
+        "javascript:alert(1)",
+        "https://cdn.carrier.example/p3.jpg",
+        "https://cdn.carrier.example/p4.jpg",
+        "https://cdn.carrier.example/p5.jpg",
+      ] } };
+      const live = L.liveTracking({ state: "On the way", attributes: { active: true, phase: "ON_THE_WAY",
+        tracking_url: "https://www.hftrack.nl/track/a?b=1&c=2" } }, null);
+      return {
+        photos: L.deliveryPhotos(w),
+        none: L.deliveryPhotos(null),
+        map: live.mapUrl,
+        media: [L.safeMediaUrl("https://media.hellofresh.com/v.mp4?x=1&y=2"), L.safeMediaUrl("data:video/mp4,AAAA")],
+        same: L.safeMediaUrl === L.safeUrl,
+      };
+    """
+    assert _run(body) == {
+        "photos": [
+            "https://cdn.carrier.example/p1.jpg?a=1&b=2",
+            "https://cdn.carrier.example/p3.jpg",
+            "https://cdn.carrier.example/p4.jpg",
+        ],
+        "none": [],
+        "map": "https://www.hftrack.nl/track/a?b=1&c=2",
+        "media": ["https://media.hellofresh.com/v.mp4?x=1&y=2", ""],
+        "same": True,
+    }
+
+
+# ---- undo --------------------------------------------------------------------------------------
+
+
+def test_undo_is_offered_until_the_weeks_selection_deadline() -> None:
+    """HelloFresh takes a change to a week only until its selection deadline, so the toast's
+    Undo stands only until then; a week without one counts while it is still to come."""
+    body = """
+      return [
+        L.undoWindowOpen(week("open", 1, { selection_deadline: future })),
+        L.undoWindowOpen(week("shut", 1, { selection_deadline: passed })),
+        L.undoWindowOpen(week("undated-deadline", 1)),
+        L.undoWindowOpen(week("past", -1)),
+        L.undoWindowOpen(null),
+        L.UNDO_MS,
+      ];
+    """
+    assert _run(body) == [True, False, True, False, False, 10000]
+
+
+def test_undoing_a_save_writes_the_old_box_back_with_the_same_service() -> None:
+    """Meals changed: ONE select_meals with the old recipe ids, servings and Market quantities,
+    the whole old box in one cart write. Only extras changed: select_market_items. An old box
+    smaller than HelloFresh's smallest can't be written back."""
+    body = """
+      const w = { week_id: "W", recipes: [1, 2, 3, 4].map((i) => ({ recipe_id: `r${i}`, course_index: i })) };
+      const before = { meals: new Map([[1, 1], [2, 2], [3, 1]]), market: new Map([["m1", 2]]) };
+      return {
+        meals: L.boxUndoWrite(w, before, { meals: true, market: false }),
+        both: L.boxUndoWrite(w, before, { meals: true, market: true }),
+        extras: L.boxUndoWrite(w, before, { meals: false, market: true }),
+        noExtrasBefore: L.boxUndoWrite(w, { meals: before.meals, market: new Map() }, { meals: false, market: true }),
+        tooSmall: L.boxUndoWrite(w, { meals: new Map([[1, 1]]), market: new Map() }, { meals: true, market: false }),
+        nothingChanged: L.boxUndoWrite(w, before, { meals: false, market: false }),
+      };
+    """
+    assert _run(body) == {
+        "meals": {
+            "service": "select_meals",
+            "data": {
+                "week_id": "W",
+                "recipe_ids": ["r1", "r2", "r3"],
+                "quantities": {"r2": 2},
+                "market_quantities": {"m1": 2},
+            },
+        },
+        "both": {
+            "service": "select_meals",
+            "data": {
+                "week_id": "W",
+                "recipe_ids": ["r1", "r2", "r3"],
+                "quantities": {"r2": 2},
+                "market_quantities": {"m1": 2},
+            },
+        },
+        "extras": {
+            "service": "select_market_items",
+            "data": {"week_id": "W", "quantities": {"m1": 2}},
+        },
+        # Every extra removed is the full state too: nothing.
+        "noExtrasBefore": {
+            "service": "select_market_items",
+            "data": {"week_id": "W", "quantities": {}},
+        },
+        "tooSmall": None,
+        "nothingChanged": None,
+    }
+
+
+def test_a_new_delivery_day_is_undone_back_to_the_option_for_the_old_date() -> None:
+    body = """
+      const w = { week_id: "W", delivery_date: "2026-10-05", available_one_off_options: [
+        { handle: null, delivery_date: "2026-10-05" },
+        { handle: "mon", delivery_date: "2026-10-05" },
+        { handle: "tue", delivery_date: "2026-10-06" },
+      ] };
+      return [
+        L.currentDeliveryOption(w),
+        L.currentDeliveryOption({ ...w, delivery_date: "2026-10-09" }),
+        L.currentDeliveryOption({ week_id: "W", delivery_date: "2026-10-05" }),
+        L.currentDeliveryOption(null),
+      ];
+    """
+    assert _run(body) == ["mon", None, None, None]
+
+
+def test_the_old_delivery_day_is_found_among_the_moved_weeks_other_days() -> None:
+    """HelloFresh lists a week's other days, so the day a box left appears only after the move.
+
+    Undo of a new delivery day looked for the old day in the options from before the move,
+    where HelloFresh never lists it, so Undo was hardly ever offered.
+    """
+    body = """
+      const moved = { week_id: "W", delivery_date: "2026-10-06", available_one_off_options: [
+        { handle: "mon", delivery_date: "2026-10-05" },
+        { handle: "wed", delivery_date: "2026-10-07" },
+      ] };
+      return [
+        L.deliveryOptionForDate(moved, "2026-10-05"),
+        L.deliveryOptionForDate(moved, "2026-10-09"),
+        L.deliveryOptionForDate(moved, null),
+        L.deliveryOptionForDate(null, "2026-10-05"),
+      ];
+    """
+    assert _run(body) == ["mon", None, None, None]
+
+
+# ---- one week's number of people ----------------------------------------------------------------
+
+PLAN_OPTIONS = [
+    {
+        "handle": "US-CBU-3-2-0",
+        "family_handle": "cbu",
+        "family_name": "Classic",
+        "meals": 3,
+        "servings": 2,
+        "price": 71.94,
+    },
+    {
+        "handle": "US-CBU-3-4-0",
+        "family_handle": "cbu",
+        "family_name": "Classic",
+        "meals": 3,
+        "servings": 4,
+        "price": 131.88,
+    },
+    {
+        "handle": "US-CBU-4-4-0",
+        "family_handle": "cbu",
+        "family_name": "Classic",
+        "meals": 4,
+        "servings": 4,
+        "price": 167.84,
+    },
+    {
+        "handle": "US-CBU-3-6-0",
+        "family_handle": "cbu",
+        "family_name": "Classic",
+        "meals": "3",
+        "servings": "6",
+        "price": None,
+    },
+    {
+        "handle": "US-VEG-3-2-0",
+        "family_handle": "veg",
+        "family_name": "Veggie",
+        "meals": 3,
+        "servings": 2,
+        "price": 68.94,
+    },
+    {
+        "handle": "US-VEG-3-1-0",
+        "family_handle": "veg",
+        "family_name": "Veggie",
+        "meals": 3,
+        "servings": 1,
+        "price": 40,
+    },
+    {
+        "handle": "US-ODD-0-0-0",
+        "family_handle": "odd",
+        "family_name": "Odd",
+        "meals": None,
+        "servings": 2,
+        "price": 1,
+    },
+]
+
+
+def test_a_weeks_box_changes_size_within_its_meal_count_and_family() -> None:
+    """The sizes a week's box can change to: its meal count, its family (told by the one family
+    selling its size, else by the name the box or the plan carries), each number of people once,
+    fewest first, with the whole box's price. Without a family: every family's sizes."""
+    body = f"""
+      const options = {json.dumps(PLAN_OPTIONS)};
+      const summary = {{ number_of_people: 2, required_meal_count: 3, selected_plan: "Classic Plan" }};
+      const classic = {{ week_id: "W", display_name: "Classic Box", meals_required: 3, servings: 2 }};
+      const sizes = (w, s = summary) => L.servingsChoices(w, options, s).map((c) => [c.servings, c.meals, c.price, c.current]);
+      return {{
+        people: [
+          L.weekServings(classic, summary),
+          L.weekServings({{ servings: null }}, {{ number_of_people: "4" }}),
+          L.weekServings({{ servings: 0 }}, {{}}),
+          L.weekServings(null, null),
+        ],
+        classic: sizes(classic),
+        namedByThePlan: sizes({{ ...classic, display_name: "" }}),
+        oneFamilySellsIt: sizes({{ ...classic, servings: 1, display_name: "Mystery" }}, {{ ...summary, selected_plan: "" }}),
+        familyUnknown: sizes({{ ...classic, display_name: "Mystery" }}, {{ ...summary, selected_plan: "" }}),
+        fromThePlan: sizes({{ week_id: "W", display_name: "Classic Box" }}),
+        noMealCount: sizes({{ ...classic, meals_required: null }}, {{}}),
+        handle: L.servingsChoices(classic, options, summary).find((c) => c.servings === 4).handle,
+        noOptions: L.servingsChoices(classic, null, summary),
+      }};
+    """
+    got = _run(body)
+    assert got["people"] == [2, 4, None, None]
+    classic = [[2, 3, 71.94, True], [4, 3, 131.88, False], [6, 3, None, False]]
+    assert got["classic"] == classic
+    assert got["namedByThePlan"] == classic
+    assert got["oneFamilySellsIt"] == [[1, 3, 40, True], [2, 3, 68.94, False]]
+    # Each size once, from the first family listing it.
+    assert got["familyUnknown"] == [
+        [1, 3, 40, False],
+        [2, 3, 71.94, True],
+        [4, 3, 131.88, False],
+        [6, 3, None, False],
+    ]
+    assert got["fromThePlan"] == classic
+    assert got["noMealCount"] == []
+    assert got["handle"] == "US-CBU-3-4-0"
+    assert got["noOptions"] == []
+
+
+# ---- recipes, a page at a time --------------------------------------------------------------------
+
+
+def test_catalog_pages_say_whether_more_follow_and_add_each_recipe_once() -> None:
+    """has_more decides Load more; an answer without it (an integration from before paging)
+    can't be paged, though a full page of it is still "the first N". A page repeating a recipe
+    the list has adds it once."""
+    body = """
+      const page = (extra) => L.catalogPage({ recipes: [{ recipe_id: "a" }, { recipe_id: "b" }], ...extra }, 2);
+      const keep = ({ total, more, capped, recipes }) => ({ total, more, capped, recipes: recipes.length });
+      const added = L.addRecipes([{ recipe_id: "a" }, { recipe_id: "b" }], [{ recipe_id: "b" }, { recipe_id: "c" }, null, { recipe_id: "c" }]);
+      return {
+        paged: keep(page({ total: 5, has_more: true, offset: 0 })),
+        last: keep(page({ total: 5, has_more: false })),
+        noTotal: keep(page({ total: null, has_more: true })),
+        badTotal: keep(page({ total: "5", has_more: true })),
+        beforePaging: keep(page({})),
+        short: keep(L.catalogPage({ recipes: [{ recipe_id: "a" }] }, 2)),
+        nothing: keep(L.catalogPage(null, 2)),
+        added: [added.list.map((r) => r.recipe_id), added.added.map((r) => r.recipe_id)],
+      };
+    """
+    assert _run(body) == {
+        "paged": {"total": 5, "more": True, "capped": True, "recipes": 2},
+        "last": {"total": 5, "more": False, "capped": False, "recipes": 2},
+        "noTotal": {"total": None, "more": True, "capped": True, "recipes": 2},
+        "badTotal": {"total": None, "more": True, "capped": True, "recipes": 2},
+        "beforePaging": {"total": None, "more": False, "capped": True, "recipes": 2},
+        "short": {"total": None, "more": False, "capped": False, "recipes": 1},
+        "nothing": {"total": None, "more": False, "capped": False, "recipes": 0},
+        "added": [["a", "b", "c"], ["c"]],
+    }
+
+
+def test_the_line_above_the_recipes_counts_what_is_shown_against_the_total() -> None:
+    body = """
+      const note = (args) => { const n = L.catalogNote(args); return n ? L.t(n.key, n.params) : null; };
+      return [
+        note({ count: 24, total: 1234, capped: true }),
+        note({ count: 24, total: 130, capped: true, search: true }),
+        note({ count: 24, total: null, capped: true }),
+        note({ count: 24, total: null, capped: true, search: true }),
+        note({ count: 30, total: 30 }),
+        note({ count: 30, total: 30, search: true }),
+        note({ count: 7, total: null, capped: false }),
+        note({ count: 1, total: null, capped: false, search: true }),
+      ];
+    """
+    assert _run(body) == [
+        "Showing 24 of 1,234 recipes",
+        "Showing 24 of 130 results across every category",
+        "Showing the first 24 recipes",
+        "Showing the first 24 results across every category",
+        None,  # a whole category says nothing
+        "30 results across every category",
+        None,
+        "1 result across every category",
+    ]
+
+
+# ---- the account: payments, credit, rewards -------------------------------------------------------
+
+
+def test_a_payment_problem_names_its_boxes_by_date_and_amount() -> None:
+    """Each box by the summary's delivery date, else the card's own week's, else its week id;
+    each amount in its own currency (the account's when it has none)."""
+    body = """
+      const weeks = [week("2026-W39", -2)];
+      const summary = { payment_problem: true, account_credit_currency: "EUR", payment_problem_weeks: [
+        { week_id: "2026-W40", delivery_date: "2026-09-28", status: "payment_failed", amount: 84.93, currency: "USD" },
+        { week_id: "2026-W39", delivery_date: null, status: "CHARGEBACK", amount: null, currency: null },
+        { week_id: "2026-W01", delivery_date: null, status: "failed", amount: "12.5", currency: null },
+        null,
+        { week_id: null, delivery_date: null, status: "failed", amount: 1 },
+      ] };
+      return {
+        problem: L.paymentProblem(summary, weeks),
+        w39: L.fmtLongDate(weeks[0].delivery_date),
+        none: [L.paymentProblem({ payment_problem: false, payment_problem_weeks: summary.payment_problem_weeks }, weeks), L.paymentProblem(null, weeks)],
+        bare: L.paymentProblem({ payment_problem: true }, weeks),
+        list: [L.listText(["A"]), L.listText(["A", "B"]), L.listText(["A", "B", "C"])],
+      };
+    """
+    got = _run(body)
+    assert got["problem"] == {
+        "boxes": [
+            {
+                "weekId": "2026-W40",
+                "date": "Monday, September 28",
+                "amount": "$84.93",
+                "status": "payment_failed",
+            },
+            {"weekId": "2026-W39", "date": got["w39"], "amount": "", "status": "chargeback"},
+            {"weekId": "2026-W01", "date": "2026-W01", "amount": "€12.50", "status": "failed"},
+        ]
+    }
+    assert got["none"] == [None, None]
+    assert got["bare"] == {"boxes": []}
+    assert got["list"] == ["A", "A and B", "A, B, and C"]
+
+
+def test_credit_lists_cash_bonus_and_the_boxes_left_until_a_free_one() -> None:
+    body = """
+      const base = { account_credit_currency: "EUR" };
+      return [
+        L.creditDetails({ ...base, account_credit_cash: 10, account_credit_bonus: 2.5, loyalty_boxes_until_free_box: 3 }),
+        L.creditDetails({ ...base, account_credit_cash: 0, account_credit_bonus: null, loyalty_boxes_until_free_box: 1 }),
+        L.creditDetails({ ...base, loyalty_boxes_until_free_box: 0 }),
+        L.creditDetails({ ...base, account_credit_cash: "x", loyalty_boxes_until_free_box: null }),
+        L.creditDetails({ selected_plan_total_price_currency: "USD", account_credit_bonus: 5 }),
+        L.creditDetails(null),
+      ];
+    """
+    assert _run(body) == [
+        [
+            ["HelloFresh Cash", "€10.00"],
+            ["Bonus credit", "€2.50"],
+            ["Rewards", "3 boxes until a free box"],
+        ],
+        [["Rewards", "1 box until a free box"]],
+        [["Rewards", "You've earned a free box"]],
+        [],
+        [["Bonus credit", "$5.00"]],
+        [],
+    ]
+
+
+# ---- a box HelloFresh moved ---------------------------------------------------------------------
+
+
+def test_a_moved_box_says_when_it_now_arrives() -> None:
+    """DELAYED or EARLY with the new date (any case), read as a local date; nothing for another
+    sub-status, a box without the new date, or one that came or was skipped."""
+    body = """
+      const late = week("a", 1, { sub_status: "DELAYED", revised_delivery_date: "2026-10-06" });
+      const early = week("b", 1, { sub_status: "early", revised_delivery_date: "2026-10-04" });
+      return {
+        late: [L.revisedDelivery(late), L.revisedDeliveryText(late), L.revisedDeliveryText(late, { long: false }),
+          L.revisedDeliveryText(late, { markup: true })],
+        early: L.revisedDeliveryText(early),
+        others: [
+          L.revisedDelivery(week("c", 1, { sub_status: "DELAYED" })),
+          L.revisedDelivery(week("d", 1, { sub_status: "COOK_IT", revised_delivery_date: "2026-10-06" })),
+          L.revisedDelivery(week("e", -1, { sub_status: "DELAYED", revised_delivery_date: "2026-10-06", delivered_at: new Date().toISOString() })),
+          L.revisedDelivery(week("f", 1, { sub_status: "DELAYED", revised_delivery_date: "2026-10-06", is_skipped: true })),
+          L.revisedDelivery(week("g", 1, { sub_status: "DELAYED", revised_delivery_date: "soon" })),
+          L.revisedDelivery(null),
+        ],
+        plain: L.revisedDeliveryText(week("h", 1)),
+      };
+    """
+    got = _run(body, tz="America/Los_Angeles")
+    assert got["late"] == [
+        {"kind": "delayed", "date": "2026-10-06"},
+        "Delayed — now arriving Tuesday, October 6",
+        "Delayed — now arriving Tue, Oct 6",
+        "Delayed — now arriving <strong>Tuesday, October 6</strong>",
+    ]
+    assert got["early"] == "Early — now arriving Sunday, October 4"
+    assert got["others"] == [None] * 6
+    assert got["plain"] == ""
+
+
+# ---- the text layer ----------------------------------------------------------------------------
+
+
+def test_english_words_follow_english_plural_rules_in_any_language() -> None:
+    """Home Assistant fills a key a language lacks with its English text, and English words need
+    English plural rules: under French rules 0 is "one" ("0 meal"), under Russian so is 21 ("21
+    meal"). A language's own words keep its own rules. A count that arrives as a string ("3",
+    read from a data attribute) still picks a form, where it used to show the key."""
+    body = """
+      const I18n = L.I18n;
+      const count = (values) => values.map((value) => L.t("meals.count", { count: value }));
+      const out = {};
+      I18n.setStrings({ "meta.language": "fr" }); // no French "meals.count": the English one
+      out.french = count([0, 1, 2]);
+      I18n.setStrings({ "meta.language": "ru" });
+      out.russian = count([1, 21, 22]);
+      I18n.setStrings({ "meta.language": "fr", "meals.count.one": "{count} plat", "meals.count.other": "{count} plats" });
+      out.ownWords = count([0, 1, 2]);
+      I18n.setStrings(null);
+      out.strings = [...count(["3", "1"]), L.ht("meals.count", { count: " 2 " })];
+      out.noCount = [L.t("meals.count"), ...count([undefined, null, "many"])];
+      return out;
+    """
+    out = _run(body)
+    assert out["french"] == ["0 meals", "1 meal", "2 meals"]
+    assert out["russian"] == ["1 meal", "21 meals", "22 meals"]
+    assert out["ownWords"] == ["0 plat", "1 plat", "2 plats"]
+    assert out["strings"] == ["3 meals", "1 meal", "2 meals"]
+    # Without a usable count it still reads as words, never as its key.
+    assert all("meals.count" not in text and text.endswith("meals") for text in out["noCount"])

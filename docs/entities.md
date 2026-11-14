@@ -11,13 +11,13 @@ A few conventions used in the tables:
 - **Entity ID prefix.** Because entities use `has_entity_name`, the real IDs are prefixed from your config-entry title — a "HelloFresh (US)" account produces `sensor.hellofresh_us_next_delivery_date`, etc. The tables show the suffix only; substitute your own prefix.
 - **Device class.** Where noted (`Date`, `Timestamp`, monetary), Home Assistant formats and graphs the value accordingly. Sensors without a noted device class are plain strings or numbers.
 - **`None` / unavailable.** Many sensors report `None` (shown as *Unknown* in the UI) when the underlying field isn't set for your account or region — e.g. no holiday shift, no tracked shipment. This is normal, not an error. A few sensors where "empty" is a definite *"there isn't one"* rather than missing data instead show the literal **`None`** so the dashboard reads clearly: **Next skipped week**, **Next delivery coupon**, and **Holiday delivery message**.
-- **Attributes vs. state.** The state is the single headline value; richer context (the full week, order, subscription, or tracking object) is exposed as entity **attributes**. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit) and are read on demand via `hellofresh.get_weeks` — see [Recorder attribute sizes](../README.md#recorder-attribute-sizes).
+- **Attributes vs. state.** The state is the single headline value; richer context (the full week, order, subscription, or tracking object) is exposed as entity **attributes**. Full per-week recipe lists are deliberately kept out of attributes (recorder size limit) and are read on demand via `hellofresh.get_weeks` — see [Recorder attribute sizes](../README.md#recorder-attribute-sizes). Personal and bulky attributes are not kept in the history — see [Privacy](#privacy).
 
 **Deliveries & orders**
 
 | Name | Entity | Description |
 | --- | --- | --- |
-| Next delivery date | `sensor.next_delivery_date` | Delivery date of the subscription's next delivery (API `nextDelivery`). `Date` device class. |
+| Next delivery date | `sensor.next_delivery_date` | Delivery date of the subscription's next delivery (API `nextDelivery`). `Date` device class. While HelloFresh has moved that box (delayed or early), the `revised_delivery_date` attribute is the day it now comes; the state stays the day it was scheduled for. |
 | Next delivery week | `sensor.next_delivery_week` | **ISO week identifier** of the next delivery (e.g. `2026-W25`), from the API `nextDeliveryWeek` and normalized against the delivery date. A week label, deliberately distinct from `Next delivery date`. Plain string (no device class). |
 | Next selectable delivery date | `sensor.next_selectable_delivery_date` | Date of the next delivery the customer can still modify (API `nextModifiableDeliveryDate`) — typically the week after the next delivery. `Date` device class. |
 | Next selectable delivery week | `sensor.next_selectable_delivery_week` | **ISO week identifier** of the next modifiable delivery (API `nextModifiableDeliveryWeek`). Plain string (no device class). |
@@ -49,7 +49,9 @@ A few conventions used in the tables:
 | --- | --- | --- |
 | Next delivery total price | `sensor.next_box_total_price` | Sum of all charges for the next upcoming delivery date, across every billing item for that date. Monetary device class; the unit reflects the subscription currency. Attributes carry a `price_breakdown` for that box (subtotal, shipping, discount, tax, coupon) from `/gw/calculate`. Its `billed_discount` attribute is what the billing ledger actually took off that delivery's charges (a wallet voucher realized as a coupon line), which the calculate split in `price_breakdown` never shows. |
 | Next box discount | `sensor.next_box_discount` | The **weekly discount** HelloFresh's wallet will apply to the next box that ships — e.g. `10.00` for a "$10 off premium meals" voucher (`POST /gw/customer-wallet/v2/benefit-distribution`, the same call the deliveries page makes). A fixed amount uses the monetary device class, in the account currency; a percentage voucher (`amount_type` `percent`, e.g. "10% off your box") reads `10` with the unit `%` and no device class. Attributes: `label` ("$10 off premium meals"), `applies_to` (`premiumSurcharge`, `shipping`, …), `amount_type` (`fixed` or `percent`), `voucher_code`, `one_time`, `boxes` and `boxes_used` (for a discount on several boxes), `expires_at`, `week_id`, `status` (`applied` when it is the discount chosen for that box, else `available`), and `benefits` (every promise on the account with the upcoming weeks it covers). Unknown when no promise covers an upcoming box. The voucher code is redacted from diagnostics exports. |
-| Account credit | `sensor.account_credit` | Spendable account credit, which applies automatically to the next order unless your account is in HelloFresh's "apply credit yourself" test (API `/gw/payments/customers/{uuid}/balance` → `amount`). Monetary device class; unit from `currencyCode`. |
+| Account credit | `sensor.account_credit` | Spendable account credit, which applies automatically to the next order unless your account is in HelloFresh's "apply credit yourself" test (API `/gw/payments/customers/{uuid}/balance` → `amount`). Monetary device class; unit from `currencyCode`. Attributes: `currency`, `restricted_amount` (the restricted part of the balance) and `cancellable_credits` (credits that can still be cancelled), in the same currency. |
+| HelloFresh Cash | `sensor.account_credit_cash` | The part of the credit that is HelloFresh Cash you bought (the balance's `cash`). Monetary device class, in the credit's currency. |
+| Bonus credit | `sensor.account_credit_bonus` | The part of the credit that is bonus credit (the balance's `bonus`). Monetary device class, in the credit's currency. |
 | Selected plan total price | `sensor.selected_plan_total_price` | Standing weekly plan price **including shipping** (the `grandTotal` from a recurring `/gw/calculate` for the primary subscription) — the price shown in plan settings, distinct from the next box's actual charge. Monetary device class; unit reflects the subscription currency. Attributes carry the same `price_breakdown` for the standing plan. |
 | Recent payment date | `sensor.recent_payment_date` | Date of the most recent HelloFresh charge that has **already been billed** (the order's `createdAt`), from order history. Because HelloFresh bills a box a few days before it ships, this reflects your last actual charge even when that box's delivery is still upcoming. Charges dated in the future are ignored. `Date` device class. |
 | Next delivery payment date | `sensor.next_payment_date` | Estimated date of the next charge — the upcoming order's delivery date, falling back to the subscription's next cutoff date. `Date` device class. |
@@ -64,9 +66,10 @@ A few conventions used in the tables:
 | Number of people | `sensor.number_of_people` | How many people the plan is for, from the primary subscription (e.g. `2`). |
 | Account subscription count | `sensor.subscription_count` | Number of subscriptions on the account. Most sensors report on the primary (first) subscription only, so a value above 1 means additional subscriptions aren't individually surfaced. |
 | Subscription status | `sensor.subscription_status` | Plan-level status of the primary subscription (e.g. `active`, `paused`), lowercased from the API. This is the whole-plan state, distinct from per-week skip state; `None` when the account doesn't report it. |
-| Delivery address | `sensor.delivery_address` | Single-line delivery address from the primary subscription; redacted in diagnostics exports. |
-| Account ID | `sensor.account_id` | HelloFresh customer account ID. |
+| Delivery address | `sensor.delivery_address` | Single-line delivery address from the primary subscription; redacted in diagnostics exports. Diagnostic (see [Privacy](#privacy)). |
+| Account ID | `sensor.account_id` | HelloFresh customer account ID. Diagnostic (see [Privacy](#privacy)). |
 | Boxes received | `sensor.boxes_received` | Lifetime count of boxes delivered to the account, from the authenticated profile endpoint. |
+| Boxes until a free box | `sensor.loyalty_boxes_until_free_box` | How many boxes are still to go before the loyalty programme's next free box, where HelloFresh reports it on the subscription. The API reference documents no such counter, so this is **Unknown** on most accounts. |
 | Available menu recipe count | `sensor.public_menu_recipe_count` | Number of recipes on the current week's public menu; `0` when menu data is unavailable. |
 
 **Shipment tracking**
@@ -105,7 +108,7 @@ A few conventions used in the tables:
 | Name | Entity | Description |
 | --- | --- | --- |
 | Account delivery subscription ID | `sensor.next_delivery_subscription` | Internal HelloFresh subscription ID for the next order. Diagnostic. |
-| Access token time remaining | `sensor.access_token_minutes_remaining` | Whole minutes until the current access token expires (unit `min`). Access tokens are short-lived (~30 min) and auto-refreshed. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
+| Access token time remaining | `sensor.access_token_minutes_remaining` | Whole minutes until the current access token expires (unit `min`). Access tokens are short-lived (~30 min) and auto-refreshed. Counts down between account polls: it is rewritten whenever the token is renewed and each time the integration checks it, every few minutes. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
 | Refresh token time remaining | `sensor.refresh_token_days_remaining` | Whole days until the refresh token expires (unit `d`). When the refresh token expires the integration logs in again with your stored credentials; if that login fails you are prompted to reauthenticate. Attributes expose the exact `expires_at` timestamp and `seconds_remaining`. Diagnostic. |
 | API base URL | `sensor.api_base_url` | Regional API base URL the integration is using. Diagnostic. |
 
@@ -115,7 +118,8 @@ A few conventions used in the tables:
 | --- | --- |
 | `binary_sensor.needs_meal_selection` | `True` when at least one upcoming week still needs your attention — HelloFresh auto-picked its meals (review them) or it has fewer than the minimum 2 meals. A week you deliberately resized to fewer meals than your plan (e.g. 2 on a 3-meal plan) counts as complete and does **not** trigger this. The primary signal for reminder automations. |
 | `binary_sensor.tracked_shipment_available` | `True` when the most-recent order has active shipment tracking data (carrier, tracking number, or tracking URL) |
-| `binary_sensor.payment_method_expiring` | Shown as **Payment method expiring**. `True` when HelloFresh reports the card on file as **expiring or already expired** (`POST /gw/payments/v1/checktokenstatus`, the same check the website runs) — the most common way a box silently fails to ship. Attributes: `expiring`, `expired`, `card_type`, `card_brand` (HelloFresh's code: `visa`, `mc` for Mastercard, `amex`, …; the card shows the brand's name), `card_last4` (the last four digits, the only part of the number HelloFresh returns), `card_provider`, `card_expiry` (`YYYY-MM`). The billing address in that response is dropped at parse time and never stored, and the digits are redacted from diagnostics exports. `Problem` device class; unavailable until the payments gateway has answered. |
+| `binary_sensor.payment_method_expiring` | Shown as **Payment method expiring**. `True` when HelloFresh reports the card on file as **expiring or already expired** (`POST /gw/payments/v1/checktokenstatus`, the same check the website runs) — the most common way a box silently fails to ship. Attributes: `expiring`, `expired`, `card_type`, `card_brand` (HelloFresh's code: `visa`, `mc` for Mastercard, `amex`, …; the card shows the brand's name), `card_last4` (the last four digits, the only part of the number HelloFresh returns), `card_provider`, `card_expiry` (`YYYY-MM`). The billing address in that response is dropped at parse time and never stored, and the digits are redacted from diagnostics exports. `Problem` device class; unavailable until the payments gateway has answered. Diagnostic, and the recorder keeps neither `card_last4` nor `card_expiry` (see [Privacy](#privacy)). |
+| `binary_sensor.payment_problem` | Shown as **Payment problem**. `True` while HelloFresh could not charge a box: a week it marks `PAYMENT_FAILED`, or a charge the orders ledger reports as failed or charged back, for upcoming boxes and those delivered in the last 14 days (a week skipped since is left out: no box is coming). The `weeks` attribute lists each box, oldest first, as `{week_id, delivery_date, status, amount, currency}` (`status` is `payment_failed`, `failed` or `chargeback`; `amount` is what failed, else the box's price). A **Repairs** warning names the box and links to your HelloFresh website while the problem lasts, and clears itself once HelloFresh stops reporting it; it is about your account, so the data-quality option does not hide it. `Problem` device class; the recorder does not keep `weeks`. |
 
 **Diagnostic** (shown under the device's *Diagnostic* section)
 
@@ -123,7 +127,7 @@ A few conventions used in the tables:
 | --- | --- |
 | `binary_sensor.write_actions_available` | `True` when the account advertises at least one supported write action (meal selection, skip/unskip, reschedule, delivery-weekday change, etc.) |
 | `binary_sensor.payload_shape_changed` | `True` when HelloFresh returned authenticated data that the integration could not fully parse; signals that an API update may require integration changes; a matching Repairs issue is also raised |
-| `calendar.delivery_schedule` | Calendar of all upcoming and recent HelloFresh deliveries (each event title includes the delivery week and order status). Add it to a **Calendar** dashboard card to see the dates, or use it in calendar-trigger automations. Its own state is just `on`/`off` (a delivery is active today or not) — the standard for any calendar entity — so it's filed here under Diagnostic to keep it out of the main entities list. |
+| `calendar.delivery_schedule` | Calendar of all upcoming and recent HelloFresh deliveries (each event title includes the delivery week and order status). Skipped and paused weeks are left out, since no box comes on those days. Add it to a **Calendar** dashboard card to see the dates, or use it in calendar-trigger automations. Its own state is just `on`/`off` (`on` for the whole of a delivery day) — the standard for any calendar entity — so it's filed here under Diagnostic to keep it out of the main entities list. |
 
 ## Other
 
@@ -147,10 +151,14 @@ A few conventions used in the tables:
 | `box_delivered` | The box arrives: the state turns `DELIVERED` (or `tracking.delivery_date` appears) and the carrier no longer has it on the road | `delivered_at`, `carrier` |
 | `delivery_failed` | The week's state turns `FAILED` | |
 | `week_skipped` / `week_unskipped` | A week is skipped, or restored | |
-| `selection_locked` | A week you could still edit passes its cutoff | |
+| `selection_deadline_approaching` | 24 hours before the selection deadline of a week you can still edit | `deadline`, `needs_selection`, `meals_selected`, `meals_required` |
+| `selection_locked` | A week you could still edit reaches its deadline (at the deadline itself), or HelloFresh locks it earlier | `deadline` |
 | `menu_published` | An upcoming week gains its menu (or appears in the window already carrying one) | |
+| `box_delayed` / `box_early` | HelloFresh moves a box to a later or an earlier day (the week's `sub_status` turns `DELAYED` or `EARLY`) | `revised_delivery_date` |
 
-Every event carries `week_id`, `subscription_id`, `display_name` and `delivery_date`. Only transitions fire: a box already delivered when the integration first sees it is history, and nothing fires on the first poll after a restart.
+Every event carries `week_id`, `subscription_id`, `display_name` and `delivery_date` (the day the box was scheduled for). Only transitions fire: a box already delivered when the integration first sees it is history, and nothing fires on the first poll after a restart. A poll that fails, or that comes back without your account (HelloFresh did not answer its first request), is not taken as the new state: the entities keep the last good data and show as unavailable, and the next good poll is compared with that data, so a recovery does not announce every upcoming week again.
+
+**Deadlines on time, and only once.** `selection_deadline_approaching` and `selection_locked` fire from timers set to the moment itself, not from the next poll, and are set again whenever the data changes (a deadline HelloFresh moves is followed). `selection_deadline_approaching`, `selection_locked`, `box_delayed` and `box_early` fire at most once per week, even across a restart: what has fired is remembered in Home Assistant's storage (and forgotten with the week, or when the integration entry is removed). A deadline that passes while Home Assistant is not running is not announced afterwards.
 
 ```yaml
 automation:
@@ -166,7 +174,7 @@ automation:
           message: "Your HelloFresh box for {{ trigger.to_state.attributes.display_name }} was delivered."
 ```
 
-**Delivery-day watch.** On the day a box is due (and the day after, if the carrier still has not confirmed it) or while a tracked shipment is on the road, the integration re-reads just the deliveries payload and the carrier lookup every 15 minutes by default (the **Delivery-day watch interval** option, 0–60 minutes; 0 turns it off), independently of the multi-hour account poll. `box_shipped` / `box_delivered`, **Last delivery day**, **Tracked shipment date** and the shipment status sensors therefore update within minutes of the carrier, instead of up to `scan_interval_minutes` later. On every other day the timer sees nothing due and makes no request.
+**Delivery-day watch.** On the day a box is due (and the day after, if the carrier still has not confirmed it) or while a tracked shipment is on the road, the integration re-reads just the deliveries payload and the carrier lookup every 15 minutes by default (the **Delivery-day watch interval** option, 0–60 minutes; 0 turns it off), independently of the multi-hour account poll. `box_shipped` / `box_delivered`, **Last delivery day**, **Tracked shipment date** and the shipment status sensors therefore update within minutes of the carrier, instead of up to `scan_interval_minutes` later. On every other day the timer sees nothing due and makes no request. A box that still reads as shipped more than three days after its delivery date (lost, or never given its last scan) no longer keeps the watch running. If HelloFresh rejects the sign-in, the watch stops and Home Assistant asks you to sign in again; it starts again once you have.
 
 ## Prep lists
 
@@ -220,6 +228,11 @@ combining them would lose which trip an amount belongs to.
 swap meals — they can be checked off but not added to or deleted from. Each entity exposes
 `week_id` and `delivery_date` attributes for dashboard headings or automations.
 
+**Fetching.** Each selected meal's recipe is read once per serving count and remembered, so
+swapping one meal reads one recipe. The lists fill in the background after Home Assistant starts.
+When HelloFresh does not answer for a recipe, the list shows what it has and asks for the missing
+recipe again ten minutes later.
+
 ## Week tab
 
 The card's [Week tab](dashboard.md#week) plans which day each meal gets made. The plan is kept in
@@ -257,6 +270,34 @@ automation:
             {{ as_timestamp(state_attr('sensor.hellofresh_us_tonights_dinner', 'start'))
                | timestamp_custom('%-I:%M %p') }}
 ```
+
+## Privacy
+
+Some entities carry personal details. They stay where dashboards and automations need them, but
+are kept out of two places they would otherwise spread to.
+
+**Not kept in the history.** These attributes are on the live state, where templates and
+automations read them as before, but Home Assistant's recorder does not store them:
+
+- personal: `tracking_url`, `tracking_events`, `delivery_photo_urls`, `delivery_signed_by`,
+  `voucher_code`, `card_last4`, `card_expiry`, and on the live-tracking sensors `driver_name`,
+  `driver_location`, `customer_location` (your home's coordinates), `latitude`, `longitude` and
+  `personal_customer_message`. A map card still shows where the van is now, but not the path it
+  took;
+- bulky or rewritten on every poll: `order`, `week`, `weeks`, `benefits`, `price_breakdown`,
+  `last_delivery_week`, `next_selection_week`, `seconds_remaining` and `last_fetched`. One of these
+  alone could pass the recorder's 16 KB limit, and the recorder then stores no attributes at all
+  for that state.
+
+The scan history is exposed once, as `tracking_events` on the two shipment sensors; it is no
+longer repeated inside every embedded `order`.
+
+**Diagnostic.** `sensor.delivery_address`, `sensor.account_id` and
+`binary_sensor.payment_method_expiring` are diagnostic entities: Home Assistant leaves them out of
+generated dashboards and does not offer them to voice assistants by default. Their entity IDs are
+unchanged and they stay enabled.
+
+Diagnostics exports redact the address, the account and card details and the voucher code.
 
 ## Notes
 

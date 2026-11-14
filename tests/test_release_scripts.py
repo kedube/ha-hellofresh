@@ -21,6 +21,12 @@ _NOTES_SPEC = importlib.util.spec_from_file_location(
 )
 generate_release_notes = importlib.util.module_from_spec(_NOTES_SPEC)
 _NOTES_SPEC.loader.exec_module(generate_release_notes)
+_CHANGELOG_SPEC = importlib.util.spec_from_file_location(
+    "update_changelog",
+    REPO_ROOT / ".github" / "scripts" / "update_changelog.py",
+)
+update_changelog = importlib.util.module_from_spec(_CHANGELOG_SPEC)
+_CHANGELOG_SPEC.loader.exec_module(update_changelog)
 
 
 def test_bump_minor() -> None:
@@ -100,3 +106,71 @@ def test_release_notes_link_to_the_docs_as_the_release_shipped_them() -> None:
         "[options](https://github.com/kedube/ha-hellofresh/blob/4.00/README.md#options), "
         "[the site](https://www.hellofresh.com) and [below](#highlights)."
     )
+
+
+_CHANGELOG_INTRO = "# Changelog\n\nNotable changes. Add entries under **Unreleased**.\n\n"
+
+
+def test_changelog_rotates_unreleased_entries_and_leaves_a_fresh_heading() -> None:
+    text = (
+        _CHANGELOG_INTRO + "## Unreleased\n- **A fix.** Details.\n\n## 4.25 — 2026-11-03\n- Old.\n"
+    )
+
+    updated, outcome = update_changelog.rotate_changelog(text, "4.26", "2026-11-14", ["ignored"])
+
+    assert outcome == "rotated"
+    assert updated == (
+        _CHANGELOG_INTRO
+        + "## Unreleased\n\n## 4.26 — 2026-11-14\n- **A fix.** Details.\n\n"
+        + "## 4.25 — 2026-11-03\n- Old.\n"
+    )
+
+
+def test_changelog_gets_a_section_from_the_commits_when_unreleased_is_empty() -> None:
+    """A release with nothing under Unreleased used to be left out of the changelog."""
+    for unreleased in ("", "## Unreleased\n\n"):
+        text = _CHANGELOG_INTRO + unreleased + "## 4.25 — 2026-11-03\n- Old.\n"
+
+        updated, outcome = update_changelog.rotate_changelog(
+            text, "4.26", "2026-11-14", ["Fix the thing", "Update CI"]
+        )
+
+        assert outcome == "generated"
+        assert updated == (
+            _CHANGELOG_INTRO
+            + "## Unreleased\n\n## 4.26 — 2026-11-14\n- Fix the thing\n- Update CI\n\n"
+            + "## 4.25 — 2026-11-03\n- Old.\n"
+        )
+
+
+def test_changelog_says_so_when_a_release_changed_nothing() -> None:
+    text = _CHANGELOG_INTRO + "## 4.25 — 2026-11-03\n- Old.\n"
+
+    updated, _ = update_changelog.rotate_changelog(text, "4.26", "2026-11-14", [])
+
+    assert "## 4.26 — 2026-11-14\n- No user-facing changes.\n" in updated
+
+
+def test_changelog_only_rotates_the_real_unreleased_heading() -> None:
+    """Prose that mentions the heading, and a deeper heading, are left alone."""
+    text = (
+        "# Changelog\n\nSee ## Unreleased below.\n\n### Unreleased ideas\n- keep me\n\n"
+        "## Unreleased\n- Real entry.\n\n## 4.25 — 2026-11-03\n- Old.\n"
+    )
+
+    updated, _ = update_changelog.rotate_changelog(text, "4.26", "2026-11-14", [])
+
+    assert "See ## Unreleased below." in updated
+    assert "### Unreleased ideas\n- keep me" in updated
+    assert "## 4.26 — 2026-11-14\n- Real entry.\n" in updated
+
+
+def test_every_tagged_release_has_a_changelog_section() -> None:
+    """The manifest's own version is always in the changelog (the release workflow adds it)."""
+    version = json.loads(
+        (REPO_ROOT / "custom_components" / "hellofresh" / "manifest.json").read_text()
+    )["version"]
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+    assert f"## {version} — " in changelog
+    assert generate_release_notes._changelog_section(version)

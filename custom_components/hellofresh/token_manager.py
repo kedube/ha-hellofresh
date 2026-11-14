@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import hashlib
 from importlib import util
@@ -20,7 +20,7 @@ import math
 import re
 import secrets
 from time import monotonic
-from typing import Any
+from typing import Any, NoReturn
 from uuid import uuid4
 from weakref import WeakKeyDictionary
 
@@ -53,9 +53,13 @@ from .tls_transport import (
 _LOGGER = logging.getLogger(__name__)
 
 # HTTP status thresholds used when interpreting HelloFresh responses.
-_HTTP_BAD_REQUEST = 400
+_HTTP_REDIRECT = 300
 _HTTP_TOO_MANY_REQUESTS = 429
 _AUTH_FAILURE_STATUSES = frozenset({401, 403})
+# An HTML page with one of these statuses is Cloudflare answering in the API's place: a
+# challenge served as 200, or a block served as 401, 403 or 429. HTML with any other status
+# (a gateway's 502 page, a 404) is an ordinary failed request and starts no cooldown.
+_HTML_BLOCK_STATUSES = frozenset({200, 401, 403, 429})
 # A dead refresh token. HelloFresh's Android app treats 400, 401 and 403 from /refresh as a
 # rejected refresh token and signs out (NewApiAuthenticator); 400 is OAuth 2's answer for an
 # invalid grant (RFC 6749 section 5.2). A JSON 4xx naming one of these errors counts too.
@@ -74,6 +78,16 @@ _CF_ERROR_CODE_RE = re.compile(
 )
 _CF_RAY_RE = re.compile(r"[0-9a-fA-F]{16,32}(?:-[A-Za-z0-9]{2,8})?")
 _CF_RAY_IN_BODY_RE = re.compile(r"Ray\s+ID\s*[:#]\s*([0-9A-Za-z-]{16,48})", re.IGNORECASE)
+# What Cloudflare's own challenge page carries, whatever status it comes with (its older
+# challenges were served as 503): the challenge options object and the orchestration script.
+# The script Cloudflare adds to ordinary pages for JavaScript detections sits under the same
+# /cdn-cgi/challenge-platform/ path, so that path alone is not a challenge.
+_CF_CHALLENGE_BODY_RE = re.compile(
+    r"_cf_chl_opt|/cdn-cgi/challenge-platform/[^\"'\s>]{0,80}orchestrate"
+)
+_CF_CHALLENGE_BODY_SCAN_CHARS = 65536
+# How long closing the manager waits for a refresh that is still in flight (see async_close).
+_CLOSE_WAITS_FOR_REFRESH_SECONDS = 10
 _BLOCK_BACKOFF_INITIAL_SECONDS = 300
 _BLOCK_BACKOFF_MAX_SECONDS = 3600
 _BLOCK_BACKOFF_MAX_STEPS = 5
@@ -102,14 +116,36 @@ def _auth_error_code(body: str) -> str | None:
 
 
 def _retry_after_seconds(response: Any) -> int | None:
-    """Return a ``Retry-After`` header given in seconds, or None."""
-    headers = getattr(response, "headers", None) or {}
-    try:
-        value = headers.get("Retry-After")
-    except AttributeError:  # pragma: no cover - defensive
-        return None
-    seconds = coerce_int(value.strip()) if isinstance(value, str) else None
+    """Return a ``Retry-After`` header given in seconds, or None.
+
+    The name is matched whatever its case: the curl transport hands its headers over as a
+    plain dict with lower-case names, where a ``headers.get("Retry-After")`` finds nothing.
+    """
+    value = _response_header(response, "Retry-After")
+    seconds = coerce_int(value.strip()) if value is not None else None
     return seconds if seconds is not None and seconds >= 0 else None
+
+
+def _raised_again[ErrorT: BaseException](err: ErrorT) -> ErrorT:
+    """Prepare an error that is kept and raised again, possibly for days.
+
+    Each raise adds its frames to the error's traceback, and the traceback keeps those frames
+    alive. A refused password or refresh token is raised on every attempt until the user
+    reauthenticates, so the traceback is started afresh each time instead of growing.
+    """
+    return err.with_traceback(None)
+
+
+def _error_name(err: BaseException) -> str:
+    """Name an error for a log line, with the error that caused it when there is one.
+
+    The transport wraps every curl failure as ``ClientError``; the cause is what tells a
+    timeout from a refused connection. Type names only, never the message.
+    """
+    cause = err.__cause__
+    if cause is None:
+        return type(err).__name__
+    return f"{type(err).__name__} ({type(cause).__name__})"
 
 
 def _safe_auth_error_summary(body: str) -> str:
@@ -130,7 +166,7 @@ def _safe_auth_error_summary(body: str) -> str:
 
 @dataclass
 class _AuthBlockBackoff:
-    """One cooldown for accounts on the same Home Assistant event loop."""
+    """One cooldown for the accounts of one HelloFresh site on a Home Assistant event loop."""
 
     consecutive_blocks: int = 0
     next_attempt_at: float = 0.0
@@ -164,29 +200,71 @@ class _AuthBlockBackoff:
             self.next_attempt_at = 0.0
 
 
-_SESSION_BLOCK_BACKOFF: WeakKeyDictionary[ClientSession, _AuthBlockBackoff] = WeakKeyDictionary()
-_LOOP_BLOCK_BACKOFF: WeakKeyDictionary[asyncio.AbstractEventLoop, _AuthBlockBackoff] = (
+@dataclass
+class _SharedAuthState:
+    """The sign-in pauses every client on one Home Assistant event loop has to honour.
+
+    Each config-flow submit and each entry reload builds a new client. A pause kept on the
+    client alone would be forgotten at exactly those moments, and the next attempt would go
+    out while HelloFresh is still blocking or locking the last one.
+    """
+
+    # Bot-protection cooldowns by regional base URL. Cloudflare blocks one site at a time, so
+    # a block on one country's host is no reason to stop talking to another's.
+    block_backoffs: dict[str, _AuthBlockBackoff] = field(default_factory=dict)
+    # monotonic() time before which no password is posted after a 429 lockout, by base URL
+    # and a digest of the account's email (the address itself is not kept here).
+    login_locks: dict[tuple[str, str], float] = field(default_factory=dict)
+
+    def block_backoff(self, base_url: str) -> _AuthBlockBackoff:
+        """Return the cooldown for one HelloFresh site, creating it on first use."""
+        backoff = self.block_backoffs.get(base_url)
+        if backoff is None:
+            backoff = self.block_backoffs[base_url] = _AuthBlockBackoff()
+        return backoff
+
+    def lock_login(self, key: tuple[str, str], until: float) -> None:
+        """Record a sign-in lockout, dropping the ones that have already run out."""
+        now = monotonic()
+        for stale in [known for known, deadline in self.login_locks.items() if deadline <= now]:
+            del self.login_locks[stale]
+        self.login_locks[key] = until
+
+
+_SESSION_AUTH_STATE: WeakKeyDictionary[ClientSession, _SharedAuthState] = WeakKeyDictionary()
+_LOOP_AUTH_STATE: WeakKeyDictionary[asyncio.AbstractEventLoop, _SharedAuthState] = (
     WeakKeyDictionary()
 )
 
 
-def _backoff_for_session(session: ClientSession) -> _AuthBlockBackoff:
-    """Share an IP-level cooldown across HA entries on the same event loop."""
+def _shared_auth_state(session: ClientSession) -> _SharedAuthState:
+    """Return the pauses shared by every client on this session's event loop."""
     try:
         owner = getattr(session, "_loop", None) or session
-        registry = (
-            _LOOP_BLOCK_BACKOFF
+        # Keyed by the event loop when the session names one, else by the session itself.
+        registry: WeakKeyDictionary[Any, _SharedAuthState] = (
+            _LOOP_AUTH_STATE
             if isinstance(owner, asyncio.AbstractEventLoop)
-            else _SESSION_BLOCK_BACKOFF
+            else _SESSION_AUTH_STATE
         )
-        backoff = registry.get(owner)
-        if backoff is None:
-            backoff = _AuthBlockBackoff()
-            registry[owner] = backoff
-        return backoff
+        state = registry.get(owner)
+        if state is None:
+            state = _SharedAuthState()
+            registry[owner] = state
+        return state
     except TypeError:
         # Test stubs and unusual sessions may not support weak references.
-        return _AuthBlockBackoff()
+        return _SharedAuthState()
+
+
+def _backoff_for_session(session: ClientSession, base_url: str) -> _AuthBlockBackoff:
+    """Share one site's IP-level cooldown across HA entries on the same event loop."""
+    return _shared_auth_state(session).block_backoff(base_url)
+
+
+def _login_lock_key(base_url: str, username: str) -> tuple[str, str]:
+    """Identify one account's sign-in on one site without keeping its email address."""
+    return base_url, hashlib.sha256(username.strip().lower().encode()).hexdigest()
 
 
 # Proactively refresh the access token once it has passed this fraction of its lifetime.
@@ -197,9 +275,9 @@ _TOKEN_REFRESH_AT_LIFETIME_FRACTION = 0.5
 _TOKEN_MIN_REMAINING_BEFORE_REFRESH = 300  # always refresh within 5 min of expiry
 
 # How long a failed refresh/login is reused instead of retried. A poll fans out dozens of
-# concurrent requests that all queue on the refresh lock; without this, each one repeated the
-# failed attempt in turn -- with stored credentials, a burst of password logins. Shorter than
-# the 2-10 min refresh timer, so every timer tick still makes a real attempt.
+# requests; the ones that arrive after a failed attempt would each repeat it in turn -- with
+# stored credentials, a burst of password logins. Shorter than the 2-10 min refresh timer, so
+# every timer tick still makes a real attempt.
 _REFRESH_FAILURE_REUSE_SECONDS = 60
 
 # A browser-like User-Agent. HelloFresh fronts its endpoints with bot protection that
@@ -363,7 +441,11 @@ def _cloudflare_diagnostics(response: Any, body: str) -> str:
     """Format only bounded Cloudflare markers; never log HTML or arbitrary headers."""
     challenged = _has_cf_challenge(response)
     code = _cf_error_code(body)
-    code_name = {"1010": "browser signature block", "1020": "firewall rule"}.get(code)
+    code_name = (
+        {"1010": "browser signature block", "1020": "firewall rule"}.get(code)
+        if code is not None
+        else None
+    )
     code_label = f"{code} ({code_name})" if code_name else code or "none"
     ray_candidate = _response_header(response, "cf-ray") or ""
     if not ray_candidate and (match := _CF_RAY_IN_BODY_RE.search(body[:8192])) is not None:
@@ -376,13 +458,14 @@ def _cloudflare_diagnostics(response: Any, body: str) -> str:
 
 
 def _looks_like_bot_block(content_type: str | None, body: str) -> bool:
-    """Return True when an auth response looks like a WAF/bot-protection block page.
+    """Return True when a response is an HTML page instead of the API's JSON.
 
-    HelloFresh's login/refresh API answers with JSON. An HTML response on a 401/403 is
-    almost always the edge bot-protection layer (Cloudflare/Akamai-style challenge page)
-    rejecting a non-browser request *before* it reaches the login API -- not the API
-    rejecting the credentials. Distinguishing the two keeps a transient block from being
-    surfaced to the user as "wrong password" (which would trigger a pointless reauth loop).
+    HelloFresh's API answers with JSON. An HTML response on a 401/403 is almost always the
+    edge bot-protection layer (a Cloudflare challenge page) rejecting a non-browser request
+    *before* it reaches the login API -- not the API rejecting the credentials. Telling the
+    two apart keeps a transient block from being surfaced to the user as "wrong password"
+    (which would trigger a pointless reauth loop). Whether an HTML page is a block depends on
+    its status too: see ``_looks_like_auth_block``.
     """
     if content_type and "html" in content_type.lower():
         return True
@@ -390,13 +473,36 @@ def _looks_like_bot_block(content_type: str | None, body: str) -> bool:
     return head.startswith("<!doctype html") or head.startswith("<html")
 
 
+def _has_cf_challenge_page(body: str) -> bool:
+    """Return whether a body is Cloudflare's challenge page."""
+    return _CF_CHALLENGE_BODY_RE.search(body[:_CF_CHALLENGE_BODY_SCAN_CHARS]) is not None
+
+
 def _looks_like_auth_block(response: Any, body: str) -> bool:
-    """Detect a WAF response from its explicit markers or HTML shape."""
-    return (
+    """Tell a bot-protection block from a request that merely failed.
+
+    Cloudflare marks its own answers: the ``cf-mitigated: challenge`` header, error 1010 or
+    1020, or its challenge page. Without a marker, an HTML page counts only on the statuses a
+    block comes with. Every HTML response used to count, so a gateway's ordinary 502 page
+    paused all requests for five minutes to an hour.
+    """
+    if (
         _has_cf_challenge(response)
         or _cf_error_code(body) in {"1010", "1020"}
-        or _looks_like_bot_block(_response_content_type(response), body)
-    )
+        or _has_cf_challenge_page(body)
+    ):
+        return True
+    if getattr(response, "status", None) not in _HTML_BLOCK_STATUSES:
+        return False
+    return _looks_like_bot_block(_response_content_type(response), body)
+
+
+async def _async_body_text(response: Any) -> str:
+    """Read a response body to classify it; one that cannot be read counts as empty."""
+    try:
+        return await response.text()
+    except (ClientError, TimeoutError, UnicodeDecodeError):
+        return ""
 
 
 class TokenManager:
@@ -456,14 +562,26 @@ class TokenManager:
         self._password = password or ""
         self._base_url = COUNTRY_BASE_URLS.get(country, COUNTRY_BASE_URLS[DEFAULT_COUNTRY])
         self._token_refresh_callback = token_refresh_callback
-        self._refresh_lock = asyncio.Lock()
-        # The last failed refresh/login and when it may be retried (see
-        # _async_refresh_or_reuse_failure).
+        # The one refresh in flight, which every caller waits on (see _async_refresh).
+        self._refresh_task: asyncio.Task[HelloFreshError | None] | None = None
+        # The last failed refresh/login and when it may be retried (see _async_refresh), and
+        # the failure already reported in the log, so one failure is one warning.
         self._refresh_failure: HelloFreshError | None = None
         self._refresh_failure_until = 0.0
-        # monotonic() time before which no password is posted after a 429 lockout.
-        self._login_locked_until = 0.0
-        self._block_backoff = _backoff_for_session(session)
+        self._warned_refresh_failure: HelloFreshError | None = None
+        # Set once /gw/login has refused the stored email and password. They cannot start
+        # working again on their own, so nothing posts them a second time; reauth and
+        # reconfigure build a new manager with whatever the user enters.
+        self._credentials_rejected: HelloFreshLoginRejectedError | None = None
+        # Set once /gw/refresh has refused the refresh token, which is then forgotten.
+        self._refresh_rejection: HelloFreshAuthError | None = None
+        # Whether the current access token has been sent on a request since it was issued.
+        # The refresh timer renews only a token that is in use (see async_refresh_if_in_use).
+        self._token_in_use = False
+        # The bot-block cooldown and the 429 sign-in lock outlive this manager.
+        self._auth_state = _shared_auth_state(session)
+        self._block_backoff = self._auth_state.block_backoff(self._base_url)
+        self._login_lock_key = _login_lock_key(self._base_url, self._username)
         # Auth POSTs use a Chrome-TLS-impersonating transport when curl_cffi is installed,
         # which is what gets past Cloudflare bot-management on stricter regions (e.g. UK).
         # Log it once so a blocked user can confirm whether the impersonation path is active.
@@ -489,7 +607,12 @@ class TokenManager:
         return bool(self._access_token)
 
     def authorization_header(self) -> str:
-        """Return the ``Authorization`` header value for an authenticated request."""
+        """Return the ``Authorization`` header value for an authenticated request.
+
+        Building the header is what puts the token on a request, so it also marks the token
+        as in use for the refresh timer.
+        """
+        self._token_in_use = True
         return f"{self._token_type} {self._access_token}"
 
     def access_token_valid(self) -> bool:
@@ -497,7 +620,7 @@ class TokenManager:
         return self._access_token_still_valid()
 
     def raise_if_bot_blocked(self) -> None:
-        """Pause new API calls while this HTTP session is cooling down from a block."""
+        """Pause new API calls while this HelloFresh site is cooling down from a block."""
         self._block_backoff.raise_if_blocked()
 
     async def async_raise_if_data_blocked(
@@ -508,6 +631,8 @@ class TokenManager:
         ``public_page`` marks a website page or Next.js route, which is HTML by design: only a
         blocking status or an explicit challenge marker counts there. Treating every HTML
         response as a block made each build-id scrape and public-menu load pause all requests.
+        An HTML error page on a data call (a gateway's 502, a 404) is left for the caller to
+        report as the failed request it is.
         """
         if (
             response.status not in {401, 403, 429}
@@ -515,28 +640,62 @@ class TokenManager:
             and (public_page or "html" not in (_response_content_type(response) or "").lower())
         ):
             return
-        try:
-            body = await response.text()
-        except (ClientError, TimeoutError, UnicodeDecodeError):
-            body = ""
-        if not _looks_like_auth_block(response, body):
-            return
+        self._raise_if_bot_block("data request", response, await _async_body_text(response))
+
+    def _raise_if_bot_block(
+        self,
+        context: str,
+        response: ClientResponse | AuthResponse,
+        body: str,
+        *,
+        hint: str = "",
+        cause: BaseException | None = None,
+    ) -> None:
+        """Start the shared cooldown and raise when a response is a bot-protection block.
+
+        Every request that can be blocked reports it here, so one rule decides what a block
+        is and one line in the log says so. ``hint`` adds what only that request knows.
+        """
+        if _looks_like_auth_block(response, body):
+            self._raise_bot_block(context, response, body, hint=hint, cause=cause)
+
+    def _raise_bot_block(
+        self,
+        context: str,
+        response: ClientResponse | AuthResponse,
+        body: str,
+        *,
+        hint: str = "",
+        cause: BaseException | None = None,
+    ) -> NoReturn:
+        """Start (or keep) the shared cooldown for a blocked request and raise the block."""
         delay = self._block_backoff.record_block()
         _LOGGER.warning(
-            "HelloFresh data request BLOCKED by bot protection (HTTP %s); "
-            "requests paused for %s seconds%s",
+            "HelloFresh %s BLOCKED by bot protection (HTTP %s); requests paused for %s seconds%s%s",
+            context,
             response.status,
             delay,
+            hint,
             self._auth_log_details(response, body),
         )
         raise HelloFreshBotBlockedError(
-            f"HelloFresh data request blocked by bot protection: HTTP {response.status}"
-        )
+            f"HelloFresh {context} blocked by bot protection: HTTP {response.status}"
+        ) from cause
 
     @property
     def can_obtain_token(self) -> bool:
         """Return True when a token can be (re)obtained via refresh or login."""
         return bool(self._refresh_token) or self._has_credentials
+
+    @property
+    def has_refresh_token(self) -> bool:
+        """Return True when a refresh token is held."""
+        return bool(self._refresh_token)
+
+    @property
+    def has_credentials(self) -> bool:
+        """Return True when an email and password are stored for signing in."""
+        return self._has_credentials
 
     @property
     def token_lifetime_seconds(self) -> int | None:
@@ -560,79 +719,128 @@ class TokenManager:
         )
 
     async def async_ensure_fresh(self) -> None:
-        """Proactively refresh the access token when it is near expiry.
+        """Refresh the access token ahead of a request when it is missing or near expiry.
 
-        Safe to call on a timer independent of data polling. Does nothing when no
-        refresh token is configured or the current token still has comfortable life.
+        Does nothing when there is nothing to renew with, or the current token still has
+        comfortable life.
         """
-        # Nothing to renew with: no refresh token to exchange and no credentials to log in.
         if not self._refresh_token and not self._has_credentials:
+            # Nothing to renew with: no refresh token to exchange and no credentials to log
+            # in. Once HelloFresh has refused the refresh token and the access token has run
+            # out too, a request could only collect a 401, so it is not sent.
+            if self._refresh_rejection is not None and self._access_token_expired():
+                raise _raised_again(self._refresh_rejection)
             return
-        if not self._access_token or self._token_expiring_soon():
-            async with self._refresh_lock:
-                # Re-check inside the lock -- another waiter may have already refreshed.
-                if not self._access_token:
-                    await self._async_refresh_or_reuse_failure(force=True)
-                elif self._token_expiring_soon():
-                    if self._refresh_recently_failed() and self._access_token_still_valid():
-                        # A waiter ahead of this one just failed; the next timer tick retries.
-                        return
-                    # Proactive (half-life) refresh. If it fails but the current access
-                    # token is still genuinely valid -- e.g. right after a reboot, when the
-                    # stored token has life left but the refresh token was already rotated
-                    # in a prior session, or /gw/refresh briefly answered 5xx -- keep using
-                    # the existing token rather than failing the request. The reactive 401
-                    # path surfaces a real expiry later. A bot block still propagates: its
-                    # backoff pauses every request, not just this refresh.
-                    try:
-                        await self._async_refresh_or_reuse_failure(force=False)
-                    except HelloFreshBotBlockedError:
-                        raise
-                    except HelloFreshError:
-                        if self._access_token_still_valid():
-                            _LOGGER.warning(
-                                "HelloFresh proactive token refresh failed; continuing with "
-                                "the existing access token until it actually expires"
-                            )
-                            return
-                        raise
+        if not self._access_token:
+            await self._async_refresh(force=True)
+            return
+        if not self._token_expiring_soon():
+            return
+        if self._refresh_recently_failed() and self._access_token_still_valid():
+            # A refresh failed moments ago and the token still works; the next attempt is
+            # made once the reuse window has passed.
+            return
+        # Half-life refresh. If it fails but the current access token is still genuinely
+        # valid -- e.g. right after a reboot, when the stored token has life left but the
+        # refresh token was already rotated in a prior session, or /gw/refresh briefly
+        # answered 5xx -- keep using the existing token rather than failing the request. The
+        # reactive 401 path surfaces a real expiry later. A bot block still propagates: its
+        # backoff pauses every request, not just this refresh.
+        try:
+            await self._async_refresh(force=False)
+        except HelloFreshBotBlockedError:
+            raise
+        except HelloFreshError as err:
+            if not self._access_token_still_valid():
+                raise
+            if self._warned_refresh_failure is not err:
+                # Every request waiting on the failed refresh lands here; say it once.
+                self._warned_refresh_failure = err
+                _LOGGER.warning(
+                    "HelloFresh proactive token refresh failed; continuing with "
+                    "the existing access token until it actually expires"
+                )
+
+    async def async_refresh_if_in_use(self) -> None:
+        """Keep the access token fresh for the refresh timer, while something is using it.
+
+        Safe to call on a timer independent of data polling. A token that no request has
+        used since it was issued is left to lapse, and the next request renews it on demand
+        (``async_ensure_fresh``). Renewing unconditionally meant a /gw/refresh every 15 to 22
+        minutes around the clock, each one rotating the refresh token and rewriting the
+        config entry, for an account that is polled a few times a day.
+        """
+        if self._token_in_use:
+            await self.async_ensure_fresh()
 
     async def async_force_refresh_if_unchanged(self, token_before: str) -> None:
-        """Force a refresh under the lock, unless another waiter already rotated the token.
+        """Force a refresh, unless the token has already been rotated since ``token_before``.
 
         Called from the reactive 401 path. When several requests 401 at once (the
         coordinator fetches many endpoints concurrently), only the first should rotate the
         refresh token: HelloFresh invalidates the old refresh token on use, so a second
-        forced rotation would burn the token the first waiter just obtained. If the access
-        token already changed, another waiter refreshed -- the caller just retries with it.
+        forced rotation would burn the token the first one just obtained. They all wait on
+        the same refresh; if the access token already changed, the caller just retries with it.
         """
-        async with self._refresh_lock:
-            if self._access_token == token_before:
-                await self._async_refresh_or_reuse_failure(force=True)
+        if self._access_token == token_before:
+            await self._async_refresh(force=True)
+
+    async def async_close(self) -> None:
+        """Give a refresh that is still in flight a moment to finish and save its tokens.
+
+        Call this before closing the HTTP sessions. Closing them under a /gw/refresh that
+        HelloFresh has already answered would lose the new refresh token, and the old one no
+        longer works.
+        """
+        task = self._refresh_task
+        if task is not None and not task.done():
+            await asyncio.wait({task}, timeout=_CLOSE_WAITS_FOR_REFRESH_SECONDS)
 
     def _refresh_recently_failed(self) -> bool:
         """Return True while the last failed refresh/login is still being reused."""
         return self._refresh_failure is not None and monotonic() < self._refresh_failure_until
 
-    async def _async_refresh_or_reuse_failure(self, force: bool) -> None:
-        """Refresh under the held lock, or re-raise a refresh that failed moments ago.
+    async def _async_refresh(self, force: bool) -> None:
+        """Wait for a refresh: the one already in flight, or else a new one.
 
-        The "did another waiter already refresh?" checks only catch a *successful* refresh.
-        After a failed one every queued waiter still saw the old token and repeated the
-        whole refresh-then-login chain, so one poll could send a burst of password logins.
+        The refresh runs as a task of its own and every caller waits on it through a shield.
+        A caller that is cancelled (Home Assistant cancels the poll when an entry unloads)
+        leaves the refresh running: HelloFresh spends the old refresh token as it answers, so
+        the new one must still be adopted and saved, and whoever asks next joins that same
+        task instead of posting the spent token again.
+
+        A refresh that failed moments ago is re-raised rather than repeated. Joining covers
+        the requests that were waiting; this covers the rest of the poll, which would
+        otherwise repeat the whole refresh-then-login chain, a burst of password logins.
         """
         failure = self._refresh_failure
         if failure is not None and monotonic() < self._refresh_failure_until:
             raise failure
+        task = self._refresh_task
+        if task is None or task.done():
+            task = asyncio.get_running_loop().create_task(self._async_refresh_outcome(force))
+            # The event loop keeps only a weak reference to a task; this one keeps it alive.
+            self._refresh_task = task
+        outcome = await asyncio.shield(task)
+        if outcome is not None:
+            raise outcome
+
+    async def _async_refresh_outcome(self, force: bool) -> HelloFreshError | None:
+        """Run one refresh to its end and return its failure, if any, instead of raising it.
+
+        Returned, not raised: when every caller has been cancelled nobody collects the
+        task's result, and asyncio reports an exception left on a task as a bug.
+        """
         try:
             await self._async_refresh_access_token(force=force)
-        except HelloFreshBotBlockedError:
-            raise  # the bot-block backoff already paces these
+        except HelloFreshBotBlockedError as err:
+            return err  # the bot-block backoff already paces these
         except HelloFreshError as err:
             self._refresh_failure = err
             self._refresh_failure_until = monotonic() + _REFRESH_FAILURE_REUSE_SECONDS
-            raise
+            return err
         self._refresh_failure = None
+        return None
 
     # ------------------------------------------------------------------
     # Expiry math
@@ -649,6 +857,14 @@ class TokenManager:
         expires_at = self._token_issued_at + self._token_expires_in
         # Require a small safety margin so we don't hand out a token about to expire mid-request.
         return now < expires_at - _TOKEN_MIN_REMAINING_BEFORE_REFRESH
+
+    def _access_token_expired(self) -> bool:
+        """Return True when there is no access token, or it is known to be past its expiry."""
+        if not self._access_token:
+            return True
+        if self._token_issued_at is None or self._token_expires_in is None:
+            return False
+        return datetime.now(UTC).timestamp() >= self._token_issued_at + self._token_expires_in
 
     def _apply_jwt_token_timing(self, access_token: str) -> None:
         """Derive issued-at/expires-in from the access token's JWT claims when absent."""
@@ -739,9 +955,13 @@ class TokenManager:
         Never a warning: the token refresh timer succeeds every few minutes, and with the
         diagnostics option on by default that flooded the HA log with HTTP 200 lines (#13).
         """
-        if status < _HTTP_BAD_REQUEST:
-            _LOGGER.debug(
-                "HelloFresh authentication diagnostic: %s returned HTTP %s", endpoint, status
+        _LOGGER.debug("HelloFresh authentication diagnostic: %s returned HTTP %s", endpoint, status)
+
+    def _log_transport_error(self, endpoint: str, err: BaseException) -> None:
+        """Report an auth request that never got an answer, when diagnostics are on."""
+        if self._log_auth_diagnostics:
+            _LOGGER.warning(
+                "HelloFresh authentication %s transport error: %s", endpoint, _error_name(err)
             )
 
     async def _async_refresh_access_token(self, force: bool) -> None:
@@ -750,9 +970,16 @@ class TokenManager:
         Mirrors the HelloFresh web app: renew via ``POST /gw/refresh`` when a live refresh
         token is available, otherwise (no/expired refresh token, or a rejected refresh)
         fall back to a full username/password login.
+
+        Once HelloFresh has refused the stored password, nothing is sent at all, a refresh
+        token this manager still holds included. The entry is waiting for the user to
+        reauthenticate by then, and reauth builds a new manager.
         """
+        if self._credentials_rejected is not None:
+            raise _raised_again(self._credentials_rejected)
         self._block_backoff.raise_if_blocked()
         if self._refresh_token and not self._refresh_token_expired():
+            refresh_token_fingerprint = _token_fingerprint(self._refresh_token)
             try:
                 await self._async_refresh_with_token()
                 return
@@ -762,7 +989,7 @@ class TokenManager:
                 _LOGGER.debug(
                     "HelloFresh /gw/refresh rejected (refresh_token fp=%s): %s; "
                     "falling back to login",
-                    _token_fingerprint(self._refresh_token),
+                    refresh_token_fingerprint,
                     err,
                 )
                 if not self._has_credentials:
@@ -791,12 +1018,13 @@ class TokenManager:
     async def _async_refresh_with_token(self) -> None:
         """Renew the access token via ``POST {base}/gw/refresh``."""
         self._block_backoff.raise_if_blocked()
+        refresh_token = self._refresh_token
         try:
             response = await async_auth_post(
                 self._session,
                 f"{self._base_url}/gw/refresh",
                 params=self._auth_query(),
-                json_payload={"refresh_token": self._refresh_token},
+                json_payload={"refresh_token": refresh_token},
                 headers=self._auth_headers(content_type="text/plain;charset=UTF-8"),
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
             )
@@ -805,33 +1033,24 @@ class TokenManager:
             # rejected refresh token. Wrapping it keeps callers' error handling intact —
             # unwrapped it escaped the config flow ("Unknown error" instead of
             # "cannot_connect") and the proactive-refresh timer (unhandled traceback).
-            if self._log_auth_diagnostics:
-                _LOGGER.warning(
-                    "HelloFresh authentication /gw/refresh transport error: %s", type(err).__name__
-                )
+            self._log_transport_error("/gw/refresh", err)
             raise HelloFreshError(
-                f"HelloFresh token refresh could not connect: {type(err).__name__}"
+                f"HelloFresh token refresh could not connect: {_error_name(err)}"
             ) from err
-        if response.status >= _HTTP_BAD_REQUEST or _has_cf_challenge(response):
-            try:
-                error_body = await response.text()
-            except (ClientError, UnicodeDecodeError):  # pragma: no cover - defensive
-                error_body = ""
-            if _looks_like_auth_block(response, error_body):
-                # Keep the refresh token and pause auth requests after an edge block.
-                delay = self._block_backoff.record_block()
-                _LOGGER.warning(
-                    "HelloFresh token refresh BLOCKED by bot protection (HTTP %s); "
-                    "requests paused for %s seconds (refresh_token fp=%s)%s",
-                    response.status,
-                    delay,
-                    _token_fingerprint(self._refresh_token),
-                    self._auth_log_details(response, error_body),
-                )
-                raise HelloFreshBotBlockedError(
-                    f"HelloFresh token refresh blocked by bot protection: HTTP {response.status}"
-                )
-            if self._refresh_was_rejected(response.status, error_body):
+        # A redirect is not followed (the body is the refresh token), so it is a failure too.
+        if response.status >= _HTTP_REDIRECT or _has_cf_challenge(response):
+            error_body = await _async_body_text(response)
+            # An edge block keeps the refresh token and pauses auth requests.
+            self._raise_if_bot_block(
+                "token refresh",
+                response,
+                error_body,
+                hint=f" (refresh_token fp={_token_fingerprint(refresh_token)})",
+            )
+            # The auth API answers in JSON. A web page that is not a block (a gateway's error
+            # page) did not come from it, and says nothing about the refresh token.
+            from_api = not _looks_like_bot_block(_response_content_type(response), error_body)
+            if from_api and self._refresh_was_rejected(response.status, error_body):
                 _LOGGER.warning(
                     "HelloFresh token refresh REJECTED HTTP %s: %s (refresh_token fp=%s, "
                     "refresh_token_issued_at=%s)%s",
@@ -839,13 +1058,20 @@ class TokenManager:
                     # Never the raw body: it is server-controlled free text and logs are not
                     # redacted the way diagnostics exports are.
                     _safe_auth_error_summary(error_body),
-                    _token_fingerprint(self._refresh_token),
+                    _token_fingerprint(refresh_token),
                     self._refresh_token_issued_at,
                     self._auth_log_details(response, error_body),
                 )
-                raise HelloFreshAuthError(
+                rejection = HelloFreshAuthError(
                     f"HelloFresh token refresh failed: HTTP {response.status}"
                 )
+                if self._refresh_token == refresh_token:
+                    # HelloFresh has said this refresh token is dead. Forgetting it keeps the
+                    # next attempt from posting it again; only this manager forgets it, so a
+                    # restart reads the stored one and asks once more.
+                    self._refresh_token = ""
+                    self._refresh_rejection = rejection
+                raise rejection
             # Treat everything else (5xx, 408, 429) as transient: the current access token may
             # still work until it expires, at which point the reactive 401-retry path surfaces a
             # proper auth failure. Raising HelloFreshError (not Auth) avoids a spurious login.
@@ -876,6 +1102,10 @@ class TokenManager:
                     "HelloFresh credentials are required to reauthenticate, but none are configured"
                 )
             return
+        if self._credentials_rejected is not None:
+            # HelloFresh has already refused this email and password. Posting them again
+            # cannot succeed, and repeated attempts are what lock an account.
+            raise _raised_again(self._credentials_rejected)
 
         self._block_backoff.raise_if_blocked()
         locked_for = math.ceil(self._login_locked_until - monotonic())
@@ -898,32 +1128,21 @@ class TokenManager:
             )
         except (ClientError, TimeoutError) as err:
             # Transient network failure — not a credential rejection. See the refresh path.
-            if self._log_auth_diagnostics:
-                _LOGGER.warning(
-                    "HelloFresh authentication /gw/login transport error: %s", type(err).__name__
-                )
+            self._log_transport_error("/gw/login", err)
             raise HelloFreshError(
-                f"HelloFresh login could not connect: {type(err).__name__}"
+                f"HelloFresh login could not connect: {_error_name(err)}"
             ) from err
-        if response.status >= _HTTP_BAD_REQUEST or _has_cf_challenge(response):
-            try:
-                error_body = await response.text()
-            except (ClientError, UnicodeDecodeError):  # pragma: no cover - defensive
-                error_body = ""
-            if _looks_like_auth_block(response, error_body):
-                # An edge block is transient, but retrying each poll risks another block.
-                delay = self._block_backoff.record_block()
-                _LOGGER.warning(
-                    "HelloFresh login BLOCKED by bot protection (HTTP %s); this is not a "
-                    "password error -- the request was rejected before reaching the login API. "
-                    "Requests paused for %s seconds.%s",
-                    response.status,
-                    delay,
-                    self._auth_log_details(response, error_body),
-                )
-                raise HelloFreshBotBlockedError(
-                    f"HelloFresh login blocked by bot protection: HTTP {response.status}"
-                )
+        # A redirect is not followed (the body is the email and password), so it fails too.
+        if response.status >= _HTTP_REDIRECT or _has_cf_challenge(response):
+            error_body = await _async_body_text(response)
+            # An edge block is transient, but retrying each poll risks another block.
+            self._raise_if_bot_block(
+                "login",
+                response,
+                error_body,
+                hint="; this is not a password error: the request was rejected before "
+                "reaching the login API",
+            )
             if response.status in _AUTH_FAILURE_STATUSES:
                 # Never the raw body: a login rejection can echo the submitted email, and logs
                 # are shared on GitHub issues without redaction.
@@ -934,21 +1153,24 @@ class TokenManager:
                     self._auth_log_details(response, error_body),
                 )
                 if _auth_error_code(error_body) == _PASSWORD_MUST_BE_ROTATED:
-                    raise HelloFreshPasswordResetRequiredError(
+                    self._credentials_rejected = HelloFreshPasswordResetRequiredError(
                         "HelloFresh says this account's password has expired; follow the "
                         "instructions HelloFresh emailed to update it"
                     )
-                raise HelloFreshLoginRejectedError(
-                    f"HelloFresh login failed: HTTP {response.status}"
-                )
+                else:
+                    self._credentials_rejected = HelloFreshLoginRejectedError(
+                        f"HelloFresh login failed: HTTP {response.status}"
+                    )
+                raise self._credentials_rejected
             if response.status == _HTTP_TOO_MANY_REQUESTS:
                 # HelloFresh locks sign-in for a few minutes after too many attempts, and each
                 # new attempt can extend the lock, so stop posting the password until it ends.
+                # The lock is kept where the next client for this account will find it.
                 lock = min(
                     max(_retry_after_seconds(response) or 0, _LOGIN_RATE_LIMIT_MIN_SECONDS),
                     _LOGIN_RATE_LIMIT_MAX_SECONDS,
                 )
-                self._login_locked_until = monotonic() + lock
+                self._auth_state.lock_login(self._login_lock_key, monotonic() + lock)
                 _LOGGER.warning(
                     "HelloFresh login RATE-LIMITED (HTTP 429): sign-in is temporarily locked "
                     "after too many attempts; not retrying for %s seconds%s",
@@ -974,6 +1196,11 @@ class TokenManager:
         self._log_auth_success("/gw/login", response.status)
         self._block_backoff.reset_after_success()
 
+    @property
+    def _login_locked_until(self) -> float:
+        """The monotonic() time before which no password is posted after a 429 lockout."""
+        return self._auth_state.login_locks.get(self._login_lock_key, 0.0)
+
     async def async_email_registered(self, email: str) -> bool | None:
         """Ask HelloFresh whether an email has an account in this country, best-effort.
 
@@ -985,9 +1212,6 @@ class TokenManager:
         """
         try:
             self._block_backoff.raise_if_blocked()
-        except HelloFreshBotBlockedError:
-            return None
-        try:
             response = await async_auth_post(
                 self._session,
                 f"{self._base_url}/gw/auth/email/status",
@@ -997,19 +1221,11 @@ class TokenManager:
                 login=True,
             )
             body = await response.text()
-        except (ClientError, TimeoutError, UnicodeDecodeError):
+            self._raise_if_bot_block("email check", response, body)
+        except (HelloFreshBotBlockedError, ClientError, TimeoutError, UnicodeDecodeError):
             return None
-        if _looks_like_auth_block(response, body):
-            delay = self._block_backoff.record_block()
-            _LOGGER.warning(
-                "HelloFresh email check BLOCKED by bot protection (HTTP %s); requests paused "
-                "for %s seconds%s",
-                response.status,
-                delay,
-                self._auth_log_details(response, body),
-            )
-            return None
-        if response.status >= _HTTP_BAD_REQUEST:
+        # Only a plain success is an answer; an error or an unfollowed redirect is not.
+        if response.status >= _HTTP_REDIRECT:
             return None
         try:
             registered = json.loads(body).get("registered")
@@ -1025,6 +1241,7 @@ class TokenManager:
         The response is not retained -- the app token only primes the gateway; the
         user-scoped token comes from /gw/login. A failure here is non-fatal: log and
         continue, since /gw/login was observed to succeed without an Authorization header.
+        Only a bot-protection block stops the login that would follow.
         """
         self._block_backoff.raise_if_blocked()
         try:
@@ -1036,103 +1253,38 @@ class TokenManager:
                 headers=self._auth_headers(content_type=None),
                 use_curl_cffi_headers=self._use_curl_cffi_headers,
             )
-        except (ClientError, TimeoutError) as err:  # pragma: no cover - defensive
-            if self._log_auth_diagnostics:
-                _LOGGER.warning(
-                    "HelloFresh authentication /gw/auth/token transport error: %s",
-                    type(err).__name__,
-                )
-            _LOGGER.debug(
-                "HelloFresh app-token request errored (non-fatal): %s", type(err).__name__
-            )
+        except (ClientError, TimeoutError) as err:
+            self._log_transport_error("/gw/auth/token", err)
+            _LOGGER.debug("HelloFresh app-token request errored (non-fatal): %s", _error_name(err))
             return
-        if response.status >= _HTTP_BAD_REQUEST or _has_cf_challenge(response):
-            try:
-                details = await response.text()
-            except (ClientError, UnicodeDecodeError):
-                details = ""
-            if _looks_like_auth_block(response, details):
-                delay = self._block_backoff.record_block()
-                _LOGGER.warning(
-                    "HelloFresh app-token request BLOCKED by bot protection (HTTP %s); "
-                    "requests paused for %s seconds%s",
-                    response.status,
-                    delay,
-                    self._auth_log_details(response, details),
-                )
-                raise HelloFreshBotBlockedError(
-                    f"HelloFresh app-token request blocked by bot protection: HTTP {response.status}"
-                )
-            if self._log_auth_diagnostics:
-                _LOGGER.warning(
-                    "HelloFresh app-token request returned HTTP %s (non-fatal)%s",
-                    response.status,
-                    self._auth_log_details(response, details),
-                )
-            else:
-                _LOGGER.debug(
-                    "HelloFresh app-token request returned HTTP %s (non-fatal)", response.status
-                )
-        else:
-            try:
-                body = await response.text()
-            except (ClientError, TimeoutError, UnicodeDecodeError):
-                body = ""
-            if _looks_like_auth_block(response, body):
-                delay = self._block_backoff.record_block()
-                _LOGGER.warning(
-                    "HelloFresh app-token request BLOCKED by bot protection (HTTP %s); "
-                    "requests paused for %s seconds%s",
-                    response.status,
-                    delay,
-                    self._auth_log_details(response, body),
-                )
-                raise HelloFreshBotBlockedError(
-                    f"HelloFresh app-token request blocked by bot protection: HTTP {response.status}"
-                )
+        # A challenge page can come with any status, 200 included, so every answer is checked.
+        body = await _async_body_text(response)
+        self._raise_if_bot_block("app-token request", response, body)
+        if response.status < _HTTP_REDIRECT:
             self._log_auth_success("/gw/auth/token", response.status)
+            return
+        _LOGGER.log(
+            logging.WARNING if self._log_auth_diagnostics else logging.DEBUG,
+            "HelloFresh app-token request returned HTTP %s (non-fatal)%s",
+            response.status,
+            self._auth_log_details(response, body),
+        )
 
     async def _async_auth_payload(
         self, response: ClientResponse | AuthResponse, context: str
     ) -> dict[str, Any]:
         """Decode and minimally validate an auth-endpoint JSON response."""
         if "html" in (_response_content_type(response) or "").lower():
-            try:
-                body = await response.text()
-            except (ClientError, TimeoutError, UnicodeDecodeError):
-                body = ""
-            delay = self._block_backoff.record_block()
-            _LOGGER.warning(
-                "HelloFresh %s BLOCKED by bot protection (HTTP %s); requests paused "
-                "for %s seconds%s",
-                context,
-                response.status,
-                delay,
-                self._auth_log_details(response, body),
-            )
-            raise HelloFreshBotBlockedError(
-                f"HelloFresh {context} blocked by bot protection: HTTP {response.status}"
+            # A web page where the auth object should be: Cloudflare's challenge when it
+            # comes as a 200, and otherwise still not an answer about the credentials.
+            self._raise_if_bot_block(context, response, await _async_body_text(response))
+            raise HelloFreshError(
+                f"HelloFresh {context} answered with a web page: HTTP {response.status}"
             )
         try:
             payload = await response.json(content_type=None)
         except (ClientError, ValueError) as err:
-            try:
-                body = await response.text()
-            except (ClientError, TimeoutError, UnicodeDecodeError):
-                body = ""
-            if _looks_like_auth_block(response, body):
-                delay = self._block_backoff.record_block()
-                _LOGGER.warning(
-                    "HelloFresh %s BLOCKED by bot protection (HTTP %s); requests paused "
-                    "for %s seconds%s",
-                    context,
-                    response.status,
-                    delay,
-                    self._auth_log_details(response, body),
-                )
-                raise HelloFreshBotBlockedError(
-                    f"HelloFresh {context} blocked by bot protection: HTTP {response.status}"
-                ) from err
+            self._raise_if_bot_block(context, response, await _async_body_text(response), cause=err)
             raise HelloFreshAuthError(f"HelloFresh {context} response was not valid JSON") from err
         if not isinstance(payload, dict):
             raise HelloFreshAuthError(f"HelloFresh {context} response was not a JSON object")
@@ -1151,6 +1303,8 @@ class TokenManager:
         """
         now = int(datetime.now(UTC).timestamp())
         self._access_token = str(payload["access_token"]).strip()
+        # No request has carried this token yet (see async_refresh_if_in_use).
+        self._token_in_use = False
 
         new_refresh = payload.get("refresh_token")
         old_refresh_fp = _token_fingerprint(self._refresh_token)
@@ -1160,6 +1314,7 @@ class TokenManager:
             # the existing one (and its original issue time) is retained unchanged.
             self._refresh_token = new_refresh.strip()
             self._refresh_token_issued_at = now
+            self._refresh_rejection = None
         _LOGGER.debug(
             "HelloFresh %s OK: refresh_token %s -> %s (rotated=%s)",
             context,

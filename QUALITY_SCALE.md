@@ -16,8 +16,8 @@ the badge is claimable — and the status below tracks them on that basis.
 - Diagnostics are implemented with sensitive account, address, and token values redacted (by key name at any nesting depth, including captured request params), and include token-health timing and a `frontend` block comparing expected vs. registered card resource versions.
 - Repairs issues are raised for payload-shape changes, fallback menu behavior, and unsupported write actions.
 - Entities use `has_entity_name`, device classes where applicable, and diagnostic entity categories; user-facing strings live in `strings.json`/`translations/en.json`. Every platform declares `PARALLEL_UPDATES = 0` (coordinator-based), the coordinator lives in `entry.runtime_data` (typed via `HelloFreshConfigEntry`), and the prep-list to-do check-offs persist across restarts via `RestoreEntity`.
-- The test suite (800+ tests) covers API parsing and normalization, entity behavior, config and options flow, diagnostics redaction, the token-refresh lifecycle (including a simulation harness), the TLS transport, and frontend resource registration/versioning.
-- GitHub Actions run ruff, pytest, Hassfest, and HACS validation on every push; a release is published by running the release workflow by hand, which requires CI to have passed, bumps the manifest version and tags the release.
+- The test suite (1,500+ tests, with a coverage floor enforced in CI, and mypy over the whole integration) covers API parsing and normalization, entity behavior, config and options flow, diagnostics redaction, the token-refresh lifecycle (including a simulation harness), the TLS transport, and frontend resource registration/versioning.
+- GitHub Actions run ruff, pytest with coverage, Hassfest, HACS validation, the card syntax and logic checks, and the card's browser flows in headless Chrome on every push; a release is published by running the release workflow by hand, which requires CI to have passed, bumps the manifest version and tags the release.
 
 ## Remaining Work
 

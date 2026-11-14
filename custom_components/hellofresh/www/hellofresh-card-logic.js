@@ -39,7 +39,10 @@ export const {
   relativeWeek,
   fmtDate,
   titleCase,
+  formatMinutes,
   fmtPrice,
+  focusableIn,
+  keepTabInside,
   accountKey,
   syncStorageKey,
   loadSyncedWeekId,
@@ -238,15 +241,6 @@ export function statusWithDetail(status, detail) {
   return tail && tail.toLowerCase() !== head.toLowerCase() ? `${head} · ${tail}` : head;
 }
 
-// "35 min", "1 h 5 min" (time.duration.*).
-export function formatMinutes(minutes) {
-  if (!minutes && minutes !== 0) return "";
-  if (minutes < 60) return t("time.duration.minutes", { minutes });
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? t("time.duration.hours_minutes", { hours, minutes: rest }) : t("time.duration.hours", { hours });
-}
-
 // ---- dates ------------------------------------------------------------------------------------
 
 export function startOfToday(now = new Date()) {
@@ -408,8 +402,8 @@ export function isDelivered(week, now = new Date()) {
 }
 
 // A box that has left HelloFresh but not arrived.
-export function isShipping(week) {
-  if (!week || isSkipped(week) || isDelivered(week)) return false;
+export function isShipping(week, now = new Date()) {
+  if (!week || isSkipped(week) || isDelivered(week, now)) return false;
   if (SHIPPED_WEEK_STATUSES.has(upper(week.status))) return true;
   return SHIPPED_TRACKING_STATUSES.has(lower(week.order && week.order.tracking_status));
 }
@@ -438,8 +432,8 @@ export function needsSelection(week, now = Date.now()) {
 // One of: skipped | delivered | shipping | needs | ready | locked.
 export function weekState(week, now = Date.now()) {
   if (isSkipped(week)) return "skipped";
-  if (isDelivered(week)) return "delivered";
-  if (isShipping(week)) return "shipping";
+  if (isDelivered(week, now)) return "delivered";
+  if (isShipping(week, now)) return "shipping";
   if (needsSelection(week, now)) return "needs";
   if (isWeekEditable(week, now)) return "ready";
   return "locked";
@@ -494,6 +488,29 @@ export function canReschedule(week, now = Date.now()) {
 
 export function isHolidayShifted(week) {
   return Boolean(week && (week.holiday_message || week.holiday_delivery_date));
+}
+
+// A box HelloFresh moved after the fact: {kind: "delayed" | "early", date} when the week's
+// sub-status says so and carries the new date, else null. A box that has arrived, or was
+// skipped, has nothing still to arrive.
+export function revisedDelivery(week) {
+  const kind = upper(week && week.sub_status);
+  if ((kind !== "DELAYED" && kind !== "EARLY") || !week.revised_delivery_date) return null;
+  if (isSkipped(week) || isDelivered(week)) return null;
+  if (Number.isNaN(parseLocalDate(week.revised_delivery_date).getTime())) return null;
+  return { kind: kind === "DELAYED" ? "delayed" : "early", date: week.revised_delivery_date };
+}
+
+// "Delayed — now arriving Tuesday, October 6" (week.delayed / week.early), the date long or
+// short ("Tue, Oct 6"); "" for a box that wasn't moved. With `markup` it is HTML, the date in
+// bold; without it, plain text.
+export function revisedDeliveryText(week, { long = true, markup = false } = {}) {
+  const revised = revisedDelivery(week);
+  if (!revised) return "";
+  const date = long ? fmtLongDate(revised.date) : fmtDate(revised.date);
+  return markup
+    ? ht(`week.${revised.kind}`, { date: html(`<strong>${esc(date)}</strong>`) })
+    : t(`week.${revised.kind}`, { date });
 }
 
 // ---- week list --------------------------------------------------------------------------------
@@ -652,13 +669,19 @@ export function nextBoxDiscount(account) {
   return fmtPrice(amount, currency);
 }
 
-// Normalize HelloFresh's surcharge label ("+7.99/serving", "+7,99/portion") to "+$7.99" in the
-// account currency. Decimal commas are normalized first so non-English markets don't truncate.
-export function fmtSurcharge(label, currency) {
-  const m = String(label).replace(/,/g, ".").match(/\+?\s*([\d.]+)/);
-  if (!m) return String(label);
-  const amount = Number.parseFloat(m[1]);
-  if (!Number.isFinite(amount)) return String(label);
+// A meal's surcharge as "+$7.99" in the account currency. HelloFresh sends the amount twice: as
+// `surcharge_cents` and inside a display label ("+7.99/serving", "+7,99/portion"). The cents are
+// the figure; the label is only parsed when a payload has none, reading the signed number in it
+// (so "2x +3.99" is 3.99, not 2), a decimal comma as one, and a leading minus as a discount.
+//
+// Takes the meal itself, or its label with the cents as a third argument.
+export function fmtSurcharge(labelOrMeal, currency, cents = null) {
+  const meal = labelOrMeal && typeof labelOrMeal === "object" ? labelOrMeal : null;
+  const label = meal ? meal.surcharge_label : labelOrMeal;
+  const raw = meal ? meal.surcharge_cents : cents;
+  let amount = raw == null || raw === "" ? NaN : Number(raw) / 100;
+  if (!Number.isFinite(amount)) amount = surchargeFromLabel(label);
+  if (!Number.isFinite(amount)) return String(label ?? "");
   try {
     return amount.toLocaleString(I18n.numberLocale(), {
       style: "currency",
@@ -669,8 +692,27 @@ export function fmtSurcharge(label, currency) {
       currencyDisplay: "narrowSymbol",
     });
   } catch (_e) {
-    return String(label);
+    return String(label ?? "");
   }
+}
+
+// The amount in a surcharge label, or NaN. With both separators the last one is the decimal
+// ("1,299.00", "1.299,00"); a lone comma is a decimal comma.
+function surchargeFromLabel(label) {
+  const text = String(label ?? "").replace(/\u2212/g, "-");
+  const m = /([+-])\s*(\d[\d.,]*)/.exec(text) || /()(\d[\d.,]*)/.exec(text);
+  if (!m) return NaN;
+  let digits = m[2].replace(/[.,]+$/, "");
+  const comma = digits.lastIndexOf(",");
+  const dot = digits.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? "," : ".";
+    digits = digits.split(decimal === "," ? "." : ",").join("").replace(",", ".");
+  } else {
+    digits = digits.replace(",", ".");
+  }
+  const amount = Number.parseFloat(digits);
+  return m[1] === "-" ? -amount : amount;
 }
 
 // A per-serving price in its narrow symbol ("$9.99", not "CA$9.99").
@@ -736,11 +778,14 @@ export function rowStatus(week, badgeLabel) {
   return [shown, detail && !repeats ? detail : ""].filter(Boolean).join(" · ");
 }
 
-// Proof-of-delivery photos (http(s) only, at most three).
+// Proof-of-delivery photos, at most three: URLs as safeUrl gives them (escape them into markup).
+// They load from whatever host the carrier names, as soon as the box's details show, so only
+// https is let through (http would be mixed content on a secure Home Assistant) and their <img>
+// carries referrerpolicy="no-referrer".
 export function deliveryPhotos(week) {
   const order = (week && week.order) || {};
   return (Array.isArray(order.delivery_photo_urls) ? order.delivery_photo_urls : [])
-    .map((url) => safeUrl(url))
+    .map((url) => safeUrl(url, { httpsOnly: true }))
     .filter(Boolean)
     .slice(0, 3);
 }
@@ -1166,11 +1211,9 @@ export function badgeStyle(r) {
   return parts.length ? ` style="${parts.join(";")}"` : "";
 }
 
-// Recipe promo clips: plain http(s) only, or "".
-export function safeMediaUrl(url) {
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  return String(url);
-}
+// Recipe promo clips go through the same check as every other URL (safeUrl); the views know it
+// by this name.
+export const safeMediaUrl = safeUrl;
 
 // ---- market ----------------------------------------------------------------------------------
 
@@ -1459,6 +1502,230 @@ export function preferenceName(slug, presets) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// A payload number, or null: Number(null) is 0, which would read as a real amount.
+function amountOf(value) {
+  if (value == null || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+// A whole count in the card's number format ("1,234").
+export function fmtNumber(value) {
+  try {
+    return new Intl.NumberFormat(I18n.numberLocale()).format(value);
+  } catch (_e) {
+    return String(value);
+  }
+}
+
+// "A, B and C" in the language of the card's words.
+export function listText(items) {
+  const list = (items || []).map(String);
+  try {
+    return new Intl.ListFormat(I18n.language(), { type: "conjunction" }).format(list);
+  } catch (_e) {
+    return list.join(", ");
+  }
+}
+
+// The boxes a payment problem is about (get_account_summary's payment_problem_weeks), each named
+// by its delivery date (the summary's, else the card's own week's, else its week id) and its
+// amount in its own currency. Null while there is no problem.
+export function paymentProblem(summary, weeks) {
+  if (!summary || summary.payment_problem !== true) return null;
+  const listed = Array.isArray(summary.payment_problem_weeks) ? summary.payment_problem_weeks : [];
+  const fallback = summary.account_credit_currency || summary.selected_plan_total_price_currency || null;
+  const boxes = listed.filter((p) => p && typeof p === "object").map((p) => {
+    const week = (weeks || []).find((w) => w && p.week_id && w.week_id === p.week_id);
+    const day = p.delivery_date || (week && week.delivery_date) || null;
+    const amount = amountOf(p.amount);
+    return {
+      weekId: p.week_id || null,
+      date: day ? fmtLongDate(day) : String(p.week_id || ""),
+      amount: amount === null ? "" : fmtPrice(amount, p.currency || fallback),
+      status: lower(p.status),
+    };
+  });
+  return { boxes: boxes.filter((b) => b.date) };
+}
+
+// What Account › Plan & billing lists under the credit: HelloFresh Cash and bonus credit (when
+// there is some), in the credit's own currency, and how many boxes are left until a free one.
+// [label, value] pairs.
+export function creditDetails(summary) {
+  if (!summary) return [];
+  const currency = summary.account_credit_currency || summary.selected_plan_total_price_currency;
+  const out = [];
+  const cash = amountOf(summary.account_credit_cash);
+  if (cash) out.push([t("account.credit_cash"), fmtPrice(cash, currency)]);
+  const bonus = amountOf(summary.account_credit_bonus);
+  if (bonus) out.push([t("account.credit_bonus"), fmtPrice(bonus, currency)]);
+  const left = summary.loyalty_boxes_until_free_box;
+  if (Number.isInteger(left) && left >= 0) {
+    out.push([t("account.rewards"), left === 0 ? t("account.free_box_earned") : t("account.boxes_until_free", { count: left })]);
+  }
+  return out;
+}
+
+// ---- one week's number of people -------------------------------------------------------------
+//
+// A box is a product: so many meals for so many people, in a family (Classic, Veggie, …).
+// hellofresh.change_week_servings changes the people for one week's box; get_plan_options lists
+// the boxes on offer, which say what that change can be and what it costs.
+
+const positiveInt = (value) => {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+};
+
+// How many people a week's box is for: its own count, else the plan's. Null when neither says.
+export function weekServings(week, summary) {
+  return positiveInt(week && week.servings) || positiveInt(summary && summary.number_of_people);
+}
+
+// The product family a week's box belongs to. The week names no product, so: the one family that
+// sells a box of its size (its meals for its people), else the family whose name the box or the
+// plan carries ("Classic" in "Classic Box"), else none.
+function boxFamily(week, sameMeals, summary, people) {
+  const selling = new Set(
+    sameMeals.filter((o) => o.family_handle && positiveInt(o.servings) === people).map((o) => o.family_handle)
+  );
+  if (selling.size === 1) return [...selling][0];
+  const names = [week && week.display_name, summary && summary.selected_plan].map(lower).filter(Boolean);
+  const pool = selling.size ? sameMeals.filter((o) => selling.has(o.family_handle)) : sameMeals;
+  const named = pool.find((o) => {
+    const family = lower(o.family_name);
+    return o.family_handle && family && names.some((name) => name.includes(family) || family.includes(name));
+  });
+  return named ? named.family_handle : null;
+}
+
+// The sizes one week's box can be changed to, one per number of people, fewest first: the boxes
+// with its own meal count in its own family, or with its meal count in any family when the family
+// can't be told. Each is {servings, meals, handle, price, current}; the price is the whole box in
+// major units, or null.
+export function servingsChoices(week, options, summary) {
+  const meals = positiveInt(week && week.meals_required) || positiveInt(summary && summary.required_meal_count);
+  if (!meals) return [];
+  const people = weekServings(week, summary);
+  const sameMeals = (Array.isArray(options) ? options : []).filter(
+    (o) => o && positiveInt(o.meals) === meals && positiveInt(o.servings)
+  );
+  const family = boxFamily(week, sameMeals, summary, people);
+  const own = family ? sameMeals.filter((o) => o.family_handle === family) : [];
+  const pool = own.length ? own : sameMeals;
+  const bySize = new Map();
+  for (const option of pool) {
+    const servings = positiveInt(option.servings);
+    if (!bySize.has(servings)) bySize.set(servings, option);
+  }
+  return [...bySize.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([servings, option]) => ({
+      servings,
+      meals,
+      handle: option.handle || null,
+      price: amountOf(option.price),
+      current: servings === people,
+    }));
+}
+
+// ---- recipes: the catalog a page at a time ---------------------------------------------------
+
+// One page of hellofresh.get_catalog_recipes: its recipes, the total when HelloFresh says it, and
+// whether more follow (`more`). An answer without `has_more` (an integration from before paging)
+// can't be paged; a full page of it is still "the first N" for the line above the grid (`capped`).
+export function catalogPage(response, limit) {
+  const recipes = Array.isArray(response && response.recipes) ? response.recipes.filter(Boolean) : [];
+  const total = response && Number.isInteger(response.total) && response.total >= 0 ? response.total : null;
+  const paged = Boolean(response) && typeof response.has_more === "boolean";
+  return {
+    recipes,
+    total,
+    more: paged && response.has_more,
+    capped: paged ? response.has_more : recipes.length >= limit,
+  };
+}
+
+// The recipes shown with a page added after them, each recipe once: a page can repeat one the last
+// page had when the catalog moved in between. `added` is what is new.
+export function addRecipes(shown, page) {
+  const list = (shown || []).slice();
+  const seen = new Set(list.map((r) => r && r.recipe_id));
+  const added = [];
+  for (const recipe of page || []) {
+    if (!recipe || seen.has(recipe.recipe_id)) continue;
+    seen.add(recipe.recipe_id);
+    added.push(recipe);
+  }
+  return { list: list.concat(added), added };
+}
+
+// The line above a catalog list or search, as {key, params}, or null for a whole category with
+// nothing more to say: "Showing 24 of 130" once HelloFresh gives the total, "Showing the first 24"
+// when there is more but no total, and a search's own count otherwise.
+export function catalogNote({ count, total = null, capped = false, search = false }) {
+  if (total !== null && total > count) {
+    return { key: search ? "recipes.results_of" : "recipes.shown_of", params: { count, total: fmtNumber(total) } };
+  }
+  if (capped && total === null) return { key: search ? "recipes.results_capped" : "recipes.capped", params: { count } };
+  return search ? { key: "recipes.results", params: { count } } : null;
+}
+
+// ---- undo ------------------------------------------------------------------------------------
+//
+// A change that went through can be taken back for a moment: its success toast offers Undo, which
+// makes the reverse write with the same service. HelloFresh takes a change to a week only until
+// that week's selection deadline, so the offer stands only until then.
+
+// How long the toast offers Undo.
+export const UNDO_MS = 10000;
+
+export function undoWindowOpen(week, now = Date.now()) {
+  if (!week) return false;
+  const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : NaN;
+  if (Number.isFinite(deadline)) return deadline > now;
+  return isUpcoming(week, new Date(now));
+}
+
+// The write that puts a week's box back as it was saved before a save (`before`: its meals and
+// extras then; `changed`: which of the two the save changed). The meals changed: ONE select_meals
+// carrying the old meals, servings and Market quantities, the whole old box in one cart write.
+// Only the extras changed: select_market_items with the old quantities. Null when the old box
+// can't be written back, being smaller than HelloFresh's smallest.
+export function boxUndoWrite(week, before, changed) {
+  if (!week || !before || !changed || !(changed.meals || changed.market)) return null;
+  const meals = before.meals || new Map();
+  const market = before.market || new Map();
+  if (changed.meals) {
+    const write = buildMealWrite(week, meals);
+    if (write.recipe_ids.length < MIN_MEALS) return null;
+    const data = { week_id: week.week_id, recipe_ids: write.recipe_ids };
+    if (Object.keys(write.quantities).length) data.quantities = write.quantities;
+    data.market_quantities = buildMarketWrite(market);
+    return { service: "select_meals", data };
+  }
+  return { service: "select_market_items", data: { week_id: week.week_id, quantities: buildMarketWrite(market) } };
+}
+
+// The one-off delivery option a week's box is on now (the option for its current date), so a new
+// day can be changed back to it. Null when the week lists none for that date.
+export function currentDeliveryOption(week) {
+  return deliveryOptionForDate(week, week && week.delivery_date);
+}
+
+// The handle of a week's one-off delivery option for `date` ("2026-10-13"), or null.
+// HelloFresh lists a week's other days as its options, so the day a box is on usually shows up
+// among them only once the box has moved away from it: the Undo of a new delivery day looks
+// for the old day in the week as it reads after the move.
+export function deliveryOptionForDate(week, date) {
+  if (!week || !date) return null;
+  const option = (week.available_one_off_options || []).find(
+    (o) => o && o.handle && o.delivery_date && o.delivery_date === date
+  );
+  return option ? option.handle : null;
+}
+
 // ---- week plan (the Week tab) -------------------------------------------------------------------
 //
 // The plan itself is the integration's (get_meal_plan): days keyed by date, each holding up to
@@ -1483,6 +1750,52 @@ export function isoDay(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// ---- Home Assistant's clock ---------------------------------------------------------------------
+//
+// The plan belongs to Home Assistant: the integration keys its days by Home Assistant's calendar
+// and writes each meal's start and end as that zone's wall clock. A browser somewhere else (a
+// phone on a trip, a tablet set to another zone) must read them the same way, so "today" and the
+// plan's times come from hass.config.time_zone, not from the browser. Until a card has passed
+// hass in, or if the browser doesn't know the zone, the browser's own clock stands in.
+
+export function haTimeZone() {
+  return I18n.timeZone();
+}
+
+// "2026-10-14": today on Home Assistant's calendar.
+export function haToday(now = new Date()) {
+  const date = now instanceof Date ? now : new Date(now);
+  const zone = I18n.timeZone();
+  if (zone) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+      const part = (type) => parts.find((p) => p.type === type).value;
+      return `${part("year")}-${part("month")}-${part("day")}`;
+    } catch (_e) {
+      /* a zone this browser doesn't know: its own calendar */
+    }
+  }
+  return isoDay(date);
+}
+
+// "6:42 PM" on Home Assistant's clock, for a Date or an ISO datetime (a planned meal's start).
+export function fmtHaTime(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const options = { hour: "numeric", minute: "2-digit", ...I18n.hourOptions() };
+  const zone = I18n.timeZone();
+  try {
+    if (zone) return date.toLocaleTimeString(I18n.timeLocale(), { ...options, timeZone: zone });
+  } catch (_e) {
+    /* a zone this browser doesn't know: its own clock */
+  }
+  try {
+    return date.toLocaleTimeString(I18n.timeLocale(), options);
+  } catch (_e) {
+    return "";
+  }
+}
+
 // The seven days a week's box covers, starting on its delivery day.
 export function planDays(week) {
   if (!week || !week.delivery_date) return [];
@@ -1492,7 +1805,7 @@ export function planDays(week) {
 
 // The weeks the Week tab plans: the box being eaten now and every later one.
 export function planWeeks(weeks, now = new Date()) {
-  const today = isoDay(now);
+  const today = haToday(now);
   return (weeks || []).filter((w) => {
     const days = planDays(w);
     return days.length && days[6] >= today;
@@ -1501,7 +1814,7 @@ export function planWeeks(weeks, now = new Date()) {
 
 // The week the tab opens on: the one whose seven days include today, else the next one.
 export function defaultPlanWeek(weeks, now = new Date()) {
-  const today = isoDay(now);
+  const today = haToday(now);
   const list = weeks || [];
   return list.find((w) => planDays(w).includes(today)) || list[0] || null;
 }
@@ -1639,17 +1952,268 @@ export function stillInBox(item, weeks) {
 
 // Today's planned meals still to come, as { meal, slot }.
 export function todayPlan(plan, now = new Date()) {
-  const today = isoDay(now);
+  const today = haToday(now);
   return PLAN_MEALS.map((meal) => ({ meal, slot: planSlot(plan, today, meal) })).filter(
     ({ slot }) => slot && (!slot.end || new Date(slot.end).getTime() > now.getTime())
   );
 }
 
-// "17:30" from a planned meal's ISO start, in the viewer's clock (for a time input).
+// "17:30" from a planned meal's ISO start, for a time input. The integration writes the start in
+// Home Assistant's zone ("2026-10-14T17:30:00-04:00") and reads an edited time back as that
+// zone's wall clock, so the time is taken from the string as written. Converting it to the
+// browser's zone first would move the meal by the difference between the two when it is saved.
 export function hhmm(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const m = /T(\d{2}):(\d{2})/.exec(String(iso ?? ""));
+  return m ? `${m[1]}:${m[2]}` : "";
+}
+
+// ---- the card's own bookkeeping ----------------------------------------------------------------
+//
+// Decisions the card element takes that need no DOM, kept here so they run under Node.
+
+// What the configured sections read. A week's whole menu is by far the largest thing the card
+// fetches, and the meal plan belongs to the Week tab (the Overview's "Tonight" line only shows
+// beside it), so a card without those sections — just Recipes on a kitchen tablet, just Account —
+// fetches neither. The summary is small and feeds the header, the banners and Account.
+const WEEK_VIEWS = ["overview", "menu", "market", "week"];
+export function dataNeeds(views) {
+  const list = Array.isArray(views) ? views : [];
+  return {
+    weeks: list.some((view) => WEEK_VIEWS.includes(view)),
+    summary: true,
+    mealPlan: list.includes("week"),
+  };
+}
+
+// Whether a section is drawn from the weeks, so a weeks read that lands has to redraw it. Account
+// is (its counters open their week); Recipes isn't, and redrawing it for nothing rebuilt a grid of
+// up to 200 photos after every favourite, whose write re-reads the weeks for the Menu's hearts.
+const WEEKS_DRAWN_IN = new Set([...WEEK_VIEWS, "account"]);
+export function viewShowsWeeks(view) {
+  return WEEKS_DRAWN_IN.has(view);
+}
+
+// How long after a FAILED load to try again: soon at first (Home Assistant restarting, the
+// integration still setting up), then at the usual pace. A failure used to count as a load, so a
+// dashboard opened mid-restart kept its error for a whole refresh interval — three hours.
+export const RETRY_DELAYS_MS = [15000, 60000, 300000];
+
+// The wait before the next load: the refresh interval after a success, a retry delay after
+// `failures` failed loads in a row (never longer than the interval itself).
+export function loadDelayMs(failures, intervalMs) {
+  const quick = failures > 0 ? RETRY_DELAYS_MS[failures - 1] : undefined;
+  return quick === undefined ? intervalMs : Math.min(quick, intervalMs);
+}
+
+// A hellofresh.* service that only reads. Everything else the card calls changes the account.
+export function isReadService(service) {
+  return /^(get|preview)_/.test(String(service || ""));
+}
+
+// Writes that change one week's box and nothing else: after one, only that week is re-read
+// (get_weeks with week_id) instead of every week with its whole menu.
+export const WEEK_WRITE_SERVICES = new Set([
+  "select_meals",
+  "select_market_items",
+  "skip_week",
+  "unskip_week",
+  "reschedule_week",
+  "change_week_servings",
+]);
+
+// Writes that leave every week's box as it was (the Week tab's plan is its own payload).
+const WEEK_NEUTRAL_SERVICES = new Set(["set_planned_meal", "clear_planned_meal"]);
+
+// Which week to re-read after the writes made since the last read: `noted` is undefined (none
+// yet), a week id, or "all". One week's box written, perhaps twice, is that week; a write that
+// could have touched more is everything.
+export function noteWrite(noted, service, data) {
+  if (WEEK_NEUTRAL_SERVICES.has(service)) return noted;
+  const weekId = WEEK_WRITE_SERVICES.has(service) && data && data.week_id ? String(data.week_id) : "all";
+  return noted === undefined || noted === weekId ? weekId : "all";
+}
+
+// A re-read week back in the list it came from (a week the list lacks is added; browsableWeeks
+// puts it in order).
+export function mergeWeek(weeks, week) {
+  const list = (weeks || []).slice();
+  const at = list.findIndex((w) => w.week_id === week.week_id);
+  if (at >= 0) list[at] = week;
+  else list.push(week);
+  return list;
+}
+
+// ---- one request for several cards ----
+//
+// Cards on one page (two on a dashboard, one beside the sidebar panel) used to each fetch the
+// same account's data at the same moments: page load, every refresh tick, every write a sibling
+// announced. A load now joins the same request already in flight for its account.
+//
+// It must not join a request that began before something changed, whose answer may predate the
+// change. Every write and every change seen in Home Assistant's entities moves the account's
+// epoch on, and a load only joins a request from the current one.
+
+const sharedLoads = new Map(); // "<account>|<what>" -> { epoch, promise }
+const dataEpochs = new Map(); // account -> number
+const epochTokens = new Map(); // "<account>|<kind>" -> the last token seen
+
+export function dataEpoch(config) {
+  return dataEpochs.get(accountKey(config)) || 0;
+}
+
+// Something changed. Several cards seeing the SAME change (one entity update reaches them all)
+// pass the same `kind` and `token`, and only the first moves the epoch — the rest can still
+// share the request it starts.
+export function bumpDataEpoch(config, kind = null, token = null) {
+  const account = accountKey(config);
+  if (kind !== null) {
+    const key = `${account}|${kind}`;
+    if (epochTokens.get(key) === token) return;
+    epochTokens.set(key, token);
+  }
+  dataEpochs.set(account, dataEpoch(config) + 1);
+}
+
+// Run `start()` (which returns a promise), or join the same load already in flight. `fresh`
+// never joins: for a load queued behind another because that one may be out of date.
+export function sharedLoad(config, what, start, { fresh = false } = {}) {
+  const key = `${accountKey(config)}|${what}`;
+  const epoch = dataEpoch(config);
+  const running = sharedLoads.get(key);
+  if (running && !fresh && running.epoch === epoch) return running.promise;
+  const entry = { epoch, promise: null };
+  entry.promise = Promise.resolve().then(start);
+  sharedLoads.set(key, entry);
+  const done = () => {
+    if (sharedLoads.get(key) === entry) sharedLoads.delete(key);
+  };
+  entry.promise.then(done, done);
+  return entry.promise;
+}
+
+// ---- header, entities, tick ----
+
+// The line under the card's title: the plan ("Classic Plan · 3 meals for 2 people"), its status
+// when it isn't active, else the next box's name.
+export function cardSubtitle(summary, weeks) {
+  const parts = [];
+  if (summary) {
+    if (summary.selected_plan) parts.push(summary.selected_plan);
+    const meals = Number(summary.required_meal_count);
+    const people = Number(summary.number_of_people);
+    if (meals && people) {
+      parts.push(t("card.plan_size", { count: meals, people: t("card.people", { count: people }) }));
+    }
+    if (summary.subscription_status && lower(summary.subscription_status) !== "active") {
+      parts.push(statusLabel(summary.subscription_status));
+    }
+  }
+  if (!parts.length && weeks && weeks.length) {
+    const next = nextBoxWeek(weeks).week;
+    if (next && next.display_name) parts.push(next.display_name);
+  }
+  return parts.join(" · ");
+}
+
+// One signature per group of the card's entities (`ids` as the card's entities() lists them,
+// `stateOf(id)` the entity's state object), so a token countdown ticking never re-renders the
+// menu: only a group whose signature moved causes work.
+export function entitySignature(ids, stateOf) {
+  const sign = (list) =>
+    list
+      .filter(Boolean)
+      .map((id) => {
+        const s = stateOf(id);
+        return s ? `${id}=${s.state}@${s.last_updated}` : `${id}=-`;
+      })
+      .join("|");
+  const of = ids || {};
+  return {
+    pantry: sign(of.prep || []),
+    plan: sign([of.boxSize, of.deliveryDay]),
+    health: sign([of.accessToken, of.refreshToken, of.writeActions, of.payloadShape]),
+    tracking: sign([of.trackingPhase, of.trackingEta]),
+    mealplan: sign([of.meals]),
+  };
+}
+
+// The groups that moved between two signatures. The first reading (nothing known before, in any
+// group) is not a change.
+export function changedEntityGroups(before, after) {
+  if (!Object.values(before || {}).some(Boolean)) return [];
+  return Object.keys(after).filter((group) => after[group] !== before[group]);
+}
+
+// How many of the card's entities are unavailable: all of them while the integration is still
+// setting up or reloading. The count going down means it is back.
+export function unavailableEntities(ids, stateOf) {
+  let count = 0;
+  for (const value of Object.values(ids || {})) {
+    for (const id of Array.isArray(value) ? value : [value]) {
+      const s = id ? stateOf(id) : null;
+      if (s && s.state === "unavailable") count += 1;
+    }
+  }
+  return count;
+}
+
+// What the weeks still allow, as a string the card's minute tick compares: a deadline passing
+// is the one change time alone causes, and the Add buttons, Save and Skip/Unskip must go with it.
+export function actionsKey(weeks, now = Date.now()) {
+  return (weeks || []).map((w) => `${isWeekEditable(w, now) ? "e" : "-"}${canSkip(w, now) ? "s" : "-"}`).join("");
+}
+
+// The "Change day" sheet's rows: the week's one-off options, named and priced from
+// get_delivery_options (`catalog`, by handle) when it has them — the date alone otherwise.
+export function rescheduleOptions(week, catalog, currency) {
+  return ((week && week.available_one_off_options) || [])
+    .filter((o) => o && o.handle)
+    .map((o) => {
+      const meta = (catalog && catalog[o.handle]) || null;
+      const named = Boolean(meta && meta.delivery_name);
+      return {
+        handle: o.handle,
+        current: Boolean(o.delivery_date) && o.delivery_date === week.delivery_date,
+        name: named ? meta.delivery_name : o.delivery_date ? fmtLongDate(o.delivery_date) : o.handle,
+        date: named && o.delivery_date ? fmtDate(o.delivery_date) : "",
+        price: meta && Number(meta.price) > 0 ? `+${fmtPrice(meta.price, currency)}` : "",
+      };
+    });
+}
+
+// A pantry item's summary ("Butter — 2 tablespoon (tbsp)", as todo.py writes it) split into the
+// name and the amount, with the amount's short form ("2 tbsp").
+export function pantryParts(summary) {
+  const text = String(summary || "");
+  const cut = text.indexOf(" — ");
+  const amount = cut >= 0 ? text.slice(cut + 3) : "";
+  return { name: cut >= 0 ? text.slice(0, cut) : text, amount, short: shortAmount(amount) };
+}
+
+// ---- keeping focus across a re-render ----
+//
+// The card draws by replacing markup, which destroys the focused element. To put focus back on
+// "the same" control it needs a name for it that the new markup shares. Controls say what they do
+// in data attributes (data-action plus its arguments), so those are the name; a control without
+// any is named by the attributes that identify it. "" means it has no usable name.
+const FOCUS_NAMING = ["id", "name", "type", "href", "aria-label", "role"];
+
+// The attributes that name a control, as [name, value] pairs out of all of its attributes.
+export function focusNaming(attributes) {
+  const pairs = (attributes || []).map(([name, value]) => [String(name), String(value ?? "")]);
+  const data = pairs.filter(
+    ([name]) => name.startsWith("data-") && name !== "data-scroll-restored" && name !== "data-focus-key"
+  );
+  return data.length ? data : pairs.filter(([name]) => FOCUS_NAMING.includes(name));
+}
+
+export function focusKey(tag, attributes) {
+  const named = focusNaming(attributes);
+  if (!named.length) return "";
+  return `${String(tag || "").toLowerCase()}|${named
+    .map(([name, value]) => `${name}=${value}`)
+    .sort()
+    .join("|")}`;
 }
 
 // ---- Home Assistant entities -------------------------------------------------------------------

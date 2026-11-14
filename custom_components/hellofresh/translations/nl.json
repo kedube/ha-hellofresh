@@ -79,14 +79,16 @@
       "password_reset_required": "Je HelloFresh-wachtwoord is verlopen. Volg de instructies die HelloFresh je per e-mail heeft gestuurd om het bij te werken en vul daarna hier het nieuwe wachtwoord in.",
       "too_many_attempts": "Je HelloFresh-account is tijdelijk geblokkeerd vanwege te veel inlogpogingen. Probeer het over een paar minuten opnieuw.",
       "wrong_password": "HelloFresh heeft dit wachtwoord niet geaccepteerd. Als je bij HelloFresh inlogt met Google, Apple of Facebook, heeft je account misschien geen wachtwoord; gebruik dan de optie \"Toegangstoken (geavanceerd)\".",
-      "invalid_token": "Dit token kon niet worden gelezen of is geweigerd"
+      "invalid_token": "Dit token kon niet worden gelezen of is geweigerd",
+      "no_subscription": "HelloFresh heeft deze gegevens geaccepteerd, maar dit account heeft geen abonnement, dus Home Assistant heeft niets te tonen. Controleer of het land klopt met dat van je abonnement."
     },
     "abort": {
       "already_configured": "Dit HelloFresh-account is al ingesteld",
       "reauth_successful": "HelloFresh is opnieuw verbonden",
       "reconfigure_successful": "HelloFresh is opnieuw ingesteld",
       "reconfigure_failed": "Deze HelloFresh-vermelding kon niet meer worden gevonden",
-      "account_mismatch": "Deze gegevens horen bij een ander HelloFresh-account. Voeg het toe als nieuwe integratievermelding in plaats van deze opnieuw in te stellen."
+      "reauth_failed": "Deze HelloFresh-vermelding kon niet meer worden gevonden",
+      "account_mismatch": "Deze gegevens horen bij een ander HelloFresh-account dan deze vermelding. Voeg dat account toe als nieuwe integratievermelding om het te gebruiken."
     }
   },
   "options": {
@@ -168,6 +170,10 @@
       "title": "HelloFresh-accountgegevens zijn gewijzigd voor {entry_title}",
       "description": "HelloFresh gaf geverifieerde gegevens terug voor **{entry_title}**, maar het formaat kwam niet meer overeen met de bezorgstructuren die deze integratie kan verwerken. Diagnostiek van deze configuratie helpt vast te stellen of een regionale API-variant of een wijziging op de website ondersteund moet worden."
     },
+    "payment_problem": {
+      "title": "HelloFresh kon een betaling voor {entry_title} niet afschrijven",
+      "description": "HelloFresh meldt een probleem met de betaling voor je maaltijdbox van {date} ({amount}) bij **{entry_title}**. Een box die niet betaald is, wordt mogelijk niet bezorgd. Controleer je betaalgegevens op de website van HelloFresh (**Meer informatie**). Deze melding verdwijnt vanzelf zodra HelloFresh het probleem niet meer meldt."
+    },
     "write_actions_unavailable": {
       "title": "HelloFresh-schrijfacties zijn niet bevestigd voor {entry_title}",
       "description": "Je probeerde een HelloFresh-actie te gebruiken die accountgegevens wijzigt voor **{entry_title}**, zoals maaltijden kiezen of een week pauzeren. De integratie heeft de bekende schrijf-endpoints voor je account geprobeerd, maar geen enkele accepteerde het verzoek. De actie is daarom geblokkeerd in plaats van verder te gokken."
@@ -229,6 +235,15 @@
       },
       "account_credit": {
         "name": "Tegoed"
+      },
+      "account_credit_cash": {
+        "name": "HelloFresh Cash-tegoed"
+      },
+      "account_credit_bonus": {
+        "name": "Bonustegoed"
+      },
+      "loyalty_boxes_until_free_box": {
+        "name": "Maaltijdboxen tot een gratis box"
       },
       "selected_plan": {
         "name": "Gekozen abonnement"
@@ -366,6 +381,9 @@
       },
       "payment_method_expiring": {
         "name": "Betaalmethode verloopt"
+      },
+      "payment_problem": {
+        "name": "Betalingsprobleem"
       }
     },
     "button": {
@@ -393,7 +411,10 @@
               "week_skipped": "Week gepauzeerd",
               "week_unskipped": "Pauze opgeheven",
               "selection_locked": "Selectie vergrendeld",
-              "menu_published": "Menu gepubliceerd"
+              "menu_published": "Menu gepubliceerd",
+              "box_delayed": "Box vertraagd",
+              "box_early": "Box komt eerder",
+              "selection_deadline_approaching": "Keuzedeadline nadert"
             }
           }
         }
@@ -434,7 +455,7 @@
     },
     "get_weeks": {
       "name": "Weken ophalen",
-      "description": "Geeft de HelloFresh-bezorgweken terug met volledige recept- en keuzedetails. Alleen lezen; geeft een antwoord terug. Optioneel te filteren op één week.",
+      "description": "Geeft de HelloFresh-bezorgweken terug met volledige recept- en keuzedetails. Alleen lezen; geeft een antwoord terug. Optioneel te filteren op één week, of zonder menu's op te vragen voor een veel kleiner antwoord.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -443,6 +464,10 @@
         "week_id": {
           "name": "Week-ID",
           "description": "Optionele identificatie van een HelloFresh-bezorgweek om alleen die week terug te geven."
+        },
+        "include_recipes": {
+          "name": "Recepten meesturen",
+          "description": "Of elke week met het bijbehorende menu wordt teruggegeven: de recepten, de producten van de HelloFresh Markt en de rubrieken en filters van het menu. Staat standaard aan. Zet het uit voor een veel kleiner antwoord als alleen het bezorgschema, het aantal gekozen maaltijden en de bestelling nodig zijn."
         }
       }
     },
@@ -554,9 +579,27 @@
         }
       }
     },
+    "change_week_servings": {
+      "name": "Aantal personen van een week wijzigen",
+      "description": "Experimenteel. Wijzig voor hoeveel personen de maaltijdbox van één bezorgweek is. Het aantal maaltijden blijft, en het abonnement en de andere weken blijven zoals ze zijn. Alleen formaten die je abonnement aanbiedt, worden geaccepteerd. Geeft de nieuwe box en de prijs terug.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuratie-ID",
+          "description": "De HelloFresh-accountvermelding waarop de actie van toepassing is wanneer er meerdere accounts zijn ingesteld."
+        },
+        "week_id": {
+          "name": "Week-ID",
+          "description": "De identificatie van de HelloFresh-bezorgweek."
+        },
+        "servings": {
+          "name": "Personen",
+          "description": "Voor hoeveel personen de box van die week na de wijziging is."
+        }
+      }
+    },
     "change_delivery_weekday": {
       "name": "Bezorgdag wijzigen",
-      "description": "De terugkerende bezorgoptie en het interval voor het abonnement wijzigen. Geldt voor alle toekomstige bezorgingen.",
+      "description": "De terugkerende bezorgdag en het bezorgtijdvak voor het abonnement wijzigen. Geldt voor alle toekomstige bezorgingen. Hoe vaak maaltijdboxen komen, kan hiermee niet worden gewijzigd.",
       "fields": {
         "config_entry_id": {
           "name": "Configuratie-ID",
@@ -568,7 +611,7 @@
         },
         "delivery_interval": {
           "name": "Bezorginterval",
-          "description": "Hoe vaak er bezorgd wordt, in weken. Standaard wekelijks."
+          "description": "Alleen 1 (elke week) wordt geaccepteerd; dat is ook de standaard. Deze actie kan niet wijzigen hoe vaak maaltijdboxen komen, dus elke andere waarde wordt geweigerd."
         },
         "subscription_id": {
           "name": "Abonnements-ID",
@@ -647,6 +690,10 @@
         "limit": {
           "name": "Maximum",
           "description": "Maximaal aantal terug te geven recepten."
+        },
+        "offset": {
+          "name": "Verschuiving",
+          "description": "Hoeveel recepten worden overgeslagen voordat deze pagina begint (standaard 0). De volgende pagina begint bij verschuiving + maximum."
         }
       }
     },
@@ -932,7 +979,8 @@
           "one": "{count} week wacht op je maaltijdkeuze",
           "other": "{count} weken wachten op je maaltijdkeuze"
         },
-        "load_failed": "Je bezorgingen konden niet worden geladen: {error}"
+        "load_failed": "Je bezorgingen konden niet worden geladen: {error}",
+        "view_failed": "Dit onderdeel kon niet worden weergegeven: {error}"
       },
       "banner": {
         "refresh_failed": "Vernieuwen mislukt: {error}",
@@ -941,7 +989,14 @@
         "card_expired_date": "Je kaart ({card}) is verlopen ({date}). Werk hem bij bij HelloFresh, anders wordt je volgende box misschien niet verstuurd.",
         "card_expiring": "Je kaart ({card}) verloopt binnenkort. Werk hem bij bij HelloFresh voordat je volgende box wordt afgeschreven.",
         "card_expiring_date": "Je kaart ({card}) verloopt binnenkort ({date}). Werk hem bij bij HelloFresh voordat je volgende box wordt afgeschreven.",
-        "holiday_date": "Nieuwe bezorgdatum: {date}."
+        "holiday_date": "Nieuwe bezorgdatum: {date}.",
+        "payment_boxes": {
+          "one": "Er is een probleem met de betaling voor je box van {boxes}.",
+          "other": "Er is een probleem met de betalingen voor {count} boxen: {boxes}."
+        },
+        "payment_any": "Er is een probleem met een betaling op je HelloFresh-account.",
+        "payment_box": "{date} ({amount})",
+        "payment_fix": "Werk je betaalgegevens bij bij HelloFresh"
       },
       "state": {
         "ready": {
@@ -1050,7 +1105,10 @@
         "skipped_title": "Deze week is gepauzeerd.",
         "unskip_to_choose": "Ontvang toch een box om maaltijden te kiezen.",
         "autopicked_before": "Houd ze of ruil er een paar om vóór {date}.",
-        "closed": "Deze box kan niet meer worden gewijzigd — hij wordt bezorgd zoals getoond."
+        "closed": "Deze box kan niet meer worden gewijzigd — hij wordt bezorgd zoals getoond.",
+        "skip_closed": "De deadline voor deze week is verstreken, dus de week kan niet meer worden gewijzigd.",
+        "delayed": "Vertraagd — komt nu op {date}",
+        "early": "Eerder — komt nu op {date}"
       },
       "skip": {
         "title": "{date} pauzeren?",
@@ -1068,6 +1126,30 @@
         "none": "Er zijn geen andere dagen beschikbaar.",
         "failed": "De dag kon niet worden gewijzigd: {error}",
         "done": "Bezorgdag voor die week gewijzigd."
+      },
+      "undo": {
+        "action": "Ongedaan maken",
+        "undoing": "Wordt ongedaan gemaakt …",
+        "done": "Wijziging ongedaan gemaakt.",
+        "failed": "Kon niet ongedaan worden gemaakt: {error}",
+        "closed": "Te laat om ongedaan te maken: de deadline voor deze week is verstreken."
+      },
+      "servings": {
+        "for": "Voor {people}",
+        "change": "Wijzigen",
+        "change_aria": "Wijzigen voor hoeveel personen deze box is",
+        "title": "Personen in deze box",
+        "only_this_box": "Alleen voor de box van {date}",
+        "loading": "Boxgroottes worden geladen …",
+        "load_failed": "De boxgroottes konden niet worden geladen: {error}",
+        "none": "HelloFresh biedt geen andere grootte voor deze box.",
+        "confirm_title": "Deze box wijzigen naar {people}?",
+        "confirm_body": "Alleen je box van {date} verandert. Je abonnement en je andere boxen blijven zoals ze zijn.",
+        "confirm_price": "HelloFresh vraagt {price} voor {size}.",
+        "confirm": "Deze box wijzigen",
+        "saving": "Box wordt gewijzigd …",
+        "done": "Deze box is nu voor {people}.",
+        "failed": "De box kon niet worden gewijzigd: {error}"
       },
       "pantry": {
         "update_failed": "De lijst kon niet worden bijgewerkt: {error}",
@@ -1243,6 +1325,9 @@
         "filters": "Filters",
         "in_my_box": "In mijn box",
         "filtering": "Filteren …",
+        "allergen_checking": "Bij HelloFresh wordt nagegaan welke maaltijden die ingrediënten vermijden. Tot het antwoord er is, zie je alleen de maaltijden in je box.",
+        "allergen_failed": "HelloFresh kon je te vermijden ingrediënten niet controleren. Maaltijden buiten je box zijn daarom verborgen in plaats van ongecontroleerd getoond.",
+        "filter_failed": "De filterdienst van HelloFresh gaf geen antwoord. Deze filters gebruiken voorlopig alleen de gegevens van het menu en kunnen maaltijden missen.",
         "remove_filter": "Verwijderen: {label}",
         "clear_all": "Alles wissen",
         "no_match_query": "Geen maaltijden gevonden voor ‘{query}’.",
@@ -1368,7 +1453,14 @@
         "min_notice": "Kies minstens {min} maaltijden — kleiner kan de box van HelloFresh niet.",
         "resized_notice": "De box van deze week is aangepast naar {meals} (je abonnement heeft er {required}). HelloFresh berekent de prijs opnieuw; je abonnement zelf verandert niet.",
         "unsaved_lower": "niet-opgeslagen wijzigingen",
-        "keep_editing": "Verder bewerken"
+        "keep_editing": "Verder bewerken",
+        "changed_title": "Je opgeslagen box is gewijzigd sinds je begon.",
+        "changed_body": "Hij is ergens anders gewijzigd, bijvoorbeeld op een ander apparaat of op hellofresh.com. {keep_mine} zet jouw wijzigingen op de box zoals hij nu is opgeslagen; {use_saved} verwerpt ze.",
+        "keep_mine": "Mijn wijzigingen behouden",
+        "use_saved": "Opgeslagen box gebruiken",
+        "changed_toast": "Je opgeslagen box is gewijzigd sinds je begon. Kies ‘{keep_mine}’ of ‘{use_saved}’ voordat je opslaat.",
+        "estimate_unavailable": "Geen schatting beschikbaar",
+        "estimate_unavailable_note": "Er is nu geen prijsschatting. HelloFresh berekent de prijs bij het afschrijven."
       },
       "market": {
         "group": {
@@ -1454,12 +1546,30 @@
           "one": "{count} resultaat in alle categorieën",
           "other": "{count} resultaten in alle categorieën"
         },
+        "results_capped": {
+          "one": "Het eerste {count} resultaat in alle categorieën wordt getoond",
+          "other": "De eerste {count} resultaten in alle categorieën worden getoond"
+        },
+        "capped": {
+          "one": "Het eerste {count} recept wordt getoond",
+          "other": "De eerste {count} recepten worden getoond"
+        },
         "cookbook_empty": "Je receptenboek is leeg. Tik op het hartje bij een recept om het hier te bewaren.",
         "no_saved_match": "Geen bewaarde recepten gevonden voor ‘{query}’.",
         "remove_aria": "Uit receptenboek verwijderen: {name}",
         "save_aria": "In receptenboek bewaren: {name}",
         "remove_title": "Uit receptenboek verwijderen",
-        "save_title": "In receptenboek bewaren"
+        "save_title": "In receptenboek bewaren",
+        "load_more": "Meer laden",
+        "loading_more": "Bezig met laden …",
+        "more_failed": "Er konden geen recepten meer worden geladen: {error}",
+        "shown_of": "{count} van {total} recepten worden getoond",
+        "results_of": "{count} van {total} resultaten in alle categorieën worden getoond",
+        "added": {
+          "one": "{count} recept meer geladen",
+          "other": "{count} recepten meer geladen"
+        },
+        "none_added": "Er zijn geen recepten meer om te laden."
       },
       "account": {
         "credit_card": "Creditcard",
@@ -1493,10 +1603,19 @@
         "presets_loading": "Menuvoorkeuren laden …",
         "presets_none": "Geen menuvoorkeuren beschikbaar.",
         "yours": "Jouw keuze",
-        "presets_note": "Wat elke voorkeur betekent — HelloFresh gebruikt de jouwe om maaltijden te kiezen. Je wijzigt hem bij HelloFresh."
+        "presets_note": "Wat elke voorkeur betekent — HelloFresh gebruikt de jouwe om maaltijden te kiezen. Je wijzigt hem bij HelloFresh.",
+        "credit_cash": "HelloFresh Cash",
+        "credit_bonus": "Bonustegoed",
+        "rewards": "Beloningen",
+        "boxes_until_free": {
+          "one": "Nog {count} box tot een gratis box",
+          "other": "Nog {count} boxen tot een gratis box"
+        },
+        "free_box_earned": "Je hebt een gratis box verdiend"
       },
       "plan": {
         "options_loading": "Opties worden zo geladen …",
+        "saving": "Je abonnement wordt bijgewerkt …",
         "settings": "Abonnementsinstellingen",
         "settings_note": "Dit wijzigt elke toekomstige box — en wat je betaalt. Wil je maar één week wijzigen, gebruik dan {change_day} of {skip} bij die week.",
         "from_to": "Van {from} naar {to}",
@@ -1689,6 +1808,7 @@
         "save_failed": "Je voorkeuren konden niet worden opgeslagen: {error}",
         "tell_us_more": "Vertel ons meer",
         "load_failed": "Je eetvoorkeuren konden niet worden geladen: {error}",
+        "reload_failed": "Je eetvoorkeuren konden niet opnieuw worden geladen: {error}",
         "none": "Geen voedingsprofiel beschikbaar.",
         "completion": "{completed} van de {total} profielonderdelen ingevuld",
         "hero_title": "Maaltijden die bij je smaak passen",
@@ -1775,6 +1895,8 @@
         "something_else_hint": "Restjes, pizza-avond, uit eten…",
         "saving": "Plan opslaan…",
         "save_failed": "Het plan kon niet worden opgeslagen: {error}",
+        "save_partial": "Het plan is maar gedeeltelijk opgeslagen. Opgeslagen: {saved}. Niet opgeslagen: {failed} ({error}).",
+        "start_time": "Starttijd",
         "saved": "Plan opgeslagen",
         "cleared": "Plan gewist",
         "item_title": "{name} plannen",

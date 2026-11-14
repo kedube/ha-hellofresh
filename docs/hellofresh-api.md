@@ -386,7 +386,7 @@ year works. A week:
 | `deliveryBlocked` | HelloFresh blocked delivery this week (the area, a carrier problem, a holiday). The app offers no unskip on a blocked week (app) |
 | `allowedActions` | `{mealSwap, pause, oneOffChange, updateDeliveryWeekday, updateDeliveryAddress, updatePaymentMethod, donate}`: what the customer may do this week |
 | `availableOneOffOptions` | `[{handle, deliveryDate}]`: other days this week's box can come |
-| `product` | This week's box: `{handle, displayName, specs: {meals, size}, price, specialFee, shippingPrice}` |
+| `product` | This week's box: `{handle, displayName, specs: {meals, size}, price, specialFee, shippingPrice}`. `specs.size` is the number of people, as in the handle |
 | `deliveryOption` | `{handle, deliveryName, deliveryDay, deliveryFrom, deliveryTo, type, price, priceInCents}`: the day and window |
 | `tracking` | Shipment tracking, or null; see below |
 | `actionable`, `prepaid`, `orderId` | Meanings not confirmed (`orderId` was null) |
@@ -401,6 +401,10 @@ The values the app knows (app):
   `CANCELLED`.
 - `subStatus`: `COOK_IT`, `DELAYED`, `EARLY`, `RATING`. A delayed or early box's new date is
   `tracking.delivery_date`.
+- A week's `status` is `PAYMENT_FAILED` when HelloFresh could not charge its box.
+
+The website has not been seen sending `PAYMENT_FAILED`, `DELAYED` or `EARLY`; see
+[What isn't known](#what-isnt-known).
 
 Notes:
 
@@ -536,7 +540,7 @@ two or so delivered weeks, for the complaint form. Their recipes have a bare `im
   "carrier": "VEHO",
   "tracking_code": "HF00000000000002",
   "delivery_date": "2026-08-17T12:00:00Z",
-  "lane": "NJ_VEHO-SOMPA",
+  "lane": "ZZ_VEHO-ANYTN",
   "public_url": "https://track.shipveho.com/#/trackingId/HF00000000000002",
   "carrier_tracking_url": "https://track.shipveho.com/#/trackingId/HF00000000000002",
   "hf_tracking_url": "https://www.hellofresh.com/delivery-tracking/<uuid>",
@@ -885,6 +889,13 @@ It returns `{"hasSeamlessDowngraded": false}`.
 `{"productHandle": "<sku>", "hfMarketCode": "<CC>"}` changes one week's box, after pricing it with
 `/gw/calculate` (app). It can change that week's number of people, which the cart write can't.
 
+- The new box is a handle of the same shape: the week's box with another number of people
+  (`US-CBU-3-2-0` for 4 people is `US-CBU-3-4-0`). The sizes on offer are the plan's
+  [box sizes](#box-sizes).
+- The price comes from [`/gw/calculate`](#price-the-plan) with the new handle as the product.
+- Nobody has seen the website send this request, so what it answers when the website doesn't
+  support it isn't known; see [What isn't known](#what-isnt-known).
+
 ## Prices
 
 ### Price a week's box
@@ -999,7 +1010,9 @@ charges as `{count, items}`. An order:
 - `couponMoneyValue` is a line's discount, in major units, such as 10 for a $10 voucher on the
   premium meals' line.
 - Order lines also have `paymentStatus` (`paid`, `failed`, `chargeback` or `canceled`) and
-  `shipped`. The app counts only `paid` lines as a successful order (app).
+  `shipped`. The app counts only `paid` lines as a successful order (app). A `failed` line is a
+  charge that didn't go through, and a `chargeback` one a payment the bank took back; a line
+  names its box by `subscription.id` and `deliveryDate`, not by week.
 - Responses can approach 1 MB.
 
 ### Credit balance
@@ -1012,6 +1025,8 @@ charges as `{count, items}`. An order:
 
 - Amounts are in minor units. `amount` is the credit that applies to the next order.
 - `cash` is HelloFresh Cash the customer bought, and `bonus` is bonus credit (app).
+- `restrictedAmount` and `cancellableCredits` were 0 in every balance seen; what they hold isn't
+  known.
 - The app sends `country` and `locale` rather than `business_unit`. Its model has no
   `cancellableCredits` and makes `restrictedAmount` optional (app).
 - Credit applies by itself, except for accounts in HelloFresh's manual credit experiment; see
@@ -1208,7 +1223,9 @@ A step has `index`, `instructions`, `instructionsHTML`, `instructionsMarkdown`, 
 `GET /gw/recipes/recipes/search?country=<CC>&locale=<locale>&q=<text>&take=<n>` searches the whole
 public catalog. It returns `{items, count, skip, take, total}`, each item shaped like a
 [recipe](#recipe), and an empty list when nothing matches. It works with the
-[anonymous token](#anonymous-token).
+[anonymous token](#anonymous-token). `total` is the number of matches; the website's requests
+have no `skip`, so whether a `skip` parameter pages the results, as `skip` and `take` page other
+collections, isn't known.
 
 ### Recipe catalog
 
@@ -1364,7 +1381,14 @@ different `/gw` paths in all.
 - The name of the group in a meal's `itemPrice`: `group`, or `priceGroup` as earlier notes said.
 - Whether a menu meal's `charge` ever has a `handle` or `boxSku`.
 - Whether the website accepts `PUT /gw/carts/{week}/size`, an empty cart `preference`, and `/oneoff`
-  with query parameters, as the app sends them.
+  with query parameters, as the app sends them, and what `/size` answers where it isn't offered.
+- Whether the website's weeks carry `status: PAYMENT_FAILED` and `subStatus` `DELAYED` or `EARLY`
+  (with the new date in `tracking.delivery_date`), as the app reads them, and what a week shows
+  once a failed payment goes through.
+- Whether a `failed` order line turns `paid` when HelloFresh charges again, or the new charge is
+  another order.
+- Whether the recipe search pages with `skip`.
+- What a credit balance's `restrictedAmount` and `cancellableCredits` hold.
 - Whether the week menu has `meals[].isSoldOut` or `feedback.favorite`, and whether a recipe has
   `userFavorite` and `userRating`, for a signed-in customer.
 - Whether the regional menus' `isSoldOut` follows the customer's own availability.

@@ -1,9 +1,14 @@
-"""Behavioural tests for the cards' image URL rewriting (``resizedImage``).
+"""Behavioural tests for the card's image URL rewriting (``resizedImage``).
 
-These run the real ``resizedImage`` from the shipped source under Node, rather than asserting on
-the source text, because the bug they cover was semantic: the function handled two URL shapes
-and HelloFresh's actual catalog host uses a third. The result was either a 404 (wrong path) or
-a 1.7 MB hero JPEG per tile (no transform applied) -- neither visible to a source-level grep.
+These run the real ``resizedImage`` from the shipped shared module under Node, rather than
+asserting on the source text, because the bug they cover was semantic: the function handled two
+URL shapes and HelloFresh's actual catalog host uses a third. The result was either a 404 (wrong
+path) or a 1.7 MB hero JPEG per tile (no transform applied) -- neither visible to a source-level
+grep.
+
+There is one ``resizedImage``, in ``hellofresh-shared.js``. The recipe sheet used to carry a
+copy of its own, and a test here held the two to the same output; the sheet now imports the
+shared one, which is checked below instead.
 
 Skipped when Node is unavailable so the suite still runs on a bare Python environment.
 """
@@ -19,51 +24,18 @@ import subprocess
 import pytest
 
 WWW = Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "www"
-RECIPES_CARD = WWW / "hellofresh-recipes-card.js"
+SHARED = WWW / "hellofresh-shared.js"
 NODE = shutil.which("node")
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 S3 = "/hellofresh_s3/image/beef-with-cheddar-gouda-fondue-6aa5702d.jpg"
 
-# Files that define their own `resizedImage`: the canonical copy in hellofresh-shared.js, and the
-# recipe sheet's. The classic Market and Meal planner cards (since removed) once carried a one-line
-# stub that only handled `/q_auto/` — so `image_width` silently did nothing on the `hellofresh_s3`
-# URLs the real API emits, and each tile pulled the full-size hero JPEG. Every copy is held to the
-# same behaviour here so a divergence fails loudly.
-CARDS_WITH_RESIZE = tuple(
-    name
-    for name in (
-        "hellofresh-shared.js",
-        "hellofresh-recipe-detail.js",
-    )
-    if re.search(
-        r"^(?:export )?function resizedImage\(", (WWW / name).read_text(encoding="utf-8"), re.M
-    )
-)
 
-
-def _extract_resized_image(filename: str = "hellofresh-shared.js") -> str:
-    """Pull the real `resizedImage` definition out of a card source.
-
-    The cards are browser modules that register custom elements on import, so they cannot be
-    imported under Node directly; this lifts out the one pure function under test. The shared
-    module exports it, so `export ` is tolerated and stripped.
-    """
-    source = (WWW / filename).read_text(encoding="utf-8")
-    match = re.search(
-        r"^(?:export )?function resizedImage\(url, width\) \{.*?^\}", source, re.S | re.M
-    )
-    assert match, f"resizedImage function not found in {filename}"
-    return match.group(0).replace("export function", "function", 1)
-
-
-def _resize(
-    cases: list[tuple[str, int | None]], filename: str = "hellofresh-shared.js"
-) -> list[str]:
-    """Run resizedImage over `cases` in Node and return its outputs."""
+def _resize(cases: list[tuple[str | None, int | None]]) -> list[str]:
+    """Run the shared module's resizedImage over `cases` in Node and return its outputs."""
     script = f"""
-    {_extract_resized_image(filename)}
+    const {{ resizedImage }} = await import({json.dumps(SHARED.as_uri())});
     const cases = {json.dumps(cases)};
     console.log(JSON.stringify(cases.map(([url, width]) => resizedImage(url, width))));
     """
@@ -116,8 +88,10 @@ def test_cloudfront_crop_form_still_works() -> None:
 
 def test_non_http_schemes_are_dropped() -> None:
     """Nothing but plain http(s) may reach an <img src>."""
-    out = _resize([("javascript:alert(1)", 320), ("data:image/png;base64,AAAA", 320), ("", 320)])
-    assert out == ["", "", ""]
+    out = _resize(
+        [("javascript:alert(1)", 320), ("data:image/png;base64,AAAA", 320), ("", 320), (None, 320)]
+    )
+    assert out == ["", "", "", ""]
 
 
 def test_absent_width_returns_the_url_unchanged() -> None:
@@ -127,8 +101,7 @@ def test_absent_width_returns_the_url_unchanged() -> None:
     assert out == url
 
 
-@pytest.mark.parametrize("filename", CARDS_WITH_RESIZE)
-def test_every_card_actually_resizes_the_urls_the_api_emits(filename: str) -> None:
+def test_image_width_actually_resizes_the_urls_the_api_emits() -> None:
     """The reported class of bug: `image_width` silently doing nothing.
 
     The stub two classic cards carried only rewrote `/q_auto/`. Real HelloFresh image URLs are
@@ -137,27 +110,28 @@ def test_every_card_actually_resizes_the_urls_the_api_emits(filename: str) -> No
     the check that a no-op stub cannot pass.
     """
     url = f"https://img.hellofresh.com/f_auto,fl_lossy,h_300,q_auto,w_450{S3}"
-    (out,) = _resize([(url, 320)], filename)
-    assert out != url, f"{filename}: image_width had no effect on a real API image URL"
+    (out,) = _resize([(url, 320)])
+    assert out != url, "image_width had no effect on a real API image URL"
     assert "w_320" in out
     assert "w_450" not in out
 
 
-@pytest.mark.parametrize("filename", CARDS_WITH_RESIZE)
-def test_resize_copies_agree_across_cards(filename: str) -> None:
-    """Every copy must produce byte-identical output for the same input.
+def test_a_url_cannot_carry_markup_into_an_img() -> None:
+    """The URL comes back as a URL: the characters that could end an attribute are encoded."""
+    (out,) = _resize([('https://img.hellofresh.com/q_auto/a".jpg', 320)])
+    assert '"' not in out and "%22" in out
+    assert "/q_auto,w_320/" in out
 
-    Hand-maintained copies of one transform is exactly how the stub survived; this pins them
-    together so the next edit to one has to be made to all.
-    """
-    cases: list[tuple[str, int | None]] = [
-        (f"https://img.hellofresh.com{S3}", 320),
-        (f"https://img.hellofresh.com/f_auto,fl_lossy,h_300,q_auto,w_450{S3}", 320),
-        (f"https://img.hellofresh.com/f_auto,q_auto{S3}", 320),
-        (f"https://img.hellofresh.com/f_auto,fl_lossy,q_auto,w_640{S3}", 320),
-        ("https://example.cloudfront.net/0,0/image/foo.jpg", 320),
-        ("javascript:alert(1)", 320),
-        (f"https://img.hellofresh.com{S3}", None),
+
+def test_no_module_keeps_its_own_copy_of_the_resizer() -> None:
+    """One definition, in the shared module. A second copy is how the no-op stub survived: the
+    fix went into one copy and the other kept shipping."""
+    definition = re.compile(r"^(?:export )?function resizedImage\(", re.M)
+    owners = [
+        path.name
+        for path in sorted(WWW.glob("*.js"))
+        if definition.search(path.read_text(encoding="utf-8"))
     ]
-    # hellofresh-shared.js is the canonical copy every other one must match.
-    assert _resize(cases, filename) == _resize(cases, "hellofresh-shared.js")
+    assert owners == ["hellofresh-shared.js"]
+    detail = (WWW / "hellofresh-recipe-detail.js").read_text(encoding="utf-8")
+    assert "resizedImage" in detail and "hellofresh-shared.js" in detail

@@ -8,8 +8,13 @@ levels deep.
 
 from __future__ import annotations
 
-from homeassistant.components.diagnostics import async_redact_data
+import asyncio
+from types import SimpleNamespace
 
+from homeassistant.components.diagnostics import async_redact_data
+import pytest
+
+from custom_components.hellofresh import diagnostics as diagnostics_module
 from custom_components.hellofresh.api import HelloFreshClient
 from custom_components.hellofresh.diagnostics import TO_REDACT
 from custom_components.hellofresh.normalizers import _template_debug_path
@@ -260,3 +265,66 @@ def test_proof_of_delivery_redacted() -> None:
     attempt = redacted["debug_trace"]["tracking_attempts"][0]
     assert attempt["proof_of_delivery_photo_urls"] == "**REDACTED**"
     assert attempt["signed_by"] == "**REDACTED**"
+
+
+def _token_health(monkeypatch, client) -> dict:
+    """Run the real export for an entry holding ``client`` and return its token_health."""
+    monkeypatch.setattr(diagnostics_module, "async_get_frontend_diagnostics", lambda _hass: {})
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        title="HelloFresh (US)",
+        data={"username": "user@example.com", "password": "pw", "refresh_token": "r"},
+        options={},
+        runtime_data=SimpleNamespace(client=client, data=None, meal_plan=None),
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    export = loop.run_until_complete(
+        diagnostics_module.async_get_config_entry_diagnostics(None, entry)  # type: ignore[arg-type]
+    )
+    assert export["config_entry"]["data"] == {
+        "username": "**REDACTED**",
+        "password": "**REDACTED**",
+        "refresh_token": "**REDACTED**",
+    }
+    return export["token_health"]
+
+
+@pytest.mark.parametrize(
+    ("has_refresh_token", "has_credentials"), [(True, True), (True, False), (False, False)]
+)
+def test_token_health_reads_the_clients_public_properties(
+    monkeypatch, has_refresh_token, has_credentials
+) -> None:
+    """The export asks the client what it can sign in with, through its public surface.
+
+    It used to reach for the client's private attributes, which would have gone on reporting
+    False without a word had they been renamed. This client has the public properties only.
+    """
+    client = SimpleNamespace(
+        token_expires_at=None,
+        refresh_token_expires_at=None,
+        has_refresh_token=has_refresh_token,
+        has_credentials=has_credentials,
+    )
+
+    health = _token_health(monkeypatch, client)
+
+    assert health["has_refresh_token"] is has_refresh_token
+    assert health["has_credentials"] is has_credentials
+
+
+def test_token_health_of_a_real_client_never_holds_the_secrets(monkeypatch) -> None:
+    """Whether a refresh token and credentials exist is exported; what they are is not."""
+    client = HelloFreshClient(
+        session=None,  # type: ignore[arg-type]
+        refresh_token="secret-refresh",
+        username="user@example.com",
+        password="hunter2",
+    )
+
+    health = _token_health(monkeypatch, client)
+
+    assert health["has_refresh_token"] is True
+    assert health["has_credentials"] is True
+    assert "secret-refresh" not in str(health) and "hunter2" not in str(health)

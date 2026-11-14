@@ -12,8 +12,9 @@
  *   * personal goals cap at three, at least one cooking style is required, "None" is offered
  *     where HelloFresh allows it;
  *   * weighted fields are Like (+100) / Dislike (−100) / neutral;
- *   * Save writes only taste / household / goals via hellofresh.set_food_profile, and the
- *     dirty check is semantic (undoing an edit really undoes it).
+ *   * Save sends only the sections that were changed (taste / household / goals, through
+ *     hellofresh.set_food_profile), and the dirty check is semantic (undoing an edit really
+ *     undoes it). A household that was never answered is never sent as "0 adults, 0 kids".
  */
 
 const PROFILE_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
@@ -27,7 +28,7 @@ const { esc, t, ht } = L;
 const { icon } = UI;
 
 // The profile's fields, by the key their names have in the card's text (profile.field.<key>).
-export const FIELD_KEYS = {
+const FIELD_KEYS = {
   exclusions: "exclusions",
   primaryProteins: "primary_proteins",
   flavors: "flavors",
@@ -49,6 +50,9 @@ const GOALS_MAX = 3;
 const TASTE_LIST_FIELDS = ["exclusions", "nutritions", "mealTypes"];
 const TASTE_WEIGHTED_FIELDS = ["cuisines", "flavors", "dishTypes", "primaryProteins"];
 const TASTE_SINGLE_FIELDS = ["dietaryPreferences"];
+// The profile's sections: Save sends each one only when it differs from what is saved.
+const SECTIONS = ["taste", "household", "goals"];
+const HOUSEHOLD_FIELDS = ["adults", "children"];
 
 // Titles: profile.panel.<key>.
 const PANELS = [
@@ -85,7 +89,7 @@ const DISLIKE = -100;
 
 // A field's or option's name; an option not named yet reads in sentence case ("low-calorie" ->
 // "Low calorie"), the site's own convention for unlabelled options.
-export function profileLabel(slug) {
+function profileLabel(slug) {
   if (FIELD_KEYS[slug]) return t(`profile.field.${FIELD_KEYS[slug]}`);
   const key = `profile.value.${String(slug).toLowerCase()}`;
   if (L.hasText(key)) return t(key);
@@ -101,7 +105,7 @@ function optionalText(group, slug) {
 
 // Semantic fingerprint for the dirty check: empty containers dropped, lists sorted (they're
 // sets), keys sorted — so un-liking the only liked cuisine is no longer "dirty".
-export function profileFingerprint(value) {
+function profileFingerprint(value) {
   const norm = (v) => {
     if (Array.isArray(v)) {
       const arr = v.map(norm).filter((x) => x !== undefined);
@@ -152,6 +156,8 @@ export class ProfileEditor {
       this.draft = this._clone(this.saved);
       this._seedExpansion();
     } catch (err) {
+      // With a profile already on screen this is a failed RELOAD: render() says so above the
+      // editor, which keeps showing what was loaded before.
       this.error = (err && err.message) || String(err);
     } finally {
       this.loading = false;
@@ -167,40 +173,76 @@ export class ProfileEditor {
 
   async save() {
     const card = this.card;
-    if (!card.hass || !this.draft || this.validationErrors().length) return;
+    if (!card.hass || !this.draft || this.busy || this.validationErrors().length) return;
+    const changes = this.buildChanges();
+    if (!Object.keys(changes).length) return;
     this.busy = true;
     card.renderView();
+    let saved = false;
     try {
-      const response = await card.call("set_food_profile", this.buildChanges());
-      const saved = (response && response.profile) || null;
-      this.saved = saved || this._clone(this.draft);
+      const response = await card.call("set_food_profile", changes);
+      this.saved = (response && response.profile) || this._clone(this.draft);
       this.draft = this._clone(this.saved);
+      this.error = null;
+      saved = true;
       card.broadcastDataChanged();
       card.toast(t("profile.saved"));
     } catch (err) {
       card.toast(t("profile.save_failed", { error: (err && err.message) || err }), true);
-    } finally {
-      this.busy = false;
-      card.renderView();
+    }
+    this.busy = false;
+    card.renderView();
+    // What HelloFresh still wants answered changes with what was just saved: the completion bar
+    // and the "Tell us more" tags are re-read rather than left showing the old answers.
+    if (saved && (await this._refreshCompletion())) card.renderView();
+  }
+
+  // Best-effort: the save itself went through and was confirmed, so a completion figure that
+  // can't be re-read stays as it was until the next reload instead of raising an error. Only
+  // the completion is taken: the draft may already hold the user's next edit. Returns whether
+  // there is something new to show.
+  async _refreshCompletion() {
+    try {
+      const response = await this.card.call("get_food_profile");
+      this.completion = response.completion || null;
+      return true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("hellofresh: food profile completion not refreshed", err);
+      return false;
     }
   }
 
+  // What Save sends: only the sections that differ from the saved profile, each in the shape
+  // the service takes. Sending a section HelloFresh never had an answer for would write one —
+  // an untouched household went out as 0 adults and 0 kids while the panel showed "1 · 0".
   buildChanges() {
-    const t = this.draft.taste || {};
-    const taste = {};
-    for (const f of TASTE_LIST_FIELDS) if (Array.isArray(t[f])) taste[f] = t[f];
-    for (const f of TASTE_SINGLE_FIELDS) if (Array.isArray(t[f])) taste[f] = t[f];
-    for (const f of TASTE_WEIGHTED_FIELDS) if (t[f] && typeof t[f] === "object") taste[f] = t[f];
-    const household = this.draft.household || {};
-    const goals = this.draft.goals || {};
-    return {
-      taste,
-      household: {
-        adults: Number(household.adults) || 0,
-        children: Number(household.children) || 0,
-      },
-      goals: { goals: Array.isArray(goals.goals) ? goals.goals : [] },
-    };
+    const draft = this.draft || {};
+    const saved = this.saved || {};
+    const changed = (section) => profileFingerprint(draft[section]) !== profileFingerprint(saved[section]);
+    const changes = {};
+    if (changed("taste")) {
+      const from = draft.taste || {};
+      const taste = {};
+      for (const f of TASTE_LIST_FIELDS) if (Array.isArray(from[f])) taste[f] = from[f];
+      for (const f of TASTE_SINGLE_FIELDS) if (Array.isArray(from[f])) taste[f] = from[f];
+      for (const f of TASTE_WEIGHTED_FIELDS) if (from[f] && typeof from[f] === "object") taste[f] = from[f];
+      changes.taste = taste;
+    }
+    if (changed("household")) {
+      // Only the counts that have an answer; a field never set is left out, not sent as 0.
+      const household = {};
+      for (const f of HOUSEHOLD_FIELDS) {
+        const value = (draft.household || {})[f];
+        if (value != null && value !== "" && Number.isFinite(Number(value))) household[f] = Number(value);
+      }
+      if (Object.keys(household).length) changes.household = household;
+    }
+    if (changed("goals")) {
+      const goals = draft.goals || {};
+      changes.goals = { goals: Array.isArray(goals.goals) ? goals.goals : [] };
+    }
+    return changes;
   }
 
   _clone(p) {
@@ -209,7 +251,7 @@ export class ProfileEditor {
 
   isDirty() {
     if (!this.saved || !this.draft) return false;
-    return profileFingerprint(this.saved) !== profileFingerprint(this.draft);
+    return SECTIONS.some((section) => profileFingerprint(this.saved[section]) !== profileFingerprint(this.draft[section]));
   }
 
   // ---- edits ---------------------------------------------------------------------------------
@@ -324,18 +366,22 @@ export class ProfileEditor {
     if (this.loading && !this.draft) {
       return `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
-    if (this.error && !this.draft) {
-      return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("profile.load_failed", { error: this.error })}
-        <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="fp-refresh">${ht("common.try_again")}</button></div></div>`;
-    }
+    if (this.error && !this.draft) return UI.loadError(t("profile.load_failed", { error: this.error }), "fp-refresh");
     if (!this.options || !this.draft) return `<div class="hf-empty">${ht("profile.none")}</div>`;
+    // A reload that failed leaves the profile loaded before on screen; without this it looked
+    // exactly like a reload that worked.
+    const reloadFailed = this.error
+      ? `<div class="hf-notice tone-danger" role="alert" style="margin-bottom:14px">${icon("mdi:cloud-alert-outline")}
+          <div class="hf-noticebody">${ht("profile.reload_failed", { error: this.error })}</div>
+          <button class="hf-btn sm" data-action="fp-refresh" data-focus-key="fp-reload-retry" ${this.busy || this.loading ? "disabled" : ""}>${ht("common.try_again")}</button></div>`
+      : "";
     const c = this.completion;
     const completion =
       c && c.total && c.completed < c.total
         ? `<div class="fp-completion"><div class="fp-bar"><span style="width:${Math.max(0, Math.min(100, Number(c.percent) || 0))}%"></span></div>
             <span class="fp-bartext">${ht("profile.completion", { completed: c.completed, total: c.total })}</span></div>`
         : "";
-    return `<div class="fp-hero"><h2 class="hf-h2">${ht("profile.hero_title")}</h2>
+    return `${reloadFailed}<div class="fp-hero"><h2 class="hf-h2">${ht("profile.hero_title")}</h2>
         <p>${ht("profile.hero_body")}</p>${completion}</div>
       <div class="fp-panels">
         <div class="fp-toppanels">${this._dietPanel()}${this._householdPanel()}</div>
@@ -368,11 +414,14 @@ export class ProfileEditor {
       const min = Math.min(...opts);
       const max = Math.max(...opts);
       return `<div class="fp-hhrow"><span class="fp-hhlabel">${esc(label)}</span>
-          <span class="hf-stepper" role="group" aria-label="${esc(label)}">
-            <button data-action="fp-step" data-field="${esc(field)}" data-delta="-1" data-focus-key="fp-step-${esc(field)}-dec" aria-label="${ht("common.fewer")}" ${value <= min || this.busy ? "disabled" : ""}>${icon("mdi:minus")}</button>
-            <span class="hf-qty">${value}</span>
-            <button data-action="fp-step" data-field="${esc(field)}" data-delta="1" data-focus-key="fp-step-${esc(field)}-inc" aria-label="${ht("common.more")}" ${value >= max || this.busy ? "disabled" : ""}>${icon("mdi:plus")}</button>
-          </span></div>`;
+          ${UI.stepper({
+            label,
+            attrs: `data-action="fp-step" data-field="${esc(field)}"`,
+            focusKey: `fp-step-${field}`,
+            qty: value,
+            dec: { label: t("common.fewer"), disabled: value <= min || this.busy },
+            inc: { label: t("common.more"), disabled: value >= max || this.busy },
+          })}</div>`;
     };
     const rows = stepper("adults", t("profile.adults")) + stepper("children", t("profile.kids"));
     if (!rows) return "";
@@ -480,9 +529,9 @@ export class ProfileEditor {
     // Pinned to the bottom of the screen only while there is something to save.
     return `<div class="fp-footer${dirty ? " sticky" : ""}">
         <span class="fp-footnote${errors.length ? " error" : ""}">${esc(note)}</span>
-        <button class="hf-btn ghost" data-action="fp-refresh" ${this.busy ? "disabled" : ""}>${icon("mdi:refresh")}${ht("profile.reload")}</button>
-        <button class="hf-btn" data-action="fp-reset" ${!dirty || this.busy ? "disabled" : ""}>${ht("profile.reset")}</button>
-        <button class="hf-btn primary" data-action="fp-save" ${!dirty || errors.length || this.busy ? "disabled" : ""}>${
+        <button class="hf-btn ghost" data-action="fp-refresh" data-focus-key="fp-refresh" ${this.busy || this.loading ? "disabled" : ""}>${icon("mdi:refresh")}${ht("profile.reload")}</button>
+        <button class="hf-btn" data-action="fp-reset" data-focus-key="fp-reset" ${!dirty || this.busy ? "disabled" : ""}>${ht("profile.reset")}</button>
+        <button class="hf-btn primary" data-action="fp-save" data-focus-key="fp-save" ${!dirty || errors.length || this.busy ? "disabled" : ""}>${
           ht(this.busy ? "profile.saving" : "profile.save")
         }</button>
       </div>`;

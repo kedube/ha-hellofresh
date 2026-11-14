@@ -228,15 +228,15 @@ def test_plan_change_is_independent_of_the_weekday_change() -> None:
 
 
 @pytest.mark.parametrize("payload", [[], None, "error", 42])
-def test_a_non_dict_catalog_body_is_not_fatal(payload) -> None:
-    """An error envelope served as a bare list/string must not raise AttributeError.
+def test_a_non_dict_catalog_body_is_a_hellofresh_error(payload) -> None:
+    """An error envelope served as a bare list/string is reported, not read as no options.
 
-    Every other read in the client type-guards the decoded payload before indexing it; this one
-    did not, so a non-dict body escaped as AttributeError instead of a HelloFresh error the
-    service layer can report to the user.
+    It once escaped as AttributeError; reading it as an empty catalog hid the failure. It is
+    raised as the HelloFreshError the service layer and the box-size select report.
     """
     client, _ = _client(payload=payload)
-    assert _run(client.async_list_plan_options()) == []
+    with pytest.raises(HelloFreshError, match="unexpected"):
+        _run(client.async_list_plan_options())
 
 
 def test_a_numeric_string_price_is_still_converted() -> None:

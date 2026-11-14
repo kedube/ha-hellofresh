@@ -14,7 +14,7 @@ on the website) and Market extras and save them together, follow the next box to
 off the pantry staples it doesn't include, plan which day you'll make each meal, browse ~10,000
 recipes, and manage your plan. It all lives in one card that the integration adds to your
 **sidebar**, so there's no dashboard to build. Behind it are **50+ entities**, delivery and meal
-calendars, pantry to-do lists and **29 services** for your own automations.
+calendars, pantry to-do lists and **30 services** for your own automations.
 
 > ⚠️ This is an **unofficial** integration, reverse-engineered from the HelloFresh website. It is not affiliated with or endorsed by HelloFresh, and the underlying API may change at any time.
 
@@ -89,14 +89,15 @@ calendars, pantry to-do lists and **29 services** for your own automations.
 |---|---|
 | [docs/entities.md](docs/entities.md) | Every sensor, binary sensor, switch, button, calendar, and to-do list |
 | [docs/dashboard.md](docs/dashboard.md) | The HelloFresh card, tab by tab: the sidebar entry, options, screenshots, and moving from the classic cards |
-| [docs/services.md](docs/services.md) | All 26 services: parameters and responses |
+| [docs/services.md](docs/services.md) | All 30 services: parameters and responses |
 
 
 ## Installation
 
 > Home Assistant requirement:
 >
-> - Home Assistant Core with support for config flows, diagnostics, and custom integrations
+> - Home Assistant 2025.8 or newer. The integration relies on features that version
+>   introduced, and it is tested against the current release.
 
 ### Method 1: HACS (recommended)
 
@@ -173,7 +174,7 @@ HelloFresh fronts its sites with Cloudflare. To pass that layer the integration 
 
 ### Reauthentication
 
-The integration renews the short-lived access token automatically using the long-lived refresh token. For **email/password** entries it falls back to a full login with your stored credentials when the refresh token is rejected or expired; if that login fails (for example you changed your password), Home Assistant prompts you to re-enter your email and password. For **token-only** entries there are no stored credentials, so reauthentication instead asks you to paste a fresh `apiV2Auth` token.
+The integration renews the short-lived access token automatically using the long-lived refresh token. For **email/password** entries it falls back to a full login with your stored credentials when the refresh token is rejected or expired; if that login fails (for example you changed your password), Home Assistant prompts you to re-enter your email and password. Until you do, the integration doesn't send the refused password again, apart from one attempt each time Home Assistant restarts, so it won't keep retrying and get your HelloFresh account locked. For **token-only** entries there are no stored credentials, so reauthentication instead asks you to paste a fresh `apiV2Auth` token. Reauthentication accepts only the entry's own HelloFresh account; to use a different account, add it as a new entry.
 
 ### Options
 
@@ -246,8 +247,9 @@ HelloFresh website does — corrections from native speakers are welcome.
 
 The integration creates **50+ entities** per HelloFresh account:
 
-- **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit, payment dates, coupons), account & subscription (plan, servings, status), shipment tracking (status, carrier, tracking link, carrier ETA, actual arrival time), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
-- **Binary sensors** for automations — most notably `binary_sensor.needs_meal_selection`, the primary signal for "review your meals before the cutoff" reminders — plus tracked-shipment availability and parse-health diagnostics.
+- **Sensors** covering deliveries & orders (dates, weeks, delivery window, holiday shifts), meal selection (deadlines, meal/market counts, preselection flags), billing & payments (box price, account credit with its HelloFresh Cash and bonus credit, payment dates, coupons), account & subscription (plan, servings, status, boxes until a free box), shipment tracking (status, carrier, tracking link, carrier ETA, actual arrival time), and history & skipped weeks — plus diagnostic sensors for token expiry and the API base URL.
+- **Binary sensors** for automations — most notably `binary_sensor.needs_meal_selection`, the primary signal for "review your meals before the cutoff" reminders, and `binary_sensor.payment_problem`, on while HelloFresh couldn't charge a box (with a Repairs warning) — plus tracked-shipment availability and parse-health diagnostics.
+- A **delivery events** entity (`event.delivery_events`) that fires when a box ships, arrives, is delayed or comes early, a week is skipped, its menu is published, its selection deadline is a day away and when it locks — see [Delivery events](docs/entities.md#delivery-events).
 - A **delivery calendar** (`calendar.delivery_schedule`), a **refresh button**, and a **skip next week switch**.
 - A **Meals calendar** (`calendar.meals`) and a **Tonight's dinner** sensor from the card's [Week tab](docs/dashboard.md#week), with today's breakfast and lunch sensors you can enable. See [Week tab](docs/entities.md#week-tab).
 - Two **prep lists** (`todo.prep_list`, `todo.prep_list_week_2`) — the pantry staples HelloFresh does *not* ship for your next two boxes, as native to-do lists you can check off from the dashboard, your phone, or a voice assistant. See [Prep lists](docs/entities.md#prep-lists).
@@ -266,11 +268,11 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 ### Services
 
-**29 services** cover everything the integration can do, grouped roughly as:
+**30 services** cover everything the integration can do, grouped roughly as:
 
 | Group | Examples |
 |---|---|
-| **Meals and Market** | `get_weeks`, `get_menu_courses`, `select_meals`, `select_market_items`, `preview_meal_price` |
+| **Meals and Market** | `get_weeks`, `get_menu_courses`, `select_meals`, `select_market_items`, `preview_meal_price`, `change_week_servings` |
 | **Delivery schedule** | `skip_week`, `unskip_week`, `reschedule_week`, `change_delivery_weekday` |
 | **Plan and account** | `get_account_summary`, `change_plan`, `get_spending` |
 | **Food profile** | `get_food_profile`, `set_food_profile` |
@@ -279,7 +281,8 @@ These handlers are intended for Home Assistant conversation workflows and future
 
 Many **return a response** (delivery weeks, spending, recipe detail) for use with
 `response_variable` in scripts and automations. All of them appear in **Developer tools → Actions**
-with inline field help.
+with inline field help. Every Home Assistant user can call them, not only administrators, including
+the ones that change your plan, your boxes and so what HelloFresh bills you.
 
 **Full reference — every service, its parameters, and what it returns — is in
 [docs/services.md](docs/services.md).**
@@ -330,11 +333,13 @@ automation:
             for delivery ({{ states('sensor.hellofresh_us_tracked_shipment_carrier') }}).
 ```
 
-Other useful triggers: the `calendar.delivery_schedule` entity for day-of-delivery automations, `sensor.next_selection_deadline` (a timestamp) with a time-based trigger for "24 hours before cutoff" reminders, and `binary_sensor.payload_shape_changed` to get notified if a HelloFresh site change breaks parsing.
+Other useful triggers: the `calendar.delivery_schedule` entity for day-of-delivery automations, `event.delivery_events` with `event_type` `selection_deadline_approaching` for "24 hours before cutoff" reminders (or `box_delayed` when HelloFresh moves a box), `binary_sensor.payment_problem` for a payment HelloFresh couldn't take, and `binary_sensor.payload_shape_changed` to get notified if a HelloFresh site change breaks parsing.
 
 ### Recorder attribute sizes
 
 Sensor state attributes are kept small so the recorder stores them without hitting Home Assistant's 16 KB per-state attribute limit. The full recipe catalog for a week (which can be large once the authenticated menu loads) is intentionally **not** embedded in any sensor attribute — the per-week `weeks` list on `sensor.hellofresh_us_next_selection_deadline` and the single-week context objects on other sensors carry only scalar week metadata (dates, deadline, meal counts, slot). No recorder `exclude` configuration is required. When you do need per-week recipes (names, selection state, images), call the read-only `hellofresh.get_weeks` service, which returns them on demand without touching the recorder.
+
+Personal details and bulky attributes — tracking links, voucher codes, the card's last digits, the driver's name and position, your home's coordinates, whole order and week objects, the scan history, price splits — are also left out of the recorder. They stay on the live state, so dashboards, templates and automations read them as before; they are just not kept in the history. See [Privacy](docs/entities.md#privacy).
 
 The complete recipe and market data is still available where it matters: the `hellofresh.select_meals` and `hellofresh.select_market_items` services read it from the live integration state, and a full serialization (with recipes) is included in the redacted **diagnostics** export for debugging.
 
@@ -388,7 +393,9 @@ window. Multiple subscriptions on one account are aggregated.
 
 **Changing your account** — meal selection with per-meal serving quantities, Market add-ons,
 skip/unskip, one-off reschedules, recurring delivery day, box size, and food preferences. Choosing
-more or fewer meals than your plan resizes that week's box automatically (minimum 2).
+more or fewer meals than your plan resizes that week's box automatically (minimum 2). Changing how
+many people one week's box is for is experimental: HelloFresh's app does it, but whether HelloFresh
+accepts it from here isn't confirmed yet.
 
 **Browsing the public catalog** — ~10,000 recipes by category, full cooking detail, and cookbook
 favoriting (including the full cookbook, which HelloFresh's own site only previews).
@@ -423,8 +430,11 @@ HelloFresh rejected the email/password. Double-check the credentials, confirm yo
 **Setup fails with "Could not connect."**
 Home Assistant could not reach HelloFresh, or the response wasn't understood. Check Home Assistant's network access and try again; transient site errors usually clear on a retry.
 
+**Setup says the account has no subscription.**
+HelloFresh accepted your sign-in but lists no subscription on the account, so there is nothing to show. Check that you picked the **Country** your subscription is in.
+
 **The log shows "login BLOCKED by bot protection" (HTTP 403 with an HTML page).**
-HelloFresh's website fronts its login with Cloudflare bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration already presents a real Chrome TLS/HTTP-2 fingerprint (via the bundled `curl_cffi`) to get past this. After a block it pauses API requests for 5 minutes, doubling the gap after each further block up to 1 hour; the pause is shared by entries on the same Home Assistant event loop and resets after successful authentication once the pause ends. If a region blocks email/password sign-in persistently, use the **access-token setup path** ([Setting up (access token)](#setting-up-access-token--advanced-backup)) as a backup — it bypasses the login step entirely by reusing a token from your own logged-in browser session. Confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear regardless.
+HelloFresh's website fronts its login with Cloudflare bot protection that sometimes blocks automated sign-ins. This is **not** a wrong-password problem — the request was rejected before it reached the login API, so re-entering your credentials won't help. The integration already presents a real Chrome TLS/HTTP-2 fingerprint (via the bundled `curl_cffi`) to get past this. After a block it pauses requests to that country's HelloFresh site for 5 minutes, doubling the gap after each further block up to 1 hour; the pause is shared by every entry for that site and resets after successful authentication once the pause ends. An ordinary error page from HelloFresh, such as HTTP 502, is not a block and pauses nothing. If a region blocks email/password sign-in persistently, use the **access-token setup path** ([Setting up (access token)](#setting-up-access-token--advanced-backup)) as a backup — it bypasses the login step entirely by reusing a token from your own logged-in browser session. Confirm you can still log in to the HelloFresh website in a normal browser; a server-side block on your account or IP would need to clear regardless.
 
 **Log authentication diagnostics** is on by default on the setup form and in the integration's [options](#options). It distinguishes a Cloudflare JavaScript challenge (`cf-mitigated=challenge`), error 1020 (firewall rule), or error 1010 (browser signature block). The warning also includes the Ray ID when Cloudflare provides one.
 

@@ -5,7 +5,7 @@ No HTTP, no aiohttp, no BeautifulSoup — just dataclasses and exceptions.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from html.parser import HTMLParser
@@ -13,10 +13,32 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from .parsers import (
+    as_utc,
+    coerce_float,
+    coerce_int,
+    dict_or_empty,
+    http_url_or_none,
+    iso_week_label,
+    local_today,
+    parse_date,
+    parse_datetime,
+)
+
 # Smallest valid box HelloFresh sells: a week with fewer meals than this has no valid
 # box, so it genuinely still needs a selection. Mirrors the client's MIN_MEALS_PER_WEEK; kept as
 # a plain module constant here so models.py stays dependency-free (no import from client).
 MIN_MEALS_PER_WEEK = 2
+
+# A payment problem is reported for boxes still to come and for boxes delivered at most this
+# many days ago: long enough to cover a charge HelloFresh retries after delivery.
+PAYMENT_PROBLEM_LOOKBACK_DAYS = 14
+# The status of a box whose week HelloFresh marks PAYMENT_FAILED. The ledger's own statuses
+# (``failed``, ``chargeback``) are reported as they are.
+PAYMENT_PROBLEM_WEEK_FLAGGED = "payment_failed"
+# Which status a box shows when both sources name it: a chargeback (money taken back) says
+# more than a failed charge, which says more than the week's flag.
+_PAYMENT_PROBLEM_RANK = {PAYMENT_PROBLEM_WEEK_FLAGGED: 0, "failed": 1, "chargeback": 2}
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -82,7 +104,7 @@ def _usable_image_url(candidates: Sequence[Any], image_base: str | None) -> str 
         if not isinstance(value, str) or not value.strip():
             continue
         value = value.strip()
-        if re.match(r"https?://", value, re.IGNORECASE):
+        if http_url_or_none(value) is not None:
             if urlsplit(value).hostname != _DEAD_IMAGE_HOST:
                 return value
         elif value.startswith("/") and image_base:
@@ -169,27 +191,18 @@ def _rich_paragraphs(html: Any) -> list[list[dict[str, Any]]]:
     return paragraphs
 
 
-def _parse_iso_datetime(value: Any) -> datetime | None:
-    """Parse an ISO-8601 timestamp, normalizing a trailing ``Z`` to UTC."""
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 class HelloFreshError(Exception):
     """Base error for HelloFresh integration.
 
     ``status`` is the HTTP status of HelloFresh's answer, when the error is one (429 for a rate
-    limit); None otherwise.
+    limit); None otherwise. ``detail`` is the log-safe summary of that answer's error body
+    (its machine fields only, see ``parsers.safe_error_summary``), when it had one.
     """
 
-    def __init__(self, *args: object, status: int | None = None) -> None:
+    def __init__(self, *args: object, status: int | None = None, detail: str | None = None) -> None:
         super().__init__(*args)
         self.status = status
+        self.detail = detail
 
 
 class HelloFreshAuthError(HelloFreshError):
@@ -213,11 +226,29 @@ class HelloFreshPasswordResetRequiredError(HelloFreshLoginRejectedError):
     """
 
 
-class HelloFreshRateLimitedError(HelloFreshError):
-    """Raised when HelloFresh temporarily locks sign-in after too many attempts (HTTP 429).
+class HelloFreshNoMenuError(HelloFreshError):
+    """Raised when HelloFresh has no menu for a week yet, so its meals can't be chosen.
 
-    Transient: the integration stops posting the password until the lockout should be over,
-    since each new attempt can extend it.
+    An ordinary state of a week far ahead, not a missing capability: unlike
+    HelloFreshNotImplementedError it raises no "write actions unavailable" repair.
+    """
+
+
+class HelloFreshNoSubscriptionError(HelloFreshError):
+    """Raised when a valid sign-in has no HelloFresh subscription to read.
+
+    Not an authentication failure: the credentials worked, so asking for them again cannot
+    help. Setup says so in its own words, and a poll treats it as an ordinary failed update.
+    """
+
+
+class HelloFreshRateLimitedError(HelloFreshError):
+    """Raised when HelloFresh answers 429 Too Many Requests.
+
+    For sign-in it is a temporary lockout after too many attempts, and the integration stops
+    posting the password until it should be over, since each new attempt can extend it. For an
+    account read it ends the poll (the last good data stays): every further request would only
+    add to the load HelloFresh is refusing. Transient either way.
     """
 
 
@@ -231,6 +262,15 @@ class HelloFreshBotBlockedError(HelloFreshError):
 
 class HelloFreshNotImplementedError(HelloFreshError):
     """Raised when the underlying HelloFresh API call is not wired yet."""
+
+
+class HelloFreshInvalidRequestError(HelloFreshError):
+    """Raised when a change can't work as asked, before anything is sent to HelloFresh.
+
+    An unknown week, a week that can no longer be changed, a box size HelloFresh doesn't sell:
+    the caller's input is the problem, so the services report it as a ServiceValidationError
+    rather than as an outage or a missing endpoint.
+    """
 
 
 @dataclass(slots=True)
@@ -411,6 +451,9 @@ class HelloFreshMarketItem:
     # Base (single-unit) price in cents and a derived display amount in major units.
     price_cents: int | None = None
     price: float | None = None
+    # The Market catalog prices items in bare minor units, with no currency of its own, so this
+    # is the currency the week's meals are priced in, else the market's (assigned by the
+    # normalizer's _apply_market_items). None on a history item, which has no price either.
     currency: str | None = None
     max_quantity: int | None = None
     is_selected: bool = False
@@ -448,6 +491,7 @@ class HelloFreshMarketItem:
             "preselected_quantity": self.preselected_quantity,
             "is_locked": self.is_locked,
             "is_sold_out": self.is_sold_out,
+            "courses": self.courses,
         }
 
 
@@ -467,6 +511,10 @@ class HelloFreshWeek:
     delivered_at: datetime | None = None
     selection_deadline: datetime | None = None
     status: str | None = None
+    # HelloFresh could not take the payment for this box: the week's own ``status`` is
+    # ``PAYMENT_FAILED``. Kept apart from ``status``, which prefers the box's live ``state``
+    # and so would hide it.
+    payment_failed: bool = False
     meals_required: int | None = None
     meals_selected: int | None = None
     is_skipped: bool = False
@@ -499,7 +547,15 @@ class HelloFreshWeek:
     slot_label: str | None = None
     shipping_method: str | None = None
     box_size: str | None = None
+    # How many people this week's own box is for (its ``product.specs.size``, else the people
+    # segment of its handle). A week can be resized apart from the plan, so this can differ
+    # from the subscription's ``servings``.
+    servings: int | None = None
     sub_status: str | None = None
+    # The day HelloFresh moved the box to, while its ``subStatus`` is DELAYED or EARLY (the
+    # new date is the week's ``tracking.delivery_date``). ``delivery_date`` stays the day it
+    # was scheduled for.
+    revised_delivery_date: date | None = None
     delivery_state: str | None = None
     actionable: bool = False
     prepaid: bool = False
@@ -511,9 +567,10 @@ class HelloFreshWeek:
     available_one_off_options: list[dict[str, str | None]] = field(default_factory=list)
     # Excluded from equality: the coordinator's always_update=False deep-compares each poll's
     # HelloFreshAccountData against the last, and this dict holds the full raw delivery payload
-    # plus (for merged weeks) the entire menu payload under "_menu_payload" — MBs of nested
-    # dicts. Comparing them field-by-field every unchanged poll is pure cost; the normalized
-    # scalar fields above already capture every change that should notify listeners.
+    # plus (for merged weeks) the menu's blocks under "_menu_payload" — the dish options,
+    # the Market catalog, sections and filters, hundreds of KB of nested dicts. Comparing them
+    # field-by-field every unchanged poll is pure cost; the normalized scalar fields above
+    # already capture every change that should notify listeners.
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
@@ -532,10 +589,7 @@ class HelloFreshWeek:
         """Return True when the week's selection deadline is known and already behind us."""
         if self.selection_deadline is None:
             return False
-        deadline = self.selection_deadline
-        if deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=UTC)
-        return deadline <= datetime.now(UTC)
+        return as_utc(self.selection_deadline) <= datetime.now(UTC)
 
     @property
     def is_editable(self) -> bool:
@@ -578,7 +632,7 @@ class HelloFreshWeek:
         """
         if not self.is_editable or self.is_paused:
             return False
-        if self.delivery_date is not None and self.delivery_date < date.today():
+        if self.delivery_date is not None and self.delivery_date < local_today():
             return False
         if self.meals_selected is None:
             return False
@@ -600,7 +654,7 @@ class HelloFreshWeek:
         """
         if not self.meals_preselected or self.is_paused or not self.is_editable:
             return False
-        return not (self.delivery_date is not None and self.delivery_date < date.today())
+        return not (self.delivery_date is not None and self.delivery_date < local_today())
 
     @property
     def selection_progress(self) -> str | None:
@@ -647,7 +701,11 @@ class HelloFreshWeek:
             "slot_label": self.slot_label,
             "shipping_method": self.shipping_method,
             "box_size": self.box_size,
+            "servings": self.servings,
             "sub_status": self.sub_status,
+            "revised_delivery_date": (
+                self.revised_delivery_date.isoformat() if self.revised_delivery_date else None
+            ),
             "delivery_state": self.delivery_state,
             "actionable": self.actionable,
             "prepaid": self.prepaid,
@@ -745,6 +803,51 @@ class HelloFreshOrder:
             "coupon_code": self.coupon_code,
             "slot_label": self.slot_label,
         }
+
+
+def same_box(
+    week_id: str,
+    subscription_id: str | None,
+    other_week_id: str,
+    other_subscription_id: str | None,
+) -> bool:
+    """Return True when two records are about one box: the same week and subscription.
+
+    Week ids are ISO weeks, which two subscriptions on one account share, so the week alone
+    does not name a box. A record without a subscription id (some history payloads leave it
+    out) matches on the week alone; two records that both carry one must agree.
+    """
+    return week_id == other_week_id and (
+        subscription_id is None
+        or other_subscription_id is None
+        or subscription_id == other_subscription_id
+    )
+
+
+class WeekLookup:
+    """Find the week a record belongs to, by week id and subscription id.
+
+    The one rule for pairing records up (see ``same_box``): an order with its week, a
+    delivered-history week with its account week. The week of the same subscription wins;
+    only when one side carries no subscription id does the week id alone decide. Among equal
+    matches the last week given wins.
+    """
+
+    def __init__(self, weeks: Iterable[HelloFreshWeek]) -> None:
+        self._by_week_id: dict[str, list[HelloFreshWeek]] = {}
+        for week in weeks:
+            self._by_week_id.setdefault(week.week_id, []).append(week)
+
+    def find(self, week_id: str, subscription_id: str | None) -> HelloFreshWeek | None:
+        """Return the week for ``week_id`` and ``subscription_id``, or None."""
+        candidates = self._by_week_id.get(week_id, ())
+        for week in reversed(candidates):
+            if week.subscription_id == subscription_id:
+                return week
+        for week in reversed(candidates):
+            if week.subscription_id is None or subscription_id is None:
+                return week
+        return None
 
 
 @dataclass(slots=True)
@@ -881,13 +984,8 @@ class HelloFreshCapabilities:
 #   • list fields — a flat array of chosen slugs (e.g. exclusions, nutritions).
 #   • weighted fields — a {slug: weight} map where weight is +100 (like) or -100 (dislike);
 #     a slug absent from the map is "neutral". The web app only ever writes +100/-100.
-# Keeping these two sets explicit lets the model normalize a PATCH payload without guessing.
-FOOD_PROFILE_TASTE_LIST_FIELDS = (
-    "exclusions",
-    "nutritions",
-    "mealTypes",
-    "dietaryPreferences",
-)
+# Only the weighted fields need naming: build_patch coerces those to the map form and passes
+# every other taste field through as the list it is.
 FOOD_PROFILE_TASTE_WEIGHTED_FIELDS = (
     "cuisines",
     "flavors",
@@ -962,11 +1060,14 @@ class HelloFreshDeliveryOption:
             delivery_day=raw.get("deliveryDay"),
             delivery_from=raw.get("deliveryFrom"),
             delivery_to=raw.get("deliveryTo"),
-            price_cents=raw.get("priceInCents"),
+            # A number in every capture, but a price sent as a string ("0") must not break
+            # the delivery-day picker.
+            price_cents=coerce_int(raw.get("priceInCents")),
             is_default=bool(raw.get("isDefault")),
         )
 
     def as_dict(self) -> dict[str, Any]:
+        cents = coerce_float(self.price_cents)
         return {
             "handle": self.handle,
             "delivery_name": self.delivery_name,
@@ -974,7 +1075,7 @@ class HelloFreshDeliveryOption:
             "delivery_from": self.delivery_from,
             "delivery_to": self.delivery_to,
             "price_cents": self.price_cents,
-            "price": (self.price_cents / 100) if self.price_cents is not None else None,
+            "price": (cents / 100) if cents is not None else None,
             "is_default": self.is_default,
         }
 
@@ -1028,7 +1129,7 @@ class HelloFreshFavorite:
         recipe_id = cls.recipe_id_from_bookmark(bookmark_id)
         if recipe_id is None:
             return None
-        nutrition = raw.get("nutrition") if isinstance(raw.get("nutrition"), dict) else {}
+        nutrition = dict_or_empty(raw.get("nutrition"))
         return cls(
             bookmark_id=bookmark_id.strip(),
             recipe_id=recipe_id,
@@ -1036,13 +1137,14 @@ class HelloFreshFavorite:
             name=raw.get("title") or raw.get("name"),
             headline=raw.get("headline"),
             description=raw.get("description"),
-            image_url=raw.get("thumbnail_url") or raw.get("image_url"),
-            url=raw.get("url"),
+            # `thumbnail_url` is a full URL; there is no image host to join a bare path to here.
+            image_url=_usable_image_url((raw.get("thumbnail_url"), raw.get("image_url")), None),
+            url=http_url_or_none(raw.get("url")),
             total_time_minutes=_iso_duration_to_minutes(raw.get("total_time")),
             prep_time_minutes=_iso_duration_to_minutes(raw.get("prep_time")),
             calories_kcal=_coerce_number(nutrition.get("calories")),
             protein_g=_coerce_number(nutrition.get("protein")),
-            created_at=_parse_iso_datetime(raw.get("created_at")),
+            created_at=parse_datetime(raw.get("created_at"), naive_as_utc=True),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -1136,7 +1238,8 @@ class HelloFreshRecipeDetail:
         # `imageLink` is the dead CloudFront host; see _usable_image_url.
         image_url = _usable_image_url((raw.get("imagePath"), raw.get("imageLink")), image_base)
 
-        yields = raw.get("yields") if isinstance(raw.get("yields"), list) else []
+        raw_yields = raw.get("yields")
+        yields = raw_yields if isinstance(raw_yields, list) else []
         available = sorted(
             {
                 int(entry["yields"])
@@ -1167,7 +1270,7 @@ class HelloFreshRecipeDetail:
         for item in raw.get("ingredients") or []:
             if not isinstance(item, dict):
                 continue
-            amount = amounts.get(str(item.get("id")), {})
+            amount_line = amounts.get(str(item.get("id")), {})
             contains = [
                 allergen_names[ref] if isinstance(ref, str) else ref.get("name")
                 for ref in item.get("allergens") or []
@@ -1177,8 +1280,8 @@ class HelloFreshRecipeDetail:
             ingredients.append(
                 {
                     "name": item.get("name"),
-                    "amount": amount.get("amount"),
-                    "unit": amount.get("unit"),
+                    "amount": amount_line.get("amount"),
+                    "unit": amount_line.get("unit"),
                     # Same dead-CloudFront `imageLink` as the recipe photo; see _usable_image_url.
                     "image_url": _usable_image_url(
                         (item.get("imagePath"), item.get("imageLink")), image_base
@@ -1272,9 +1375,12 @@ class HelloFreshRecipeDetail:
             description=raw.get("description"),
             slug=raw.get("slug"),
             image_url=image_url,
-            video_url=raw.get("videoLink") or None,
-            card_url=raw.get("cardLink"),
-            url=raw.get("websiteUrl") or raw.get("canonicalLink"),
+            # Links are http(s) or nothing: they land in entity attributes and service
+            # responses, which anything may put in an href.
+            video_url=http_url_or_none(raw.get("videoLink")),
+            card_url=http_url_or_none(raw.get("cardLink")),
+            url=http_url_or_none(raw.get("websiteUrl"))
+            or http_url_or_none(raw.get("canonicalLink")),
             difficulty=raw.get("difficulty") if isinstance(raw.get("difficulty"), int) else None,
             prep_time_minutes=_iso_duration_to_minutes(raw.get("prepTime")),
             total_time_minutes=_iso_duration_to_minutes(raw.get("totalTime")),
@@ -1390,9 +1496,11 @@ class HelloFreshProfileCompletion:
             for entry in section.get("fields") or []:
                 if isinstance(entry, dict) and isinstance(entry.get("field"), str):
                     fields[entry["field"]] = bool(entry.get("completed"))
+        completed = overall.get("completed")
+        total = overall.get("total")
         return cls(
-            completed=overall.get("completed") if isinstance(overall.get("completed"), int) else 0,
-            total=overall.get("total") if isinstance(overall.get("total"), int) else 0,
+            completed=completed if isinstance(completed, int) else 0,
+            total=total if isinstance(total, int) else 0,
             fields=fields,
         )
 
@@ -1436,23 +1544,15 @@ class HelloFreshCatalogRecipe:
         name = raw.get("name")
         if not isinstance(recipe_id, str) or not isinstance(name, str) or not name.strip():
             return None
-        # Catalog rows carry `imagePath` (a bare path like "/image/foo.jpg"), not a full URL;
-        # the CDN host has to be prefixed for it to be usable in an <img src>.
-        image_path = raw.get("imagePath")
-        image_url = None
-        if isinstance(image_path, str) and image_path.strip():
-            image_url = (
-                f"{image_base.rstrip('/')}{image_path}"
-                if image_base and image_path.startswith("/")
-                else image_path
-            )
         return cls(
             recipe_id=recipe_id.split("-", 1)[0],
             name=name.strip(),
             headline=raw.get("headline"),
             slug=raw.get("slug"),
-            image_url=image_url,
-            url=raw.get("websiteUrl"),
+            # Catalog rows carry `imagePath` (a bare path like "/image/foo.jpg"), not a full
+            # URL; the CDN host has to be prefixed for it to be usable in an <img src>.
+            image_url=_usable_image_url((raw.get("imagePath"),), image_base),
+            url=http_url_or_none(raw.get("websiteUrl")),
             rating=_coerce_number(raw.get("aggregateRating") or raw.get("averageRating")),
             # Website catalog rows spell it `aggregateRatingsCount`; the /gw recipes-service
             # search rows spell it `ratingsCount`.
@@ -1503,19 +1603,12 @@ class HelloFreshRecipeCollection:
         name = raw.get("name")
         if not isinstance(slug, str) or not isinstance(name, str):
             return None
-        thumb = raw.get("thumbnail")
-        thumbnail_url = None
-        if isinstance(thumb, str) and thumb.strip():
-            thumbnail_url = (
-                f"{image_base.rstrip('/')}{thumb}"
-                if image_base and thumb.startswith("/")
-                else thumb
-            )
         return cls(
             slug=slug,
             name=name,
             collection_id=raw.get("id") if isinstance(raw.get("id"), str) else None,
-            thumbnail_url=thumbnail_url,
+            # A bare path, joined to the image host like a catalog recipe's `imagePath`.
+            thumbnail_url=_usable_image_url((raw.get("thumbnail"),), image_base),
             path=cls._path_from_breadcrumbs(raw.get("breadcrumbs")) or slug,
         )
 
@@ -1641,6 +1734,14 @@ class HelloFreshFoodProfile:
 _CARRIER_EN_ROUTE_STATUSES = frozenset({"pre_transit", "in_transit", "out_for_delivery"})
 
 
+def _has_concrete_tracking(order: HelloFreshOrder) -> bool:
+    """Return True when an order has a shipment to follow: a tracking number or a link."""
+    return bool(
+        (order.tracking_number and order.tracking_number.strip())
+        or (order.tracking_url and order.tracking_url.strip())
+    )
+
+
 def _tracked_order_sort_key(
     order: HelloFreshOrder,
 ) -> tuple[bool, bool, bool, bool, bool, date]:
@@ -1649,7 +1750,7 @@ def _tracked_order_sort_key(
     has_tracking_url = bool(order.tracking_url and order.tracking_url.strip())
     has_carrier = bool(order.carrier and order.carrier.strip())
     has_tracking_status = bool(order.tracking_status and order.tracking_status.strip())
-    has_concrete_tracking = has_tracking_number or has_tracking_url
+    has_concrete_tracking = _has_concrete_tracking(order)
     return (
         has_concrete_tracking,
         has_tracking_number,
@@ -1676,11 +1777,27 @@ class HelloFreshAccountData:
     boxes_received: int | None = None
     account_data_available: bool = False
     capabilities: HelloFreshCapabilities = field(default_factory=HelloFreshCapabilities)
-    debug_trace: dict[str, Any] = field(default_factory=dict)
+    # Excluded from equality: it records each request of the poll in the order it finished,
+    # and the per-week menu fetches run concurrently, so two polls of identical data differ
+    # here. Compared, it would notify every listener on every poll (always_update=False).
+    debug_trace: dict[str, Any] = field(default_factory=dict, compare=False)
     next_delivery_total: float | None = None
     next_delivery_total_currency: str | None = None
     account_credit: float | None = None
     account_credit_currency: str | None = None
+    # The parts of the credit balance, in major units of ``account_credit_currency``: the
+    # HelloFresh Cash the customer bought, the bonus credit, the restricted part and the
+    # credits that can still be cancelled (the balance's ``cash``, ``bonus``,
+    # ``restrictedAmount`` and ``cancellableCredits``).
+    account_credit_cash: float | None = None
+    account_credit_bonus: float | None = None
+    account_credit_restricted: float | None = None
+    account_credit_cancellable: float | None = None
+    # Charges the orders ledger reports as failed or charged back, one per (subscription,
+    # delivery date): {subscription_id, delivery_date (a date), status ("failed" or
+    # "chargeback"), amount (major units or None), currency}. finalize() pairs them with their
+    # weeks into ``payment_problem_weeks``.
+    payment_failures: list[dict[str, Any]] = field(default_factory=list)
     selected_plan_total_price: float | None = None
     selected_plan_total_price_currency: str | None = None
     # Price breakdowns behind the two box-price sensors, from ``/gw/calculate``: the standing
@@ -1716,9 +1833,6 @@ class HelloFreshAccountData:
     # including them made every poll compare unequal and defeated always_update=False.
     _serialized_orders: list[dict[str, Any]] | None = field(default=None, compare=False)
     _serialized_weeks: list[dict[str, Any]] | None = field(default=None, compare=False)
-    _serialized_past_delivery_weeks: list[dict[str, Any]] | None = field(
-        default=None, compare=False
-    )
     _serialized_weeks_needing_selection: list[dict[str, Any]] | None = field(
         default=None, compare=False
     )
@@ -1739,7 +1853,11 @@ class HelloFreshAccountData:
     _delivery_count_this_week: int = 0
     _current_public_menu: HelloFreshWeek | None = None
     _last_delivery_week: HelloFreshWeek | None = None
+    _payment_problem_weeks: list[dict[str, Any]] = field(default_factory=list)
     _weeks_by_id: dict[str, HelloFreshWeek] = field(default_factory=dict)
+    # The same weeks by (week id, subscription id), for pairing an order with its own week.
+    # An index over ``weeks``, so it adds nothing to compare.
+    _week_lookup: WeekLookup | None = field(default=None, compare=False, repr=False)
 
     @property
     def next_order(self) -> HelloFreshOrder | None:
@@ -1838,9 +1956,22 @@ class HelloFreshAccountData:
         return self._last_delivery_week
 
     @property
-    def past_delivery_count(self) -> int:
-        """Return the number of delivered weeks available from account history."""
-        return len(self.past_delivery_weeks)
+    def payment_problem_weeks(self) -> list[dict[str, Any]]:
+        """The boxes HelloFresh could not charge, oldest first.
+
+        Weeks HelloFresh marks ``PAYMENT_FAILED`` and charges the orders ledger reports as
+        ``failed`` or ``chargeback``, for upcoming boxes and those delivered in the last
+        ``PAYMENT_PROBLEM_LOOKBACK_DAYS``. One entry per box:
+        ``{week_id, delivery_date (ISO or None), status, amount, currency}``, where ``status``
+        is ``payment_failed`` (the week's flag), ``failed`` or ``chargeback`` (the ledger's)
+        and ``amount`` is in major units (the failed charge, else the box's price).
+        """
+        return self._payment_problem_weeks
+
+    @property
+    def payment_problem(self) -> bool:
+        """True while any box has a payment problem (see ``payment_problem_weeks``)."""
+        return bool(self._payment_problem_weeks)
 
     @property
     def subscription_count(self) -> int:
@@ -1860,15 +1991,6 @@ class HelloFreshAccountData:
         if self._serialized_weeks is None:
             self._serialized_weeks = [week.as_dict() for week in self.weeks]
         return self._serialized_weeks
-
-    @property
-    def serialized_past_delivery_weeks(self) -> list[dict[str, Any]]:
-        """Return serialized past delivery weeks, computed once per finalize cycle."""
-        if self._serialized_past_delivery_weeks is None:
-            self._serialized_past_delivery_weeks = [
-                week.as_dict() for week in self.past_delivery_weeks
-            ]
-        return self._serialized_past_delivery_weeks
 
     @property
     def serialized_weeks_needing_selection(self) -> list[dict[str, Any]]:
@@ -1908,21 +2030,139 @@ class HelloFreshAccountData:
             self._serialized_subscriptions = [s.as_dict() for s in self.subscriptions]
         return self._serialized_subscriptions
 
-    def get_week(self, week_id: str) -> HelloFreshWeek | None:
-        """Return a cached week by id."""
-        return self._weeks_by_id.get(week_id)
+    def get_week(self, week_id: str, subscription_id: str | None = None) -> HelloFreshWeek | None:
+        """Return a cached week by id.
 
-    def get_order_for_week(self, week_id: str) -> HelloFreshOrder | None:
+        Two subscriptions share ISO week ids. With only the week id this is the primary
+        subscription's week; with a ``subscription_id`` it is that subscription's week (or one
+        that names no subscription), and never another subscription's.
+        """
+        if subscription_id is None:
+            return self._weeks_by_id.get(week_id)
+        if self._week_lookup is None:
+            return None
+        return self._week_lookup.find(week_id, subscription_id)
+
+    def get_order_for_week(
+        self, week_id: str, subscription_id: str | None = None
+    ) -> HelloFreshOrder | None:
         """Return the best order for a week id.
 
         A week can have several order records (a generic state-only one plus a richer one with
         shipment tracking); prefer the one with concrete tracking/details via the same ranking
         used for the tracked-shipment sensor.
+
+        Pass the week's ``subscription_id`` to get that subscription's order. With only the
+        week id the answer is for the week ``get_week`` returns, the primary subscription's,
+        so the two lookups agree when two subscriptions share the week.
         """
-        candidates = [order for order in self.orders if order.week_id == week_id]
+        if subscription_id is None:
+            week = self._weeks_by_id.get(week_id)
+            subscription_id = week.subscription_id if week is not None else None
+        candidates = [
+            order
+            for order in self.orders
+            if same_box(order.week_id, order.subscription_id, week_id, subscription_id)
+        ]
         if not candidates:
             return None
         return max(candidates, key=_tracked_order_sort_key)
+
+    def _week_delivered_on(self, subscription_id: str | None, day: date) -> HelloFreshWeek | None:
+        """The week of ``subscription_id`` whose box is due on ``day``, or None.
+
+        The orders ledger names a charge's box by its delivery date only. A box moved for a
+        holiday is dated by its new day here but may keep its own ``deliveryDate`` in the
+        ledger, so that date is tried as well.
+        """
+        candidates = [
+            week
+            for week in self.weeks
+            if subscription_id is None
+            or week.subscription_id is None
+            or week.subscription_id == subscription_id
+        ]
+        for week in candidates:
+            if week.delivery_date == day:
+                return week
+        for week in candidates:
+            if parse_date(week.raw.get("deliveryDate")) == day:
+                return week
+        return None
+
+    def _collect_payment_problems(self, today: date) -> list[dict[str, Any]]:
+        """Build ``payment_problem_weeks`` from the weeks' flags and the ledger's failed charges.
+
+        A box both sources name is reported once, with the ledger's charge (it says what
+        failed and how much) and the more serious status. Boxes delivered longer ago than the
+        window are left out, so a charge that failed long ago does not keep the warning up.
+        """
+        earliest = today - timedelta(days=PAYMENT_PROBLEM_LOOKBACK_DAYS)
+        problems: dict[tuple[str | None, str], dict[str, Any]] = {}
+
+        for week in self.weeks:
+            # A week always has a date once it is in the window, so one without a date is not
+            # history; it is kept rather than dropped.
+            if not week.payment_failed or (
+                week.delivery_date is not None and week.delivery_date < earliest
+            ):
+                continue
+            order = self.get_order_for_week(week.week_id, week.subscription_id)
+            amount: float | None = None
+            currency: str | None = None
+            if order is not None:
+                if order.total_price is not None:
+                    amount, currency = order.total_price, order.currency
+                elif order.billed_total_price is not None:
+                    amount, currency = order.billed_total_price, order.billed_total_currency
+            problems[(week.subscription_id, week.week_id)] = {
+                "week_id": week.week_id,
+                "delivery_date": week.delivery_date.isoformat() if week.delivery_date else None,
+                "status": PAYMENT_PROBLEM_WEEK_FLAGGED,
+                "amount": amount,
+                "currency": currency if amount is not None else None,
+            }
+
+        for failure in self.payment_failures:
+            day = failure.get("delivery_date")
+            if not isinstance(day, date) or day < earliest:
+                continue
+            subscription_id = failure.get("subscription_id")
+            charged_week = self._week_delivered_on(subscription_id, day)
+            if charged_week is not None and charged_week.is_skipped:
+                # Skipped since the charge failed: no box is coming, so nothing is owed for it.
+                continue
+            if charged_week is not None:
+                key = (charged_week.subscription_id, charged_week.week_id)
+                week_id, delivery_date = charged_week.week_id, charged_week.delivery_date or day
+            else:
+                # A charge for a box outside the weeks read: named by the ISO week of its day,
+                # the best guess there is.
+                week_id = iso_week_label(None, day) or day.isoformat()
+                key, delivery_date = (subscription_id, week_id), day
+            amount = failure.get("amount")
+            entry = {
+                "week_id": week_id,
+                "delivery_date": delivery_date.isoformat(),
+                "status": failure.get("status"),
+                "amount": amount,
+                "currency": failure.get("currency") if amount is not None else None,
+            }
+            existing = problems.get(key)
+            if existing is not None:
+                entry["status"] = max(
+                    existing["status"],
+                    entry["status"],
+                    key=lambda status: _PAYMENT_PROBLEM_RANK.get(status, 0),
+                )
+                if entry["amount"] is None:
+                    entry["amount"], entry["currency"] = existing["amount"], existing["currency"]
+            problems[key] = entry
+
+        return sorted(
+            problems.values(),
+            key=lambda problem: (problem["delivery_date"] or "9999-12-31", problem["week_id"]),
+        )
 
     def reconcile_premature_deliveries(self) -> None:
         """Take "delivered" back from a box that has not arrived yet.
@@ -1935,7 +2175,7 @@ class HelloFreshAccountData:
         so one that never posts its last scan can't hold a box back for good.
         """
         now = datetime.now(UTC)
-        earliest = date.today() - timedelta(days=1)
+        earliest = local_today() - timedelta(days=1)
         for week in self.weeks:
             delivered_at = week.delivered_at
             if delivered_at is None and (week.status or "").strip().upper() != "DELIVERED":
@@ -1943,14 +2183,14 @@ class HelloFreshAccountData:
             orders = [
                 order
                 for order in self.orders
-                if order.week_id == week.week_id
-                and (
-                    order.subscription_id is None
-                    or week.subscription_id is None
-                    or order.subscription_id == week.subscription_id
+                if same_box(
+                    order.week_id, order.subscription_id, week.week_id, week.subscription_id
                 )
             ]
             tracked = max(orders, key=_tracked_order_sort_key, default=None)
+            # The carrier's word only: ``tracking_status`` comes from tracking data, never from
+            # the week's own lifecycle state (see ``extract_tracking_details``), so a week that
+            # reads delivered too early cannot confirm itself here.
             carrier = (tracked.tracking_status or "").strip().lower() if tracked else ""
             if carrier == "delivered":
                 continue
@@ -1959,12 +2199,7 @@ class HelloFreshAccountData:
                 and week.delivery_date is not None
                 and week.delivery_date >= earliest
             )
-            # A carrier timestamp without an offset is UTC.
-            arrives_later = (
-                delivered_at is not None
-                and (delivered_at if delivered_at.tzinfo else delivered_at.replace(tzinfo=UTC))
-                > now
-            )
+            arrives_later = delivered_at is not None and as_utc(delivered_at) > now
             if not (en_route or arrives_later):
                 continue
             progress = "PREPARING" if carrier == "pre_transit" else "ON_THE_WAY"
@@ -2006,42 +2241,50 @@ class HelloFreshAccountData:
             ):
                 continue
             self._weeks_by_id[week.week_id] = week
+        # An order is paired with its OWN subscription's week: by week id alone, the primary
+        # subscription skipping a week hid the second subscription's box for that week.
+        self._week_lookup = WeekLookup(self.weeks)
+
+        def _order_is_skipped(order: HelloFreshOrder) -> bool:
+            week = self.get_week(order.week_id, order.subscription_id)
+            return week is not None and week.is_skipped
+
         # Only non-skipped deliveries today or later are "upcoming". The deliveries endpoint
         # returns a wide window (≈12 weeks back to 6 weeks ahead) including weeks the customer
         # skipped, where no box ships — those are excluded so the count and next_order reflect
         # real upcoming deliveries. Without the date filter, next_order would resolve to the
         # oldest historical delivery instead of the next one. Skip state is read from the
         # week (its is_skipped is computed robustly) rather than the order status string.
-        today = date.today()
+        today = local_today()
         self._upcoming_orders = [
             order
             for order in self.orders
             if order.delivery_date is not None
             and order.delivery_date >= today
-            and not ((week := self._weeks_by_id.get(order.week_id)) is not None and week.is_skipped)
+            and not _order_is_skipped(order)
         ]
         self._next_order = self._upcoming_orders[0] if self._upcoming_orders else None
-        tracked_orders = [
-            order
-            for order in self.orders
-            if order.tracking_url or order.tracking_number or order.tracking_status
-        ]
+        # A tracked shipment has a tracking number or a link. An order with neither is every
+        # week HelloFresh has scheduled, and the furthest of those is not "the tracked order".
         self._tracked_order = max(
-            tracked_orders,
+            (order for order in self.orders if _has_concrete_tracking(order)),
             default=None,
             key=_tracked_order_sort_key,
         )
         self._weeks_needing_selection = [week for week in self.weeks if week.needs_selection]
         self._weeks_auto_picked = [week for week in self.weeks if week.auto_picked]
         self._skipped_weeks = [week for week in self.weeks if week.is_skipped]
+        # Deadlines carry their market's offset, so they are ordered as moments in time: as
+        # text, "23:00-08:00" sorted before the earlier "02:00+00:00" of the same day.
+        no_deadline = datetime.max.replace(tzinfo=UTC)
         self._next_selection_week = min(
             self._weeks_needing_selection,
             default=None,
             key=lambda week: (
-                week.selection_deadline.isoformat()
+                as_utc(week.selection_deadline)
                 if week.selection_deadline is not None
-                else "9999-12-31T23:59:59",
-                week.delivery_date.isoformat() if week.delivery_date is not None else "9999-12-31",
+                else no_deadline,
+                week.delivery_date or date.max,
                 week.week_id,
             ),
         )
@@ -2078,14 +2321,17 @@ class HelloFreshAccountData:
                 week.week_id,
             ),
         )
+        # Skipped weeks ship no box, so they are not deliveries here either (as above).
         current_iso = today.isocalendar()[:2]
         self._delivery_count_this_week = sum(
             1
             for order in self.orders
             if order.delivery_date is not None
             and order.delivery_date.isocalendar()[:2] == current_iso
+            and not _order_is_skipped(order)
         )
         self._current_public_menu = self.public_menu_weeks[0] if self.public_menu_weeks else None
+        self._payment_problem_weeks = self._collect_payment_problems(today)
 
         # The most recent DELIVERED box — its carrier arrival drives "Last delivery day" and
         # "Tracked shipment date".
@@ -2111,30 +2357,23 @@ class HelloFreshAccountData:
         # Monday placeholder — with the account week's real scheduled ``deliveryDate``, so the
         # ``delivery_date`` attribute on "Last delivery day" reports the day the box was
         # scheduled for rather than the start of its week.
+        delivered_weeks = WeekLookup(week for week in self.weeks if week.delivered_at is not None)
         for history_week in self.past_delivery_weeks:
             if history_week.delivered_at is not None:
                 continue
-            for account_week in self.weeks:
-                if (
-                    account_week.week_id == history_week.week_id
-                    and account_week.delivered_at is not None
-                    and (
-                        account_week.subscription_id is None
-                        or history_week.subscription_id is None
-                        or account_week.subscription_id == history_week.subscription_id
-                    )
-                ):
-                    history_week.delivered_at = account_week.delivered_at
-                    if account_week.delivery_date is not None:
-                        history_week.delivery_date = account_week.delivery_date
-                    break
+            account_week = delivered_weeks.find(history_week.week_id, history_week.subscription_id)
+            if account_week is None:
+                continue
+            history_week.delivered_at = account_week.delivered_at
+            if account_week.delivery_date is not None:
+                history_week.delivery_date = account_week.delivery_date
 
         def _delivered_key(week: HelloFreshWeek) -> datetime:
             # A carrier timestamp without an offset is UTC; normalise so aware and naive
             # values compare instead of raising.
             delivered_at = week.delivered_at
             assert delivered_at is not None
-            return delivered_at if delivered_at.tzinfo else delivered_at.replace(tzinfo=UTC)
+            return as_utc(delivered_at)
 
         self._last_delivery_week = max(
             (
@@ -2147,7 +2386,6 @@ class HelloFreshAccountData:
         )
         self._serialized_orders = None
         self._serialized_weeks = None
-        self._serialized_past_delivery_weeks = None
         self._serialized_weeks_needing_selection = None
         self._summarized_weeks_needing_selection = None
         self._serialized_public_menu_weeks = None

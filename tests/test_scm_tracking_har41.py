@@ -33,7 +33,7 @@ SCM_BOX = {
     "packing_date": None,
     "tracking_code": "HF00000000000005",
     "weight": 14,
-    "lane": "NJ_VEHO-SOMPA",
+    "lane": "ZZ_VEHO-ANYTN",
     "signed_by": "",
     "public_url": "https://track.shipveho.com/#/trackingId/HF00000000000005",
     "carrier_tracking_url": "https://track.shipveho.com/#/trackingId/HF00000000000005",

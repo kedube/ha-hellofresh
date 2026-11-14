@@ -11,15 +11,21 @@
  *
  *   t("menu.add")                        -> "Add"
  *   t("box.meals", { count: 3 })         -> "3 meals"   (a key with one/other forms is a plural,
- *                                                        chosen by `count` with the language's
- *                                                        own plural rules)
+ *                                                        chosen by `count` with the plural rules
+ *                                                        of the language its words are in: the
+ *                                                        user's, or English where Home Assistant
+ *                                                        filled the key in English)
  *   ht("hero.deadline", { when: html(`<strong>${esc(date)}</strong>`) })
  *                                        -> HTML: the text and every value escaped, except values
  *                                           wrapped in html(), which are markup the caller built
  *                                           (and escaped) itself.
  *
  * Once a card passes hass in (useHass), dates, times and numbers follow the Home Assistant
- * profile as well: its language, number format and 12/24-hour clock.
+ * profile as well: its language, number format and 12/24-hour clock. Home Assistant's own time
+ * zone (timeZone) is kept too, for the times the integration writes as its wall clock.
+ *
+ * This is the one module every other card module imports, so the HTML escape lives here (esc)
+ * and hellofresh-shared.js hands it on: one definition, no import cycle.
  */
 
 const I18N_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
@@ -34,11 +40,15 @@ let strings = EN;
 let wanted = null; // the language last asked for
 let pending = null; // its load, while one is in flight
 let profile = {}; // hass.locale
+let zone = null; // hass.config.time_zone
 const listeners = new Set();
 const warned = new Set();
 const pluralRules = new Map();
 
-function escapeHtml(value) {
+// Escape a value for interpolation into card HTML, as text or inside a double-quoted attribute.
+// Every payload-derived `${…}` goes through this: card markup is built as template strings, so an
+// unescaped recipe name is an injection.
+export function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
@@ -63,8 +73,7 @@ export function language() {
   return strings["meta.language"] || "en";
 }
 
-function pluralCategory(count) {
-  const lang = language();
+function pluralCategory(count, lang) {
   if (!pluralRules.has(lang)) {
     let rules;
     try {
@@ -77,11 +86,30 @@ function pluralCategory(count) {
   return pluralRules.get(lang).select(count);
 }
 
+// A count as a number: the number itself, or a numeric string ("3" from a data attribute or a
+// payload). null for anything else.
+function countOf(params) {
+  const raw = params ? params.count : undefined;
+  const count = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+  return typeof count === "number" && Number.isFinite(count) ? count : null;
+}
+
+// Whether a table's forms of a plural are the English ones. Home Assistant fills a key a language
+// lacks from English, and English words need English plural rules: French counts 0 as "one" and
+// Russian 21, which read "0 meal" and "21 meal".
+function isEnglish(table, key) {
+  if (table === EN) return true;
+  return ["one", "other"].every((form) => table[`${key}.${form}`] === EN[`${key}.${form}`]);
+}
+
 function template(key, params) {
   for (const table of strings === EN ? [EN] : [strings, EN]) {
     if (typeof table[key] === "string") return table[key];
-    if (params && typeof params.count === "number" && typeof table[`${key}.other`] === "string") {
-      const form = table[`${key}.${pluralCategory(params.count)}`];
+    if (typeof table[`${key}.other`] === "string") {
+      // A plural asked for without a usable count still reads as words ("meals"), not as its key.
+      const count = countOf(params);
+      if (count === null) return table[`${key}.other`];
+      const form = table[`${key}.${pluralCategory(count, isEnglish(table, key) ? "en" : language())}`];
       return typeof form === "string" ? form : table[`${key}.other`];
     }
   }
@@ -107,11 +135,12 @@ function render(key, params, forHtml) {
     .split(/(\{\w+\})/)
     .map((part) => {
       const name = /^\{(\w+)\}$/.exec(part);
-      if (!name || !params || !(name[1] in params)) return forHtml ? escapeHtml(part) : part;
+      if (!name || !params || !(name[1] in params)) return forHtml ? esc(part) : part;
       const value = params[name[1]];
       if (value instanceof Markup) return value.markup;
-      const shown = name[1] === "count" && typeof value === "number" ? formatCount(value) : String(value ?? "");
-      return forHtml ? escapeHtml(shown) : shown;
+      const count = name[1] === "count" ? countOf(params) : null;
+      const shown = count !== null ? formatCount(count) : String(value ?? "");
+      return forHtml ? esc(shown) : shown;
     })
     .join("");
 }
@@ -141,6 +170,7 @@ export function en(key) {
 // now; false while it loads, and onChange listeners hear when it lands.
 export function useHass(hass) {
   profile = (hass && hass.locale) || {};
+  zone = (hass && hass.config && hass.config.time_zone) || null;
   const lang = String(profile.language || (hass && hass.language) || "en");
   if (lang === wanted) return !pending;
   wanted = lang;
@@ -201,6 +231,12 @@ export function dateLocale() {
 
 export function timeLocale() {
   return profile.time_format === "system" ? undefined : dateLocale();
+}
+
+// Home Assistant's own time zone ("America/New_York"), or null until a card passes hass in. The
+// integration writes meal-plan times as this zone's wall clock, whatever zone the browser is in.
+export function timeZone() {
+  return zone;
 }
 
 // Home Assistant's 12/24-hour choice, as Intl options.

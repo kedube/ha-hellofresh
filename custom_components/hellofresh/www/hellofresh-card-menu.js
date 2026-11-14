@@ -25,15 +25,34 @@ const [L, UI] = await Promise.all([
   import(new URL(`./hellofresh-card-ui.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc, t, ht, html } = L;
-const { icon, pill } = UI;
-const strong = (text) => html(`<strong>${esc(text)}</strong>`);
+const { esc, t, ht } = L;
+const { icon, pill, strong } = UI;
 
 // Tiles rendered before a "Show more" button: a planning-catalog week carries ~350 meals, and
 // painting them all at once is what made the classic planner slow to open.
 const PAGE_SIZE = 100;
 
+// How long the box waits after an edit before asking HelloFresh for a price.
+const PREVIEW_DELAY_MS = 650;
+
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+// The main area of the card in the page, or null (a card not rendered yet, or a test's stand-in).
+const mainOf = (card) => (card.shadowRoot && card.shadowRoot.querySelector(".js-main")) || null;
+
+// A meal priced above (or below) the dish as written. HelloFresh gives the difference in cents,
+// in a display label, or both; L.fmtSurcharge takes the meal and prefers the cents.
+const hasSurcharge = (r) => Boolean(r.surcharge_label) || (r.surcharge_cents != null && Number(r.surcharge_cents) !== 0);
+
+// A draft's edits (what `pending` changed about `base`) put on top of a saved selection that
+// moved underneath it: whatever the user added or set to another quantity is kept as they set
+// it, whatever they removed stays out, and everything they left alone follows `saved`.
+function rebaseSelection(base, pending, saved) {
+  const out = new Map(saved);
+  for (const [key, qty] of pending) if (base.get(key) !== qty) out.set(key, qty);
+  for (const key of base.keys()) if (!pending.has(key)) out.delete(key);
+  return out;
+}
 
 // ---- the pending box -----------------------------------------------------------------------
 
@@ -42,6 +61,11 @@ export class BoxStore {
     this.card = card;
     this.meals = {}; // week_id -> Map(selKey -> servings)
     this.market = {}; // week_id -> Map(item_id -> quantity)
+    // The saved selection each draft was started from. A draft is a full snapshot (that is what
+    // the cart write takes), so when the saved box changes somewhere else in the meantime the
+    // draft no longer says what the user meant: see stale() and rebase().
+    this.mealsBase = {}; // week_id -> Map(selKey -> servings)
+    this.marketBase = {}; // week_id -> Map(item_id -> quantity)
     // What a successful save just wrote, per week, shown as the saved state until a fetch that
     // STARTED after the save lands. A fetch already in flight when the save finished carries the
     // old box; without this, its response would briefly show the pre-save selection.
@@ -49,9 +73,9 @@ export class BoxStore {
     this._savedMeals = new WeakMap();
     this._savedMarket = new WeakMap();
     this._deduped = new WeakMap();
-    this._preview = new Map();
-    this._previewBroken = new Set();
-    this._previewTimer = null;
+    this._preview = new Map(); // selection key -> {status: "loading" | "ok" | "error", data}
+    this._previewTimers = new Map(); // week_id -> the debounce timer of its next price request
+    this._previewEpoch = 0; // bumped by every refresh: a price asked before it is not kept
     this.downgradedWeek = null;
   }
 
@@ -119,11 +143,51 @@ export class BoxStore {
     return !this.card.busy && L.isWeekEditable(week);
   }
 
+  // The saved box changed (another device, hellofresh.com, HelloFresh itself) after this week's
+  // draft was started. Saving the draft as it is would put the old box back over that change,
+  // so nothing is saved until the user picks: rebase() ("Keep mine") or discard() ("Use saved").
+  mealsStale(week) {
+    const base = this.mealsBase[week.week_id];
+    return Boolean(this.meals[week.week_id] && base) && !L.selectionsEqual(base, this.savedMeals(week));
+  }
+
+  marketStale(week) {
+    const base = this.marketBase[week.week_id];
+    return Boolean(this.market[week.week_id] && base) && !L.selectionsEqual(base, this.savedMarket(week));
+  }
+
+  stale(week) {
+    return this.dirty(week) && (this.mealsStale(week) || this.marketStale(week));
+  }
+
+  // "Keep mine": the user's own adds, removals and quantity changes, re-applied to the box as it
+  // is saved now. The draft that comes out is an ordinary one, to review and save as usual.
+  rebase(week) {
+    for (const [store, bases, saved] of [
+      [this.meals, this.mealsBase, this.savedMeals(week)],
+      [this.market, this.marketBase, this.savedMarket(week)],
+    ]) {
+      const pending = store[week.week_id];
+      if (!pending) continue;
+      const rebased = rebaseSelection(bases[week.week_id] || saved, pending, saved);
+      if (L.selectionsEqual(rebased, saved)) {
+        delete store[week.week_id];
+        delete bases[week.week_id];
+      } else {
+        store[week.week_id] = rebased;
+        bases[week.week_id] = new Map(saved);
+      }
+    }
+    this.schedulePreview(week);
+  }
+
   _pendingMeals(week) {
     let pending = this.meals[week.week_id];
     if (!pending) {
-      pending = new Map(this.savedMeals(week));
+      const saved = this.savedMeals(week);
+      pending = new Map(saved);
       this.meals[week.week_id] = pending;
+      this.mealsBase[week.week_id] = new Map(saved);
     }
     return pending;
   }
@@ -131,8 +195,10 @@ export class BoxStore {
   _pendingMarket(week) {
     let pending = this.market[week.week_id];
     if (!pending) {
-      pending = new Map(this.savedMarket(week));
+      const saved = this.savedMarket(week);
+      pending = new Map(saved);
       this.market[week.week_id] = pending;
+      this.marketBase[week.week_id] = new Map(saved);
     }
     return pending;
   }
@@ -192,6 +258,10 @@ export class BoxStore {
   discard(week) {
     delete this.meals[week.week_id];
     delete this.market[week.week_id];
+    delete this.mealsBase[week.week_id];
+    delete this.marketBase[week.week_id];
+    // A price asked for the dropped draft would otherwise still go out.
+    this._cancelPreview(week.week_id);
   }
 
   clearDowngrade() {
@@ -202,27 +272,43 @@ export class BoxStore {
   // and edits that now match what is saved. Unlike the classic cards, a background refresh does
   // NOT throw away a half-built box. `fetchSeq` is the landing fetch's start number: a committed
   // save gives way to the server only once a fetch begun after it arrives.
+  //
+  // A draft whose saved box moved is kept as it is and reported by stale(); it is never rebased
+  // or dropped behind the user's back.
   reconcile(weeks, fetchSeq = Infinity) {
     for (const [weekId, entry] of Object.entries(this.committed)) {
       if (fetchSeq > entry.seq) delete this.committed[weekId];
     }
     const byId = new Map((weeks || []).map((w) => [w.week_id, w]));
-    for (const [store, validKeys, saved] of [
-      [this.meals, (w) => new Set((w.recipes || []).map((r) => L.selKey(r))), (w) => this.savedMeals(w)],
-      [this.market, (w) => new Set((w.market_items || []).map((i) => i.item_id)), (w) => this.savedMarket(w)],
+    for (const [store, bases, validKeys, saved] of [
+      [this.meals, this.mealsBase, (w) => new Set((w.recipes || []).map((r) => L.selKey(r))), (w) => this.savedMeals(w)],
+      [this.market, this.marketBase, (w) => new Set((w.market_items || []).map((i) => i.item_id)), (w) => this.savedMarket(w)],
     ]) {
       for (const weekId of Object.keys(store)) {
         const week = byId.get(weekId);
         if (!week || !L.isWeekEditable(week)) {
           delete store[weekId];
+          delete bases[weekId];
           continue;
         }
         const keys = validKeys(week);
         for (const key of [...store[weekId].keys()]) if (!keys.has(key)) store[weekId].delete(key);
-        if (L.selectionsEqual(store[weekId], saved(week))) delete store[weekId];
+        if (L.selectionsEqual(store[weekId], saved(week))) {
+          delete store[weekId];
+          delete bases[weekId];
+        }
       }
     }
-    this._preview.clear();
+    // Prices are only good for the data they were asked against. A selection that could not be
+    // priced stays marked so (the refresh is no reason to ask again; the next edit is), and
+    // every box still being edited gets a fresh price.
+    this._previewEpoch += 1;
+    for (const [key, entry] of [...this._preview]) if (entry.status !== "error") this._preview.delete(key);
+    for (const weekId of [...this._previewTimers.keys()]) if (!byId.has(weekId)) this._cancelPreview(weekId);
+    for (const week of weeks || []) this.schedulePreview(week, { retry: false });
+    // An open review was drawn against the box as it was; show it against the refreshed one
+    // (a draft gone stale must not keep offering its Save).
+    if (this.card.sheetKind === "review") this.card.renderSheet();
   }
 
   // ---- live price estimate (hellofresh.preview_meal_price) ------------------------------------
@@ -232,39 +318,92 @@ export class BoxStore {
     return `${week.week_id}|${JSON.stringify(entries)}`;
   }
 
-  preview(week) {
-    if (!this.mealsDirty(week)) return null;
-    return this._preview.get(this._previewKey(week)) || null;
+  // Whether HelloFresh can be asked to price this week's pending meals at all: an open week,
+  // meals changed, at least the smallest box, and a draft that is the user's to save.
+  _previewable(week) {
+    return (
+      this.mealsDirty(week) &&
+      L.isWeekEditable(week) &&
+      !this.stale(week) &&
+      L.mealsCount(this.displayMeals(week)) >= L.MIN_MEALS &&
+      L.buildMealWrite(week, this.displayMeals(week)).recipe_ids.length > 0
+    );
   }
 
-  // Price the pending meals once the user pauses (debounced, cached per selection). A week whose
-  // preview fails once is not asked again — the estimate is a nicety, never worth an error loop.
-  schedulePreview(week) {
-    clearTimeout(this._previewTimer);
-    if (!this.mealsDirty(week) || !L.isWeekEditable(week) || this._previewBroken.has(week.week_id)) return;
-    if (L.mealsCount(this.displayMeals(week)) < L.MIN_MEALS) return;
+  // Where the price of the pending meals stands: "ok" (with `data`), "loading", "pending" (a
+  // request is about to go out), or "unavailable" when there is none and none is coming — the
+  // box is below the minimum, waiting on a stale-draft choice, or HelloFresh failed to price
+  // this very selection.
+  previewState(week) {
+    if (!this.mealsDirty(week)) return { status: "none" };
+    const cached = this._preview.get(this._previewKey(week));
+    if (cached) return cached.status === "error" ? { status: "unavailable" } : cached;
+    return { status: this._previewTimers.has(week.week_id) ? "pending" : "unavailable" };
+  }
+
+  _cancelPreview(weekId) {
+    clearTimeout(this._previewTimers.get(weekId));
+    this._previewTimers.delete(weekId);
+  }
+
+  // Price the pending meals once the user pauses (debounced, cached per selection). A selection
+  // HelloFresh failed to price is asked about again only when the user does something (`retry`:
+  // an edit, opening the review), never by a background refresh — so one failure neither leaves
+  // the week without prices nor turns into an error loop.
+  schedulePreview(week, { retry = true } = {}) {
+    this._cancelPreview(week.week_id);
+    if (!this._previewable(week)) return;
+    const key = this._previewKey(week);
+    const cached = this._preview.get(key);
+    if (cached && !(retry && cached.status === "error")) return;
+    this._preview.delete(key);
+    const weekId = week.week_id;
+    this._previewTimers.set(
+      weekId,
+      setTimeout(() => {
+        this._previewTimers.delete(weekId);
+        this._fetchPreview(weekId);
+      }, PREVIEW_DELAY_MS)
+    );
+  }
+
+  // The selection is read when the request goes out, and its key with it: by then the draft can
+  // have been edited further or discarded since the timer was set, and a price filed under
+  // another selection's key would be shown for that other selection.
+  async _fetchPreview(weekId) {
+    const card = this.card;
+    const week = card.weekById(weekId);
+    if (!week || !this._previewable(week)) {
+      card.renderBoxBar();
+      return;
+    }
     const key = this._previewKey(week);
     if (this._preview.has(key)) return;
-    this._previewTimer = setTimeout(() => this._fetchPreview(week, key), 650);
-  }
-
-  async _fetchPreview(week, key) {
     const write = L.buildMealWrite(week, this.displayMeals(week));
-    if (!write.recipe_ids.length) return;
-    this._preview.set(key, { status: "loading" });
-    this.card.renderBoxBar();
+    const epoch = this._previewEpoch;
+    const marker = { status: "loading" };
+    this._preview.set(key, marker);
+    card.renderBoxBar();
+    let entry;
     try {
-      const data = { week_id: week.week_id, recipe_ids: write.recipe_ids };
+      const data = { week_id: weekId, recipe_ids: write.recipe_ids };
       if (Object.keys(write.quantities).length) data.quantities = write.quantities;
-      this._preview.set(key, { status: "ok", data: await this.card.call("preview_meal_price", data) });
+      entry = { status: "ok", data: await card.call("preview_meal_price", data) };
     } catch (err) {
-      this._preview.set(key, { status: "error" });
-      this._previewBroken.add(week.week_id);
+      entry = { status: "error" };
       // eslint-disable-next-line no-console
       console.warn("hellofresh: price preview unavailable", err);
     }
-    this.card.renderBoxBar();
-    if (this.card.sheetKind === "review") this.card.renderSheet();
+    const current = card.weekById(weekId);
+    if (epoch !== this._previewEpoch || !current || this._previewKey(current) !== key) {
+      // A refresh landed or the selection moved on while HelloFresh was pricing: this answer
+      // is for a box nobody is looking at any more. Whatever replaced it scheduled its own.
+      if (this._preview.get(key) === marker) this._preview.delete(key);
+    } else {
+      this._preview.set(key, entry);
+    }
+    card.renderBoxBar();
+    if (card.sheetKind === "review") card.renderSheet();
   }
 
   // ---- save -----------------------------------------------------------------------------------
@@ -275,6 +414,11 @@ export class BoxStore {
     if (!L.isWeekEditable(week)) {
       // The deadline passed while the box was being edited; HelloFresh would reject the write.
       card.toast(t("box.closed_toast"), true);
+      return;
+    }
+    if (this.stale(week)) {
+      // Never the stale snapshot: it would undo whatever changed the saved box.
+      card.toast(t("box.changed_toast", { keep_mine: t("box.keep_mine"), use_saved: t("box.use_saved") }), true);
       return;
     }
     const mealsDirty = this.mealsDirty(week);
@@ -298,6 +442,8 @@ export class BoxStore {
       service = "select_market_items";
       data = { week_id: week.week_id, quantities: L.buildMarketWrite(this.displayMarket(week)) };
     }
+    // The box as it was saved before this save, for its Undo.
+    const before = { meals: new Map(this.savedMeals(week)), market: new Map(this.savedMarket(week)) };
     if (card.sheetKind === "review") card.closeSheet();
     card.setSaving(t("box.saving"));
     card.renderView();
@@ -312,11 +458,7 @@ export class BoxStore {
       failed = (err && err.message) || String(err);
     }
     if (!failed) {
-      this.committed[week.week_id] = {
-        meals: new Map(this.displayMeals(week)),
-        market: new Map(this.displayMarket(week)),
-        seq: card.fetchSeq,
-      };
+      this._commit(week.week_id, this.displayMeals(week), this.displayMarket(week));
       this.discard(week);
       card.broadcastDataChanged();
     }
@@ -326,11 +468,53 @@ export class BoxStore {
     else if (downgraded) {
       this.downgradedWeek = week.week_id;
       card.renderView();
-    } else card.toast(t("box.saved"));
+    } else {
+      const write = L.boxUndoWrite(week, before, { meals: mealsDirty, market: marketDirty });
+      const weekId = week.week_id;
+      card.toast(t("box.saved"), false, {
+        undo: write && card.weekUndo(weekId, () => this.restore(weekId, write, before)),
+      });
+    }
+  }
+
+  // What a save (or an undo) just wrote, shown as the saved box until a fetch that STARTED after
+  // it lands (see `committed`).
+  _commit(weekId, meals, market) {
+    this.committed[weekId] = { meals: new Map(meals), market: new Map(market), seq: this.card.fetchSeq };
+  }
+
+  // Undo a save: write the box back as it was saved before it (`write` from L.boxUndoWrite), in
+  // the card's saving state like the save itself. A draft started since is left as it is: the
+  // saved box moving under it makes it a stale draft, which asks before it is saved.
+  async restore(weekId, write, before) {
+    const card = this.card;
+    if (card.busy || !write) return;
+    card.setSaving(t("undo.undoing"));
+    card.renderView();
+    await nextFrame();
+    let failed = null;
+    try {
+      await card.call(write.service, write.data);
+    } catch (err) {
+      failed = (err && err.message) || String(err);
+    }
+    if (!failed) {
+      this._commit(weekId, before.meals, before.market);
+      card.broadcastDataChanged({ weekId });
+    }
+    card.setSaving(null);
+    await card.reloadWeeks({ weekId });
+    card.undoResult(failed);
   }
 }
 
 // ---- week strip & header (shared by Menu and Market) --------------------------------------
+
+// The amber dot on a week chip with unsaved changes. Colour alone says nothing to a screen
+// reader, so it carries its meaning as an image label too.
+function dirtyDot() {
+  return `<span class="hf-wcdirty" role="img" aria-label="${ht("box.unsaved_changes")}" title="${ht("box.unsaved_changes")}"></span>`;
+}
 
 function renderWeekStrip(card, selected) {
   const weeks = card.weeks;
@@ -346,7 +530,7 @@ function renderWeekStrip(card, selected) {
           data-week-id="${esc(w.week_id)}" aria-pressed="${w === selected}"
           title="${esc(`${w.display_name || w.week_id} · ${L.stateLabel(w, state)}`)}">
           ${isNext ? `<span class="hf-wcnow">${ht("week.next")}</span>` : ""}
-          ${dirty ? `<span class="hf-wcdirty" title="${ht("box.unsaved_changes")}"></span>` : ""}
+          ${dirty ? dirtyDot() : ""}
           <span class="hf-wcday">${esc(L.fmtWeekday(w.delivery_date))}</span>
           <span class="hf-wcdate">${esc(L.fmtDateShort(w.delivery_date))}</span>
           <span class="hf-wcstate"><span class="hf-wcdot ${state}"></span><span class="hf-wclabel">${esc(label)}</span></span>
@@ -379,21 +563,10 @@ function renderWeekHead(card, week, kind) {
   if (benefit) pills.push(pill(benefit.label, "ok", "mdi:ticket-percent-outline", benefit.voucher_code ? t("voucher.code", { code: benefit.voucher_code }) : ""));
   const sub = [rel, week.display_name, week.slot_label].filter(Boolean).map(esc).join(" · ");
 
-  const deadlineLine =
-    editable && deadline
-      ? `<div class="hf-weekdeadline${L.deadlineTone(deadline) === "urgent" ? " urgent" : ""}">${icon("mdi:timer-outline")}${ht(
-          "week.make_changes_by",
-          { date: strong(L.fmtDateTime(deadline)) }
-        )} · ${UI.countdownHtml(deadline)}</div>`
-      : "";
+  const deadlineLine = editable && deadline ? UI.deadlineLine(deadline) : "";
+  const people = kind === "menu" ? renderPeopleLine(card, week) : "";
   const actions = [];
-  const pantryId = card.pantryEntityFor(week);
-  if (pantryId && kind === "menu") {
-    const s = card.entityState(pantryId);
-    const count = s && Number(s.state);
-    actions.push(`<button class="hf-btn sm" data-action="pantry" data-entity="${esc(pantryId)}">
-      ${icon("mdi:basket-outline")}${ht("week.pantry")}${Number.isFinite(count) && count > 0 ? ` · ${count}` : ""}</button>`);
-  }
+  if (kind === "menu") actions.push(UI.pantryButton(card, week, { small: true }));
   if (L.canReschedule(week)) {
     actions.push(`<button class="hf-btn sm" data-action="reschedule" ${card.busy ? "disabled" : ""}>
       ${icon("mdi:calendar-edit")}${ht("week.change_day")}</button>`);
@@ -407,10 +580,158 @@ function renderWeekHead(card, week, kind) {
       <div class="hf-weektitle">
         <div class="hf-weekdate">${esc(L.fmtLongDate(week.delivery_date))}</div>
         <div class="hf-weekpills">${pills.join("")}${sub ? `<span class="hf-weeksub">${sub}</span>` : ""}</div>
-        ${deadlineLine}
+        ${deadlineLine}${people}
       </div>
       <div class="hf-actions">${actions.join("")}</div>
     </div>`;
+}
+
+// "For 2 people · Change": how many people the week's box is for (its own count, else the
+// plan's), with the way to change that for this week alone, while the box can still change.
+function renderPeopleLine(card, week) {
+  if (!L.isWeekEditable(week)) return "";
+  const people = L.weekServings(week, card.summary);
+  if (!people) return "";
+  return `<div class="hf-weekpeople">${icon("mdi:account-multiple-outline")}<span>${ht("servings.for", {
+    people: t("card.people", { count: people }),
+  })}</span><button class="hf-link" data-action="servings" data-focus-key="servings-change"
+      aria-label="${ht("servings.change_aria")}" ${card.busy ? "disabled" : ""}>${ht("servings.change")}</button></div>`;
+}
+
+// ---- one week's number of people ----------------------------------------------------------
+//
+// hellofresh.change_week_servings changes the people for ONE week's box (the plan, and every
+// other box, stay as they are). The sheet lists the box's sizes from get_plan_options with their
+// prices; picking one asks first, then writes, re-reads that week and offers Undo.
+
+// The plan's currency, which the plan options' prices are in (they carry none of their own).
+function planCurrency(card) {
+  return (
+    (card.account && card.account.selected_plan_total_price_currency) ||
+    (card.summary && card.summary.selected_plan_total_price_currency) ||
+    null
+  );
+}
+
+export function openServings(card, week) {
+  if (!week || !L.isWeekEditable(week)) return;
+  const weekId = week.week_id;
+  const current = () => card.weekById(weekId) || week;
+  card.openSheet({
+    kind: "servings",
+    narrow: true,
+    label: t("servings.title"),
+    render: () => renderServingsSheet(card, current()),
+    onClick: (_ev, el) => {
+      const action = el && el.getAttribute("data-action");
+      if (action === "servings-retry") card.loadPlanOptions();
+      else if (action === "servings-pick") confirmServings(card, current(), Number(el.getAttribute("data-servings")));
+    },
+  });
+  card.loadPlanOptions();
+}
+
+function renderServingsSheet(card, week) {
+  const head = UI.sheetHead(t("servings.title"), t("servings.only_this_box", { date: L.fmtLongDate(week.delivery_date) }));
+  const state = card.planOptions;
+  let body;
+  if (!state || state.status === "loading") {
+    body = `<div class="hf-empty">${ht("servings.loading")}</div>`;
+  } else if (state.status === "failed") {
+    body = `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("servings.load_failed", { error: state.error })}
+        <div class="hf-actions" style="justify-content:center;margin-top:12px">
+        <button class="hf-btn" data-action="servings-retry" data-focus-key="servings-retry">${ht("common.retry")}</button></div></div>`;
+  } else {
+    const choices = L.servingsChoices(week, state.options, card.summary);
+    const currency = planCurrency(card);
+    body = choices.some((c) => !c.current)
+      ? choices
+          .map((c) => {
+            const people = t("card.people", { count: c.servings });
+            const side = c.current
+              ? pill(t("reschedule.current"), "ok")
+              : c.price !== null
+                ? `<span class="hf-muted hf-small">${esc(L.fmtPrice(c.price, currency))}</span>`
+                : "";
+            return `<button class="hf-controlrow hf-btn ghost hf-choice" data-action="servings-pick" data-servings="${c.servings}"
+                data-focus-key="servings:${c.servings}" ${c.current || card.busy ? "disabled" : ""}>
+                <span class="hf-choicetext"><span class="hf-controllabel">${esc(people)}</span>
+                  <span class="hf-controlhint">${esc(t("card.plan_size", { count: c.meals, people }))}</span></span>
+                <span>${side}</span></button>`;
+          })
+          .join("")
+      : `<div class="hf-empty">${ht("servings.none")}</div>`;
+  }
+  return `${head}<div class="hf-sheetbody" style="gap:4px">${body}</div>`;
+}
+
+// "Change this box to 4 people?": for this week only, at the price HelloFresh lists for it.
+function confirmServings(card, week, servings) {
+  const state = card.planOptions;
+  const choice =
+    state && state.status === "ok" ? L.servingsChoices(week, state.options, card.summary).find((c) => c.servings === servings) : null;
+  if (!choice || choice.current) return;
+  const weekId = week.week_id;
+  const people = t("card.people", { count: servings });
+  const date = L.fmtLongDate(week.delivery_date);
+  const price =
+    choice.price !== null
+      ? ` ${ht("servings.confirm_price", {
+          size: t("card.plan_size", { count: choice.meals, people }),
+          price: strong(L.fmtPrice(choice.price, planCurrency(card))),
+        })}`
+      : "";
+  card.openSheet({
+    kind: "confirm",
+    narrow: true,
+    label: t("servings.confirm_title", { people }),
+    render: () => `
+      ${UI.sheetHead(t("servings.confirm_title", { people }), t("servings.only_this_box", { date }))}
+      <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">${ht("servings.confirm_body", { date: strong(date) })}${price}</p></div>
+      <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>${ht("common.cancel")}</button>
+        <button class="hf-btn primary" data-action="confirm-servings" ${card.busy ? "disabled" : ""}>${ht("servings.confirm")}</button></div>`,
+    onClick: (_ev, el) => {
+      if (!el || el.getAttribute("data-action") !== "confirm-servings") return;
+      card.closeSheet();
+      changeServings(card, card.weekById(weekId) || week, servings);
+    },
+  });
+}
+
+// Write one week's number of people, in the card's saving state, then re-read that week. Its
+// toast offers Undo, which writes the old number back (`undoing`: that undo itself).
+export async function changeServings(card, week, servings, { undoing = false } = {}) {
+  if (card.busy || !week) return;
+  if (!undoing && !L.isWeekEditable(week)) {
+    // The deadline went by while the sheet was open: say why rather than send HelloFresh a
+    // change it will refuse. (An undo is checked against the deadline when it is pressed.)
+    card.renderView();
+    card.toast(t("week.skip_closed"), true);
+    return;
+  }
+  const weekId = week.week_id;
+  const before = L.weekServings(week, card.summary);
+  card.setSaving(t(undoing ? "undo.undoing" : "servings.saving"));
+  card.renderView();
+  let failed = null;
+  try {
+    await card.call("change_week_servings", { week_id: weekId, servings });
+  } catch (err) {
+    // HelloFresh may not offer this at all; its own words say so.
+    failed = (err && err.message) || String(err);
+  }
+  card.setSaving(null);
+  if (!failed) card.broadcastDataChanged({ weekId });
+  await card.reloadWeeks({ weekId });
+  if (undoing) card.undoResult(failed);
+  else if (failed) card.toast(t("servings.failed", { error: failed }), true);
+  else {
+    const undo =
+      before && before !== servings
+        ? card.weekUndo(weekId, () => changeServings(card, card.weekById(weekId) || week, before, { undoing: true }))
+        : null;
+    card.toast(t("servings.done", { people: t("card.people", { count: servings }) }), false, { undo });
+  }
 }
 
 // Notices and delivery detail between the header and the grid.
@@ -436,6 +757,7 @@ function renderWeekNotices(card, week, kind, view) {
     out.push(`<div class="hf-notice tone-muted">${icon("mdi:lock-outline")}
       <div class="hf-noticebody">${ht("week.closed")}</div></div>`);
   }
+  out.push(UI.revisedNotice(week));
   const history = L.isHistoryWeek(week, card.menuGraceWeeks());
   if (L.trackingStep(week) >= 0 && !history) {
     const total = L.boxTotal(week, card.account);
@@ -455,8 +777,8 @@ function renderWeekNotices(card, week, kind, view) {
 // The Meals | Extras switch at the start of each week view's toolbar.
 function renderKindSwitch(card, week, kind) {
   if (!card.hasView("menu") || !card.hasView("market")) return "";
-  const meals = card.box.displayMeals(week).size;
-  const extras = card.box.displayMarket(week).size;
+  const meals = L.mealsCount(card.box.displayMeals(week));
+  const extras = UI.extrasCount(card.box.displayMarket(week));
   const btn = (key, label, iconName, count) =>
     `<button data-action="goto-kind" data-view="${key}" aria-pressed="${kind === key}">${icon(iconName)}${label}${
       count ? ` <span class="hf-muted">${count}</span>` : ""
@@ -469,12 +791,51 @@ function renderKindSwitch(card, week, kind) {
   )}</div>`;
 }
 
-function searchBox(key, value, placeholder) {
-  return `<label class="hf-search"><span class="sr-only">${esc(placeholder)}</span>${icon("mdi:magnify")}
-      <input type="search" data-focus-key="${key}" data-input="${key}" value="${esc(value)}"
-        placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off">
-      ${value ? `<button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="${ht("common.clear_search")}">${icon("mdi:close")}</button>` : ""}
-    </label>`;
+// After an edit that left the rest of the view standing: bring the few things outside the grid
+// that count the box up to date — the week chip's unsaved dot, the Meals | Extras switch and
+// the box bar.
+function patchBoxChrome(card, week, kind) {
+  const root = mainOf(card);
+  if (root) {
+    const chip = root.querySelector(`.hf-weekchip[data-week-id="${CSS.escape(week.week_id)}"]`);
+    if (chip) {
+      const dot = chip.querySelector(".hf-wcdirty");
+      const dirty = card.box.dirty(week);
+      if (dirty && !dot) chip.insertAdjacentHTML("afterbegin", dirtyDot());
+      else if (!dirty && dot) dot.remove();
+    }
+    const segment = root.querySelector(".hf-toolbar .hf-segment");
+    if (segment) UI.replaceNode(segment, renderKindSwitch(card, week, kind));
+  }
+  card.renderBoxBar();
+}
+
+// Redraw only a week view's results (the grid and what is said above it), leaving the toolbar
+// — and with it the search field the user may be typing in — in the page. False when the view
+// isn't on screen in that shape, and the caller should render it whole.
+function redrawResults(card, markup) {
+  const root = mainOf(card);
+  const host = root && root.querySelector(".js-results");
+  if (!host) return false;
+  host.innerHTML = markup;
+  return true;
+}
+
+// The stepper or Add button a quantity change came from, so the keyboard can be put back on it
+// (or on what took its place) once its tile has been redrawn. Null for a tap or click that
+// left focus elsewhere.
+function focusedControl(card, el) {
+  const active = card.shadowRoot && card.shadowRoot.activeElement;
+  return active && el && active === el ? el.getAttribute("data-focus-key") : null;
+}
+
+// After a quantity change: focus the same control, else its neighbours ("+ Add" becomes the
+// stepper's +, the last serving's − becomes "+ Add").
+function refocusControl(card, focusKey) {
+  if (!focusKey) return;
+  const base = focusKey.slice(0, focusKey.lastIndexOf(":"));
+  const order = focusKey.endsWith(":dec") ? ["dec", "add", "inc"] : ["inc", "dec", "add"];
+  UI.focusKeyed(mainOf(card), [focusKey, ...order.map((side) => `${base}:${side}`)]);
 }
 
 // Actions both week views handle identically. Returns true when handled.
@@ -490,10 +851,20 @@ function handleWeekAction(card, view, week, action, el) {
       card.navigate(el.getAttribute("data-view"));
       return true;
     case "skip":
+      if (!L.canSkip(week)) {
+        // The deadline went by while the button was on screen: take it away and say why,
+        // rather than send HelloFresh a change it will refuse.
+        card.renderView();
+        card.toast(t("week.skip_closed"), true);
+        return true;
+      }
       card.confirmSkip(week);
       return true;
     case "reschedule":
       card.openReschedule(week);
+      return true;
+    case "servings":
+      openServings(card, week);
       return true;
     case "pantry":
       card.openPantry(el.getAttribute("data-entity"), week);
@@ -648,29 +1019,41 @@ export class MealsView {
 
   // HelloFresh's own filter service answers cuisine / dish type / ingredients to avoid (menu
   // recipes carry neither allergen data nor those slugs), and places the meals the menu leaves
-  // without a protein for the protein chips. Cached per week + query; while a lookup runs the
-  // grid stays as it is, and a failure falls back to the client-side filters.
+  // without a protein for the protein chips. Cached per week + query.
+  //
+  // The answer is one of four things, and "no filter" must never be confused with "couldn't
+  // find out": {state: "none"} (nothing to ask), "pending" (asked, not answered), "failed"
+  // (kept until Retry or the next refresh, so a broken service isn't hammered) or "ok" with the
+  // matching `ids`.
   _lookup(week, filters) {
-    if (!Object.keys(filters).length) return null;
+    if (!Object.keys(filters).length) return { state: "none", ids: null };
     const key = L.serverFilterKey(week.week_id, filters);
-    if (this._serverCache.has(key)) return this._serverCache.get(key);
+    const cached = this._serverCache.get(key);
+    if (cached) return cached;
     if (!this._serverPending.has(key)) this._fetchServerIds(week.week_id, filters, key);
-    return null;
+    return { state: "pending", ids: null };
   }
 
   async _fetchServerIds(weekId, filters, key) {
     this._serverPending.add(key);
+    // A refresh replaces the cache while this is on its way; the answer belongs to the old one.
+    const cache = this._serverCache;
     try {
       const response = await this.card.call("get_menu_courses", { week_id: weekId, filters });
-      this._serverCache.set(key, new Set((response.recipe_ids || []).map((id) => String(id).split("-")[0])));
+      cache.set(key, { state: "ok", ids: new Set((response.recipe_ids || []).map((id) => String(id).split("-")[0])) });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("hellofresh: menu filter lookup failed; filtering on the menu data alone", err);
-      this._serverCache.set(key, null);
+      console.warn("hellofresh: menu filter lookup failed", err);
+      cache.set(key, { state: "failed", ids: null });
     } finally {
       this._serverPending.delete(key);
       if (this.card.view === "menu") this.card.renderView();
     }
+  }
+
+  // "Retry" on a failed lookup: forget the failures, and the next render asks again.
+  _retryLookups() {
+    for (const [key, entry] of [...this._serverCache]) if (entry.state === "failed") this._serverCache.delete(key);
   }
 
   // ---- render ------------------------------------------------------------------------------
@@ -693,16 +1076,67 @@ export class MealsView {
 
   afterRender(root, context) {
     UI.syncStrip(root, this, this.card.selectedWeek(), context);
+    UI.watchSkipCutoff(this.card, this);
   }
 
-  _renderBody(week) {
+  // What the grid shows for a week under the current search and filters, and why. Also
+  // refreshes the lookups the click handlers use (`_rendered`, `_units`).
+  _model(week) {
     const card = this.card;
     const box = card.box;
     const history = L.isHistoryWeek(week, card.menuGraceWeeks());
     const { recipes } = box.deduped(week);
     this._rendered = new Map(recipes.map((r) => [String(L.selKey(r)), r]));
     this._units = new Map();
-    if (!recipes.length) {
+    const selection = box.displayMeals(week);
+    const sel = (r) => L.tileSelected(selection, r);
+    const f = this.f;
+    const applyFilters = !history && !f.selectedOnly;
+    const sectionIds = applyFilters ? L.menuSectionIds(week, f.section) : null;
+    const serverFilters = applyFilters ? L.activeServerFilters(week, f.server) : {};
+    const server = this._lookup(week, serverFilters);
+    const protein = this._lookup(week, applyFilters ? L.proteinServerFilters(week, f.protein) : {});
+    const unanswered = (lookup) => lookup.state === "pending" || lookup.state === "failed";
+    // "Ingredients to avoid" has nothing in the menu data to fall back on. Until HelloFresh has
+    // answered, showing the menu unfiltered would put the very meals the user asked to avoid in
+    // front of them with the filter looking active — so only what is already in the box shows.
+    const failClosed = unanswered(server) && Boolean(serverFilters["exclude-allergens"]);
+    const visible = L.menuTiles(recipes, {
+      sel,
+      selectedOnly: f.selectedOnly && !history,
+      applyFilters,
+      protein: f.protein,
+      proteinIds: protein.ids,
+      diet: f.diet,
+      time: f.time,
+      highlight: f.highlight,
+      sectionIds,
+      serverIds: failClosed ? new Set() : server.ids,
+      query: this.query,
+    });
+    for (const unit of visible) this._units.set(String(L.selKey(unit.recipe)), unit);
+    return {
+      recipes,
+      history,
+      selection,
+      sel,
+      applyFilters,
+      visible,
+      total: L.menuTiles(recipes, { sel }).length, // the grid before any narrowing
+      failClosed,
+      // "pending" | "failed" | "": how the lookups the grid depends on stand.
+      lookups: [server, protein].some((l) => l.state === "failed")
+        ? "failed"
+        : [server, protein].some((l) => l.state === "pending")
+          ? "pending"
+          : "",
+    };
+  }
+
+  _renderBody(week) {
+    const card = this.card;
+    const model = this._model(week);
+    if (!model.recipes.length) {
       const message = L.isSkipped(week)
         ? ht("menu.no_meals_skipped")
         : L.isPastWeek(week)
@@ -710,40 +1144,18 @@ export class MealsView {
           : ht("menu.not_published");
       return `<div class="hf-empty">${icon("mdi:silverware-clean")}${message}</div>`;
     }
-    const selection = box.displayMeals(week);
-    const sel = (r) => L.tileSelected(selection, r);
+    const { history, applyFilters } = model;
     const f = this.f;
-    const applyFilters = !history && !f.selectedOnly;
-    const sectionIds = applyFilters ? L.menuSectionIds(week, f.section) : null;
-    const serverIds = applyFilters ? this._lookup(week, L.activeServerFilters(week, f.server)) : null;
-    const proteinIds = applyFilters ? this._lookup(week, L.proteinServerFilters(week, f.protein)) : null;
-    const visible = L.menuTiles(recipes, {
-      sel,
-      selectedOnly: f.selectedOnly && !history,
-      applyFilters,
-      protein: f.protein,
-      proteinIds,
-      diet: f.diet,
-      time: f.time,
-      highlight: f.highlight,
-      sectionIds,
-      serverIds,
-      query: this.query,
-    });
-    for (const unit of visible) this._units.set(String(L.selKey(unit.recipe)), unit);
-    const total = L.menuTiles(recipes, { sel }).length; // the grid before any narrowing
-    const ctx = this._tileContext(week, { history, selection, sel });
-
     const active = applyFilters ? this._activeFilters(week) : [];
     const toolbar = `<div class="hf-toolbar">
         ${renderKindSwitch(card, week, "menu")}
-        ${searchBox("meal-search", this.query, t(history ? "menu.search_delivered" : "menu.search"))}
-        ${history ? "" : `<button class="hf-chip${f.expanded ? " on" : ""}" data-action="toggle-filters" aria-expanded="${f.expanded}">
+        ${UI.searchBox("meal-search", this.query, t(history ? "menu.search_delivered" : "menu.search"))}
+        ${history ? "" : `<button class="hf-chip${f.expanded ? " on" : ""}" data-action="toggle-filters" data-focus-key="menu-filters" aria-expanded="${f.expanded}">
             ${icon("mdi:tune-variant")}${ht("menu.filters")}${active.length ? ` · ${active.length}` : ""}</button>
-          <button class="hf-chip${f.selectedOnly ? " on" : ""}" data-action="toggle-selected-only" aria-pressed="${f.selectedOnly}">
+          <button class="hf-chip${f.selectedOnly ? " on" : ""}" data-action="toggle-selected-only" data-focus-key="menu-in-box" aria-pressed="${f.selectedOnly}">
             ${icon("mdi:package-variant-closed")}${ht("menu.in_my_box")}</button>`}
         <span class="hf-spacer"></span>
-        ${this._serverPending.size ? `<span class="hf-busynote" role="status">${ht("menu.filtering")}</span>` : ""}
+        ${model.lookups === "pending" && !model.failClosed ? `<span class="hf-busynote" role="status">${ht("menu.filtering")}</span>` : ""}
       </div>`;
     const chips =
       active.length && !f.expanded
@@ -755,28 +1167,58 @@ export class MealsView {
             .join("")}<button class="hf-link hf-small" data-action="clear-filters">${ht("menu.clear_all")}</button></div>`
         : "";
     const panel = applyFilters && f.expanded ? this._renderFilterPanel(week, active) : "";
+    return `${toolbar}${chips}${panel}<div class="js-results">${this._renderResults(week, model)}</div>`;
+  }
 
-    let grid;
+  // What the filter service's silence means for the grid below, with the way out. Its answer
+  // for "Ingredients to avoid" is the only source there is, so that one says what is hidden.
+  _lookupNotice(model) {
+    if (model.failClosed && model.lookups !== "failed") {
+      return `<div class="hf-notice tone-info hf-filternotice" role="status">${icon("mdi:shield-search")}
+        <div class="hf-noticebody">${ht("menu.allergen_checking")}</div></div>`;
+    }
+    if (model.lookups !== "failed") return "";
+    return `<div class="hf-notice tone-warn hf-filternotice" role="alert">${icon("mdi:alert-outline")}
+      <div class="hf-noticebody">${ht(model.failClosed ? "menu.allergen_failed" : "menu.filter_failed")}</div>
+      <button class="hf-btn sm" data-action="retry-filters" data-focus-key="menu-retry-filters">${ht("common.retry")}</button></div>`;
+  }
+
+  // The grid with what is said above it: everything a keystroke in the search field changes.
+  _renderResults(week, model = this._model(week)) {
+    const card = this.card;
+    const f = this.f;
+    const { visible, total, history } = model;
+    const notice = this._lookupNotice(model);
     if (!visible.length) {
-      const why = this.query
+      // With the menu held back for an unanswered "Ingredients to avoid", the notice already
+      // says why nothing is listed.
+      if (model.failClosed && !this.query.trim()) return notice;
+      const why = this.query.trim()
         ? ht("menu.no_match_query", { query: this.query.trim() })
         : f.selectedOnly
           ? ht("menu.nothing_in_box", { in_my_box: t("menu.in_my_box") })
           : ht("menu.no_match_filters");
-      grid = `<div class="hf-empty">${icon("mdi:food-off-outline")}${why}</div>`;
-    } else {
-      const shown = visible.slice(0, this.limit);
-      const narrowed = visible.length !== total;
-      const note = narrowed
-        ? `<p class="hf-resultnote">${ht("menu.result_count", { shown: visible.length, total: t("meals.count", { count: total }) })}</p>`
-        : history
-          ? `<p class="hf-resultnote">${ht("menu.delivered_this_week")}</p>`
-          : "";
-      grid = `${note}<div class="hf-grid${card.busy ? " busy" : ""}">${shown.map((unit) => this._tile(unit, ctx)).join("")}</div>
-        ${visible.length > shown.length ? `<div class="hf-more-row"><button class="hf-btn" data-action="more">
-          ${ht("menu.show_more", { count: Math.min(PAGE_SIZE, visible.length - shown.length), left: visible.length - shown.length })}</button></div>` : ""}`;
+      return `${notice}<div class="hf-empty">${icon("mdi:food-off-outline")}${why}</div>`;
     }
-    return `${toolbar}${chips}${panel}${grid}`;
+    const ctx = this._tileContext(week, model);
+    const shown = visible.slice(0, this.limit);
+    const narrowed = visible.length !== total;
+    const note = narrowed
+      ? `<p class="hf-resultnote">${ht("menu.result_count", { shown: visible.length, total: t("meals.count", { count: total }) })}</p>`
+      : history
+        ? `<p class="hf-resultnote">${ht("menu.delivered_this_week")}</p>`
+        : "";
+    return `${notice}${note}<div class="hf-grid${card.busy ? " busy" : ""}">${shown.map((unit) => this._tile(unit, ctx)).join("")}</div>
+      ${visible.length > shown.length ? `<div class="hf-more-row"><button class="hf-btn" data-action="more" data-focus-key="menu-more">
+        ${ht("menu.show_more", { count: Math.min(PAGE_SIZE, visible.length - shown.length), left: visible.length - shown.length })}</button></div>` : ""}`;
+  }
+
+  // Redraw just the results (see redrawResults); the whole view when it isn't on screen.
+  _redrawResults() {
+    const card = this.card;
+    const week = card.selectedWeek();
+    if (card.view !== "menu") return;
+    if (!week || !redrawResults(card, this._renderResults(week))) card.renderView();
   }
 
   _filterRow(label, chips) {
@@ -870,7 +1312,7 @@ export class MealsView {
     const custom = !L.isDefaultMeal(r);
     if (options > 0 && ctx.editable) {
       return `<button class="hf-optselect${custom ? " custom" : ""}" data-action="customize" data-key="${esc(String(L.selKey(r)))}"
-          aria-haspopup="dialog" aria-label="${ht("customize.aria", { dish: group.base.name, option: L.optionLabel(r), options: t("customize.options", { count: options }) })}">
+          data-focus-key="meal:${esc(String(L.selKey(r)))}:customize" aria-haspopup="dialog" aria-label="${ht("customize.aria", { dish: group.base.name, option: L.optionLabel(r), options: t("customize.options", { count: options }) })}">
           ${icon("mdi:tune-variant")}<span class="hf-optlabel">${custom ? esc(L.optionLabel(r)) : ht("customize.title")}</span>
           ${custom ? "" : `<span class="hf-optcount">${ht("customize.options", { count: options })}</span>`}${icon("mdi:chevron-down")}</button>`;
     }
@@ -909,14 +1351,19 @@ export class MealsView {
 
     let control = "";
     if (ctx.editable && !selected) {
-      control = `<button class="hf-add" data-action="add" data-key="${key}" aria-label="${ht("menu.add_aria", { name: r.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
+      control = `<button class="hf-add" data-action="add" data-key="${key}" data-focus-key="meal:${key}:add" aria-label="${ht("menu.add_aria", { name: r.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
     } else if (ctx.editable && selected) {
       // In the box: the servings stepper takes the whole footer (the price is in the box now).
-      control = `<span class="hf-stepper wide" role="group" aria-label="${ht("menu.servings_of", { name: r.name })}">
-          <button data-action="qty" data-delta="-1" data-key="${key}" aria-label="${ht(qty === 1 ? "menu.remove_meal" : "menu.fewer_servings")}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
-          <span class="hf-qty">${qty} <span class="hf-unit">${ht("menu.serving_unit", { count: qty })}</span></span>
-          <button data-action="qty" data-delta="1" data-key="${key}" aria-label="${ht("menu.more_servings")}" ${qty >= L.MAX_MEAL_SERVINGS ? "disabled" : ""}>${icon("mdi:plus")}</button>
-        </span>`;
+      control = UI.stepper({
+        label: t("menu.servings_of", { name: r.name }),
+        attrs: `data-action="qty" data-key="${key}"`,
+        focusKey: `meal:${L.selKey(r)}`,
+        qty,
+        unit: t("menu.serving_unit", { count: qty }),
+        dec: { label: t(qty === 1 ? "menu.remove_meal" : "menu.fewer_servings"), icon: qty === 1 ? "mdi:trash-can-outline" : "mdi:minus" },
+        inc: { label: t("menu.more_servings"), disabled: qty >= L.MAX_MEAL_SERVINGS },
+        wide: true,
+      });
     } else if (selected && !ctx.history) {
       control = `<span class="hf-ordered">${icon("mdi:check")} ${ht("menu.in_box")}${qty > 1 ? ` · ${qty}×` : ""}</span>`;
     }
@@ -924,25 +1371,38 @@ export class MealsView {
       r.price != null && !(ctx.editable && selected)
         ? `<span class="hf-tprice">${esc(L.fmtPerServing(r.price, r.currency || ctx.currency))}<span>${ht("menu.per_serving")}</span></span>`
         : "";
-    const color = L.PREFERENCE_COLORS[r.preference] || "var(--hf-muted)";
+    // Indexed with a payload string, so only a known protein's own colour may come back (a
+    // name like "constructor" would otherwise fetch something off Object.prototype).
+    const color = (Object.hasOwn(L.PREFERENCE_COLORS, r.preference) && L.PREFERENCE_COLORS[r.preference]) || "var(--hf-muted)";
+    const mark = (cls, label, iconName) =>
+      `<span class="${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon(iconName)}</span>`;
     const topRight = [
-      r.is_favorite === true ? `<span class="hf-favdot" title="${ht("menu.in_cookbook")}">${icon("mdi:heart")}</span>` : "",
-      selected && !ctx.history ? `<span class="hf-checkmark" title="${ht("menu.in_your_box")}">${icon("mdi:check-bold")}</span>` : "",
+      r.is_favorite === true ? mark("hf-favdot", t("menu.in_cookbook"), "mdi:heart") : "",
+      selected && !ctx.history ? mark("hf-checkmark", t("menu.in_your_box"), "mdi:check-bold") : "",
       qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : "",
     ].join("");
     const protein = L.PROTEIN_FILTERS.includes(r.preference) ? L.proteinLabel(r.preference) : r.preference || "";
+    // The protein dot is colour only; a named protein gets a text alternative with it.
+    const dot = `<span class="hf-pdot" style="background:${color}"${
+      protein ? ` role="img" aria-label="${esc(protein)}" title="${esc(protein)}"` : ' aria-hidden="true"'
+    }></span>`;
+    // The tile is a plain container. Its one "open" control is the dish's name, a real button;
+    // Add, the stepper, the video and the customize selector are that button's siblings, not
+    // controls nested inside another control. (A click anywhere else on the tile still opens
+    // the recipe: the container keeps the action for the mouse.)
     return `<div class="hf-tile${selected && !ctx.history ? " selected" : ""}${soldOut ? " soldout" : ""}"
-        role="button" tabindex="0" data-action="open-recipe" data-key="${key}" aria-label="${ht("recipe.open", { name: r.name })}">
+        data-action="open-recipe" data-key="${key}">
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
           ${soldOut ? `<div class="hf-soldout">${ht("menu.sold_out")}</div>` : ""}
           <div class="hf-tl">${r.badge ? `<span class="hf-badge"${L.badgeStyle(r)}>${esc(r.badge)}</span>` : ""}</div>
           <div class="hf-tr">${topRight}</div>
           <div class="hf-bl">${video ? `<button class="hf-play" data-action="play" data-key="${key}" aria-label="${ht("menu.play_video", { name: r.name })}">${icon("mdi:play")}</button>` : ""}</div>
-          <div class="hf-br">${r.surcharge_label ? `<span class="hf-overlaypill" title="${ht("menu.surcharge")}">${esc(L.fmtSurcharge(r.surcharge_label, ctx.currency))}</span>` : ""}</div>
+          <div class="hf-br">${hasSurcharge(r) ? `<span class="hf-overlaypill" title="${ht("menu.surcharge")}">${esc(L.fmtSurcharge(r, ctx.currency))}</span>` : ""}</div>
         </div>
         <div class="hf-tbody">
-          <div class="hf-tname"><span class="hf-pdot" style="background:${color}" title="${esc(protein)}"></span><span>${esc(r.name)}</span></div>
+          <div class="hf-tname">${dot}<button class="hf-open" data-action="open-recipe" data-key="${key}" data-focus-key="meal:${key}:open"
+            aria-label="${ht("recipe.open", { name: r.name })}"><span>${esc(r.name)}</span></button></div>
           ${this._optionLine(r, group, ctx)}
           ${r.description ? `<div class="hf-tdesc">${esc(r.description)}</div>` : ""}
           ${meta.length ? `<div class="hf-tmeta">${meta.join("")}</div>` : ""}
@@ -953,53 +1413,37 @@ export class MealsView {
       </div>`;
   }
 
-  // After a selection edit: patch the one tile, the strip's unsaved dot and the box bar when no
-  // filter could change which tiles are visible; otherwise re-render the view.
-  afterSelection(week, recipe) {
+  // After a selection edit: redraw as little as shows it. With no search, filter or "In my box"
+  // on, an edit cannot change WHICH tiles are visible, so only that tile is swapped; otherwise
+  // the results are redrawn. Either way the toolbar stays, the few counters outside the grid
+  // are patched, and `focusKey` (the control the edit came from) keeps the keyboard.
+  afterSelection(week, recipe, focusKey = null) {
     const card = this.card;
     card.box.schedulePreview(week);
-    const f = this.f;
-    const root = card.shadowRoot && card.shadowRoot.querySelector(".js-main");
-    const visibilityMayChange = f.selectedOnly || this.query.trim() || this._activeFilters(week).length;
-    if (card.view !== "menu" || !root || visibilityMayChange) {
-      if (card.view === "menu") card.renderView();
-      else card.renderBoxBar();
+    if (card.view !== "menu") {
+      card.renderBoxBar();
       return;
     }
-    const key = String(L.selKey(recipe));
-    const tile = root.querySelector(`.hf-tile[data-key="${CSS.escape(key)}"]`);
-    const unit = this._units && this._units.get(key);
-    if (!tile || !unit) {
-      // No tile shows this meal as itself — e.g. an option added from its recipe sheet while
-      // its dish's tile shows the base — so the grid must be rebuilt.
+    const root = mainOf(card);
+    if (!root || !root.querySelector(".js-results")) {
       card.renderView();
       return;
     }
-    const selection = card.box.displayMeals(week);
-    const html = this._tile(unit, this._tileContext(week, { selection, sel: (r) => L.tileSelected(selection, r) }));
-    const tpl = document.createElement("template");
-    tpl.innerHTML = html.trim();
-    const hadFocus = tile.contains(card.shadowRoot.activeElement);
-    const replacement = tpl.content.firstElementChild;
-    tile.replaceWith(replacement);
-    if (hadFocus) {
-      const target = replacement.querySelector("[data-action='qty'], [data-action='add']") || replacement;
-      target.focus({ preventScroll: true });
+    const f = this.f;
+    const visibilityMayChange = f.selectedOnly || this.query.trim() || this._activeFilters(week).length;
+    const key = String(L.selKey(recipe));
+    const tile = visibilityMayChange ? null : root.querySelector(`.hf-tile[data-key="${CSS.escape(key)}"]`);
+    const unit = this._units && this._units.get(key);
+    if (tile && unit) {
+      const selection = card.box.displayMeals(week);
+      UI.replaceNode(tile, this._tile(unit, this._tileContext(week, { selection, sel: (r) => L.tileSelected(selection, r) })));
+    } else {
+      // A filter may now show or hide tiles, or no tile shows this meal as itself (an option
+      // added from its recipe sheet while its dish's tile shows the base): rebuild the grid.
+      this._redrawResults();
     }
-    const chip = root.querySelector(`.hf-weekchip[data-week-id="${CSS.escape(week.week_id)}"]`);
-    if (chip) {
-      const dot = chip.querySelector(".hf-wcdirty");
-      const dirty = card.box.dirty(week);
-      if (dirty && !dot) chip.insertAdjacentHTML("afterbegin", `<span class="hf-wcdirty" title="${ht("box.unsaved_changes")}"></span>`);
-      else if (!dirty && dot) dot.remove();
-    }
-    const kind = root.querySelector(".hf-segment");
-    if (kind) {
-      const tpl = document.createElement("template");
-      tpl.innerHTML = renderKindSwitch(card, week, "menu").trim();
-      if (tpl.content.firstElementChild) kind.replaceWith(tpl.content.firstElementChild);
-    }
-    card.renderBoxBar();
+    patchBoxChrome(card, week, "menu");
+    refocusControl(card, focusKey);
   }
 
   // Selection state for the recipe sheet's pinned Add/servings footer (null = read-only sheet).
@@ -1043,17 +1487,20 @@ export class MealsView {
       .map((m) => {
         const key = String(L.selKey(m));
         const on = key === state.choice;
+        // Advisory, as on the grid's tiles: the flag comes from HelloFresh's regional catalog,
+        // not from what this subscription can order, so the option stays choosable under a
+        // "Sold out" note and HelloFresh decides on save.
         const soldOut = m.is_sold_out === true && L.isWeekEditable(week) && !L.isRecipeSelected(m);
         // Another tile already holds this option (two versions of the dish in one box).
         const taken = m !== current && L.tileSelected(selection, m);
-        const note = soldOut ? t("menu.sold_out") : taken ? t("customize.taken") : "";
+        const note = taken ? t("customize.taken") : soldOut ? t("menu.sold_out") : "";
         const photo = L.isDefaultMeal(m) ? L.resizedImage(m.image_url, 160) : L.resizedImage(m.variation_image_url, 96);
-        const price = m.surcharge_label
-          ? `<span class="hf-optprice">${esc(L.fmtSurcharge(m.surcharge_label, currency))}<span>${ht("menu.per_serving")}</span></span>`
+        const price = hasSurcharge(m)
+          ? `<span class="hf-optprice">${esc(L.fmtSurcharge(m, currency))}<span>${ht("menu.per_serving")}</span></span>`
           : `<span class="hf-optprice included">${ht("customize.included")}</span>`;
         const sub = m.name && m.name !== group.base.name ? m.name : L.isDefaultMeal(m) ? t("customize.as_written") : "";
-        return `<button class="hf-optrow${on ? " on" : ""}" aria-pressed="${on}" data-action="opt-pick" data-key="${esc(key)}"
-            ${soldOut || taken || !editable ? "disabled" : ""}>
+        return `<button class="hf-optrow${on ? " on" : ""}${soldOut ? " soldout" : ""}" aria-pressed="${on}" data-action="opt-pick" data-key="${esc(key)}"
+            data-focus-key="opt:${esc(key)}" ${taken || !editable ? "disabled" : ""}>
             <span class="hf-radio" aria-hidden="true"></span>
             ${photo ? `<img class="hf-optimg${L.isDefaultMeal(m) ? " dish" : ""}" src="${esc(photo)}" alt="" loading="lazy">` : `<span class="hf-optimg"></span>`}
             <span class="hf-opttext"><span class="hf-optname">${esc(L.optionLabel(m))}</span>
@@ -1070,9 +1517,7 @@ export class MealsView {
         ? `<button class="hf-btn primary" data-action="opt-apply" ${changed ? "" : "disabled"}>${ht("customize.update")}</button>`
         : `<button class="hf-btn primary" data-action="opt-apply">${icon("mdi:plus")}${ht("customize.add")}</button>`;
     return `
-      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("customize.title")}</h2>
-        <div class="hf-sheetsub">${esc(group.base.name)}${inBox ? ` · ${ht("customize.in_box")}` : ""}</div></div>
-        <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+      ${UI.sheetHead(t("customize.title"), [group.base.name, inBox ? t("customize.in_box") : ""].filter(Boolean).join(" · "))}
       <div class="hf-sheetbody hf-optlist" role="group" aria-label="${ht("customize.ways")}">${rows}</div>
       <div class="hf-sheetfoot"><button class="hf-btn ghost" data-action="opt-recipe">${icon("mdi:book-open-page-variant-outline")}${ht("customize.view_recipe")}</button>
         ${primary}</div>`;
@@ -1110,13 +1555,10 @@ export class MealsView {
     }
   }
 
+  // Typing in the search field redraws the results only: the field itself, and the toolbar
+  // around it, stay in the page.
   onInput(ev) {
-    const input = ev.target.closest("[data-input='meal-search']");
-    if (!input) return;
-    this.query = input.value;
-    this.limit = PAGE_SIZE;
-    clearTimeout(this._searchTimer);
-    this._searchTimer = setTimeout(() => this.card.renderView(), 160);
+    if (UI.searchTyped(this, ev, "meal-search", () => this._redrawResults())) this.limit = PAGE_SIZE;
   }
 
   onClick(ev, el) {
@@ -1134,12 +1576,16 @@ export class MealsView {
     };
     switch (action) {
       case "add":
-        if (recipe && card.box.addMeal(week, recipe)) this.afterSelection(week, recipe);
+        if (recipe && card.box.addMeal(week, recipe)) this.afterSelection(week, recipe, focusedControl(card, el));
         break;
       case "qty":
         if (recipe && card.box.changeMeal(week, recipe, Number(el.getAttribute("data-delta")) || 0)) {
-          this.afterSelection(week, recipe);
+          this.afterSelection(week, recipe, focusedControl(card, el));
         }
+        break;
+      case "retry-filters":
+        this._retryLookups();
+        card.renderView();
         break;
       case "play":
         if (recipe) card.openVideo(recipe);
@@ -1152,15 +1598,28 @@ export class MealsView {
       case "open-recipe":
         if (recipe) card.openRecipe(recipe.recipe_id, () => this._detailSelection(card.selectedWeek(), recipe));
         break;
-      case "more":
+      case "more": {
+        const fromKeyboard = Boolean(focusedControl(card, el));
+        const first = this.limit;
         this.limit += PAGE_SIZE;
-        card.renderView();
+        this._redrawResults();
+        // The button was replaced (or is gone): carry on from the first tile it brought in.
+        const root = mainOf(card);
+        const next = fromKeyboard && root ? root.querySelectorAll(".js-results .hf-tile .hf-open")[first] : null;
+        if (next) next.focus({ preventScroll: true });
         break;
-      case "clear-search":
+      }
+      case "clear-search": {
+        clearTimeout(this._searchTimer);
         this.query = "";
         this.limit = PAGE_SIZE;
-        card.renderView();
+        // Emptied in place, so the caret stays in the field the button belongs to.
+        const input = el.parentElement && el.parentElement.querySelector("input");
+        UI.syncSearchBox(input, "");
+        if (input) input.focus({ preventScroll: true });
+        this._redrawResults();
         break;
+      }
       case "toggle-filters":
         f.expanded = !f.expanded;
         this._persist();
@@ -1279,32 +1738,36 @@ export class MarketView {
 
   afterRender(root, context) {
     UI.syncStrip(root, this, this.card.selectedWeek(), context);
+    UI.watchSkipCutoff(this.card, this);
+  }
+
+  // The shelves a week has, and which of them the shelf chips currently narrow to.
+  _sections(week) {
+    const all = L.marketSections(week);
+    const present = new Set(all);
+    const active = new Set([...this.sections].filter((s) => present.has(s)));
+    const shown = !L.isPastWeek(week) && !this.selectedOnly && all.length >= 2;
+    return { all, active, shown };
   }
 
   _renderBody(week) {
     const card = this.card;
-    const box = card.box;
     const past = L.isPastWeek(week);
     const all = week.market_items || [];
     this._items = new Map(all.map((i) => [String(i.item_id), i]));
-    const selection = box.displayMarket(week);
-    const editable = box.canEdit(week);
-    const sections = L.marketSections(week);
-    const present = new Set(sections);
-    const active = new Set([...this.sections].filter((s) => present.has(s)));
-    const showSections = !past && !this.selectedOnly && sections.length >= 2;
+    const { all: sections, active, shown: showSections } = this._sections(week);
     const toolbar = `<div class="hf-toolbar">
         ${renderKindSwitch(card, week, "market")}
-        ${all.length ? searchBox("market-search", this.query, t("market.search")) : ""}
-        ${past || !all.length ? "" : `<button class="hf-chip${this.selectedOnly ? " on" : ""}" data-action="toggle-selected-only"
+        ${all.length ? UI.searchBox("market-search", this.query, t("market.search")) : ""}
+        ${past || !all.length ? "" : `<button class="hf-chip${this.selectedOnly ? " on" : ""}" data-action="toggle-selected-only" data-focus-key="market-in-box"
           aria-pressed="${this.selectedOnly}">${icon("mdi:package-variant-closed")}${ht("menu.in_my_box")}</button>`}
       </div>`;
     const sectionBar = showSections
       ? `<div class="hf-rail" data-scroll-key="market-sections" style="margin-bottom:14px">${[
-          `<button class="hf-chip${active.size === 0 ? " on" : ""}" data-action="section-all" aria-pressed="${active.size === 0}">${ht("filters.all")}</button>`,
+          `<button class="hf-chip${active.size === 0 ? " on" : ""}" data-action="section-all" data-focus-key="market-section:" aria-pressed="${active.size === 0}">${ht("filters.all")}</button>`,
           ...sections.map(
             (slug) => `<button class="hf-chip${active.has(slug) ? " on" : ""}" data-action="section" data-value="${esc(slug)}"
-                aria-pressed="${active.has(slug)}">${esc(L.marketGroupLabel(slug))}</button>`
+                data-focus-key="market-section:${esc(slug)}" aria-pressed="${active.has(slug)}">${esc(L.marketGroupLabel(slug))}</button>`
           ),
         ].join("")}</div>`
       : "";
@@ -1312,35 +1775,55 @@ export class MarketView {
       const message = ht(past ? "market.none_ordered" : "market.not_open");
       return `${toolbar}<div class="hf-empty">${icon("mdi:storefront-outline")}${message}</div>`;
     }
+    return `${toolbar}${sectionBar}<div class="js-results">${this._renderResults(week)}</div>`;
+  }
+
+  // The shelves of tiles (or why there are none): everything a keystroke in the search field,
+  // or a quantity change under a filter, can change.
+  _renderResults(week) {
+    const card = this.card;
+    const past = L.isPastWeek(week);
+    const selection = card.box.displayMarket(week);
+    const { active, shown: showSections } = this._sections(week);
     const groups = L.marketGroups(week, selection, {
       selectedOnly: past || this.selectedOnly,
       sections: showSections ? active : null,
       query: this.query,
     });
     if (!groups.length) {
-      const why = this.query
+      const why = this.query.trim()
         ? ht("market.no_match_query", { query: this.query.trim() })
         : past
           ? ht("market.none_ordered")
           : this.selectedOnly
             ? ht("market.none_in_box")
             : ht("market.no_match_categories");
-      return `${toolbar}${sectionBar}<div class="hf-empty">${icon("mdi:storefront-outline")}${why}</div>`;
+      return `<div class="hf-empty">${icon("mdi:storefront-outline")}${why}</div>`;
     }
-    const currency = L.marketCurrency(week);
-    const body = groups
+    const ctx = this._tileContext(week);
+    return groups
       .map(
         (g) => `<section class="hf-group">
           ${g.label ? `<div class="hf-grouphead"><h3 class="hf-h3">${esc(g.label)}</h3><span class="hf-groupcount">${g.items.length}</span></div>` : ""}
           <div class="hf-grid market${card.busy ? " busy" : ""}">${g.items
-            .map((item) => this._tile(item, selection.get(item.item_id) || 0, editable, currency, past))
+            .map((item) => this._tile(item, selection.get(item.item_id) || 0, ctx))
             .join("")}</div></section>`
       )
       .join("");
-    return `${toolbar}${sectionBar}${body}`;
   }
 
-  _tile(item, qty, editable, currency, past) {
+  _redrawResults() {
+    const card = this.card;
+    const week = card.selectedWeek();
+    if (card.view !== "market") return;
+    if (!week || !redrawResults(card, this._renderResults(week))) card.renderView();
+  }
+
+  _tileContext(week) {
+    return { editable: this.card.box.canEdit(week), currency: L.marketCurrency(week), past: L.isPastWeek(week) };
+  }
+
+  _tile(item, qty, { editable, currency, past }) {
     const id = esc(String(item.item_id));
     // Sold out stops adding, but what the saved box holds stays the customer's: it can be put
     // back after an unsaved removal (changeMarket), and it shows no ribbon or greyed photo.
@@ -1351,14 +1834,19 @@ export class MarketView {
     const cap = L.marketCap(item);
     let control = "";
     if (editable && qty === 0) {
-      control = `<button class="hf-add" data-action="market-qty" data-delta="1" data-id="${id}" ${noMore ? "disabled" : ""}
+      control = `<button class="hf-add" data-action="market-qty" data-delta="1" data-id="${id}" data-focus-key="extra:${id}:add" ${noMore ? "disabled" : ""}
         aria-label="${ht("market.add_aria", { name: item.name })}">${icon("mdi:plus")}${ht("menu.add")}</button>`;
     } else if (editable) {
-      control = `<span class="hf-stepper wide" role="group" aria-label="${ht("market.quantity_of", { name: item.name })}">
-          <button data-action="market-qty" data-delta="-1" data-id="${id}" aria-label="${ht(qty === 1 ? "market.remove" : "common.fewer")}">${icon(qty === 1 ? "mdi:trash-can-outline" : "mdi:minus")}</button>
-          <span class="hf-qty">${qty} <span class="hf-unit">${ht("market.in_box_unit")}</span></span>
-          <button data-action="market-qty" data-delta="1" data-id="${id}" aria-label="${ht("common.more")}" ${qty >= cap || noMore ? "disabled" : ""}>${icon("mdi:plus")}</button>
-        </span>`;
+      control = UI.stepper({
+        label: t("market.quantity_of", { name: item.name }),
+        attrs: `data-action="market-qty" data-id="${id}"`,
+        focusKey: `extra:${item.item_id}`,
+        qty,
+        unit: t("market.in_box_unit"),
+        dec: { label: t(qty === 1 ? "market.remove" : "common.fewer"), icon: qty === 1 ? "mdi:trash-can-outline" : "mdi:minus" },
+        inc: { label: t("common.more"), disabled: qty >= cap || noMore },
+        wide: true,
+      });
     } else if (qty > 0) {
       control = `<span class="hf-ordered">${icon("mdi:check")} ${past ? ht("market.ordered", { count: qty }) : `${ht("menu.in_box")}${qty > 1 ? ` · ${qty}×` : ""}`}</span>`;
     }
@@ -1366,15 +1854,22 @@ export class MarketView {
       item.price != null && !(editable && qty > 0)
         ? `<span class="hf-tprice">${esc(L.fmtPrice(item.price, item.currency || currency))}</span>`
         : "";
-    return `<div class="hf-tile${qty > 0 && !past ? " selected" : ""}${soldOut ? " soldout" : ""}" role="button" tabindex="0"
-        data-action="open-item" data-id="${id}" aria-label="${ht("market.open", { name: item.name })}">
+    // Add-ons carry a normal recipe id; an item known only by SKU has nothing to open. As on
+    // the Menu, the tile is a plain container and its name is the one "open" button, beside
+    // (not around) the Add button or stepper.
+    const open = item.recipe_id ? `data-action="open-item" data-id="${id}"` : `data-id="${id}"`;
+    const name = item.recipe_id
+      ? `<button class="hf-open" data-action="open-item" data-id="${id}" data-focus-key="extra:${id}:open"
+          aria-label="${ht("market.open", { name: item.name })}"><span>${esc(item.name)}</span></button>`
+      : `<span>${esc(item.name)}</span>`;
+    return `<div class="hf-tile${qty > 0 && !past ? " selected" : ""}${soldOut ? " soldout" : ""}${item.recipe_id ? "" : " plain"}" ${open}>
         <div class="hf-media">
           ${img ? `<img loading="lazy" src="${esc(img)}" alt="">` : `<div class="hf-noimg"></div>`}
           ${soldOut ? `<div class="hf-soldout">${ht("menu.sold_out")}</div>` : ""}
-          <div class="hf-tr">${qty > 0 && !past ? `<span class="hf-checkmark">${icon("mdi:check-bold")}</span>` : ""}${qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : ""}</div>
+          <div class="hf-tr">${qty > 0 && !past ? `<span class="hf-checkmark" role="img" aria-label="${ht("menu.in_your_box")}">${icon("mdi:check-bold")}</span>` : ""}${qty > 1 ? `<span class="hf-overlaypill">${qty}×</span>` : ""}</div>
         </div>
         <div class="hf-tbody">
-          <div class="hf-tname"><span>${esc(item.name)}</span></div>
+          <div class="hf-tname">${name}</div>
           ${item.description ? `<div class="hf-tdesc">${esc(item.description)}</div>` : ""}
           ${item.calories_kcal != null ? `<div class="hf-tmeta"><span>${icon("mdi:fire")}${esc(Math.round(item.calories_kcal))} kcal</span></div>` : ""}
           <div class="hf-tfoot">${price}${control}</div>
@@ -1382,13 +1877,26 @@ export class MarketView {
       </div>`;
   }
 
-  _afterQuantity(week) {
+  // After a quantity change: swap that one tile when nothing narrows the shelves (a narrowed
+  // view keeps an item only while it is in the box, so there the shelves are redrawn), patch
+  // the counters outside the grid, and put the keyboard back on the control it came from.
+  _afterQuantity(week, item, focusKey = null) {
     const card = this.card;
-    // Visibility can change only under a filter (a filtered-out item stays visible while it is
-    // in the box); otherwise a re-render of this small grid is cheap enough.
-    card.renderView();
-    card.renderBoxBar();
-    void week;
+    if (card.view !== "market") {
+      card.renderBoxBar();
+      return;
+    }
+    const root = mainOf(card);
+    if (!root || !root.querySelector(".js-results")) {
+      card.renderView();
+      return;
+    }
+    const narrowed = L.isPastWeek(week) || this.selectedOnly || this._sections(week).active.size > 0;
+    const tile = narrowed ? null : root.querySelector(`.hf-tile[data-id="${CSS.escape(String(item.item_id))}"]`);
+    if (tile) UI.replaceNode(tile, this._tile(item, card.box.displayMarket(week).get(item.item_id) || 0, this._tileContext(week)));
+    else this._redrawResults();
+    patchBoxChrome(card, week, "market");
+    refocusControl(card, focusKey);
   }
 
   _detailSelection(week, item) {
@@ -1398,18 +1906,14 @@ export class MarketView {
       qty: box.displayMarket(week).get(item.item_id) || 0,
       maxQty: L.marketCap(item),
       unit: "item",
-      add: () => box.changeMarket(week, item, 1) && this._afterQuantity(week),
-      inc: () => box.changeMarket(week, item, 1) && this._afterQuantity(week),
-      dec: () => box.changeMarket(week, item, -1) && this._afterQuantity(week),
+      add: () => box.changeMarket(week, item, 1) && this._afterQuantity(week, item),
+      inc: () => box.changeMarket(week, item, 1) && this._afterQuantity(week, item),
+      dec: () => box.changeMarket(week, item, -1) && this._afterQuantity(week, item),
     };
   }
 
   onInput(ev) {
-    const input = ev.target.closest("[data-input='market-search']");
-    if (!input) return;
-    this.query = input.value;
-    clearTimeout(this._searchTimer);
-    this._searchTimer = setTimeout(() => this.card.renderView(), 160);
+    UI.searchTyped(this, ev, "market-search", () => this._redrawResults());
   }
 
   onClick(ev, el) {
@@ -1422,7 +1926,7 @@ export class MarketView {
     switch (action) {
       case "market-qty":
         if (item && card.box.changeMarket(week, item, Number(el.getAttribute("data-delta")) || 0)) {
-          this._afterQuantity(week);
+          this._afterQuantity(week, item, focusedControl(card, el));
         }
         break;
       case "open-item":
@@ -1449,10 +1953,15 @@ export class MarketView {
         this._persist();
         card.renderView();
         break;
-      case "clear-search":
+      case "clear-search": {
+        clearTimeout(this._searchTimer);
         this.query = "";
-        card.renderView();
+        const input = el.parentElement && el.parentElement.querySelector("input");
+        UI.syncSearchBox(input, "");
+        if (input) input.focus({ preventScroll: true });
+        this._redrawResults();
         break;
+      }
       default:
         break;
     }
@@ -1461,17 +1970,29 @@ export class MarketView {
 
 // ---- box bar & review sheet ---------------------------------------------------------------
 
-// The estimate while meals are being changed: the meal preview's total (it prices meals,
-// shipping, tax and discounts, not add-ons) plus the pending extras.
+// "+$5.99" / "−$5.99": what a change adds to the bill or takes off it.
+function signedPrice(amount, currency) {
+  return `${amount < 0 ? "−" : "+"}${L.fmtPrice(Math.abs(amount), currency)}`;
+}
+
+// The price beside the box, by what is pending:
+//
+//   * meals changed       -> "ok": HelloFresh's own estimate for exactly those meals (it prices
+//                            meals, shipping, tax and discounts, not add-ons) plus the pending
+//                            extras; "pending" / "loading" while that is on its way; and
+//                            "unavailable" when there is no estimate and none is coming.
+//   * only extras changed -> "extras": what the change adds or takes off (pending minus saved).
+//   * nothing changed     -> "saved": the box's bill.
+//   * a stale draft       -> "stale": no figure until the user has chosen what to keep.
 function estimate(card, week) {
   const box = card.box;
+  if (box.stale(week)) return { status: "stale" };
   const currency = L.marketCurrency(week) || (card.account && card.account.selected_plan_total_price_currency);
   const extrasCents = L.marketTotalCents(week, box.displayMarket(week));
   if (box.mealsDirty(week)) {
-    const preview = box.preview(week);
-    if (!preview) return { status: "pending" };
-    if (preview.status === "loading") return { status: "loading" };
-    if (preview.status !== "ok" || preview.data.grand_total == null) return { status: "unavailable" };
+    const preview = box.previewState(week);
+    if (preview.status !== "ok") return { status: preview.status };
+    if (!preview.data || preview.data.grand_total == null) return { status: "unavailable" };
     return {
       status: "ok",
       amount: Number(preview.data.grand_total) + extrasCents / 100,
@@ -1480,7 +2001,10 @@ function estimate(card, week) {
       extras: extrasCents / 100,
     };
   }
-  if (box.marketDirty(week)) return { status: "extras", extras: extrasCents / 100, currency };
+  if (box.marketDirty(week)) {
+    const savedCents = L.marketTotalCents(week, box.savedMarket(week));
+    return { status: "extras", delta: (extrasCents - savedCents) / 100, currency };
+  }
   const total = L.boxTotal(week, card.account);
   return total
     ? { status: "saved", amount: total.amount, currency: total.currency, label: total.estimate ? total.label : t("box.box_total") }
@@ -1496,8 +2020,7 @@ export function renderBoxBar(card, week) {
   const count = L.mealsCount(meals);
   const servings = L.servingsTotal(meals);
   const required = Number(week.meals_required) || 0;
-  const extras = box.displayMarket(week);
-  const extraCount = [...extras.values()].reduce((a, b) => a + b, 0);
+  const extraCount = UI.extrasCount(box.displayMarket(week));
   const slots = [];
   const slotCount = Math.max(required, count);
   for (let i = 0; i < Math.min(slotCount, 10); i += 1) {
@@ -1508,13 +2031,18 @@ export function renderBoxBar(card, week) {
     servings !== count ? `<span class="hf-muted">${ht("meals.servings", { count: servings })}</span>` : "",
     extraCount ? `<span class="hf-muted">${ht("meals.extras", { count: extraCount })}</span>` : "",
   ].filter(Boolean).join("");
+  const closed = dirty && !editable;
+  const stale = !closed && box.stale(week);
+  const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
   let note;
   let noteCls = "";
-  const closed = dirty && !editable;
   if (closed) {
     note = t("box.deadline_passed");
     noteCls = " warn";
-  } else if (count < L.MIN_MEALS && box.mealsDirty(week)) {
+  } else if (stale) {
+    note = t("box.changed_title");
+    noteCls = " warn";
+  } else if (invalid) {
     note = t("box.min_note", { min: L.MIN_MEALS });
     noteCls = " warn";
   } else if (required && count !== required && count > 0) {
@@ -1528,22 +2056,33 @@ export function renderBoxBar(card, week) {
     total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">${ht("box.estimated_total")}</span>`;
   } else if (est.status === "loading" || est.status === "pending") {
     total = `<span class="hf-boxamountnote">${ht("box.updating_price")}</span>`;
+  } else if (est.status === "unavailable" && !invalid && !closed) {
+    // Below the minimum the note beside it already says why there is no price.
+    total = `<span class="hf-boxamountnote">${ht("box.estimate_unavailable")}</span>`;
   } else if (est.status === "extras") {
-    total = `<span class="hf-boxamount">+${esc(L.fmtPrice(est.extras, est.currency))}</span><span class="hf-boxamountnote">${ht("box.extras")}</span>`;
+    total = `<span class="hf-boxamount">${esc(signedPrice(est.delta, est.currency))}</span><span class="hf-boxamountnote">${ht("box.extras")}</span>`;
   } else if (est.status === "saved") {
     total = `<span class="hf-boxamount">${esc(L.fmtPrice(est.amount, est.currency))}</span><span class="hf-boxamountnote">${esc(est.label)}</span>`;
   }
-  const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
-  const actions = closed
-    ? `<button class="hf-btn" data-action="box-discard" ${card.busy ? "disabled" : ""}>${ht("box.discard_changes")}</button>`
-    : dirty
-      ? `<button class="hf-btn ghost" data-action="box-discard" ${card.busy ? "disabled" : ""}>${ht("box.discard")}</button>
-       <button class="hf-btn" data-action="box-review">${ht("week.review")}</button>
-       <button class="hf-btn primary" data-action="box-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>`
-      : `<button class="hf-btn" data-action="box-review">${icon("mdi:package-variant-closed")}${ht("box.your_box")}</button>`;
+  const busy = card.busy ? "disabled" : "";
+  let actions;
+  if (closed) {
+    actions = `<button class="hf-btn" data-action="box-discard" data-focus-key="box-discard" ${busy}>${ht("box.discard_changes")}</button>`;
+  } else if (stale) {
+    // The saved box moved under this draft: the two ways on, instead of a Save that would
+    // put the old box back.
+    actions = `<button class="hf-btn" data-action="box-use-saved" data-focus-key="box-use-saved" ${busy}>${ht("box.use_saved")}</button>
+       <button class="hf-btn primary" data-action="box-keep-mine" data-focus-key="box-keep-mine" ${busy}>${ht("box.keep_mine")}</button>`;
+  } else if (dirty) {
+    actions = `<button class="hf-btn ghost" data-action="box-discard" data-focus-key="box-discard" ${busy}>${ht("box.discard")}</button>
+       <button class="hf-btn" data-action="box-review" data-focus-key="box-review">${ht("week.review")}</button>
+       <button class="hf-btn primary" data-action="box-save" data-focus-key="box-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>`;
+  } else {
+    actions = `<button class="hf-btn" data-action="box-review" data-focus-key="box-review">${icon("mdi:package-variant-closed")}${ht("box.your_box")}</button>`;
+  }
   return `<div class="hf-boxbarinner" role="region" aria-label="${ht("box.your_box")}">
       <div class="hf-boxslots" aria-hidden="true">${slots.join("")}</div>
-      <div class="hf-boxsummary"><div class="hf-boxline">${line}</div><div class="hf-boxnote${noteCls}">${esc(note)}</div></div>
+      <div class="hf-boxsummary"><div class="hf-boxline">${line}</div><div class="hf-boxnote${noteCls}"${stale ? ' role="alert"' : ""}>${esc(note)}</div></div>
       ${total ? `<div class="hf-boxtotal">${total}</div>` : ""}
       <div class="hf-actions">${actions}</div>
     </div>`;
@@ -1553,11 +2092,17 @@ export function onBoxBarClick(card, _ev, el) {
   const week = card.selectedWeek();
   if (!el || !week) return;
   const action = el.getAttribute("data-action");
+  const fromKeyboard = Boolean(card.shadowRoot && card.shadowRoot.activeElement === el);
   if (action === "box-save") card.box.save(week);
-  else if (action === "box-discard") {
-    card.box.discard(week);
+  else if (action === "box-review") openReview(card, week);
+  else if (action === "box-discard" || action === "box-use-saved" || action === "box-keep-mine") {
+    if (action === "box-keep-mine") card.box.rebase(week);
+    else card.box.discard(week);
     card.renderView();
-  } else if (action === "box-review") openReview(card, week);
+    // The button just used is gone from the bar; hand the keyboard to what replaced it.
+    const bar = fromKeyboard && card.shadowRoot.querySelector(".js-boxbar");
+    if (bar) UI.focusKeyed(bar, ["box-save", "box-review"]);
+  }
 }
 
 function lineItem(img, name, sub, tag = "", removed = false) {
@@ -1568,50 +2113,28 @@ function lineItem(img, name, sub, tag = "", removed = false) {
     </div>`;
 }
 
-function renderReview(card, week) {
-  const box = card.box;
-  const meals = box.displayMeals(week);
-  const saved = box.savedMeals(week);
-  const recipes = week.recipes || [];
-  const byKey = new Map(recipes.map((r) => [L.selKey(r), r]));
-  const mealRows = [];
-  for (const [key, qty] of meals) {
-    const r = byKey.get(key);
-    if (!r) continue;
+// One half of the review (meals or extras): what is in the pending selection, tagged where it
+// differs from the saved one, then what the pending selection drops. `row` builds a line from
+// (thing, quantity, tag); a `null` quantity is a removal.
+function reviewRows(pending, saved, lookup, row) {
+  const out = [];
+  for (const [key, qty] of pending) {
+    const thing = lookup.get(key);
+    if (!thing) continue;
     const was = saved.get(key);
     const tag = was == null ? pill(t("box.new"), "ok") : was !== qty ? pill(t("box.was", { count: was }), "info") : "";
-    const price = r.price != null ? ` · ${esc(L.fmtPerServing(r.price, r.currency))}${ht("menu.per_serving")}` : "";
-    const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
-    mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${ht("meals.servings", { count: qty })}${price}`, tag));
+    out.push(row(thing, qty, tag));
   }
-  for (const [key] of saved) {
-    if (meals.has(key)) continue;
-    const r = byKey.get(key);
-    if (r) {
-      const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
-      mealRows.push(lineItem(L.resizedImage(r.image_url, 160), r.name, `${option}${ht("box.removed")}`, pill(t("box.removed"), "danger"), true));
-    }
+  for (const key of saved.keys()) {
+    const thing = pending.has(key) ? null : lookup.get(key);
+    if (thing) out.push(row(thing, null, pill(t("box.removed"), "danger")));
   }
-  const market = box.displayMarket(week);
-  const savedMarket = box.savedMarket(week);
-  const items = new Map((week.market_items || []).map((i) => [i.item_id, i]));
-  const currency = L.marketCurrency(week);
-  const extraRows = [];
-  for (const [id, qty] of market) {
-    const item = items.get(id);
-    if (!item) continue;
-    const was = savedMarket.get(id);
-    const tag = was == null ? pill(t("box.new"), "ok") : was !== qty ? pill(t("box.was", { count: was }), "info") : "";
-    const price = item.price != null ? ` · ${esc(L.fmtPrice(item.price * qty, item.currency || currency))}` : "";
-    extraRows.push(lineItem(L.resizedImage(item.image_url, 160), item.name, `${qty} ×${price}`, tag));
-  }
-  for (const [id] of savedMarket) {
-    if (market.has(id)) continue;
-    const item = items.get(id);
-    if (item) extraRows.push(lineItem(L.resizedImage(item.image_url, 160), item.name, ht("box.removed"), pill(t("box.removed"), "danger"), true));
-  }
+  return out;
+}
 
-  const est = estimate(card, week);
+// The review's price table: the estimate's breakdown, the saved bill, or what an extras-only
+// change adds or takes off.
+function reviewPrice(est, { invalid }) {
   const rows = [];
   if (est.status === "ok") {
     const p = est.preview;
@@ -1625,19 +2148,49 @@ function renderReview(card, week) {
   } else if (est.status === "saved") {
     rows.push([esc(est.label), L.fmtPrice(est.amount, est.currency), true]);
   } else if (est.status === "extras") {
-    rows.push([ht("box.extras_change"), L.fmtPrice(est.extras, est.currency), true]);
+    rows.push([ht("box.extras_change"), signedPrice(est.delta, est.currency), true]);
   } else if (est.status === "loading" || est.status === "pending") {
     rows.push([ht("box.estimated_total"), t("box.updating"), true]);
+  } else if (est.status === "unavailable" && !invalid) {
+    return `<div><div class="hf-eyebrow" style="margin-bottom:8px">${ht("box.price")}</div>
+      <p class="hf-small hf-muted" style="margin:0">${ht("box.estimate_unavailable_note")}</p></div>`;
   }
-  const priceTable = rows.length
-    ? `<div><div class="hf-eyebrow" style="margin-bottom:8px">${ht("box.price")}</div><div class="hf-pricetable">${rows
-        .map(([k, v, bold]) => `<div class="hf-prow${bold ? " total" : ""}"><span>${k}</span><span>${esc(v)}</span></div>`)
-        .join("")}</div>${est.status === "ok" ? `<p class="hf-small hf-muted" style="margin:8px 0 0">${ht("box.estimate_note")}</p>` : ""}</div>`
-    : "";
+  if (!rows.length) return "";
+  return `<div><div class="hf-eyebrow" style="margin-bottom:8px">${ht("box.price")}</div><div class="hf-pricetable">${rows
+    .map(([k, v, bold]) => `<div class="hf-prow${bold ? " total" : ""}"><span>${k}</span><span>${esc(v)}</span></div>`)
+    .join("")}</div>${est.status === "ok" ? `<p class="hf-small hf-muted" style="margin:8px 0 0">${ht("box.estimate_note")}</p>` : ""}</div>`;
+}
+
+function renderReview(card, week) {
+  const box = card.box;
+  const meals = box.displayMeals(week);
+  const mealRows = reviewRows(meals, box.savedMeals(week), new Map((week.recipes || []).map((r) => [L.selKey(r), r])), (r, qty, tag) => {
+    const option = r.variation_title ? `${esc(r.variation_title)} · ` : "";
+    const price = qty != null && r.price != null ? ` · ${esc(L.fmtPerServing(r.price, r.currency))}${ht("menu.per_serving")}` : "";
+    const sub = qty == null ? `${option}${ht("box.removed")}` : `${option}${ht("meals.servings", { count: qty })}${price}`;
+    return lineItem(L.resizedImage(r.image_url, 160), r.name, sub, tag, qty == null);
+  });
+  const market = box.displayMarket(week);
+  const currency = L.marketCurrency(week);
+  const extraRows = reviewRows(market, box.savedMarket(week), new Map((week.market_items || []).map((i) => [i.item_id, i])), (item, qty, tag) => {
+    const price = qty != null && item.price != null ? ` · ${esc(L.fmtPrice(item.price * qty, item.currency || currency))}` : "";
+    return lineItem(L.resizedImage(item.image_url, 160), item.name, qty == null ? ht("box.removed") : `${qty} ×${price}`, tag, qty == null);
+  });
+
   const count = L.mealsCount(meals);
   const required = Number(week.meals_required) || 0;
+  const dirty = box.dirty(week);
+  const stale = dirty && L.isWeekEditable(week) && box.stale(week);
+  const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
   const notes = [];
-  if (box.mealsDirty(week) && count < L.MIN_MEALS) {
+  if (stale) {
+    notes.push(`<div class="hf-notice tone-warn" role="alert">${icon("mdi:sync-alert")}
+      <div class="hf-noticebody"><strong>${ht("box.changed_title")}</strong> ${ht("box.changed_body", {
+        keep_mine: strong(t("box.keep_mine")),
+        use_saved: strong(t("box.use_saved")),
+      })}</div></div>`);
+  }
+  if (invalid) {
     notes.push(`<div class="hf-notice tone-warn">${icon("mdi:alert-outline")}<div class="hf-noticebody">${ht("box.min_notice", { min: L.MIN_MEALS })}</div></div>`);
   } else if (required && count !== required && count > 0) {
     notes.push(`<div class="hf-notice tone-info">${icon("mdi:resize")}<div class="hf-noticebody">${ht("box.resized_notice", {
@@ -1645,27 +2198,31 @@ function renderReview(card, week) {
       required,
     })}</div></div>`);
   }
-  const dirty = box.dirty(week);
-  const invalid = box.mealsDirty(week) && count < L.MIN_MEALS;
+  const busy = card.busy ? "disabled" : "";
+  // A stale draft is settled first (Use saved / Keep mine); only then is there a box to save.
+  const foot = !dirty
+    ? `<button class="hf-btn" data-close-sheet>${ht("common.close")}</button>`
+    : stale
+      ? `<button class="hf-btn ghost danger" data-action="review-use-saved" data-focus-key="review-use-saved" ${busy}>${ht("box.use_saved")}</button><span class="hf-spacer"></span>
+         <button class="hf-btn" data-close-sheet>${ht("common.close")}</button>
+         <button class="hf-btn primary" data-action="review-keep-mine" data-focus-key="review-keep-mine" ${busy}>${ht("box.keep_mine")}</button>`
+      : `<button class="hf-btn ghost danger" data-action="review-discard" data-focus-key="review-discard" ${busy}>${ht("box.discard_changes")}</button><span class="hf-spacer"></span>
+         <button class="hf-btn" data-close-sheet>${ht("box.keep_editing")}</button>
+         <button class="hf-btn primary" data-action="review-save" data-focus-key="review-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>`;
+  const sub = [L.fmtLongDate(week.delivery_date), L.stateLabel(week), dirty ? t("box.unsaved_lower") : ""].filter(Boolean).join(" · ");
   return `
-    <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht("box.your_box")}</h2>
-      <div class="hf-sheetsub">${esc(L.fmtLongDate(week.delivery_date))} · ${esc(L.stateLabel(week))}${dirty ? ` · ${ht("box.unsaved_lower")}` : ""}</div></div>
-      <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+    ${UI.sheetHead(t("box.your_box"), sub)}
     <div class="hf-sheetbody">
       ${notes.join("")}
       <div><div class="hf-eyebrow" style="margin-bottom:4px">${ht("box.meals")} · ${count}</div>
         ${mealRows.length ? `<div class="hf-lineitems">${mealRows.join("")}</div>` : `<div class="hf-muted hf-small">${ht("overview.no_meals")}</div>`}</div>
-      ${extraRows.length ? `<div><div class="hf-eyebrow" style="margin-bottom:4px">${ht("box.extras")} · ${market.size}</div><div class="hf-lineitems">${extraRows.join("")}</div></div>` : ""}
-      ${priceTable}
+      ${extraRows.length ? `<div><div class="hf-eyebrow" style="margin-bottom:4px">${ht("box.extras")} · ${UI.extrasCount(market)}</div><div class="hf-lineitems">${extraRows.join("")}</div></div>` : ""}
+      ${reviewPrice(estimate(card, week), { invalid })}
     </div>
-    <div class="hf-sheetfoot">
-      ${dirty ? `<button class="hf-btn ghost danger" data-action="review-discard">${ht("box.discard_changes")}</button><span class="hf-spacer"></span>` : ""}
-      <button class="hf-btn" data-close-sheet>${ht(dirty ? "box.keep_editing" : "common.close")}</button>
-      ${dirty ? `<button class="hf-btn primary" data-action="review-save" ${card.busy || invalid ? "disabled" : ""}>${icon("mdi:content-save-outline")}${ht("box.save")}</button>` : ""}
-    </div>`;
+    <div class="hf-sheetfoot">${foot}</div>`;
 }
 
-export function openReview(card, week) {
+function openReview(card, week) {
   card.box.schedulePreview(week);
   card.openSheet({
     kind: "review",
@@ -1676,10 +2233,17 @@ export function openReview(card, week) {
       const current = card.weekById(week.week_id) || week;
       const action = el.getAttribute("data-action");
       if (action === "review-save") card.box.save(current);
-      else if (action === "review-discard") {
+      else if (action === "review-discard" || action === "review-use-saved") {
         card.box.discard(current);
         card.closeSheet();
         card.renderView();
+      } else if (action === "review-keep-mine") {
+        // Stay in the review: it now shows the box that would be saved.
+        card.box.rebase(current);
+        card.renderSheet();
+        card.renderView();
+        const sheet = card.shadowRoot && card.shadowRoot.querySelector(".hf-sheet");
+        if (sheet) UI.focusKeyed(sheet, ["review-save", "review-discard"]);
       }
     },
   });

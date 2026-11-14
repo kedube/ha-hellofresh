@@ -292,6 +292,10 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
       benefits: [],
       holiday_message: null,
       holiday_delivery_date: null,
+      // The number of people this week's box is for, and the day HelloFresh moved it to.
+      servings: 2,
+      sub_status: null,
+      revised_delivery_date: null,
       recipes: [],
       market_items: [],
       menu_categories: [],
@@ -361,7 +365,8 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
         ev(3, "in_transit", "received_at_origin_facility"),
       ];
       if (idx === 9) {
-        week.order.delivery_photo_urls = [img("pod")];
+        // A carrier's own https host (the card shows no http photo); chrome.mjs answers it.
+        week.order.delivery_photo_urls = ["https://delivery-photos.test/pod.svg"];
         week.order.delivery_signed_by = "Front porch";
       }
     }
@@ -404,6 +409,11 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
       week.needs_selection = editable;
       week.holiday_message = "Holiday week: your box arrives a day later than usual.";
       week.holiday_delivery_date = iso(new Date(d.getTime() + 86400000));
+    }
+    // ?scenario=delayed: HelloFresh moved the next box a day later and the one after a day earlier.
+    if (scenario === "delayed" && (weekIdx === 0 || weekIdx === 1)) {
+      week.sub_status = weekIdx === 0 ? "DELAYED" : "EARLY";
+      week.revised_delivery_date = iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() + (weekIdx === 0 ? 1 : -1)));
     }
     weeks.push(week);
   });
@@ -456,7 +466,25 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
     payment_card_last4: "4242",
     payment_card_expiry: iso(new Date(today.getFullYear(), today.getMonth() + 1, 1)).slice(0, 7),
     next_box_discount: account.next_box_discount,
+    // The credit split into what was bought (HelloFresh Cash) and what was given, and the rewards
+    // program's count.
+    account_credit_cash: 10,
+    account_credit_bonus: 2.5,
+    loyalty_boxes_until_free_box: 3,
+    payment_problem: false,
+    payment_problem_weeks: [],
   };
+  // ?scenario=payment: HelloFresh couldn't collect for the last box, and a payment for the one
+  // before was charged back (that one named by its week alone).
+  if (scenario === "payment") {
+    const past = weeks.filter((w) => w.delivery_date < iso(today));
+    const [last, before] = [past[past.length - 1], past[past.length - 2]];
+    summary.payment_problem = true;
+    summary.payment_problem_weeks = [
+      { week_id: last.week_id, delivery_date: last.delivery_date, status: "payment_failed", amount: 84.93, currency: "USD" },
+      { week_id: before.week_id, delivery_date: null, status: "chargeback", amount: null, currency: null },
+    ];
+  }
 
   const spending = (() => {
     const months = [];
@@ -528,13 +556,34 @@ export function buildFixtures(origin, { scenario = "default" } = {}) {
     completion: { total: 9, completed: 7, percent: 78, incomplete_fields: ["taste.flavors", "goals.goals"] },
   };
 
+  // The boxes the subscription can switch to (get_plan_options), whole-box prices: Classic in
+  // several sizes, and a Veggie family that also sells 3 meals for 2 or 4, so the week's own
+  // family has to be told apart.
+  const planOption = (family, name, meals, servings, price) => ({
+    handle: `US-${family}-${meals}-${servings}-0`,
+    name: `${name} - ${meals} meals per week for ${servings} people`,
+    family_handle: family.toLowerCase(),
+    family_name: name,
+    meals,
+    servings,
+    price_cents: Math.round(price * 100),
+    price,
+  });
+  const planOptions = [
+    ...[[2, 2, 59.94], [3, 2, 71.94], [4, 2, 89.92], [5, 2, 104.9], [2, 4, 95.88], [3, 4, 131.88], [4, 4, 167.84], [3, 6, 179.82]].map(
+      ([meals, servings, price]) => planOption("CBU", "Classic", meals, servings, price)
+    ),
+    planOption("VEG", "Veggie", 3, 2, 68.94),
+    planOption("VEG", "Veggie", 3, 4, 125.88),
+  ];
+
   const prepItems = (weekId) => [
     ["Salt", ""], ["Black Pepper", "3 teaspoon (tsp)"], ["Olive Oil", "4 tablespoon (tbsp)"], ["Butter", "3 tablespoon (tbsp)"],
     ["Eggs", "2 unit"], ["Sugar", "1 teaspoon (tsp)"], ["Vegetable Oil", "2 teaspoon (tsp)"], ["Soy Sauce", "1 tablespoon (tbsp) + 1 teaspoon (tsp)"],
     ["Garlic Powder", "½ teaspoon (tsp)"],
   ].map(([n, a], i) => ({ uid: `${weekId}:${n.toLowerCase()}`, summary: a ? `${n} — ${a}` : n, status: i === 1 ? "completed" : "needs_action", due: null }));
 
-  return { weeks, account, summary, spending, collections, catalog, profile, prepItems };
+  return { weeks, account, summary, spending, collections, catalog, profile, prepItems, planOptions };
 }
 
 // ---- fake hass ----------------------------------------------------------------------------
@@ -697,6 +746,8 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
   setState("sensor.hellofresh_us_refresh_token_days_remaining", 26);
   setState("binary_sensor.hellofresh_us_write_actions_available", "on");
   setState("binary_sensor.hellofresh_us_payload_shape_changed", "off");
+  // The integration's diagnostic "API base URL": the HelloFresh website the account is on.
+  setState("sensor.hellofresh_us_api_base_url", "https://www.hellofresh.com");
   const reg = (entity_id, translation_key) => [entity_id, { entity_id, platform: "hellofresh", translation_key, device_id: "dev1" }];
   const entities = Object.fromEntries([
     reg("todo.hellofresh_us_prep_list", "prep_list"),
@@ -707,6 +758,7 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     reg("sensor.hellofresh_us_refresh_token_days_remaining", "refresh_token_days_remaining"),
     reg("binary_sensor.hellofresh_us_write_actions_available", "write_actions_available"),
     reg("binary_sensor.hellofresh_us_payload_shape_changed", "payload_shape_changed"),
+    reg("sensor.hellofresh_us_api_base_url", "api_base_url"),
   ]);
   const devices = { dev1: { id: "dev1", config_entries: ["entry1"], name: "HelloFresh (US)" } };
   // The Meals calendar's plan_updated moves with every plan change, wherever it was made.
@@ -756,7 +808,7 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
       return { weeks: JSON.parse(JSON.stringify(fx.weeks)), account: fx.account };
     },
     async get_account_summary() {
-      return fx.summary;
+      return JSON.parse(JSON.stringify(fx.summary));
     },
     async get_meal_plan() {
       return plan.view();
@@ -828,6 +880,18 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
       const o = w.available_one_off_options.find((x) => x.handle === delivery_option);
       if (o) w.delivery_date = o.delivery_date;
     },
+    async get_plan_options() {
+      return { options: JSON.parse(JSON.stringify(fx.planOptions)) };
+    },
+    // One week's box for another number of people: the same meals, in the box's own family.
+    async change_week_servings({ week_id, servings }) {
+      const w = week(week_id);
+      const box = fx.planOptions.find((o) => o.family_handle === "cbu" && o.meals === w.meals_required && o.servings === servings);
+      if (!box) throw new Error(`HelloFresh doesn't offer a box for ${servings} people this week.`);
+      w.servings = servings;
+      if (w.order && w.order.total_price != null) w.order.total_price = Number((box.price + 10.99).toFixed(2));
+      return { week_id, servings, product_handle: box.handle, price: box.price, currency: "USD" };
+    },
     async get_delivery_options() {
       return { delivery_options: [
         { handle: "mon-8-20", delivery_name: "Monday 8AM - 8PM", price: 0 },
@@ -856,12 +920,17 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
     async get_recipe_collections() {
       return { collections: fx.collections };
     },
-    async get_catalog_recipes({ collection, search }) {
-      if (search) return { recipes: fx.catalog.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())), subcollections: [] };
-      const offset = collection ? hash(collection) % 10 : 0;
+    // A page of `limit` recipes from `offset`, with the total and whether more follow.
+    async get_catalog_recipes({ collection, search, limit = 50, offset = 0 }) {
+      const page = (all) => {
+        const recipes = all.slice(offset, offset + limit);
+        return { recipes, offset, total: all.length, has_more: offset + recipes.length < all.length };
+      };
+      if (search) return { ...page(fx.catalog.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()))), subcollections: [] };
+      const turn = collection ? hash(collection) % 10 : 0;
       return {
         collection: collection || null,
-        recipes: fx.catalog.slice(offset).concat(fx.catalog.slice(0, offset)),
+        ...page(fx.catalog.slice(turn).concat(fx.catalog.slice(0, turn))),
         subcollections: collection === "noodle-recipes" ? [{ name: "Ramen", slug: "ramen", path: "noodle-recipes/ramen" }, { name: "Udon", slug: "udon", path: "noodle-recipes/udon" }] : [],
       };
     },

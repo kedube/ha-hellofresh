@@ -10,17 +10,18 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .meal_plan import KIND_MARKET, KIND_MEAL, MEAL_SENSOR_KEYS, MEALS, MealPlan, slot_title
+from .parsers import dict_or_empty
 from .sensor_helpers import (
+    UNRECORDED_SENSOR_ATTRIBUTES,
     humanize_status,
     next_box_discount_is_percent,
     sensor_extra_state_attributes,
@@ -32,8 +33,6 @@ from .sensor_helpers import (
     tracked_shipment_estimate,
 )
 from .tracey import HelloFreshTraceyCoordinator
-
-_MONETARY_DEVICE_CLASS = getattr(SensorDeviceClass, "MONETARY", None)
 
 SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -111,25 +110,45 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="next_box_total_price",
         translation_key="next_box_total_price",
-        device_class=_MONETARY_DEVICE_CLASS,
+        device_class=SensorDeviceClass.MONETARY,
         icon="mdi:cash",
     ),
     SensorEntityDescription(
         key="next_box_discount",
         translation_key="next_box_discount",
-        device_class=_MONETARY_DEVICE_CLASS,
+        device_class=SensorDeviceClass.MONETARY,
         icon="mdi:ticket-percent-outline",
     ),
     SensorEntityDescription(
         key="account_credit",
         translation_key="account_credit",
-        device_class=_MONETARY_DEVICE_CLASS,
+        device_class=SensorDeviceClass.MONETARY,
         icon="mdi:cash-plus",
+    ),
+    # The two parts of the credit balance that HelloFresh's app shows apart: the HelloFresh
+    # Cash the customer bought and the bonus credit. In the credit's own currency, with no
+    # state class, like the credit itself.
+    SensorEntityDescription(
+        key="account_credit_cash",
+        translation_key="account_credit_cash",
+        device_class=SensorDeviceClass.MONETARY,
+        icon="mdi:cash",
+    ),
+    SensorEntityDescription(
+        key="account_credit_bonus",
+        translation_key="account_credit_bonus",
+        device_class=SensorDeviceClass.MONETARY,
+        icon="mdi:gift-outline",
+    ),
+    SensorEntityDescription(
+        key="loyalty_boxes_until_free_box",
+        translation_key="loyalty_boxes_until_free_box",
+        icon="mdi:package-variant-plus",
     ),
     SensorEntityDescription(
         key="selected_plan_total_price",
         translation_key="selected_plan_total_price",
-        device_class=_MONETARY_DEVICE_CLASS,
+        device_class=SensorDeviceClass.MONETARY,
         icon="mdi:cash",
     ),
     SensorEntityDescription(
@@ -157,9 +176,12 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         translation_key="number_of_people",
         icon="mdi:account-group-outline",
     ),
+    # Personal data as a state. Diagnostic entities are left out of generated dashboards and
+    # are not offered to voice assistants by default.
     SensorEntityDescription(
         key="delivery_address",
         translation_key="delivery_address",
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:map-marker-outline",
     ),
     SensorEntityDescription(
@@ -265,6 +287,7 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="account_id",
         translation_key="account_id",
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:account-circle-outline",
     ),
     SensorEntityDescription(
@@ -343,6 +366,11 @@ TRACEY_SENSORS: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+# The sensors that report how long the sign-in tokens have left.
+TOKEN_SENSOR_KEYS = frozenset({"access_token_minutes_remaining", "refresh_token_days_remaining"})
+# The credit balance and its parts, all in the balance's currency.
+CREDIT_SENSOR_KEYS = ("account_credit", "account_credit_cash", "account_credit_bonus")
+
 # Coordinator-based: entities never poll on their own, so entity-update parallelism is
 # irrelevant — declared 0 (unlimited) per the integration quality scale's convention.
 PARALLEL_UPDATES = 0
@@ -350,11 +378,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh sensors."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     entities: list[SensorEntity] = [
         HelloFreshSensor(coordinator, description) for description in SENSORS
     ]
@@ -372,23 +400,31 @@ async def async_setup_entry(
 class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
     """HelloFresh sensor."""
 
+    _unrecorded_attributes = UNRECORDED_SENSOR_ATTRIBUTES
+
     def __init__(
         self,
         coordinator: HelloFreshDataUpdateCoordinator,
         description: SensorEntityDescription,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
 
     async def async_added_to_hass(self) -> None:
-        """Also follow the live tracker for the estimate, which falls back to its ETA."""
+        """Follow what the sensor reads besides account data.
+
+        The estimate falls back to the live tracker's ETA. The two token sensors read the
+        client and the clock, so they follow the token: a poll that returns unchanged account
+        data writes nothing, and they used to show the same "27 min" for hours.
+        """
         await super().async_added_to_hass()
         tracey = getattr(self.coordinator, "tracey", None)
         if self.entity_description.key == "tracked_shipment_estimate" and tracey is not None:
             self.async_on_remove(tracey.async_add_listener(self._handle_coordinator_update))
+        if self.entity_description.key in TOKEN_SENSOR_KEYS:
+            self.async_on_remove(
+                self.coordinator.async_add_token_listener(self.async_write_ha_state)
+            )
 
     @property
     def native_value(self):
@@ -436,7 +472,7 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
                 return PERCENTAGE
             discount = self.coordinator.data.next_box_discount
             return discount.get("currency") if discount else None
-        if self.entity_description.key == "account_credit":
+        if self.entity_description.key in CREDIT_SENSOR_KEYS:
             return self.coordinator.data.account_credit_currency
         if self.entity_description.key == "selected_plan_total_price":
             return self.coordinator.data.selected_plan_total_price_currency
@@ -453,8 +489,8 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
         if self.entity_description.key in (
             "next_box_total_price",
             "next_box_discount",
-            "account_credit",
             "selected_plan_total_price",
+            *CREDIT_SENSOR_KEYS,
         ):
             return 2
         return None
@@ -480,7 +516,9 @@ class HelloFreshSensor(HelloFreshCoordinatorEntity, SensorEntity):
         )
 
 
-class HelloFreshTraceySensor(HelloFreshCoordinatorEntity, SensorEntity):
+class HelloFreshTraceySensor(
+    HelloFreshCoordinatorEntity[HelloFreshTraceyCoordinator], SensorEntity
+):
     """Live last-mile tracking sensor, driven by the fast Tracey coordinator.
 
     Reuses the shared entity base (device grouping, pinned entity ids) — the Tracey
@@ -489,16 +527,28 @@ class HelloFreshTraceySensor(HelloFreshCoordinatorEntity, SensorEntity):
     delivery is actively trackable.
     """
 
+    # Where the customer lives, where the driver is and has been, and the driver's name are
+    # for the live card, not for the database. ``last_fetched`` changes on every poll.
+    _unrecorded_attributes = frozenset(
+        {
+            "customer_location",
+            "driver_location",
+            "driver_name",
+            "last_fetched",
+            "latitude",
+            "longitude",
+            "personal_customer_message",
+            "tracking_url",
+        }
+    )
+
     def __init__(
         self,
         coordinator: HelloFreshTraceyCoordinator,
         description: SensorEntityDescription,
     ) -> None:
         """Initialize the tracking sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
 
     @property
     def native_value(self):
@@ -573,16 +623,14 @@ class HelloFreshMealSensor(HelloFreshCoordinatorEntity, SensorEntity):
         meal: str,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        key = MEAL_SENSOR_KEYS[meal]
+        super().__init__(coordinator, ENTITY_ID_FORMAT, key)
         self._meal_plan = meal_plan
         self._meal = meal
-        key = MEAL_SENSOR_KEYS[meal]
         self._attr_translation_key = key
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{key}"
         self._attr_icon = _MEAL_ICONS[meal]
         # Dinner is what most households plan; breakfast and lunch start disabled.
         self._attr_entity_registry_enabled_default = meal == "dinner"
-        self._pin_entity_id(ENTITY_ID_FORMAT, key)
 
     async def async_added_to_hass(self) -> None:
         """Follow the plan, and move on to the next day's meal at midnight."""
@@ -621,7 +669,7 @@ class HelloFreshMealSensor(HelloFreshCoordinatorEntity, SensorEntity):
         if slot is None:
             return attrs
         start, end = self._meal_plan.window(day, self._meal, slot)
-        main = slot.get("main") if isinstance(slot.get("main"), dict) else {}
+        main = dict_or_empty(slot.get("main"))
         kind = main.get("kind")
         attrs.update(
             {

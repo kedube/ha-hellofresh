@@ -17,12 +17,13 @@ from custom_components.hellofresh.api import (
     HelloFreshWeek,
 )
 from custom_components.hellofresh.diagnostics import TO_REDACT
+from custom_components.hellofresh.parsers import local_today
 from custom_components.hellofresh.sensor_helpers import (
     sensor_extra_state_attributes,
     sensor_native_value,
 )
 
-TODAY = date.today()
+TODAY = local_today()
 NEXT_WEEK = TODAY + timedelta(days=5)
 WEEK_AFTER = TODAY + timedelta(days=12)
 PROMISE_ID = "5bd74469-69cd-55d6-8217-e24e25df8839"

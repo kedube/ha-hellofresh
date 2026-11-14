@@ -27,6 +27,7 @@ from custom_components.hellofresh.api import (
     HelloFreshSubscription,
     HelloFreshWeek,
 )
+from custom_components.hellofresh.parsers import local_today
 from custom_components.hellofresh.sensor_helpers import (
     sensor_extra_state_attributes,
     sensor_native_value,
@@ -111,7 +112,7 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
         HelloFreshWeek(
             week_id="week-past",
             display_name="Past",
-            delivery_date=date.today() - timedelta(days=30),
+            delivery_date=local_today() - timedelta(days=30),
             meals_required=3,
             meals_selected=0,
             meals_preselected=True,
@@ -125,7 +126,7 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
         HelloFreshWeek(
             week_id="week-locked",
             display_name="Locked",
-            delivery_date=date.today() + timedelta(days=3),
+            delivery_date=local_today() + timedelta(days=3),
             selection_deadline=datetime.now(UTC) - timedelta(hours=1),
             meals_required=3,
             meals_selected=3,
@@ -140,7 +141,7 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
         HelloFreshWeek(
             week_id="week-no-swap",
             display_name="No swap",
-            delivery_date=date.today() + timedelta(days=3),
+            delivery_date=local_today() + timedelta(days=3),
             selection_deadline=future_deadline,
             meals_required=3,
             meals_selected=3,
@@ -155,7 +156,7 @@ def test_week_needs_selection_respects_skip_and_counts() -> None:
             week_id="week-paused",
             display_name="Paused",
             status="PAUSED",
-            delivery_date=date.today() + timedelta(days=3),
+            delivery_date=local_today() + timedelta(days=3),
             selection_deadline=future_deadline,
             meals_required=3,
             meals_selected=3,
@@ -279,7 +280,7 @@ def test_week_summary_dict_omits_recipes_but_full_dict_keeps_them() -> None:
 
 def test_account_data_finalize_builds_serialized_views() -> None:
     """Serialized attribute payloads should be derived in one place."""
-    today = date.today()
+    today = local_today()
     current_week_id = f"{today.isocalendar().year}-W{today.isocalendar().week:02d}"
     last_week = today - timedelta(days=7)
     last_week_id = f"{last_week.isocalendar().year}-W{last_week.isocalendar().week:02d}"
@@ -352,13 +353,12 @@ def test_account_data_finalize_builds_serialized_views() -> None:
     assert data.serialized_weeks_needing_selection[0]["week_id"] == current_week_id
     assert data.serialized_weeks_needing_selection[0]["subscription_id"] == "sub-1"
     assert data.serialized_public_menu_weeks[0]["source"] == "public_menu"
-    assert data.serialized_past_delivery_weeks[0]["source"] == "past_deliveries"
     assert data.serialized_subscriptions[0]["display_name"] == "Classic Plan"
     assert data.next_selection_week is not None
     assert data.serialized_weeks_needing_selection[0]["week_id"] == current_week_id
     assert data.next_selection_week.week_id == current_week_id
     assert data.delivery_count_this_week == 1
-    assert data.past_delivery_count == 1
+    assert len(data.past_delivery_weeks) == 1
     assert data.last_delivery_week is not None
     assert data.last_delivery_week.week_id == last_week_id
 
@@ -368,7 +368,7 @@ def test_last_delivery_week_is_the_newest_box_with_a_carrier_arrival() -> None:
     (``delivered_at``), from the main deliveries list when history is empty — and a box still
     in transit (past its scheduled day, but no carrier arrival yet) must not displace it.
     """
-    today = date.today()
+    today = local_today()
     data = HelloFreshAccountData(
         weeks=[
             # Scheduled two days ago but still on the truck: no carrier arrival, so it is
@@ -430,7 +430,7 @@ def test_last_delivery_week_is_none_without_a_carrier_arrival() -> None:
     The past-deliveries endpoint carries no dates at all (its weeks get stamped with the ISO
     week's Monday) and no carrier timestamps, so history-only data cannot resolve it.
     """
-    today = date.today()
+    today = local_today()
     data = HelloFreshAccountData(
         weeks=[
             HelloFreshWeek(
@@ -555,7 +555,7 @@ def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
     delivery_date >= today and pick the earliest *future* order, not orders[0] (which is
     the oldest historical delivery).
     """
-    today = date.today()
+    today = local_today()
     orders = [
         HelloFreshOrder(
             order_id="past-old",
@@ -597,7 +597,7 @@ def test_next_order_skips_past_deliveries_and_picks_earliest_future() -> None:
 
 def test_upcoming_orders_exclude_skipped_weeks() -> None:
     """A skipped upcoming week ships no box, so it drops out of upcoming_orders/next_order."""
-    today = date.today()
+    today = local_today()
     weeks = [
         HelloFreshWeek(
             week_id="w-next",
@@ -639,7 +639,7 @@ def test_upcoming_orders_exclude_skipped_weeks() -> None:
 
 def test_next_order_includes_todays_delivery() -> None:
     """A delivery scheduled for today still counts as upcoming."""
-    today = date.today()
+    today = local_today()
     data = HelloFreshAccountData(
         orders=[
             HelloFreshOrder(
@@ -788,6 +788,8 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
         session=object(),  # type: ignore[arg-type]
         access_token="token",
         enable_public_menu_fallback=False,
+        # The cookbook listing runs beside the menu stage; this test does not stub it.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(
         subscription_id="sub-1",
@@ -856,7 +858,7 @@ def test_account_data_loads_profile_metrics_and_past_delivery_history() -> None:
     result = loop.run_until_complete(client.async_get_account_data())
 
     assert result.boxes_received == 14
-    assert result.past_delivery_count == 1
+    assert len(result.past_delivery_weeks) == 1
     assert result.last_delivery_week is not None
     assert result.last_delivery_week.week_id == "2026-W23"
     assert result.last_delivery_week.delivered_at == datetime(2026, 6, 8, 20, 15, tzinfo=UTC)
@@ -870,6 +872,8 @@ def test_payload_shape_not_flagged_when_subscription_backfills_week() -> None:
         session=object(),  # type: ignore[arg-type]
         access_token="token",
         enable_public_menu_fallback=True,
+        # The cookbook listing runs beside the menu stage; this test does not stub it.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(
         subscription_id="sub-1",
@@ -1264,7 +1268,7 @@ def test_an_old_week_without_its_progress_is_delivered() -> None:
 
 def test_next_order_status_reflects_on_the_way_box_today() -> None:
     """End to end: today's 'on the way' box is next_order with the live state, not stale."""
-    today = date.today()
+    today = local_today()
     weeks = [
         HelloFreshWeek(
             week_id="prev",
@@ -1398,7 +1402,7 @@ def test_normalize_weeks_payload_extracts_nested_delivery_recipes_and_counts() -
     # A FUTURE week (dated after today) with an OPEN deadline and swaps allowed, so the
     # needs_selection assertion is meaningful — a past or locked week can never need selection
     # regardless of its counts.
-    future = date.today() + timedelta(days=10)
+    future = local_today() + timedelta(days=10)
     payload = {
         "items": [
             {
@@ -2278,7 +2282,8 @@ def test_account_menu_data_falls_back_to_subscription_scoped_menu_endpoint() -> 
     async def fake_api_get(path: str, params=None):
         requests.append({"path": path, "params": params})
         if path != "/gw/api/customers/me/subscriptions/sub-1/menu":
-            raise HelloFreshError("unreachable")
+            # A route that doesn't exist: the one answer that moves on to the next candidate.
+            raise HelloFreshError("unreachable", status=404)
         return DummyResponse()
 
     async def fake_response_json(_response):
@@ -2311,8 +2316,12 @@ def test_account_menu_data_falls_back_to_subscription_scoped_menu_endpoint() -> 
     assert weeks[0].recipes[0].name == "Pasta"
 
 
-def test_past_delivery_history_tries_ranged_customer_deliveries_endpoint() -> None:
-    """History loading should try the ranged customer deliveries endpoint from the HAR."""
+def test_past_delivery_history_asks_recent_deliveries_only_when_past_deliveries_fails() -> None:
+    """past-deliveries is the history; the complaint form's list is its fallback only.
+
+    It knows just the last couple of weeks, with image-less recipes, so asking for it on every
+    poll cost a request for weeks past-deliveries had already answered.
+    """
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
 
@@ -2321,22 +2330,22 @@ def test_past_delivery_history_tries_ranged_customer_deliveries_endpoint() -> No
 
         status = 200
 
-    requests: list[dict[str, object | None]] = []
+    requests: list[str] = []
+    failing: set[str] = set()
 
     async def fake_api_get(path: str, params=None, extra_headers=None):
-        requests.append({"path": path, "params": params, "extra_headers": extra_headers})
-        if path == "/gw/customer-complaints/users/me/deliveries":
-            raise HelloFreshError("unavailable")
+        requests.append(path)
+        if path in failing:
+            raise HelloFreshError("unavailable", status=503)
         return DummyResponse()
 
     async def fake_response_json(_response):
         return {
-            "items": [
+            "weeks": [
                 {
-                    "id": "2026-W24",
-                    "deliveryDate": "2026-06-08T12:00:00-0700",
+                    "week": "2026-W24",
                     "subscriptionId": "sub-1",
-                    "recipes": [{"id": "recipe-1", "name": "Pasta"}],
+                    "meals": [{"id": "recipe-1", "name": "Pasta"}],
                 }
             ]
         }
@@ -2347,13 +2356,17 @@ def test_past_delivery_history_tries_ranged_customer_deliveries_endpoint() -> No
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+    assert [week.week_id for week in weeks] == ["2026-W24"]
+    assert requests == ["/gw/my-deliveries/past-deliveries"]
 
-    assert len(weeks) == 1
-    assert requests[1]["path"] == "/gw/api/customers/me/deliveries"
-    params = requests[1]["params"]
-    assert isinstance(params, dict)
-    assert "rangeStart" in params
-    assert "rangeEnd" in params
+    requests.clear()
+    failing.add("/gw/my-deliveries/past-deliveries")
+    weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+    assert [week.week_id for week in weeks] == ["2026-W24"]
+    assert requests == [
+        "/gw/my-deliveries/past-deliveries",
+        "/gw/customer-complaints/users/me/deliveries",
+    ]
 
 
 def test_past_delivery_history_follows_next_week_cursor() -> None:
@@ -2470,7 +2483,7 @@ def test_paused_week_has_no_selected_meals() -> None:
         display_name="Past Paused Week",
         subscription_id="1000001",
         status="PAUSED",
-        delivery_date=date.today() - timedelta(days=30),
+        delivery_date=local_today() - timedelta(days=30),
         meals_selected=0,
         recipes=[HelloFreshRecipe(recipe_id=f"cat-{i}", name=f"Catalog {i}") for i in range(50)],
     )
@@ -2480,7 +2493,7 @@ def test_paused_week_has_no_selected_meals() -> None:
         subscription_id="1000001",
         status="DELIVERED",
         is_skipped=True,
-        delivery_date=date.today() - timedelta(days=23),
+        delivery_date=local_today() - timedelta(days=23),
         recipes=[HelloFreshRecipe(recipe_id=f"s-{i}", name=f"Skipped {i}") for i in range(40)],
     )
     active = HelloFreshWeek(
@@ -2522,7 +2535,7 @@ def test_history_range_covers_a_full_year_past_the_boundary() -> None:
     range_ = client._build_delivery_history_range()
     # The integration gates delivery dates with LOCAL today (they are local-market
     # calendar dates); expectations must match or they diverge near midnight UTC.
-    today = date.today()
+    today = local_today()
     # The week from 53 weeks ago (comfortably "a year back") must be at/after range_start.
     boundary = today - timedelta(weeks=53)
     boundary_iso = boundary.isocalendar()
@@ -2541,7 +2554,7 @@ def test_history_range_honors_configured_lookback() -> None:
     key = HelloFreshClient._iso_week_sort_key
     # The integration gates delivery dates with LOCAL today (they are local-market
     # calendar dates); expectations must match or they diverge near midnight UTC.
-    today = date.today()
+    today = local_today()
 
     short_start = short._build_delivery_history_range()["range_start"]
     default_start = default._build_delivery_history_range()["range_start"]
@@ -2563,7 +2576,7 @@ def test_history_range_reaches_far_enough_into_the_future() -> None:
     range_end = client._build_delivery_history_range()["range_end"]
     # The integration gates delivery dates with LOCAL today (they are local-market
     # calendar dates); expectations must match or they diverge near midnight UTC.
-    today = date.today()
+    today = local_today()
     key = HelloFreshClient._iso_week_sort_key
     # A box 8 weeks out (within HelloFresh's typical publish window) must be at/before range_end.
     eight_out = today + timedelta(weeks=8)
@@ -2799,6 +2812,11 @@ def test_account_menu_data_uses_authenticated_delivery_menu_endpoint() -> None:
     assert weeks[0].recipes[0].is_selected is False
 
 
+async def _routes_not_found(path, params=None, extra_headers=None):
+    """A GET to a route HelloFresh doesn't have: 404, as the real request raises it."""
+    raise HelloFreshError(f"HelloFresh request failed for {path}: HTTP 404", status=404)
+
+
 def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> None:
     """A past week older than the grace window must not trigger a (wasted) menu fetch.
 
@@ -2823,7 +2841,7 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
     )
     # The integration gates delivery dates with LOCAL today (they are local-market
     # calendar dates); expectations must match or they diverge near midnight UTC.
-    today = date.today()
+    today = local_today()
     # menu_grace_weeks default is 2; a week delivered 10 weeks ago is well past the floor.
     old_week = HelloFreshWeek(
         week_id="2026-old",
@@ -2848,6 +2866,8 @@ def test_account_menu_data_skips_menu_fetch_for_weeks_past_grace_window() -> Non
         return []
 
     client._async_get_delivery_menu_week_data = fake_fetch  # type: ignore[method-assign]
+    # With no week menu, the stage probes its fallback routes: none of them exists here.
+    client._async_api_get = _routes_not_found  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -2884,7 +2904,7 @@ def test_account_menu_data_skips_weeks_without_a_published_menu(latest, expected
     if latest is not None:
         raw["weekWithLatestMenu"] = latest
     subscription = HelloFreshSubscription(subscription_id="1000001", raw=raw)
-    today = date.today()
+    today = local_today()
     weeks = [
         HelloFreshWeek(
             week_id=week_id,
@@ -2903,6 +2923,8 @@ def test_account_menu_data_skips_weeks_without_a_published_menu(latest, expected
         return []
 
     client._async_get_delivery_menu_week_data = fake_fetch  # type: ignore[method-assign]
+    # With no week menu, the stage probes its fallback routes: none of them exists here.
+    client._async_api_get = _routes_not_found  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -2975,7 +2997,7 @@ def test_past_delivery_purchased_addons_become_market_items() -> None:
 def test_merge_past_delivery_market_items_onto_account_weeks() -> None:
     """Purchased add-ons land on the matching PAST account week, never a current/future one."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()
+    today = local_today()
 
     past_week = HelloFreshWeek(
         week_id="2026-W25",
@@ -3040,7 +3062,7 @@ def test_market_items_never_cross_subscriptions() -> None:
     onto this week.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    past_date = date.today() - timedelta(weeks=9)
+    past_date = local_today() - timedelta(weeks=9)
 
     other_sub_history = HelloFreshWeek(
         week_id="2026-W25",
@@ -3079,28 +3101,50 @@ def test_past_delivery_addons_do_not_leak_into_meal_list_without_catalog() -> No
 
     _delivered_meals_only used to identify add-ons only via the week's catalog, which is gone
     past the grace window — so a bought add-on would have shown up as a delivered meal.
+
+    The account week starts as the client finds it: a bare shell with no Market items, since
+    the purchased list is only merged onto it AFTER the meals. The history week's own add-ons
+    are what identifies them, and the meal count follows the filtered list.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
+    gyoza = "69fb4b89fd1622233825d098"
     account_week = HelloFreshWeek(
         week_id="2026-W25",
         display_name="Jun 15",
         subscription_id="1000001",
-        delivery_date=date.today() - timedelta(weeks=9),
-        market_items=[
-            HelloFreshMarketItem(
-                item_id="69fb4b89fd1622233825d098",
-                name="Pork & Shiitake Gyoza",
-                recipe_id="69fb4b89fd1622233825d098",
-            )
-        ],
+        delivery_date=local_today() - timedelta(weeks=9),
         raw={},
     )
-    delivered = [
-        HelloFreshRecipe(recipe_id="meal-1", name="Cantina Steak"),
-        HelloFreshRecipe(recipe_id="69fb4b89fd1622233825d098", name="Pork & Shiitake Gyoza"),
+    past_week = HelloFreshWeek(
+        week_id="2026-W25",
+        display_name="2026-W25",
+        subscription_id="1000001",
+        source="past_deliveries",
+        meals_selected=3,
+        recipes=[
+            HelloFreshRecipe(recipe_id="meal-1", name="Cantina Steak"),
+            HelloFreshRecipe(recipe_id="meal-2", name="Chicken"),
+            HelloFreshRecipe(recipe_id=gyoza, name="Pork & Shiitake Gyoza"),
+        ],
+        market_items=[
+            HelloFreshMarketItem(item_id=gyoza, name="Pork & Shiitake Gyoza", recipe_id=gyoza)
+        ],
+    )
+    assert [r.name for r in client._delivered_meals_only(account_week, past_week)] == [
+        "Cantina Steak",
+        "Chicken",
     ]
-    meals = client._delivered_meals_only(account_week, delivered)
-    assert [r.name for r in meals] == ["Cantina Steak"]
+
+    # The client's order: meals first, then the Market.
+    client._merge_past_delivery_recipes_into_account_weeks(
+        account_weeks=[account_week], past_delivery_weeks=[past_week]
+    )
+    client._merge_past_delivery_market_items(
+        account_weeks=[account_week], past_delivery_weeks=[past_week]
+    )
+    assert [r.name for r in account_week.recipes] == ["Cantina Steak", "Chicken"]
+    assert account_week.meals_selected == 2
+    assert [i.name for i in account_week.market_items] == ["Pork & Shiitake Gyoza"]
 
 
 def test_past_delivery_pagination_cap_covers_max_history_weeks() -> None:
@@ -3232,7 +3276,7 @@ def test_merge_past_delivery_leaves_current_week_menu_intact() -> None:
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
     # The merge gates "past" on UTC (matching normalizers), so pin the boundary to UTC too.
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     # Current week: full menu catalog present, dated today (not past).
     current_week = HelloFreshWeek(
         week_id="2026-W27",
@@ -3424,7 +3468,7 @@ def test_merge_past_delivery_grace_window_keeps_catalog_with_delivered_overlay()
     are re-selected, and a delivered meal missing from the catalog is appended.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -3470,14 +3514,15 @@ def test_merge_past_delivery_grace_window_keeps_catalog_with_delivered_overlay()
     assert [r.name for r in week.recipes if r.is_selected] == ["Menu Dish B", "Menu Dish C"]
     by_id = {r.recipe_id: r for r in week.recipes}
     assert by_id["m-2"].selected_quantity == 2
-    assert week.meals_selected == 2
+    # Portions, not dishes: the doubled B fills two of the box's meals, C the third.
+    assert week.meals_selected == 3
     assert week.meals_preselected is False
 
 
 def test_merge_past_delivery_grace_window_appends_unmatched_delivered_meal() -> None:
     """A delivered meal absent from the kept catalog is appended, selected — never hidden."""
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -3511,7 +3556,7 @@ def test_merge_past_delivery_grace_window_without_catalog_shows_delivered_only()
     recipes of its own, so it gets the plain delivered-only fill — same as an old week.
     """
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     recent_week = HelloFreshWeek(
         week_id="2026-W27",
         display_name="Last Week",
@@ -3551,7 +3596,7 @@ def test_merge_past_delivery_never_crosses_subscriptions() -> None:
         week_id="2026-W20",
         display_name="Week",
         subscription_id="sub-1",
-        delivery_date=date.today() - timedelta(weeks=10),
+        delivery_date=local_today() - timedelta(weeks=10),
         recipes=[],
     )
     other_subs_week = HelloFreshWeek(
@@ -3592,7 +3637,7 @@ def test_merge_past_delivery_older_than_grace_replaces_catalog() -> None:
     from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
 
     client = HelloFreshClient(session=None)  # type: ignore[arg-type]
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     old_week = HelloFreshWeek(
         week_id="2026-W26",
         display_name="Older Week",
@@ -3631,7 +3676,7 @@ def test_menu_grace_weeks_option_is_honored() -> None:
     """
     from custom_components.hellofresh.const import DEFAULT_MENU_GRACE_WEEKS
 
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
 
     def _week_pair(days_ago: int) -> tuple[HelloFreshWeek, HelloFreshWeek]:
         account_week = HelloFreshWeek(
@@ -3689,7 +3734,7 @@ def test_paused_week_in_grace_window_keeps_catalog_unselected() -> None:
         display_name="Skipped Last Week",
         subscription_id="1000001",
         status="PAUSED",
-        delivery_date=date.today() - timedelta(days=3),
+        delivery_date=local_today() - timedelta(days=3),
         meals_selected=3,
         recipes=[
             HelloFreshRecipe(recipe_id="a", name="Auto A", is_selected=True, selected_quantity=1),
@@ -4231,7 +4276,7 @@ def test_variation_group_clusters_variants_including_renamed_swaps() -> None:
             {"defaultCourseIndex": 500, "variations": []},
         ]
     }
-    groups = HelloFreshPayloadNormalizer._build_variation_groups(raw_week)
+    groups = HelloFreshPayloadNormalizer._modularity_maps(raw_week).groups
     assert groups == {68: 68, 348: 68, 350: 68, 351: 68, 349: 68}
     assert 500 not in groups
 
@@ -4320,7 +4365,7 @@ def test_variation_groups_ignore_suggested_add_ons() -> None:
     """
     from custom_components.hellofresh.normalizers import HelloFreshPayloadNormalizer
 
-    groups = HelloFreshPayloadNormalizer._build_variation_groups(_real_shaped_modularity())
+    groups = HelloFreshPayloadNormalizer._modularity_maps(_real_shaped_modularity()).groups
     assert groups == {1: 1, 164: 1, 161: 1, 162: 1}
     assert 500 not in groups and 10003 not in groups
 
@@ -4499,10 +4544,12 @@ def test_account_data_enriches_order_price_from_cart_endpoint() -> None:
         session=None,  # type: ignore[arg-type]
         access_token="token",
         country="us",
+        # The cookbook listing runs beside the menu stage; this test does not stub it.
+        enable_favorites=False,
     )
     # The week must stay in the future so the cart-price path treats it as the next order
     # (``isFutureWeek=true``). ``week_id`` is just an opaque label echoed into ``hfWeek``.
-    future_delivery = date.today() + timedelta(days=7)
+    future_delivery = local_today() + timedelta(days=7)
     subscription = HelloFreshSubscription(
         subscription_id="1000001",
         account_id="20000001",
@@ -4684,7 +4731,7 @@ def test_account_data_backfills_next_selection_week_from_subscription_metadata()
     )
     # A FUTURE modifiable week — needs_selection (and thus next_selection_week) only considers
     # upcoming weeks, since a past box can't be changed.
-    future = date.today() + timedelta(days=10)
+    future = local_today() + timedelta(days=10)
     future_week = future.strftime("%G-W%V")
     future_iso = future.strftime("%Y-%m-%dT00:00:00-0700")
     # Cutoff still ahead: the week must count as editable/needing selection. A PAST cutoff
@@ -4762,6 +4809,8 @@ def test_account_data_derives_write_capabilities_from_allowed_actions() -> None:
         session=None,  # type: ignore[arg-type]
         access_token="token",
         enable_public_menu_fallback=False,
+        # The cookbook listing runs beside the menu stage; this test does not stub it.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(subscription_id="sub-1", locale="en-US", meals_required=3)
     actionable_week = HelloFreshWeek(
@@ -4825,17 +4874,20 @@ def test_account_data_enriches_tracking_from_scm_public_tracking_endpoint() -> N
         session=None,  # type: ignore[arg-type]
         access_token="token",
         enable_public_menu_fallback=False,
+        # The cookbook listing runs beside the menu stage; this test does not stub it.
+        enable_favorites=False,
     )
     subscription = HelloFreshSubscription(
         subscription_id="1000001",
         account_id="acct-1",
         locale="en-US",
     )
+    # Delivered today: tracking is looked up for boxes delivered in the last few days only.
     tracked_week = HelloFreshWeek(
         week_id="2026-W24",
         display_name="Week 24",
         subscription_id="1000001",
-        delivery_date=date(2026, 6, 8),
+        delivery_date=local_today(),
         status="DELIVERED",
     )
     tracked_order = HelloFreshOrder(
@@ -4843,7 +4895,7 @@ def test_account_data_enriches_tracking_from_scm_public_tracking_endpoint() -> N
         week_id="2026-W24",
         status="DELIVERED",
         subscription_id="1000001",
-        delivery_date=date(2026, 6, 8),
+        delivery_date=local_today(),
         tracking_url="https://www.hellofresh.com/delivery-tracking/00000000-0000-4000-8000-f00000000001",
         tracking_number="DUS0000000000000001",
     )
@@ -4920,6 +4972,69 @@ def test_account_data_enriches_tracking_from_scm_public_tracking_endpoint() -> N
     )
 
 
+class _MenuResponse:
+    """A week-menu answer, for the read a cart write makes of its week before writing."""
+
+    status = 200
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    async def json(self, content_type=None):
+        return self._payload
+
+
+def _menu_from_week(week: HelloFreshWeek) -> dict:
+    """The week's menu as HelloFresh would answer it, built from the test's week.
+
+    The meals are the week's ``_menu_payload`` meals when it has them, else its recipes with
+    their selection; the Market catalog is its market items with theirs.
+    """
+    meals = (week.raw.get("_menu_payload") or {}).get("meals")
+    if meals is None:
+        meals = [
+            {
+                "index": recipe.course_index,
+                "recipe": {"id": recipe.recipe_id, "name": recipe.name},
+                "selection": {
+                    "quantity": (recipe.selected_quantity or 1) if recipe.is_selected else 0
+                },
+            }
+            for recipe in week.recipes
+            if recipe.course_index is not None
+        ]
+    groups: dict = {}
+    for item in week.market_items:
+        group = groups.setdefault(
+            (item.group_type, item.sku),
+            {"groupType": item.group_type, "sku": item.sku, "addOns": []},
+        )
+        selection = None
+        if item.is_selected or item.preselected_quantity:
+            selection = {
+                "skipped": not item.is_selected,
+                "oneOffQuantity": (item.selected_quantity or 1) if item.is_selected else 0,
+                "preselectedQuantity": item.preselected_quantity or 0,
+            }
+        group["addOns"].append(
+            {
+                "index": item.index,
+                "sku": item.sku,
+                "maxQuantity": item.max_quantity,
+                "recipe": {"id": item.item_id, "name": item.name},
+                "selection": selection,
+            }
+        )
+    return {"week": week.week_id, "meals": meals, "addOns": {"groups": list(groups.values())}}
+
+
+def _menu_read(week: HelloFreshWeek, path: str) -> _MenuResponse:
+    """Answer the cart write's read of ``week``'s menu; any other read is a 404."""
+    if path == "/gw/my-deliveries/menu":
+        return _MenuResponse(_menu_from_week(week))
+    raise HelloFreshError(f"HelloFresh request failed for {path}: HTTP 404", status=404)
+
+
 def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> None:
     """Meal selection should use the cart update API with menu indexes from the authenticated menu."""
     client = HelloFreshClient(
@@ -4935,6 +5050,7 @@ def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> Non
         raw={
             "customerPlanId": "plan-123",
             "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
         },
     )
     week = HelloFreshWeek(
@@ -4991,6 +5107,9 @@ def test_async_select_meals_uses_cart_update_endpoint_from_menu_payload() -> Non
         extra_headers=None,
         _allow_refresh_retry=True,
     ):
+        if method == "GET":
+            # The write reads the week's menu again first; the writes are what is checked.
+            return _menu_read(week, path)
         requests.append(
             {
                 "method": method,
@@ -5055,7 +5174,11 @@ def _select_meals_client_with_cart_response(cart_body):
         account_id="20000001",
         locale="en-US",
         servings=2,
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
+        },
     )
     week = HelloFreshWeek(
         week_id="2026-W26",
@@ -5109,6 +5232,8 @@ def _select_meals_client_with_cart_response(cart_body):
     async def fake_api_request(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
+        if method == "GET":
+            return _menu_read(week, path)
         return CartResponse()
 
     client._async_get_subscriptions = fake_get_subscriptions  # type: ignore[method-assign]
@@ -5160,6 +5285,7 @@ def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
         raw={
             "customerPlanId": "plan-123",
             "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
         },
     )
     week = HelloFreshWeek(
@@ -5206,6 +5332,8 @@ def test_async_select_meals_upgrades_box_sku_when_over_selecting() -> None:
         extra_headers=None,
         _allow_refresh_retry=True,
     ):
+        if method == "GET":
+            return _menu_read(week, path)
         requests.append(
             {"method": method, "path": path, "params": params, "json_payload": json_payload}
         )
@@ -5268,7 +5396,11 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
         account_id="20000001",
         locale="en-US",
         servings=2,
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
+        },
     )
     week = HelloFreshWeek(
         week_id="2026-W26",
@@ -5307,6 +5439,9 @@ def _build_select_meals_client() -> tuple[HelloFreshClient, list[dict[str, objec
     async def fake_api_request(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
+        if method == "GET":
+            # The snapshot's week, so a test that changes it changes what HelloFresh answers.
+            return _menu_read(client._last_account_data.get_week("2026-W26"), path)
         requests.append(
             {"method": method, "path": path, "params": params, "json_payload": json_payload}
         )
@@ -5445,7 +5580,12 @@ def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, obje
         subscription_id="1000001",
         account_id="20000001",
         locale="en-US",
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
+        },
     )
     week = HelloFreshWeek(
         week_id="2026-W26",
@@ -5490,6 +5630,9 @@ def _build_market_select_client() -> tuple[HelloFreshClient, list[dict[str, obje
     async def fake_req(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
+        if method == "GET":
+            # HelloFresh answers with the week as the test left it (selection, add-ons).
+            return _menu_read(client._last_account_data.get_week("2026-W26"), path)
         requests.append({"method": method, "path": path, "json_payload": json_payload})
 
         class R:
@@ -5597,7 +5740,12 @@ def test_select_market_items_keeps_base_sku_when_meals_below_minimum() -> None:
         subscription_id="1000001",
         account_id="20000001",
         locale="en-US",
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+        servings=2,
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
+        },
     )
     week = HelloFreshWeek(
         week_id="2026-W26",
@@ -5635,6 +5783,8 @@ def test_select_market_items_keeps_base_sku_when_meals_below_minimum() -> None:
     async def fake_req(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
+        if method == "GET":
+            return _menu_read(week, path)
         requests.append({"params": params})
 
         class R:
@@ -5818,6 +5968,8 @@ def test_market_item_reads_limits_sku_and_meal_links_like_the_app() -> None:
     assert item.max_quantity == 4
     assert item.sku == "US-GRP-0-0-0"
     assert item.courses == [4]
+    # Its own index is what the cart orders it by, and stays apart from the linked meal's.
+    assert item.index == 10089
 
 
 def test_scm_tracking_prefers_external_status_label() -> None:
@@ -5859,7 +6011,7 @@ def test_api_request_refreshes_expiring_access_token_before_request() -> None:
     class DummySession:
         """Minimal session object."""
 
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             requests.append({"method": "POST", "url": url, "json": json, "headers": headers})
             return DummyResponse(
                 200,
@@ -5927,7 +6079,7 @@ def test_api_request_retries_after_401_with_refreshed_token() -> None:
         def __init__(self) -> None:
             self.request_calls = 0
 
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             requests.append({"method": "POST", "url": url, "json": json, "headers": headers})
             return DummyResponse(200, {"access_token": "fresh-token", "expires_in": 1800})
 
@@ -5994,7 +6146,7 @@ def test_concurrent_401s_rotate_refresh_token_only_once() -> None:
         def __init__(self) -> None:
             self.access_token = "expired-token"
 
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             nonlocal refresh_calls
             # Yield so any racing waiters reach the lock before this rotation completes.
             await asyncio.sleep(0)
@@ -6067,7 +6219,7 @@ def test_reboot_uses_valid_access_token_when_proactive_refresh_fails() -> None:
             return str(self._payload)
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             # Refresh token was rotated in a previous session -> Auth0 rejects it.
             return DummyResponse(403, {"error": "invalid_grant"})
 
@@ -6119,7 +6271,7 @@ def test_async_ensure_token_fresh_refreshes_expiring_token() -> None:
             return str(self._payload)
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append({"url": url, "json": json})
             return DummyResponse(200, {"access_token": "renewed-token", "expires_in": 1800})
 
@@ -6137,6 +6289,8 @@ def test_async_ensure_token_fresh_refreshes_expiring_token() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # The timer keeps a token fresh only once a request has carried it (an idle one lapses).
+    client._tokens.authorization_header()
     loop.run_until_complete(client.async_ensure_token_fresh())
 
     assert posts and posts[0]["url"] == "https://www.hellofresh.com/gw/refresh"
@@ -6171,7 +6325,7 @@ def test_rejected_login_raises_a_login_rejected_auth_error() -> None:
     from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app"})
             return _AuthFlowResponse(401, text='{"error":"invalid_grant"}', headers=_JSON_HEADERS)
@@ -6193,7 +6347,7 @@ def test_email_check_sends_what_the_sign_in_page_sends() -> None:
     posts: list[dict] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             posts.append({"url": url, "params": params, "json": json, "headers": headers})
             return _AuthFlowResponse(200, text='{"registered":false}', headers=_JSON_HEADERS)
 
@@ -6228,7 +6382,7 @@ def test_email_check_answers_only_when_hellofresh_does(outcome: str, expected) -
     from aiohttp import ClientError  # noqa: PLC0415
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if outcome == "connection_error":
                 raise ClientError("reset")
             return {
@@ -6259,7 +6413,7 @@ def test_email_check_respects_and_records_bot_blocks(monkeypatch) -> None:
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             return _AuthFlowResponse(
                 403, text=_BOT_BLOCK_HTML, headers={"Content-Type": "text/html"}
@@ -6280,7 +6434,7 @@ def test_login_runs_app_token_then_login_when_no_refresh_token() -> None:
     posts: list[dict] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append({"url": url, "params": params, "json": json})
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
@@ -6323,7 +6477,7 @@ def test_refresh_falls_back_to_login_when_refresh_token_rejected() -> None:
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if url.endswith("/gw/refresh"):
                 return _AuthFlowResponse(403, {"error": "invalid_grant"})
@@ -6360,7 +6514,7 @@ def test_refresh_without_credentials_raises_when_token_rejected() -> None:
     """A rejected refresh with no credentials configured surfaces an auth error (no login)."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             return _AuthFlowResponse(403, {"error": "invalid_grant"})
 
     client = HelloFreshClient(
@@ -6383,7 +6537,7 @@ def _refresh_client(refresh_status: int, refresh_body: str, posts: list[str]) ->
     """A client with stored credentials whose /gw/refresh answers with the given status."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if url.endswith("/gw/refresh"):
                 return _AuthFlowResponse(refresh_status, text=refresh_body, headers=_JSON_HEADERS)
@@ -6454,7 +6608,7 @@ def test_login_requiring_a_password_reset_says_so() -> None:
     )
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app"})
             return _AuthFlowResponse(
@@ -6486,7 +6640,7 @@ def test_login_rate_limit_stops_posting_the_password() -> None:
     logins: list[str] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app"})
             logins.append(url)
@@ -6527,7 +6681,7 @@ def test_login_bot_block_raises_transient_error_not_auth_error() -> None:
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
@@ -6564,7 +6718,7 @@ def test_login_cloudflare_warning_respects_diagnostics_option(
     """Only the opted-in warning includes bounded Cloudflare markers, never the body."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
             return _AuthFlowResponse(
@@ -6601,7 +6755,7 @@ def test_refresh_logs_browser_signature_block_from_plain_text(caplog) -> None:
     """Cloudflare error 1010 is classified even when a block page is not HTML."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             return _AuthFlowResponse(
                 403,
                 text="Error 1010. Ray ID: 8ac2aa51e94d72e0-YYZ. private marker",
@@ -6629,7 +6783,7 @@ def test_cf_mitigated_header_marks_json_auth_response_as_challenge(caplog) -> No
     """The explicit challenge header wins even when the block body is JSON."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             return _AuthFlowResponse(
                 403,
                 text='{"error":"challenge"}',
@@ -6655,7 +6809,7 @@ def test_auth_diagnostics_logs_successful_steps_without_secrets(caplog) -> None:
     """Successful login steps are logged at debug only, never as warnings (#13)."""
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "private-app-token"})
             return _AuthFlowResponse(200, {"access_token": "private-user-token"})
@@ -6685,7 +6839,7 @@ def test_auth_error_summary_does_not_log_reflected_credentials(caplog) -> None:
     """Server-controlled auth messages must not expose credentials in HA logs."""
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
             return _AuthFlowResponse(
@@ -6713,7 +6867,7 @@ def test_auth_success_requires_json_object(payload) -> None:
     """A malformed success response becomes a controlled authentication error."""
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
             response = _AuthFlowResponse(200)
@@ -6737,7 +6891,7 @@ def test_html_200_auth_response_starts_backoff(blocked_step, caplog) -> None:
     posts = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if url.endswith(blocked_step):
                 return _AuthFlowResponse(
@@ -6765,7 +6919,7 @@ def test_app_token_timeout_is_nonfatal() -> None:
     """A transient app-token timeout does not prevent a working login request."""
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             if url.endswith("/gw/auth/token"):
                 raise TimeoutError("temporary timeout")
             return _AuthFlowResponse(200, {"access_token": "user-token"})
@@ -6791,7 +6945,7 @@ def test_refresh_bot_block_does_not_fall_back_to_login() -> None:
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             return _AuthFlowResponse(
                 403,
@@ -6836,7 +6990,7 @@ def test_bot_block_backoff_grows_and_is_shared_across_entries(monkeypatch) -> No
     login_results = [403, 403, 200, 403]
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if url.endswith("/gw/auth/token"):
                 return _AuthFlowResponse(200, {"access_token": "app-token"})
@@ -6898,7 +7052,10 @@ def test_bot_block_backoff_caps_at_one_hour(monkeypatch) -> None:
 
 
 def test_backoff_is_shared_across_distinct_entry_sessions_on_one_loop() -> None:
-    """Cookie isolation must still preserve an IP-wide pause across HA entries."""
+    """Cookie isolation must still preserve an IP-wide pause across HA entries.
+
+    The pause is per HelloFresh site: a block on one country's host leaves the others alone.
+    """
     from custom_components.hellofresh import token_manager  # noqa: PLC0415
 
     loop = asyncio.new_event_loop()
@@ -6907,9 +7064,15 @@ def test_backoff_is_shared_across_distinct_entry_sessions_on_one_loop() -> None:
         def __init__(self):
             self._loop = loop
 
-    first = token_manager._backoff_for_session(DummySession())  # type: ignore[arg-type]
-    second = token_manager._backoff_for_session(DummySession())  # type: ignore[arg-type]
+    site = "https://www.hellofresh.com"
+    first = token_manager._backoff_for_session(DummySession(), site)  # type: ignore[arg-type]
+    second = token_manager._backoff_for_session(DummySession(), site)  # type: ignore[arg-type]
+    other_site = token_manager._backoff_for_session(
+        DummySession(),  # type: ignore[arg-type]
+        "https://www.hellofresh.co.uk",
+    )
     assert first is second
+    assert other_site is not first
     loop.close()
 
 
@@ -6922,7 +7085,7 @@ def test_app_token_block_stops_login_and_starts_backoff(monkeypatch, status: int
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             return _AuthFlowResponse(status, headers={"cf-mitigated": "challenge"})
 
@@ -6961,7 +7124,7 @@ def test_data_cloudflare_block_pauses_calls_without_refresh(monkeypatch) -> None
                 )
             return _AuthFlowResponse(200, {"ok": True})
 
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             raise AssertionError("a data challenge must not trigger token refresh")
 
     client = HelloFreshClient(
@@ -7028,7 +7191,7 @@ def test_public_menu_page_loads_as_a_chrome_navigation(monkeypatch, curl_headers
     It used to be the one request sent on aiohttp's fingerprint, which a strict Cloudflare
     region answers with a 403 -- and that block then paused the entry's auth and data calls.
     """
-    from custom_components.hellofresh import client as client_mod  # noqa: PLC0415
+    from custom_components.hellofresh import client_menus  # noqa: PLC0415
 
     calls: list[dict] = []
 
@@ -7038,7 +7201,7 @@ def test_public_menu_page_loads_as_a_chrome_navigation(monkeypatch, curl_headers
             200, text="<!doctype html><html></html>", headers={"Content-Type": "text/html"}
         )
 
-    monkeypatch.setattr(client_mod, "async_request", fake_async_request)
+    monkeypatch.setattr(client_menus, "async_request", fake_async_request)
     client = HelloFreshClient(
         session=object(),  # type: ignore[arg-type]
         country="be",
@@ -7215,12 +7378,12 @@ def test_public_menu_connection_error_leaves_the_poll_running(monkeypatch) -> No
     """A dropped connection on the page load is a normal fallback failure, not a crash."""
     from aiohttp import ClientError  # noqa: PLC0415
 
-    from custom_components.hellofresh import client as client_mod  # noqa: PLC0415
+    from custom_components.hellofresh import client_menus  # noqa: PLC0415
 
     async def failing_async_request(session, method, url, **kwargs):
         raise ClientError("curl_cffi GET request failed: Timeout")
 
-    monkeypatch.setattr(client_mod, "async_request", failing_async_request)
+    monkeypatch.setattr(client_menus, "async_request", failing_async_request)
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -7265,7 +7428,7 @@ def test_proactive_refresh_transient_failure_keeps_using_the_valid_token(failure
     sent_auth: list[str] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             if failure == "transport_error":
                 raise ClientError("connection reset")
@@ -7299,7 +7462,7 @@ def test_proactive_refresh_bot_block_still_pauses_requests() -> None:
     """A blocked refresh is not papered over by the still-valid token: the block pauses all calls."""
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             return _AuthFlowResponse(
                 403, text=_BOT_BLOCK_HTML, headers={"Content-Type": "text/html"}
             )
@@ -7324,18 +7487,19 @@ def test_proactive_refresh_bot_block_still_pauses_requests() -> None:
 
 
 @pytest.mark.parametrize(
-    ("scenario", "expected_posts"),
+    ("scenario", "expected_posts", "expected_retry_posts"),
     [
-        ("refresh_unavailable", ["refresh"]),
-        ("refresh_and_login_rejected", ["refresh", "auth/token", "login"]),
+        ("refresh_unavailable", ["refresh"], ["refresh"]),
+        # A refused refresh token and a refused password are never posted a second time.
+        ("refresh_and_login_rejected", ["refresh", "auth/token", "login"], []),
     ],
 )
 def test_failed_proactive_refresh_is_not_repeated_by_queued_requests(
-    monkeypatch, scenario: str, expected_posts: list[str]
+    monkeypatch, scenario: str, expected_posts: list[str], expected_retry_posts: list[str]
 ) -> None:
     """One failed refresh per poll, not one per concurrent request.
 
-    Every request queued on the refresh lock used to repeat a failed attempt; with stored
+    Every request waiting on the refresh used to repeat a failed attempt; with stored
     credentials a single poll sent a burst of password logins.
     """
     from custom_components.hellofresh import token_manager  # noqa: PLC0415
@@ -7345,7 +7509,7 @@ def test_failed_proactive_refresh_is_not_repeated_by_queued_requests(
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             await asyncio.sleep(0)  # real lock contention
             posts.append(url.rsplit("/gw/", 1)[-1])
             if url.endswith("/gw/auth/token"):
@@ -7381,10 +7545,11 @@ def test_failed_proactive_refresh_is_not_repeated_by_queued_requests(
     assert [r.status for r in responses] == [200] * 6
     assert posts == expected_posts
 
-    # Once the reuse window has passed, the next request makes a real attempt again.
+    # Once the reuse window has passed, the next request makes a real attempt again, unless
+    # HelloFresh's answer was final.
     clock[0] += 61
     loop.run_until_complete(client._async_api_request("GET", "/gw/again"))
-    assert posts == expected_posts * 2
+    assert posts == expected_posts + expected_retry_posts
 
 
 def test_failed_reactive_refresh_is_not_repeated_by_concurrent_401s(monkeypatch) -> None:
@@ -7395,7 +7560,7 @@ def test_failed_reactive_refresh_is_not_repeated_by_concurrent_401s(monkeypatch)
     posts: list[str] = []
 
     class DummySession:
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             await asyncio.sleep(0)
             posts.append(url.rsplit("/gw/", 1)[-1])
             if url.endswith("/gw/auth/token"):
@@ -7437,7 +7602,7 @@ def test_data_403_with_a_valid_token_is_not_an_auth_failure() -> None:
         async def request(self, method, url, params=None, json=None, headers=None):
             return _AuthFlowResponse(403, text='{"error":"forbidden"}', headers=_JSON_HEADERS)
 
-        async def post(self, url, params=None, json=None, headers=None):
+        async def post(self, url, params=None, json=None, headers=None, **_kwargs):
             raise AssertionError("a 403 on a valid token must not spend a refresh")
 
     client = HelloFreshClient(
@@ -7497,7 +7662,7 @@ def test_upcoming_deliveries_prefers_last_successful_endpoint() -> None:
         calls.append(f"{path}?{param_keys}")
         if path == "/gw/my-deliveries/upcoming-deliveries" and param_keys == winning_params_key:
             return DummyResponse()
-        raise HelloFreshError("HTTP 404")
+        raise HelloFreshError("HTTP 404", status=404)
 
     async def fake_response_json(_response):
         return {"weeks": [{"id": "2026-W25", "deliveryDate": "2026-06-19"}]}
@@ -7701,53 +7866,6 @@ def test_enrich_selected_plan_price_skips_when_payload_cannot_be_built() -> None
     assert data.selected_plan_total_price_currency is None
 
 
-def test_mutation_remembers_winning_endpoint_combo() -> None:
-    """A write action that succeeds should be retried first next time (sticky writes)."""
-    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
-    week = HelloFreshWeek(week_id="2026-W25", display_name="W25", subscription_id="sub-1")
-
-    winning_path = "/gw/api/customers/me/subscriptions/sub-1/weeks/2026-W25/skip"
-    attempts: list[str] = []
-
-    async def fake_api_request(
-        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
-    ):
-        attempts.append(f"{method} {path}")
-        if path == winning_path:
-            return object()
-        raise HelloFreshError("HTTP 404")
-
-    client._async_api_request = fake_api_request  # type: ignore[method-assign]
-
-    path_templates = [
-        "/gw/my-deliveries/weeks/{week_id}/skip",
-        "/gw/my-menu/weeks/{week_id}/skip",
-        "/gw/api/customers/me/subscriptions/{subscription_id}/weeks/{week_id}/skip",
-    ]
-    payload_variants = [{"weekId": "2026-W25", "skip": True}]
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(
-        client._async_try_mutation_candidates(
-            path_templates, week, payload_variants, category="skip"
-        )
-    )
-    assert any(a.endswith(winning_path) for a in attempts)
-    first_attempt_count = len(attempts)
-    assert first_attempt_count > 1  # had to probe past the failing candidates
-
-    attempts.clear()
-    loop.run_until_complete(
-        client._async_try_mutation_candidates(
-            path_templates, week, payload_variants, category="skip"
-        )
-    )
-    # Second call hits the remembered winning combo first — no wasted probes.
-    assert attempts == [f"POST {winning_path}"]
-
-
 def _client_with_known_week(week: HelloFreshWeek) -> HelloFreshClient:
     """Return a client whose loaded account data contains ``week``."""
     client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
@@ -7827,8 +7945,12 @@ def test_unskip_week_sets_status_running() -> None:
     assert captured["json_payload"]["delivery"]["status"] == "RUNNING"  # type: ignore[index]
 
 
-def test_skip_week_falls_back_to_guessed_paths_without_dates() -> None:
-    """When a week lacks cutoff/delivery dates, skip falls back to the guessed endpoints."""
+def test_skip_week_without_a_delivery_date_is_refused_without_a_request() -> None:
+    """The verified PATCH needs the week's delivery date; without one nothing is sent.
+
+    It used to fall back to a matrix of guessed endpoints no capture has shown, sending writes
+    nobody has seen HelloFresh accept.
+    """
     week = HelloFreshWeek(week_id="2026-W30", display_name="W30", subscription_id="1000001")
     client = _client_with_known_week(week)
 
@@ -7838,20 +7960,15 @@ def test_skip_week_falls_back_to_guessed_paths_without_dates() -> None:
         method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
     ):
         paths.append(path)
-        # Accept the first guessed skip path so the fallback resolves.
-        if path.endswith("/skip"):
-            return object()
-        raise HelloFreshError("HTTP 404")
+        return object()
 
     client._async_api_request = fake_api_request  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(client.async_skip_week("2026-W30"))
-
-    # The verified PATCH is skipped (no dates), so only the guessed /skip paths are tried.
-    assert paths and all(p.endswith("/skip") for p in paths)
-    assert not any("delivery_dates" in p for p in paths)
+    with pytest.raises(HelloFreshNotImplementedError, match="no delivery date"):
+        loop.run_until_complete(client.async_skip_week("2026-W30"))
+    assert paths == []
 
 
 def test_skip_week_without_cutoff_still_uses_the_status_patch() -> None:
@@ -8026,7 +8143,7 @@ def test_async_ensure_token_fresh_skips_when_token_has_life() -> None:
     posts: list[object] = []
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             posts.append(url)
             raise AssertionError("refresh should not be attempted for a healthy token")
 
@@ -8149,7 +8266,7 @@ def test_rotation_resets_refresh_token_clock_and_persists_it() -> None:
             return str(self._payload)
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             return DummyResponse(
                 200,
                 {
@@ -8208,7 +8325,7 @@ def test_rotation_does_not_swallow_server_refresh_expires_in() -> None:
             return str(self._payload)
 
     class DummySession:
-        async def post(self, url: str, params=None, json=None, headers=None):
+        async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
             return DummyResponse(
                 200,
                 {
@@ -8313,7 +8430,7 @@ def test_token_refresh_timer_never_lets_token_expire() -> None:
     The original 2/3-of-lifetime interval (20 min for a 30-min token) stepped over the
     narrow pre-expiry window, leaving the token dead for ~10 min each cycle. This
     simulates the real interaction between _token_refresh_interval (coordinator) and
-    _token_expiring_soon (client) and asserts the token is never past expiry at a tick.
+    _token_expiring_soon (token manager) and asserts the token is never past expiry at a tick.
     """
     from custom_components.hellofresh.client import (
         _TOKEN_MIN_REMAINING_BEFORE_REFRESH,
@@ -8599,7 +8716,7 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
     order is a real recent payment even while its delivery is still upcoming.
     """
     client = _make_client()
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     older_charge = today - timedelta(days=14)
     recent_charge = today - timedelta(days=3)
     future_delivery = today + timedelta(days=4)
@@ -8629,7 +8746,7 @@ def test_accumulate_order_prices_future_vs_past_tracking() -> None:
 def test_accumulate_order_prices_next_order_nr_is_earliest_future() -> None:
     """next_order_nr_by_subscription should point to the nearest upcoming delivery."""
     client = _make_client()
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     nearest_future = today + timedelta(days=3)
     farther_future = today + timedelta(days=10)
     items = [
@@ -8687,7 +8804,7 @@ def test_recent_payment_date_is_most_recent_actual_charge() -> None:
     charge, because the upcoming box (billed days ago) was skipped in favour of the prior one.
     """
     client = _make_client()
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     older_charge = today - timedelta(days=14)
     recent_charge = today - timedelta(days=3)
     items = [
@@ -8715,7 +8832,7 @@ def test_recent_payment_date_is_most_recent_actual_charge() -> None:
 def test_recent_payment_date_none_when_charge_is_still_in_the_future() -> None:
     """A charge dated in the future (not yet billed) does not count as a recent payment."""
     client = _make_client()
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     future_charge = today + timedelta(days=2)
     items = [
         _billing_item(
@@ -9483,7 +9600,7 @@ def test_build_spending_dataset_aggregates_ledger() -> None:
 
 def test_build_spending_dataset_excludes_upcoming_from_running_total() -> None:
     """A not-yet-delivered box appears flagged upcoming but is not counted in the running total."""
-    today = date.today()  # matches the integration's LOCAL delivery-date gating
+    today = local_today()  # matches the integration's LOCAL delivery-date gating
     past = today - timedelta(days=7)
     future = today + timedelta(days=7)
     price_by_key = {
@@ -9564,37 +9681,71 @@ def test_get_spending_returns_empty_when_no_subscriptions() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     dataset = loop.run_until_complete(client.async_get_spending())
-    assert dataset == {"weeks": [], "months": [], "total": None}
+    assert dataset == {"weeks": [], "months": [], "total": None, "truncated": False}
+
+
+class _RoutedSession:
+    """A session answering by path, as HelloFresh would: the client's whole request path runs.
+
+    ``routes`` maps a path to ``(status, JSON body)``; any other path answers 404.
+    """
+
+    def __init__(self, routes: dict[str, tuple[int, object]]) -> None:
+        self.routes = routes
+        self.calls: list[tuple[str, str]] = []
+
+    async def request(self, method, url, params=None, json=None, headers=None):
+        path = url.split("://", 1)[-1].split("/", 1)[-1]
+        path = "/" + path
+        self.calls.append((method, path))
+        status, body = self.routes.get(path, (404, {"status": "NOT_FOUND"}))
+        return _AuthFlowResponse(status, body, headers={"Content-Type": "application/json"})
+
+
+def _routed_client(
+    routes: dict[str, tuple[int, object]],
+) -> tuple[HelloFreshClient, _RoutedSession]:
+    session = _RoutedSession(routes)
+    client = HelloFreshClient(
+        session=session,  # type: ignore[arg-type]
+        access_token="t",
+        token_issued_at=int(datetime.now(timezone.utc).timestamp()),
+        token_expires_in=1800,
+    )
+    return client, session
 
 
 def test_get_presets_falls_back_to_menus_service() -> None:
     """When /gw/api/presets 404s, get_presets falls back to /gw/menus-service/presets."""
-    client = HelloFreshClient(session=None, access_token="token")  # type: ignore[arg-type]
-    body = {"items": [{"handle": "fit", "name": "Fit & Wholesome"}]}
-    calls: list[str] = []
-
-    class Resp:
-        def __init__(self, status):
-            self.status = status
-
-        async def json(self, content_type=None):
-            return body
-
-        async def text(self):
-            return ""
-
-    async def fake_get(path, params=None, extra_headers=None):
-        calls.append(path)
-        # First candidate is unavailable; the fallback succeeds.
-        return Resp(404 if path == "/gw/api/presets" else 200)
-
-    client._async_api_get = fake_get  # type: ignore[method-assign]
+    client, session = _routed_client(
+        {"/gw/menus-service/presets": (200, {"items": [{"handle": "fit", "name": "Fit"}]})}
+    )
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     presets = loop.run_until_complete(client.async_get_presets())
-    assert calls == ["/gw/api/presets", "/gw/menus-service/presets"]
+    assert [path for _method, path in session.calls] == [
+        "/gw/api/presets",
+        "/gw/menus-service/presets",
+    ]
     assert [p["handle"] for p in presets] == ["fit"]
+
+
+def test_get_presets_does_not_fall_back_on_a_server_error() -> None:
+    """Only a 404/405 says the first route is missing; a 500 is raised, not probed past."""
+    client, session = _routed_client(
+        {
+            "/gw/api/presets": (500, {"error": "boom"}),
+            "/gw/menus-service/presets": (200, {"items": [{"handle": "fit"}]}),
+        }
+    )
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with pytest.raises(HelloFreshError) as raised:
+        loop.run_until_complete(client.async_get_presets())
+    assert raised.value.status == 500
+    assert [path for _method, path in session.calls] == ["/gw/api/presets"]
 
 
 # ---------------------------------------------------------------------------
@@ -10038,7 +10189,10 @@ def test_remove_favorite_raises_on_rejected_delete() -> None:
     """A rejected delete must raise rather than report a removal that did not happen."""
     from custom_components.hellofresh.models import HelloFreshFavorite
 
-    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    # The refusal comes through the real request path, which raises for any 4xx.
+    client, _session = _routed_client(
+        {"/gw/cookbook/v1/external-recipes/srv-9": (403, {"error": "forbidden"})}
+    )
 
     async def fake_search(_ids):
         return {
@@ -10047,13 +10201,7 @@ def test_remove_favorite_raises_on_rejected_delete() -> None:
             )
         }, True
 
-    async def fake_api_request(
-        method, path, params=None, json_payload=None, extra_headers=None, authenticated=True
-    ):
-        return _StubResponse(403)
-
     client._async_search_favorites = fake_search  # type: ignore[method-assign]
-    client._async_api_request = fake_api_request  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -11424,13 +11572,12 @@ def test_recipe_detail_leaves_favorite_unknown_when_cookbook_fails() -> None:
 
 
 def test_recipe_detail_raises_clear_error_on_404() -> None:
-    """An unknown recipe id should say so rather than surfacing a generic failure."""
-    client = HelloFreshClient(session=object(), access_token="t")  # type: ignore[arg-type]
+    """An unknown recipe id should say so rather than surfacing a generic failure.
 
-    async def fake_api_get(path, params=None, extra_headers=None):
-        return _StubResponse(404)
-
-    client._async_api_get = fake_api_get  # type: ignore[method-assign]
+    The 404 comes through the real request path, which raises for it: a check of the
+    response's status after the request could never see one.
+    """
+    client, _session = _routed_client({})
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -11759,7 +11906,7 @@ def test_past_weeks_never_keep_a_sold_out_flag() -> None:
         week_id="2026-W32",
         display_name="W32",
         subscription_id="sub-1",
-        delivery_date=date.today() - timedelta(days=14),
+        delivery_date=local_today() - timedelta(days=14),
         # Deliberately "editable"-looking: swaps allowed, no deadline recorded.
         allowed_actions={"mealSwap": True},
         recipes=[stale],
@@ -11796,7 +11943,7 @@ def test_locked_undelivered_week_never_keeps_a_sold_out_flag() -> None:
         week_id="2026-W38",
         display_name="W38",
         subscription_id="sub-1",
-        delivery_date=date.today() + timedelta(days=3),
+        delivery_date=local_today() + timedelta(days=3),
         allowed_actions={"mealSwap": True},
         selection_deadline=datetime.now(UTC) - timedelta(days=1),
         recipes=[stale],
@@ -11825,7 +11972,7 @@ def test_future_week_still_receives_sold_out_flags() -> None:
         week_id="2026-W39",
         display_name="W39",
         subscription_id="sub-1",
-        delivery_date=date.today() + timedelta(days=7),
+        delivery_date=local_today() + timedelta(days=7),
         allowed_actions={"mealSwap": True},
         recipes=[recipe],
     )
@@ -12155,45 +12302,49 @@ def test_rating_feedback_is_parsed_from_the_other_feedback_shape() -> None:
 def test_history_auth_failure_propagates_for_reauth() -> None:
     """An expired token during history loading must reach the coordinator, not be swallowed.
 
-    `_async_get_past_delivery_weeks` walks a list of candidate endpoints, and a plain
-    HelloFreshError on one means "try the next". Auth is different: every candidate will fail
-    the same way, so treating a dead token as a failed candidate silently produced EMPTY
-    history with no reauth prompt. Its sibling `_async_get_upcoming_deliveries` — which runs in
-    the same asyncio.gather and shares this fetch helper — always re-raised here.
+    A plain HelloFreshError on past-deliveries means "ask the fallback". Auth is different:
+    every request will fail the same way, so treating a dead token as a failed read silently
+    produced EMPTY history with no reauth prompt.
     """
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
+    attempts: list[str] = []
 
-    async def fake_shared_get(path: str, params=None):
+    async def fake_api_get(path: str, params=None, extra_headers=None):
+        attempts.append(path)
         raise HelloFreshAuthError("token expired")
 
-    client._async_api_get_json_shared = fake_shared_get  # type: ignore[method-assign]
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with pytest.raises(HelloFreshAuthError):
         loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
+    assert attempts == ["/gw/my-deliveries/past-deliveries"]
 
 
-def test_history_non_auth_failure_still_tries_the_next_candidate() -> None:
-    """Guards the over-correction: a plain transport error must NOT abort the whole walk."""
+def test_history_non_auth_failure_still_tries_the_fallback() -> None:
+    """Guards the over-correction: a plain transport error must NOT abort the whole history."""
     client = HelloFreshClient(session=object())  # type: ignore[arg-type]
     subscriptions = [HelloFreshSubscription(subscription_id="sub-1", meals_required=3)]
 
     attempts: list[str] = []
 
-    async def fake_shared_get(path: str, params=None):
+    async def fake_api_get(path: str, params=None, extra_headers=None):
         attempts.append(path)
         raise HelloFreshError("endpoint unavailable")
 
-    client._async_api_get_json_shared = fake_shared_get  # type: ignore[method-assign]
+    client._async_api_get = fake_api_get  # type: ignore[method-assign]
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     weeks = loop.run_until_complete(client._async_get_past_delivery_weeks(subscriptions))
 
     assert weeks == []
-    assert len(attempts) > 1, "a non-auth failure should fall through to other candidates"
+    assert attempts == [
+        "/gw/my-deliveries/past-deliveries",
+        "/gw/customer-complaints/users/me/deliveries",
+    ]
 
 
 def _catalog_payload_with_children(children: list[dict]) -> dict:

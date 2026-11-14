@@ -197,6 +197,9 @@ export const CARD_STYLES = `
   }
   .hf-iconbtn:hover:not(:disabled) { background: var(--hf-surface-2); color: var(--hf-text); }
   .hf-iconbtn:disabled { opacity: 0.4; cursor: default; }
+  /* The refresh button while a load runs: it must keep keyboard focus, which a disabled button
+     cannot, so it is only marked as one. */
+  .hf-iconbtn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
   .hf-iconbtn.spin ha-icon { animation: hf-spin 0.9s linear infinite; }
   .hf-link {
     border: none; background: none; padding: 0; cursor: pointer; color: var(--hf-accent);
@@ -1100,6 +1103,14 @@ export const CARD_STYLES = `
   .hf-toast.error { background: #b91c1c; }
   .hf-toast.saving { top: 16px; bottom: auto; background: var(--hf-accent); color: var(--hf-accent-ink); }
   .hf-toast ha-icon { --mdc-icon-size: 18px; }
+  .hf-toasttext { min-width: 0; }
+  /* The toast's Undo: lime on the toast's near-black, like the brand's own buttons. */
+  .hf-toastbtn {
+    flex: none; margin: -6px -8px -6px 4px; padding: 6px 10px; border: none; border-radius: 8px;
+    background: transparent; color: var(--hf-lime); font: inherit; font-weight: 800; cursor: pointer;
+  }
+  .hf-toastbtn:hover { background: rgba(255, 255, 255, 0.1); }
+  .hf-toastbtn:focus-visible { outline: 2px solid var(--hf-lime); outline-offset: 1px; }
   .hf-spinner {
     width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor;
     border-right-color: transparent; animation: hf-spin 0.7s linear infinite; flex: none;
@@ -1226,6 +1237,51 @@ export const CARD_STYLES = `
   .fp-footer.sticky { position: sticky; bottom: 0; z-index: 2; background: color-mix(in srgb, var(--hf-surface) 90%, transparent); backdrop-filter: blur(8px); }
   .fp-footer .fp-footnote { flex: 1; min-width: 200px; font-size: 0.8em; color: var(--hf-muted); }
   .fp-footer .fp-footnote.error { color: var(--hf-danger-fg); font-weight: 600; }
+
+  /* ---- the views' own additions ---------------------------------------------------------- */
+  /* A tile, row, card or plan line is a plain container. Its one "open" control is a real
+     button (.hf-open) and its other buttons are that button's siblings, never its children. */
+  .hf-open {
+    appearance: none; border: none; background: none; padding: 0; margin: 0; min-width: 0;
+    text-align: left; cursor: pointer;
+  }
+  .hf-open:focus-visible { outline: 2px solid var(--hf-accent); outline-offset: 2px; border-radius: 4px; }
+  .hf-media > .hf-open { display: block; width: 100%; height: 100%; }
+  .hf-media > .hf-open:focus-visible { outline-offset: -3px; border-radius: 0; }
+  .hf-open > .hf-noimg { display: block; }
+  .hf-tile.plain { cursor: default; }
+  .hf-planline.empty .hf-planside button.hf-btn { pointer-events: auto; }
+  /* "Something else" in the plan sheet: a radio button with the note field beside it. */
+  div.hf-planote { cursor: default; }
+  .hf-planotepick {
+    appearance: none; border: none; background: none; padding: 0; margin: 0; flex: none;
+    display: flex; align-items: center; gap: 12px; cursor: pointer; color: inherit; border-radius: 10px;
+  }
+  .hf-planotepick:focus-visible { outline: 2px solid var(--hf-accent); outline-offset: 3px; }
+  .hf-planotepick:disabled { cursor: default; }
+  /* States the views change in place rather than by redrawing. */
+  .hf-search .hf-clear[hidden] { display: none; }
+  .hf-favbtn[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+  .hf-segment button[aria-selected="true"] {
+    background: var(--hf-surface); color: var(--hf-text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  }
+  .hf-filternotice { margin-bottom: 12px; align-items: center; }
+  /* The Menu week head's "For 2 people · Change". */
+  .hf-weekpeople { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 0.86em; color: var(--hf-muted); }
+  .hf-weekpeople ha-icon { --mdc-icon-size: 17px; }
+  .hf-weekpeople .hf-link { font-size: 1em; }
+  /* A choice in a sheet's list (a box size): its words on the left, a price or pill on the right. */
+  .hf-choice { height: auto; width: 100%; border-radius: 12px; justify-content: space-between; padding: 12px 14px; }
+  .hf-choicetext { display: flex; flex-direction: column; text-align: left; min-width: 0; }
+  /* A box HelloFresh moved: "Delayed — now arriving Tue, Oct 6" on a week card or row. */
+  .hf-revised { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; }
+  .hf-revised ha-icon { --mdc-icon-size: 16px; }
+  .hf-revised.delayed { color: var(--hf-warn-fg); }
+  .hf-revised.early { color: var(--hf-info-fg); }
+  .hf-weekcard .hf-revised { font-size: 0.82em; }
+  /* Recipes: a next page that failed, with Retry in the place of Load more. */
+  .hf-more-row.hf-morefailed { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+  .hf-paymentnotice a { font-weight: 700; }
 
   /* ---- shared recipe sheet (hellofresh-recipe-detail.js), restyled to match ---------------- */
   .detailwrap { color: var(--hf-text); }

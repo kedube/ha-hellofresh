@@ -111,8 +111,8 @@ async def async_get_config_entry_diagnostics(
             "refresh_token_expires_at": (
                 refresh_expires_at.isoformat() if refresh_expires_at else None
             ),
-            "has_refresh_token": bool(getattr(client, "_refresh_token", None)),
-            "has_credentials": bool(getattr(client, "_has_credentials", False)),
+            "has_refresh_token": bool(getattr(client, "has_refresh_token", False)),
+            "has_credentials": bool(getattr(client, "has_credentials", False)),
         }
 
     diagnostics = {
@@ -134,7 +134,8 @@ async def async_get_config_entry_diagnostics(
             "subscription_id": getattr(data, "subscription_id", None),
             "locale": getattr(data, "locale", None),
             "account_data_available": getattr(data, "account_data_available", None),
-            "capabilities": getattr(data, "capabilities", None).as_dict() if data else {},
+            # Read directly: every account data object has its capabilities.
+            "capabilities": data.capabilities.as_dict() if data else {},
             "debug_trace": getattr(data, "debug_trace", {}) if data else {},
             "subscription_count": len(getattr(data, "subscriptions", [])) if data else 0,
             "order_count": len(getattr(data, "orders", [])) if data else 0,

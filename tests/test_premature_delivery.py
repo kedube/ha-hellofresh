@@ -9,7 +9,7 @@ arrival time still in the future, takes "delivered" back until the box really co
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
@@ -24,8 +24,9 @@ from custom_components.hellofresh.coordinator import (
     delivery_snapshot,
     delivery_transitions,
 )
+from custom_components.hellofresh.parsers import local_today
 
-TODAY = date.today()
+TODAY = local_today()
 NOW = datetime.now(UTC)
 
 

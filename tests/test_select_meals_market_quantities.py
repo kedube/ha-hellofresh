@@ -1,13 +1,13 @@
 """select_meals can carry the week's Market add-ons in the same cart write.
 
-The unified card saves a box's meals and extras with one button. Two back-to-back writes are
-not safe: each rebuilds the whole cart from the integration's LAST POLL, so a Market write
-issued right after a meal write (before the coordinator re-read the week) sends the OLD meals
-back and silently undoes the first save. ``market_quantities`` puts both halves in one PUT.
+The unified card saves a box's meals and extras with one button, and ``market_quantities``
+puts both halves in one PUT. Every cart write reads the week's menu again first and builds
+both halves from what HelloFresh answers, so the half it doesn't change is the one in the box
+now, not the one the last poll saw.
 
-These pin the contract: one request with both halves, omission preserves the current extras
-(the old behaviour), an empty map clears them, a bad item fails before anything is written,
-and the legacy meal-only endpoints refuse rather than dropping the extras on the floor.
+These pin the contract: one write with both halves, omission keeps the extras in the box, an
+empty map clears them, a bad item fails before anything is written, and a week HelloFresh has
+no menu for refuses rather than guessing.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from homeassistant.config_entries import ConfigEntryState
 import pytest
 import voluptuous as vol
 
-from custom_components.hellofresh import _async_register_services
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
     HelloFreshClient,
@@ -30,7 +30,8 @@ from custom_components.hellofresh.api import (
     HelloFreshWeek,
 )
 from custom_components.hellofresh.const import DOMAIN
-from custom_components.hellofresh.models import HelloFreshNotImplementedError
+from custom_components.hellofresh.models import HelloFreshNoMenuError
+from custom_components.hellofresh.services import async_register_services
 
 
 def _run(coro):
@@ -39,8 +40,56 @@ def _run(coro):
     return loop.run_until_complete(coro)
 
 
+# The week's menu as HelloFresh answers it: three meals, none in the box yet, and a Market
+# catalog with the salmon bites in the box (one) and a cake that isn't.
+MENU = {
+    "week": "2026-W26",
+    "meals": [
+        {
+            "index": i,
+            "selection": {"limit": 2},
+            "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"},
+        }
+        for i in (11, 18, 20)
+    ],
+    "addOns": {
+        "groups": [
+            {
+                "groupType": "appetizer",
+                "sku": "US-AAB-0-0-0",
+                "addOns": [
+                    {
+                        "index": 70185,
+                        "sku": "US-AAB-0-0-0",
+                        "maxQuantity": 6,
+                        "recipe": {"id": "m-app", "name": "Salmon Bites"},
+                        "selection": {"oneOffQuantity": 1, "preselectedQuantity": 0},
+                    }
+                ],
+            },
+            {
+                "groupType": "dessert",
+                "sku": "US-DES-0-0-0",
+                "addOns": [
+                    {
+                        "index": 70200,
+                        "sku": "US-DES-0-0-0",
+                        "maxQuantity": 4,
+                        "recipe": {"id": "m-des", "name": "Bundt Cake"},
+                        "selection": None,
+                    }
+                ],
+            },
+        ]
+    },
+}
+
+
 def _client(*, menu_payload: bool = True):
-    """A client whose one known week has a menu, a Market catalog and one extra already chosen."""
+    """A client whose one known week has a menu, a Market catalog and one extra already chosen.
+
+    Without ``menu_payload`` HelloFresh has no menu for the week (it answers 404).
+    """
     client = HelloFreshClient(
         session=None,  # type: ignore[arg-type]
         access_token="token",
@@ -51,21 +100,15 @@ def _client(*, menu_payload: bool = True):
         account_id="20000001",
         locale="en-US",
         servings=2,
-        raw={"customerPlanId": "plan-123", "product": {"sku": "US-CBU-3-2-0"}},
+        raw={
+            "customerPlanId": "plan-123",
+            "product": {"sku": "US-CBU-3-2-0"},
+            "shippingAddress": {"postcode": "01103"},
+        },
     )
     raw: dict = {"product": {"handle": "US-CBU-3-2-0"}}
     if menu_payload:
-        raw["_menu_payload"] = {
-            "week": "2026-W26",
-            "meals": [
-                {
-                    "index": i,
-                    "selection": {"limit": 2},
-                    "recipe": {"id": f"recipe-{i}", "name": f"Meal {i}"},
-                }
-                for i in (11, 18, 20)
-            ],
-        }
+        raw["_menu_payload"] = {"week": "2026-W26"}
     week = HelloFreshWeek(
         week_id="2026-W26",
         display_name="Week 26",
@@ -107,17 +150,25 @@ def _client(*, menu_payload: bool = True):
     async def fake_pref(_s):
         return "quick"
 
-    class CartResponse:
+    class JsonResponse:
         status = 200
 
+        def __init__(self, body: dict) -> None:
+            self._body = body
+
         async def json(self, content_type=None):
-            return {"hasSeamlessDowngraded": False}
+            return self._body
 
     async def fake_req(
         method, path, params=None, json_payload=None, extra_headers=None, _allow_refresh_retry=True
     ):
+        if method == "GET":
+            # The week's menu, read again before every write; any other read isn't served.
+            if path == "/gw/my-deliveries/menu" and menu_payload:
+                return JsonResponse(MENU)
+            raise HelloFreshError(f"HelloFresh request failed for {path}: HTTP 404", status=404)
         requests.append({"method": method, "path": path, "json_payload": json_payload})
-        return CartResponse()
+        return JsonResponse({"hasSeamlessDowngraded": False})
 
     client._async_get_subscriptions = fake_subs  # type: ignore[method-assign]
     client._async_get_subscription_plan_preference = fake_pref  # type: ignore[method-assign]
@@ -193,10 +244,13 @@ def test_a_bad_add_on_fails_before_anything_is_written(market, match) -> None:
     assert requests == []
 
 
-def test_legacy_meal_endpoints_refuse_rather_than_drop_the_extras() -> None:
-    """Without the menu payload only the meal-only fallbacks remain; they can't carry extras."""
+def test_a_week_without_a_menu_refuses_rather_than_guessing() -> None:
+    """No menu, no cart write: there is no other write path to fall back to.
+
+    Meal-only endpoints nobody had seen HelloFresh accept used to be tried in turn here.
+    """
     client, requests = _client(menu_payload=False)
-    with pytest.raises(HelloFreshNotImplementedError, match="together"):
+    with pytest.raises(HelloFreshNoMenuError, match="no menu for week 2026-W26"):
         _run(client.async_select_meals("2026-W26", MEALS, None, {"m-des": 1}))
     assert requests == []
 
@@ -225,13 +279,22 @@ def _service_hass(calls: list):
     async def async_request_refresh():
         return None
 
+    async def async_after_write(*, full_refresh: bool = True):
+        return None
+
     coordinator = SimpleNamespace(
         client=SimpleNamespace(async_select_meals=async_select_meals),
         async_request_refresh=async_request_refresh,
+        async_after_write=async_after_write,
         config_entry=SimpleNamespace(entry_id="entry1", title="HelloFresh"),
     )
     entry = SimpleNamespace(
-        entry_id="entry1", title="HelloFresh", options={}, domain=DOMAIN, runtime_data=coordinator
+        entry_id="entry1",
+        title="HelloFresh",
+        options={},
+        domain=DOMAIN,
+        state=ConfigEntryState.LOADED,
+        runtime_data=coordinator,
     )
     return SimpleNamespace(
         services=_Services(),
@@ -242,7 +305,7 @@ def _service_hass(calls: list):
 
 
 def _register(hass):
-    asyncio.new_event_loop().run_until_complete(_async_register_services(hass))
+    async_register_services(hass)
     return hass.services
 
 
@@ -267,7 +330,8 @@ def test_schema_accepts_market_quantities_and_coerces_them() -> None:
 )
 def test_handler_distinguishes_absent_from_empty(monkeypatch, extra, expected) -> None:
     monkeypatch.setattr(
-        "custom_components.hellofresh.async_delete_write_actions_issue", lambda *_a, **_k: None
+        "custom_components.hellofresh.coordinator.async_delete_write_actions_issue",
+        lambda *_a, **_k: None,
     )
     calls: list = []
     hass = _service_hass(calls)

@@ -9,15 +9,18 @@ from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import HelloFreshError
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import (
+    HelloFreshConfigEntry,
+    HelloFreshDataUpdateCoordinator,
+    async_client_error,
+    async_write_succeeded,
+)
 from .entity import HelloFreshCoordinatorEntity
-from .issues import async_create_write_actions_issue, async_delete_write_actions_issue
 
 SWITCHES: tuple[SwitchEntityDescription, ...] = (
     SwitchEntityDescription(
@@ -35,11 +38,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh switches."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     async_add_entities(HelloFreshSwitch(coordinator, description) for description in SWITCHES)
 
 
@@ -57,10 +60,7 @@ class HelloFreshSwitch(HelloFreshCoordinatorEntity, SwitchEntity):
         description: SwitchEntityDescription,
     ) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
 
     @property
     def available(self) -> bool:
@@ -97,17 +97,12 @@ class HelloFreshSwitch(HelloFreshCoordinatorEntity, SwitchEntity):
                 await self.coordinator.client.async_skip_week(week.week_id)
             else:
                 await self.coordinator.client.async_unskip_week(week.week_id)
-            # A write just succeeded — clear any stale "write actions unavailable" warning.
-            async_delete_write_actions_issue(
-                self.coordinator.hass, self.coordinator.config_entry.entry_id
-            )
-            await self.coordinator.async_request_refresh()
         except HelloFreshError as err:
-            # A known integration/write failure: raise a Repairs issue and surface a
-            # clean error. Unexpected exceptions are left to propagate as real bugs.
-            async_create_write_actions_issue(
-                self.coordinator.hass,
-                self.coordinator.config_entry.entry_id,
-                self.coordinator.config_entry.title,
-            )
-            raise HomeAssistantError(str(err)) from err
+            # The rule the services use: a rejected sign-in starts reauth, an action
+            # HelloFresh has no endpoint for raises the repair, and anything else (a timeout,
+            # a 5xx) is only reported. Unexpected exceptions propagate as real bugs.
+            raise async_client_error(
+                self.coordinator.hass, self.coordinator.config_entry, err
+            ) from err
+        async_write_succeeded(self.coordinator.hass, self.coordinator.config_entry)
+        await self.coordinator.async_after_write()

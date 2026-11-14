@@ -1,11 +1,12 @@
 // Browser flows: drive the real HelloFresh card in headless Chrome against a fake Home Assistant
 // (fixtures.js, made-up data) and assert on its service calls and DOM. `npm test`; exits non-zero
 // on any failed check or page error.
-import { launchBrowser } from "./chrome.mjs";
+import { launchBrowser, serveDeliveryPhotos } from "./chrome.mjs";
 import { startServer } from "./server.mjs";
 
 const { server, port: PORT } = await startServer(0);
 const browser = await launchBrowser();
+serveDeliveryPhotos(browser, PORT);
 const results = [];
 const errors = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,9 +18,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // pass its own `now`.
 const FLOW_CLOCK = "2026-09-29T12:00:00";
 
-async function open(params = {}, viewport = [1400, 900], path = "/index.html") {
+async function open(params = {}, viewport = [1400, 900], path = "/index.html", init = null) {
   const page = await browser.newPage();
   await page.setViewport({ width: viewport[0], height: viewport[1] });
+  // `init` runs in the page before its own scripts: a flow's stand-in for a Home Assistant that
+  // misbehaves (see flakyWeeks).
+  if (init) await page.evaluateOnNewDocument(init);
   page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
     if (msg.type() === "error" && !msg.text().includes("404")) errors.push(`console: ${msg.text()}`);
@@ -54,7 +58,12 @@ const text = (page, sel) => page.evaluate((s) => (window.__card.shadowRoot.query
 const calls = (page, service) =>
   page.evaluate((svc) => window.__calls.filter((c) => !svc || `${c.domain}.${c.service}` === svc), service);
 
+// FLOWS=<regex> runs only the flows whose name matches (case-insensitive), to try one while
+// working on it; CI runs them all.
+const only = process.env.FLOWS ? new RegExp(process.env.FLOWS, "i") : null;
+
 async function check(name, fn) {
+  if (only && !only.test(name)) return;
   const started = Date.now();
   try {
     await fn();
@@ -469,7 +478,8 @@ await check("calendar: whole weeks of day tiles; a delivered day opens its detai
 
 await check("keyboard Enter on a tile opens the recipe sheet", async () => {
   const page = await open({ view: "menu" });
-  await page.evaluate(() => window.__card.shadowRoot.querySelector(".hf-tile").focus());
+  // A tile is a plain container; its dish name is the button that opens it.
+  await page.evaluate(() => window.__card.shadowRoot.querySelector(".hf-tile .hf-open").focus());
   await page.keyboard.press("Enter");
   await sleep(700);
   assert(await q(page, ".detailwrap .detailbox"), "detail open");
@@ -613,6 +623,8 @@ await check("the drawer switches a boxed dish to another option, keeping serving
         name: b.querySelector(".hf-optname").textContent,
         on: b.getAttribute("aria-pressed") === "true",
         disabled: b.disabled,
+        soldOut: b.classList.contains("soldout"),
+        note: b.querySelector(".hf-optsub")?.textContent.trim() || "",
         price: b.querySelector(".hf-optprice").textContent.trim(),
         img: Boolean(b.querySelector("img")),
       })),
@@ -623,7 +635,8 @@ await check("the drawer switches a boxed dish to another option, keeping serving
   assert(drawer.kind === "customize" && drawer.rows.length === 9, JSON.stringify(drawer));
   assert(drawer.rows[0].name === "No Change" && drawer.rows[2].on && drawer.rows[2].name === "2x Chicken Cutlets", JSON.stringify(drawer.rows.slice(0, 3)));
   assert(drawer.rows[3].price === "Included" && /\+\$2\.49/.test(drawer.rows[2].price) && drawer.rows.every((x) => x.img), JSON.stringify(drawer.rows));
-  assert(drawer.rows[7].disabled, "the sold-out option can't be picked");
+  // Sold out is advisory, as on the grid: the option says so and can still be chosen.
+  assert(drawer.rows[7].soldOut && drawer.rows[7].note === "Sold out" && !drawer.rows[7].disabled, JSON.stringify(drawer.rows[7]));
   assert(/Update box/.test(drawer.apply) && drawer.applyDisabled, "nothing to update until a different option is picked");
   const before = await page.evaluate(() => window.__card.box.displayMeals(window.__card.selectedWeek()).size);
   await click(page, ".hf-sheet .hf-optrow:nth-child(4)", 300); // Salmon
@@ -1025,6 +1038,1159 @@ await check("week tab: always there; empty without a plan; the Overview shows to
   assert(/Tonight: Romesco/.test(tonight) && /5:30/.test(tonight), `tonight: ${tonight}`);
   await click(page, '.hf-todayplan [data-action="goto"]', 300);
   assert((await page.evaluate(() => window.__card.view)) === "week", "the line opens the Week tab");
+  await page.close();
+});
+
+// ---- the card itself: loading, keyboard focus, sheets, accounts ---------------------------------
+
+// Runs before the page's own scripts (open's `init`): get_weeks fails while window.__down is set,
+// as it does while Home Assistant restarts, counting the tries in window.__attempts; and the
+// card's retry delays (15 s, 1 min, 5 min) are cut to a moment, noted in window.__retries.
+const flakyWeeks = () => {
+  window.__down = true;
+  window.__attempts = 0;
+  window.__retries = [];
+  const later = window.setTimeout.bind(window);
+  window.setTimeout = (fn, ms, ...rest) => {
+    if (ms === 15000 || ms === 60000 || ms === 300000) {
+      window.__retries.push(ms);
+      ms = 100;
+    }
+    return later(fn, ms, ...rest);
+  };
+  // The harness sets window.__hass before it hands the card hass: wrap its callService there.
+  let hass;
+  Object.defineProperty(window, "__hass", {
+    configurable: true,
+    get: () => hass,
+    set(value) {
+      hass = value;
+      const real = value.callService.bind(value);
+      value.callService = async (domain, service, ...rest) => {
+        if (domain === "hellofresh" && service === "get_weeks" && window.__down) {
+          window.__attempts += 1;
+          await new Promise((r) => later(r, 30));
+          throw new Error("Home Assistant is starting");
+        }
+        return real(domain, service, ...rest);
+      };
+    },
+  });
+};
+
+await check("a failed load is retried soon, then again when Home Assistant or the integration comes back", async () => {
+  const page = await open({ view: "overview" }, [1400, 900], "/index.html", flakyWeeks);
+  await sleep(800); // the three quick retries run (and fail)
+  let s = await page.evaluate(() => ({
+    retries: window.__retries,
+    attempts: window.__attempts,
+    fetched: window.__card.lastFetched,
+    text: window.__card.shadowRoot.querySelector(".js-main").textContent,
+  }));
+  assert(JSON.stringify(s.retries) === "[15000,60000,300000]" && s.attempts === 4, `retries: ${JSON.stringify(s)}`);
+  assert(s.fetched === 0, "a failed load counted as a load");
+  assert(/Home Assistant is starting/.test(s.text) && /Try again/.test(s.text), s.text.slice(0, 160));
+  await sleep(500);
+  assert((await page.evaluate(() => window.__attempts)) === 4, "after those it waits for the usual interval");
+
+  // Home Assistant reconnects: the card reads again straight away.
+  await page.evaluate(() => {
+    window.__down = false;
+    const hass = window.__hass;
+    window.__card.hass = { ...hass, connected: false };
+    window.__card.hass = { ...hass, connected: true };
+  });
+  await sleep(1600);
+  s = await page.evaluate(() => ({
+    fetched: window.__card.lastFetched,
+    error: window.__card.error,
+    hero: Boolean(window.__card.shadowRoot.querySelector(".js-main .hf-hero")),
+  }));
+  assert(s.fetched > 0 && !s.error && s.hero, `after reconnecting: ${JSON.stringify(s)}`);
+
+  // A refresh fails over data the card already shows; the integration's entities going
+  // unavailable (it reloads) and coming back is the sign to read again.
+  const banners = () => page.evaluate(() => window.__card.shadowRoot.querySelector(".js-banners").textContent);
+  await page.evaluate(() => {
+    window.__down = true;
+    window.__card.refresh({ quiet: true });
+  });
+  await sleep(900);
+  assert(/Couldn't refresh/.test(await banners()), "the failure shows over the data");
+  await page.evaluate(() => {
+    const hass = window.__hass;
+    const down = Object.fromEntries(
+      Object.entries(hass.states).map(([id, st]) => [id, id.includes("hellofresh") ? { ...st, state: "unavailable" } : st])
+    );
+    window.__card.hass = { ...hass, states: down };
+    window.__down = false;
+    window.__card.hass = { ...hass };
+  });
+  await sleep(1600);
+  assert(!/Couldn't refresh/.test(await banners()), "not read again once the integration was back");
+  await page.close();
+});
+
+await check("keyboard focus stays on the control in use through a redraw, a tab switch and a refresh", async () => {
+  const page = await open({ view: "overview" });
+  const focused = () =>
+    page.evaluate(() => {
+      const el = window.__card.shadowRoot.activeElement;
+      if (!el) return null;
+      const attr = (name) => el.getAttribute(name);
+      return {
+        action: attr("data-action"),
+        view: attr("data-view"),
+        uid: attr("data-uid"),
+        week: attr("data-week-id"),
+        current: attr("aria-current"),
+        pressed: attr("aria-pressed"),
+      };
+    });
+  // A pantry tick redraws the whole Overview; the ticked item (no focus key of its own) keeps focus.
+  const uid = await page.evaluate(() => {
+    const item = window.__card.shadowRoot.querySelector(".js-main .hf-pantryitem:not(.done)");
+    item.focus();
+    return item.getAttribute("data-uid");
+  });
+  await page.keyboard.press("Space");
+  await sleep(300);
+  let f = await focused();
+  assert(f && f.action === "pantry-toggle" && f.uid === uid && f.pressed === "true", `after a pantry tick: ${JSON.stringify(f)}`);
+
+  // A tab switch redraws the tab bar (the current tab moves) and the section.
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-tab[data-view="menu"]').focus());
+  await page.keyboard.press("Enter");
+  await sleep(500);
+  f = await focused();
+  assert(f && f.action === "nav" && f.view === "menu" && f.current === "page", `after a tab switch: ${JSON.stringify(f)}`);
+
+  // Refresh: the button spins while the load runs, a second press starts nothing, focus stays.
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.js-appbar [data-action="refresh"]').focus());
+  const before = (await calls(page, "hellofresh.get_weeks")).length;
+  await page.keyboard.press("Enter");
+  const busy = await page.evaluate(() => {
+    const button = window.__card.shadowRoot.querySelector('.js-appbar [data-action="refresh"]');
+    return [button.classList.contains("spin"), button.getAttribute("aria-disabled")];
+  });
+  await page.keyboard.press("Enter");
+  await sleep(900);
+  f = await focused();
+  assert(busy[0] && busy[1] === "true", `while loading: ${JSON.stringify(busy)}`);
+  assert((await calls(page, "hellofresh.get_weeks")).length === before + 1, "one load for two presses");
+  assert(f && f.action === "refresh", `after the load: ${JSON.stringify(f)}`);
+
+  // A background load landing redraws the Menu under a focused week chip.
+  const week = await page.evaluate(() => {
+    const chip = window.__card.shadowRoot.querySelector('.hf-weekchip[aria-pressed="false"]');
+    chip.focus();
+    return chip.getAttribute("data-week-id");
+  });
+  await page.evaluate(() => window.__card.refresh({ quiet: true }));
+  await sleep(800);
+  f = await focused();
+  assert(f && f.action === "select-week" && f.week === week, `after a background load: ${JSON.stringify(f)}`);
+  await page.close();
+});
+
+await check("a sheet is built once per open: no replayed entrance, focus kept, Tab stays inside, focus goes back", async () => {
+  const page = await open({ view: "overview" });
+  const state = () =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const dialog = root.querySelector('.hf-sheet[role="dialog"]');
+      const wrap = root.querySelector(".hf-sheetwrap");
+      const el = root.activeElement;
+      return {
+        open: Boolean(dialog),
+        modal: dialog && dialog.getAttribute("aria-modal"),
+        same: Boolean(dialog && dialog.__mark && wrap && wrap.__mark),
+        animating: dialog ? dialog.getAnimations().length + wrap.getAnimations().length : 0,
+        inDialog: Boolean(dialog && el && dialog.contains(el)),
+        action: el && el.getAttribute("data-action"),
+        uid: el && el.getAttribute("data-uid"),
+        pressed: el && el.getAttribute("aria-pressed"),
+        inert: root.querySelector("ha-card").inert,
+      };
+    });
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.js-main [data-action="pantry"]').focus());
+  await page.keyboard.press("Enter");
+  await sleep(700);
+  let s = await state();
+  assert(s.open && s.modal === "true" && s.inDialog && s.inert, `opened: ${JSON.stringify(s)}`);
+  const uid = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    root.querySelector('.hf-sheet[role="dialog"]').__mark = true;
+    root.querySelector(".hf-sheetwrap").__mark = true;
+    const item = root.querySelector(".hf-sheet .hf-pantryitem:not(.done)");
+    item.focus();
+    return item.getAttribute("data-uid");
+  });
+  // A tick redraws the sheet at once (before the write answers): only what is inside it.
+  await page.keyboard.press("Space");
+  s = await state();
+  assert(s.same && s.animating === 0, `the tick rebuilt the sheet: ${JSON.stringify(s)}`);
+  assert(s.action === "pantry-toggle" && s.uid === uid && s.pressed === "true", `focus after the tick: ${JSON.stringify(s)}`);
+  // So does the list being read again (the to-do entity moved).
+  await page.evaluate(() => {
+    const card = window.__card;
+    const id = card.shadowRoot.querySelector(".hf-sheet .hf-pantryitem").getAttribute("data-entity");
+    card.loadPantry(id, { force: true });
+  });
+  await sleep(400);
+  s = await state();
+  assert(s.same && s.uid === uid, `after the list was read again: ${JSON.stringify(s)}`);
+  assert((await calls(page, "todo.update_item")).length === 1, "one write");
+
+  // Tab from the last control goes to the first; Shift+Tab from the first to the last.
+  const stops = () =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const all = [...root.querySelectorAll(".hf-sheet button")].filter((b) => !b.disabled && b.getClientRects().length);
+      return { count: all.length, at: all.indexOf(root.activeElement) };
+    });
+  await page.evaluate(() => {
+    const all = [...window.__card.shadowRoot.querySelectorAll(".hf-sheet button")].filter((b) => !b.disabled);
+    all[all.length - 1].focus();
+  });
+  await page.keyboard.press("Tab");
+  const wrapped = await stops();
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("Tab");
+  await page.keyboard.up("Shift");
+  const back = await stops();
+  assert(wrapped.count > 2 && wrapped.at === 0 && back.at === back.count - 1, `Tab: ${JSON.stringify([wrapped, back])}`);
+
+  // The view behind is redrawn while the sheet is open, so the button that opened it is a new
+  // element by the time it closes; focus still goes back to it.
+  await page.evaluate(() => window.__card.renderView());
+  await page.keyboard.press("Escape");
+  await sleep(300);
+  s = await state();
+  assert(!s.open && !s.inert && s.action === "pantry", `after closing: ${JSON.stringify(s)}`);
+  await page.close();
+});
+
+await check("the box bar is rewritten only when it changes, and Save keeps focus when the price lands", async () => {
+  const page = await open({ view: "menu" });
+  await click(page, '.hf-tile:not(.selected) [data-action="add"]', 100);
+  const kept = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const save = root.querySelector('.js-boxbar [data-action="box-save"]');
+    save.__mark = true;
+    save.focus();
+    window.__card.renderBoxBar();
+    window.__card.renderBoxBar();
+    const again = root.querySelector('.js-boxbar [data-action="box-save"]');
+    return Boolean(again && again.__mark) && root.activeElement === again;
+  });
+  assert(kept, "an unchanged bar was rewritten");
+  await sleep(1500); // the price estimate (asked 650 ms after the edit) lands and changes the bar
+  const after = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const el = root.activeElement;
+    return { action: el && el.getAttribute("data-action"), bar: root.querySelector(".js-boxbar").textContent.replace(/\s+/g, " ") };
+  });
+  assert(/Estimated total/.test(after.bar), `the price landed: ${after.bar}`);
+  assert(after.action === "box-save", `focus after the price landed: ${JSON.stringify(after)}`);
+  await page.close();
+});
+
+await check("the recipe sheet is a dialog that keeps the reader's place; focus goes back to the dish", async () => {
+  const page = await open({ view: "menu" }, [1000, 640]);
+  const key = await page.evaluate(() => {
+    const opener = window.__card.shadowRoot.querySelector('.hf-tile:not(.selected) button[data-action="open-recipe"]');
+    opener.focus();
+    return opener.getAttribute("data-key");
+  });
+  await page.keyboard.press("Enter");
+  await sleep(800);
+  const sheet = () =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const dialog = root.querySelector(".detailwrap .detailbox");
+      const scroll = dialog && dialog.querySelector(".detailscroll");
+      const el = root.activeElement;
+      const close = dialog && dialog.querySelector(".detailclose");
+      return {
+        role: dialog && dialog.getAttribute("role"),
+        modal: dialog && dialog.getAttribute("aria-modal"),
+        label: dialog && dialog.getAttribute("aria-label"),
+        close: close && close.getAttribute("aria-label"),
+        focusIn: Boolean(dialog && el && dialog.contains(el)) || el === dialog,
+        sel: el && el.getAttribute("data-sel"),
+        same: Boolean(dialog && dialog.__mark && scroll && scroll.__mark),
+        top: scroll ? Math.round(scroll.scrollTop) : -1,
+        busy: Boolean(scroll && scroll.classList.contains("busy")),
+        inert: root.querySelector("ha-card").inert,
+      };
+    });
+  let s = await sheet();
+  assert(s.role === "dialog" && s.modal === "true" && s.label && s.close && s.focusIn && s.inert, `opened: ${JSON.stringify(s)}`);
+  // Read down to the steps, then add the meal from the footer by keyboard.
+  await page.evaluate(() => {
+    const dialog = window.__card.shadowRoot.querySelector(".detailwrap .detailbox");
+    const scroll = dialog.querySelector(".detailscroll");
+    dialog.__mark = true;
+    scroll.__mark = true;
+    scroll.scrollTop = 300;
+    dialog.querySelector('[data-sel="add"]').focus();
+  });
+  const top = (await sheet()).top;
+  assert(top > 0, "the recipe doesn't scroll");
+  await page.keyboard.press("Enter");
+  await sleep(300);
+  s = await sheet();
+  assert(s.same && s.top === top && s.focusIn && (s.sel === "inc" || s.sel === "dec"), `after Add: ${JSON.stringify(s)}`);
+  assert(/4 of 3 meals/.test(await text(page, ".js-boxbar")), "added to the box");
+  // Another serving size: the recipe stays on screen, dimmed and in place, while it reloads.
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.detailwrap [data-servings="4"]').click());
+  const loading = await sheet();
+  await sleep(600);
+  s = await sheet();
+  assert(loading.busy && loading.top === top, `while the new amounts load: ${JSON.stringify(loading)}`);
+  assert(!s.busy && s.top === top, `with the new amounts: ${JSON.stringify(s)}`);
+  // Escape: focus goes back to the dish that opened the sheet, though its tile was redrawn.
+  await page.keyboard.press("Escape");
+  await sleep(300);
+  const back = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const el = root.activeElement;
+    return {
+      open: Boolean(root.querySelector(".detailwrap")),
+      inert: root.querySelector("ha-card").inert,
+      key: el && el.getAttribute("data-key"),
+      action: el && el.getAttribute("data-action"),
+    };
+  });
+  assert(!back.open && !back.inert && back.key === key && back.action === "open-recipe", `after closing: ${JSON.stringify(back)}, opened from ${key}`);
+  await page.close();
+});
+
+await check("given another account, a live card drops the old one's weeks and unsaved box and loads the new one", async () => {
+  const page = await open({ view: "menu" });
+  await click(page, '.hf-tile:not(.selected) [data-action="add"]');
+  const start = await page.evaluate(() => [window.__card.box.dirty(window.__card.selectedWeek()), window.__calls.length]);
+  assert(start[0], "no pending edit to start with");
+  const right = await page.evaluate(() => {
+    const card = window.__card;
+    card.setConfig({ type: "custom:hellofresh-card", config_entry_id: "entry2" });
+    return { weeks: card.weeks, week: card.selectedWeekId, bar: card.shadowRoot.querySelector(".js-boxbar").textContent.trim() };
+  });
+  assert(right.weeks === null && right.week === null && !right.bar, `right after: ${JSON.stringify(right)}`);
+  await sleep(900);
+  const after = await page.evaluate((from) => {
+    const card = window.__card;
+    const week = card.selectedWeek();
+    return {
+      reads: window.__calls.slice(from).filter((c) => c.service === "get_weeks").map((c) => c.data.config_entry_id),
+      dirty: Boolean(week) && card.box.dirty(week),
+      meals: week ? card.box.displayMeals(week).size : -1,
+      bar: card.shadowRoot.querySelector(".js-boxbar").textContent.replace(/\s+/g, " "),
+    };
+  }, start[1]);
+  assert(after.reads.length >= 1 && after.reads.every((id) => id === "entry2"), `reads: ${JSON.stringify(after.reads)}`);
+  assert(!after.dirty && after.meals === 3 && !/4 of 3/.test(after.bar), `the old account's edit stayed: ${JSON.stringify(after)}`);
+  assert((await calls(page, "hellofresh.select_meals")).length === 0, "something was written");
+  await page.close();
+});
+
+await check("a card reads only what its sections show; a save re-reads its week; two cards share one read", async () => {
+  let page = await open({ config: JSON.stringify({ views: ["recipes"] }) });
+  const services = (await calls(page)).filter((c) => c.domain === "hellofresh").map((c) => c.service);
+  assert(
+    !services.includes("get_weeks") && !services.includes("get_meal_plan") && services.includes("get_account_summary"),
+    `a Recipes card read: ${services.join(", ")}`
+  );
+  await page.close();
+
+  page = await open({ view: "menu" });
+  await click(page, '.hf-tile:not(.selected) [data-action="add"]');
+  const week = await page.evaluate(() => window.__card.selectedWeekId);
+  const from = (await calls(page)).length;
+  await click(page, '.js-boxbar [data-action="box-save"]', 1500);
+  const reads = (await calls(page)).slice(from).filter((c) => c.service === "get_weeks");
+  assert(reads.length === 1 && reads[0].data.week_id === week, `after the save: ${JSON.stringify(reads.map((c) => c.data))}`);
+
+  // A second card for the same account on the page: one read serves both.
+  const shared = await page.evaluate(async () => {
+    const second = document.createElement("hellofresh-card");
+    second.setConfig({ type: "custom:hellofresh-card", views: ["overview"] });
+    second.hass = window.__hass;
+    document.getElementById("wrap").appendChild(second);
+    await new Promise((r) => setTimeout(r, 700));
+    const start = window.__calls.length;
+    window.__card.refresh();
+    second.refresh();
+    await new Promise((r) => setTimeout(r, 800));
+    const services = window.__calls.slice(start).map((c) => c.service);
+    const count = (name) => services.filter((s) => s === name).length;
+    const shown = Boolean(second.shadowRoot.querySelector(".js-main .hf-hero"));
+    second.remove();
+    return { weeks: count("get_weeks"), summary: count("get_account_summary"), shown };
+  });
+  assert(shared.weeks === 1 && shared.summary === 1 && shared.shown, `two cards refreshing: ${JSON.stringify(shared)}`);
+  await page.close();
+});
+
+await check("change day: day names are asked for again after a failed read; a new day re-reads that week and the summary", async () => {
+  // The first get_delivery_options fails; every call's notifyOnError argument is noted.
+  const failOnce = () => {
+    let hass;
+    window.__notify = {};
+    Object.defineProperty(window, "__hass", {
+      configurable: true,
+      get: () => hass,
+      set(value) {
+        hass = value;
+        const real = value.callService.bind(value);
+        let failures = 1;
+        value.callService = async (domain, service, data, target, notify, ...rest) => {
+          window.__notify[`${domain}.${service}`] = notify;
+          if (service === "get_delivery_options" && failures > 0) {
+            failures -= 1;
+            throw new Error("HelloFresh is down");
+          }
+          return real(domain, service, data, target, notify, ...rest);
+        };
+      },
+    });
+  };
+  const page = await open({ view: "overview" }, [1400, 900], "/index.html", failOnce);
+  const names = () =>
+    page.evaluate(() =>
+      [...window.__card.shadowRoot.querySelectorAll('.hf-sheet [data-action="pick-day"]')].map((b) => b.textContent.replace(/\s+/g, " ").trim())
+    );
+  await click(page, '.hf-hero [data-action="reschedule"]', 600);
+  const first = await names();
+  assert(first.length === 3 && !first.some((n) => /8AM/.test(n)), `after the failed read, dates alone: ${JSON.stringify(first)}`);
+  await page.keyboard.press("Escape");
+  await sleep(200);
+  await click(page, '.hf-hero [data-action="reschedule"]', 600);
+  const second = await names();
+  assert(second.some((n) => /Tuesday 8AM - 8PM/.test(n)), `opened again, the names: ${JSON.stringify(second)}`);
+  const from = (await calls(page)).length;
+  await page.evaluate(() => window.__card.shadowRoot.querySelectorAll('.hf-sheet [data-action="pick-day"]')[1].click());
+  await sleep(900);
+  const after = (await calls(page)).slice(from).filter((c) => c.domain === "hellofresh");
+  const moved = after.find((c) => c.service === "reschedule_week");
+  const reads = after.filter((c) => c.service === "get_weeks");
+  assert(moved && reads.length === 1 && reads[0].data.week_id === moved.data.week_id, `week re-read: ${JSON.stringify(after.map((c) => [c.service, c.data.week_id]))}`);
+  assert(after.some((c) => c.service === "get_account_summary"), "the summary (header, next delivery) wasn't re-read");
+  // Each write shows its own failure, so Home Assistant is asked not to add a toast of its own.
+  await click(page, ".js-main .hf-pantryitem:not(.done)", 400);
+  const notify = await page.evaluate(() => window.__notify);
+  for (const service of ["hellofresh.reschedule_week", "todo.update_item", "hellofresh.get_weeks"]) {
+    assert(notify[service] === false, `${service} notifyOnError: ${notify[service]}`);
+  }
+  await page.close();
+});
+
+await check("a plan re-read asked for while one is in flight runs after it", async () => {
+  const page = await open({ view: "week" });
+  const reads = await page.evaluate(async () => {
+    const start = window.__calls.length;
+    window.__card.loadMealPlan();
+    window.__card.loadMealPlan(); // the plan changed on another device meanwhile
+    await new Promise((r) => setTimeout(r, 600));
+    return window.__calls.slice(start).filter((c) => c.service === "get_meal_plan").length;
+  });
+  assert(reads === 2, `get_meal_plan reads: ${reads}`);
+  await page.close();
+});
+
+await check("a card taken out of the page and put back shows the chosen week in its strip again", async () => {
+  const page = await open({ view: "menu" });
+  const strip = () =>
+    page.evaluate(() => {
+      const el = window.__card.shadowRoot.querySelector(".hf-weekstrip");
+      const box = el.getBoundingClientRect();
+      const chips = [...el.querySelectorAll(".hf-weekchip")];
+      const shown = chips.filter((c) => {
+        const r = c.getBoundingClientRect();
+        return r.left >= box.left - 1 && r.right <= box.right + 1;
+      });
+      const chosen = chips.find((c) => c.getAttribute("aria-pressed") === "true");
+      return { first: chips.indexOf(shown[0]), chosenShown: shown.includes(chosen) };
+    });
+  const start = await strip();
+  assert(start.first > 0 && start.chosenShown, `to start: ${JSON.stringify(start)}`);
+  await page.evaluate(async () => {
+    const card = window.__card;
+    const parent = card.parentElement;
+    card.remove(); // Home Assistant keeps a dashboard around; edit mode re-parents its cards
+    card.renderView(); // a load landing meanwhile
+    await new Promise((r) => setTimeout(r, 50));
+    parent.appendChild(card);
+  });
+  await sleep(400);
+  const back = await strip();
+  assert(back.first === start.first && back.chosenShown, `put back: ${JSON.stringify(back)}, was ${JSON.stringify(start)}`);
+  await page.close();
+});
+
+await check("a section that fails to draw says so, and the rest of the card carries on", async () => {
+  const page = await open({ view: "overview" });
+  page.removeAllListeners("console"); // the card reports the failure on the console, as it should
+  const shown = await page.evaluate(() => {
+    const card = window.__card;
+    // A payload shape nobody has seen: reading the weeks' meals throws.
+    for (const week of card.weeks) {
+      Object.defineProperty(week, "recipes", {
+        get() {
+          throw new Error("an unexpected payload");
+        },
+      });
+    }
+    card.renderView();
+    return card.shadowRoot.querySelector(".js-main").textContent;
+  });
+  assert(/couldn't be shown/.test(shown) && /an unexpected payload/.test(shown) && /Try again/.test(shown), shown.slice(0, 160));
+  await click(page, '.hf-tab[data-view="recipes"]', 600);
+  assert(await q(page, ".js-main .hf-tile"), "another section doesn't draw");
+  await click(page, '.hf-tab[data-view="overview"]', 300);
+  await click(page, '.js-main [data-action="refresh"]', 900); // Try again: the weeks are read afresh
+  assert(await q(page, ".js-main .hf-hero"), "Try again doesn't bring the Overview back");
+  await page.close();
+});
+
+await check("the visual editor can clear the title", async () => {
+  const page = await open({});
+  const titles = await page.evaluate(() => {
+    const editor = document.createElement("hellofresh-card-editor");
+    editor.setConfig({ type: "custom:hellofresh-card", title: "Kitchen" });
+    document.body.appendChild(editor);
+    editor.hass = window.__hass;
+    const form = editor.querySelector("ha-form");
+    const sent = [];
+    editor.addEventListener("config-changed", (ev) => sent.push(ev.detail.config));
+    // Home Assistant's text field reports an emptied optional field as undefined.
+    const change = (title) => form.dispatchEvent(new CustomEvent("value-changed", { detail: { value: { ...form.data, title } } }));
+    change(undefined);
+    change("HelloFresh");
+    change("Dinner");
+    editor.remove();
+    return sent.map((config) => ("title" in config ? config.title : "(default)"));
+  });
+  assert(JSON.stringify(titles) === JSON.stringify(["", "(default)", "Dinner"]), JSON.stringify(titles));
+  await page.close();
+});
+
+// ---- the views: filters that can't be checked, boxes changed elsewhere, writes in flight ----------
+
+await check("ingredients to avoid: unchecked meals stay hidden, a failed check says so, Retry asks again", async () => {
+  const page = await open({ view: "menu" });
+  // HelloFresh's filter service answers, then fails, while window.__filtersDown is set.
+  await page.evaluate(() => {
+    window.__filtersDown = true;
+    const real = window.__hass.callService.bind(window.__hass);
+    window.__hass.callService = async (domain, service, ...rest) => {
+      const result = await real(domain, service, ...rest);
+      if (service === "get_menu_courses" && window.__filtersDown) throw new Error("HelloFresh is down");
+      return result;
+    };
+  });
+  const grid = () =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const tiles = [...root.querySelectorAll(".hf-grid .hf-tile")];
+      const notice = root.querySelector(".hf-filternotice");
+      return {
+        tiles: tiles.length,
+        outside: tiles.filter((t) => !t.classList.contains("selected")).length,
+        notice: notice ? notice.textContent.replace(/\s+/g, " ").trim() : "",
+        role: notice ? notice.getAttribute("role") : null,
+        retry: Boolean(notice && notice.querySelector('[data-action="retry-filters"]')),
+        filters: (root.querySelector('[data-action="toggle-filters"]')?.textContent || "").replace(/\s+/g, " ").trim(),
+      };
+    });
+  await click(page, '[data-action="toggle-filters"]', 300);
+  await click(page, '[data-action="f-server"][data-group="exclude-allergens"][data-value="nuts"]', 700);
+  const failed = await grid();
+  assert(failed.tiles >= 1 && failed.outside === 0, `only the box's meals while unchecked: ${JSON.stringify(failed)}`);
+  assert(/couldn't check your ingredients to avoid/.test(failed.notice) && failed.role === "alert" && failed.retry, JSON.stringify(failed));
+  assert(/Filters · 1/.test(failed.filters), `the filter still reads as on: ${failed.filters}`);
+  const asked = (await calls(page, "hellofresh.get_menu_courses")).length;
+  await page.evaluate(() => {
+    window.__filtersDown = false;
+  });
+  await click(page, '[data-action="retry-filters"]', 700);
+  const answered = await grid();
+  assert((await calls(page, "hellofresh.get_menu_courses")).length === asked + 1, "Retry asked HelloFresh again");
+  assert(answered.outside > 0 && !answered.notice, `checked meals are back: ${JSON.stringify(answered)}`);
+  await page.close();
+});
+
+await check("a box changed elsewhere mid-edit: the bar says so, Save waits, Keep mine keeps both changes", async () => {
+  const page = await open({ view: "menu" });
+  const added = await page.evaluate(() => {
+    const card = window.__card;
+    const tile = card.shadowRoot.querySelector('.hf-tile:not(.selected) [data-action="add"]').closest(".hf-tile");
+    const recipe = card.selectedWeek().recipes.find((r) => String(r.course_index) === tile.getAttribute("data-key"));
+    return recipe.recipe_id;
+  });
+  await click(page, '.hf-tile:not(.selected) [data-action="add"]');
+  // Meanwhile hellofresh.com swaps one of the box's meals for another, and the card refreshes.
+  const elsewhere = await page.evaluate(async () => {
+    const card = window.__card;
+    const week = window.__fx.weeks.find((w) => w.week_id === card.selectedWeekId);
+    const draft = card.box.displayMeals(card.selectedWeek());
+    const out = week.recipes.find((r) => r.is_selected && r.variation_group == null);
+    const into = [...week.recipes].reverse().find((r) => !r.is_selected && r.variation_group == null && !draft.has(r.course_index));
+    out.is_selected = false;
+    out.selected_quantity = null;
+    into.is_selected = true;
+    into.selected_quantity = 1;
+    await card.refresh({ quiet: true });
+    return { out: out.recipe_id, into: into.recipe_id };
+  });
+  await sleep(500);
+  const bar = await text(page, ".js-boxbar");
+  assert(/Your saved box changed since you started/.test(bar), `box bar: ${bar}`);
+  assert(!(await q(page, '[data-action="box-save"]')), "no Save over a box that moved");
+  assert((await q(page, '[data-action="box-keep-mine"]')) && (await q(page, '[data-action="box-use-saved"]')), "Keep mine and Use saved offered");
+  await click(page, '[data-action="box-keep-mine"]', 400);
+  assert(await q(page, '[data-action="box-save"]'), "Save is back once the user chose");
+  await click(page, '[data-action="box-save"]', 1500);
+  const saves = await calls(page, "hellofresh.select_meals");
+  assert(saves.length === 1, `select_meals calls: ${saves.length}`);
+  const ids = saves[0].data.recipe_ids;
+  assert(ids.includes(added) && ids.includes(elsewhere.into) && !ids.includes(elsewhere.out), JSON.stringify({ ids, added, elsewhere }));
+  await page.close();
+});
+
+await check("a plan change: the select shows the new option and both wait until HelloFresh answers", async () => {
+  const page = await open({ view: "account" });
+  const controls = () =>
+    page.evaluate(() => {
+      const root = window.__card.shadowRoot;
+      const read = (key) => {
+        const select = root.querySelector(`[data-plan-control="${key}"]`);
+        return [select.value, select.disabled];
+      };
+      return { box: read("box_size"), day: read("delivery_day"), toast: root.querySelector(".hf-toast")?.textContent.trim() || "", sheet: Boolean(root.querySelector(".hf-sheet .hf-sheethead")) };
+    });
+  const choose = (key, value) =>
+    page.evaluate(
+      ([k, v]) => {
+        const select = window.__card.shadowRoot.querySelector(`[data-plan-control="${k}"]`);
+        select.value = v;
+        select.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      },
+      [key, value]
+    );
+  // HelloFresh takes its time: the write is held until the flow lets it through.
+  await page.evaluate(() => {
+    const real = window.__hass.callService.bind(window.__hass);
+    window.__hass.callService = async (domain, ...rest) => {
+      if (domain === "select") await new Promise((r) => (window.__releasePlan = r));
+      return real(domain, ...rest);
+    };
+  });
+  await choose("box_size", "4 meals for 2 people");
+  await sleep(300);
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-plan"]').click());
+  await sleep(300);
+  const during = await controls();
+  assert(during.box[0] === "4 meals for 2 people" && during.box[1] && during.day[1], `while writing: ${JSON.stringify(during)}`);
+  assert(/Updating your plan/.test(during.toast) && !during.sheet, `while writing: ${JSON.stringify(during)}`);
+  await choose("delivery_day", "Tuesday 8AM - 8PM");
+  await sleep(300);
+  const meanwhile = await controls();
+  assert(!meanwhile.sheet && meanwhile.day[0] === "Monday 8AM - 8PM", `a second change is not taken: ${JSON.stringify(meanwhile)}`);
+  await page.evaluate(() => window.__releasePlan());
+  await sleep(800);
+  const after = await controls();
+  assert(after.box[0] === "4 meals for 2 people" && !after.box[1] && !after.day[1], `after: ${JSON.stringify(after)}`);
+  assert(/Box size changed/.test(after.toast), `toast: ${after.toast}`);
+  const writes = await calls(page, "select.select_option");
+  assert(writes.length === 1 && writes[0].data.option === "4 meals for 2 people", JSON.stringify(writes));
+  await page.close();
+});
+
+await check("week tab: a note typed from the keyboard is chosen and saved", async () => {
+  const page = await openWeek();
+  await click(page, line("2026-10-17"), 300);
+  await page.evaluate(() => window.__card.shadowRoot.querySelector("[data-note-input]").focus());
+  await page.keyboard.type("Pizza night", { delay: 20 });
+  const typed = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    return {
+      pressed: root.querySelector(".hf-planotepick").getAttribute("aria-pressed"),
+      on: root.querySelector(".hf-planote").classList.contains("on"),
+      focused: Boolean(root.activeElement && root.activeElement.hasAttribute("data-note-input")),
+      value: root.querySelector("[data-note-input]").value,
+    };
+  });
+  assert(typed.pressed === "true" && typed.on && typed.focused && typed.value === "Pizza night", JSON.stringify(typed));
+  // On to Save with the keyboard, never clicking the note's radio.
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('[data-action="save-slot"]').focus());
+  await page.keyboard.press("Enter");
+  await sleep(700);
+  const sets = await calls(page, "hellofresh.set_planned_meal");
+  assert(sets.length === 1 && sets[0].data.text === "Pizza night" && sets[0].data.date === "2026-10-17", JSON.stringify(sets));
+  assert(/Pizza night/.test(await text(page, line("2026-10-17"))), "Saturday shows the note");
+  await page.close();
+});
+
+await check("keyboard: + Add, + and − keep focus on the tile's controls, in Menu and Market", async () => {
+  const page = await open({ view: "menu" });
+  const focused = () => page.evaluate(() => window.__card.shadowRoot.activeElement?.getAttribute("data-focus-key") || null);
+  const press = async () => {
+    await page.keyboard.press("Enter");
+    await sleep(300);
+  };
+  const key = await page.evaluate(() => {
+    const add = window.__card.shadowRoot.querySelector('.hf-tile:not(.selected) [data-action="add"]');
+    add.focus();
+    return add.getAttribute("data-key");
+  });
+  await press();
+  assert((await focused()) === `meal:${key}:inc`, `after + Add: ${await focused()}`);
+  await press();
+  assert((await focused()) === `meal:${key}:inc`, `after +: ${await focused()}`);
+  const servings = await page.evaluate((k) => window.__card.box.displayMeals(window.__card.selectedWeek()).get(Number(k)), key);
+  assert(servings === 2, `servings ${servings}`);
+  await page.evaluate((k) => window.__card.shadowRoot.querySelector(`[data-focus-key="meal:${k}:dec"]`).focus(), key);
+  await press();
+  assert((await focused()) === `meal:${key}:dec`, `after −: ${await focused()}`);
+  await press(); // the last serving: out of the box, and the tile is "+ Add" again
+  assert((await focused()) === `meal:${key}:add`, `after the last −: ${await focused()}`);
+
+  await click(page, '[data-action="goto-kind"][data-view="market"]', 600);
+  const id = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const add = root.querySelector('.hf-tile:not(.soldout) [data-action="market-qty"][data-delta="1"]:not([disabled])');
+    // Another tile, to see that a quantity change redraws its own tile and leaves the rest.
+    window.__otherTile = [...root.querySelectorAll(".hf-grid.market .hf-tile")].find((t) => !t.contains(add));
+    add.focus();
+    return add.getAttribute("data-id");
+  });
+  await press();
+  assert((await focused()) === `extra:${id}:inc`, `after Add in Market: ${await focused()}`);
+  await press();
+  assert((await focused()) === `extra:${id}:inc`, `after + in Market: ${await focused()}`);
+  assert(await page.evaluate(() => window.__otherTile.isConnected), "the other tiles were left in place");
+  await page.close();
+});
+
+await check("typing in a search keeps its field in place while the results follow (Menu, Market, Recipes)", async () => {
+  for (const [view, key, typed] of [["menu", "meal-search", "tacos"], ["market", "market-search", "bread"], ["recipes", "recipe-search", "chicken"]]) {
+    const page = await open({ view });
+    await sleep(view === "recipes" ? 600 : 0);
+    await page.evaluate((k) => {
+      window.__field = window.__card.shadowRoot.querySelector(`[data-input="${k}"]`);
+      window.__field.focus();
+    }, key);
+    await page.keyboard.type(typed, { delay: 30 });
+    await sleep(1000);
+    const state = await page.evaluate((k) => {
+      const root = window.__card.shadowRoot;
+      const field = root.querySelector(`[data-input="${k}"]`);
+      return {
+        same: field === window.__field,
+        focused: root.activeElement === field,
+        value: field.value,
+        clear: !field.parentElement.querySelector(".hf-clear").hidden,
+        results: (root.querySelector(".js-results")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
+      };
+    }, key);
+    assert(state.same && state.focused && state.value === typed && state.clear, `${view}: ${JSON.stringify(state)}`);
+    assert(state.results, `${view}: results shown`);
+    await page.close();
+  }
+});
+
+// ---- undo, Load more, one week's people, payments, credit, moved boxes --------------------------
+
+// The toast as it stands: its role, words, whether it offers Undo, and whether it has focus.
+const toastState = (page) =>
+  page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const toast = root.querySelector(".hf-toast");
+    return {
+      role: toast ? toast.getAttribute("role") : null,
+      text: toast ? toast.textContent.replace(/\s+/g, " ").trim() : "",
+      undo: Boolean(toast && toast.querySelector('[data-action="undo"]')),
+      focused: Boolean(root.activeElement && root.activeElement.closest(".hf-toast")),
+    };
+  });
+const pressUndo = (page) => page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-toast [data-action="undo"]').click());
+
+await check("undo after a box save puts the old box back in one write and re-reads only that week", async () => {
+  const page = await open({ view: "menu" });
+  const before = await page.evaluate(() => {
+    const week = window.__card.selectedWeek();
+    return { week: week.week_id, ids: week.recipes.filter((r) => r.is_selected).map((r) => r.recipe_id) };
+  });
+  await click(page, '.hf-tile:not(.selected) [data-action="add"]');
+  await click(page, '[data-action="goto-kind"][data-view="market"]', 600);
+  await click(page, '.hf-tile:not(.selected):not(.soldout) [data-action="market-qty"][data-delta="1"]');
+  await click(page, '[data-action="box-save"]', 1500);
+  const saved = await toastState(page);
+  assert(saved.role === "status" && /Your box is saved/.test(saved.text) && saved.undo && !saved.focused, JSON.stringify(saved));
+  const from = (await calls(page)).length;
+  await pressUndo(page);
+  await sleep(1500);
+  const after = (await calls(page)).slice(from).filter((c) => c.domain === "hellofresh");
+  const writes = after.filter((c) => c.service.startsWith("select_"));
+  assert(writes.length === 1 && writes[0].service === "select_meals", `writes: ${JSON.stringify(writes.map((c) => c.service))}`);
+  const data = writes[0].data;
+  assert(JSON.stringify([...data.recipe_ids].sort()) === JSON.stringify([...before.ids].sort()), `recipe ids ${JSON.stringify(data)}`);
+  assert(data.week_id === before.week && JSON.stringify(data.market_quantities) === "{}", JSON.stringify(data));
+  const reads = after.filter((c) => c.service === "get_weeks");
+  assert(reads.length === 1 && reads[0].data.week_id === before.week, `re-reads: ${JSON.stringify(reads.map((c) => c.data))}`);
+  const undone = await toastState(page);
+  assert(/Change undone/.test(undone.text) && !undone.undo, JSON.stringify(undone));
+  const box = await page.evaluate(() => {
+    const card = window.__card;
+    const week = card.selectedWeek();
+    return { meals: card.box.displayMeals(week).size, extras: card.box.displayMarket(week).size, dirty: card.box.dirty(week) };
+  });
+  assert(box.meals === before.ids.length && box.extras === 0 && !box.dirty, JSON.stringify(box));
+  await page.close();
+});
+
+await check("undo after a skip: a status toast, its Undo next in the Tab order without taking focus, Escape dismisses", async () => {
+  const page = await open({ view: "overview" });
+  const skip = async () => {
+    await click(page, '.hf-hero [data-action="skip"]', 300);
+    await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-skip"]').click());
+    await sleep(1200);
+  };
+  await skip();
+  const week = (await calls(page, "hellofresh.skip_week"))[0].data.week_id;
+  const skipped = await toastState(page);
+  assert(skipped.role === "status" && /Week skipped/.test(skipped.text) && skipped.undo && !skipped.focused, JSON.stringify(skipped));
+  // The card's last control, then Tab: the toast's Undo, and Enter takes it.
+  const last = await page.evaluate(() => {
+    const card = window.__card.shadowRoot.querySelector("ha-card");
+    const controls = [...card.querySelectorAll("button, a[href], input, select")].filter((el) => !el.disabled && el.getClientRects().length);
+    const el = controls[controls.length - 1];
+    el.focus();
+    return el.getAttribute("data-action");
+  });
+  await page.keyboard.press("Tab");
+  const onUndo = await page.evaluate(() => window.__card.shadowRoot.activeElement?.getAttribute("data-action"));
+  assert(onUndo === "undo", `Tab after the card's last control reached ${onUndo}`);
+  await page.keyboard.press("Enter");
+  await sleep(1500);
+  const unskips = await calls(page, "hellofresh.unskip_week");
+  assert(unskips.length === 1 && unskips[0].data.week_id === week, JSON.stringify(unskips));
+  const back = await page.evaluate(() => ({
+    action: window.__card.shadowRoot.activeElement?.getAttribute("data-action"),
+    skipped: window.__card.weekById(window.__calls.find((c) => c.service === "skip_week").data.week_id).is_skipped,
+  }));
+  assert(back.action === last && back.skipped === false, `after Undo: ${JSON.stringify(back)}, came from ${last}`);
+  const undone = await toastState(page);
+  assert(/Change undone/.test(undone.text) && !undone.undo, JSON.stringify(undone));
+  // Skipped again, then Escape: the toast goes and nothing is written.
+  await skip();
+  assert((await toastState(page)).undo, "the second skip offers Undo");
+  await page.keyboard.press("Escape");
+  await sleep(200);
+  assert(!(await q(page, ".hf-toast")), "Escape dismisses the toast");
+  assert((await calls(page, "hellofresh.unskip_week")).length === 1, "Escape wrote nothing");
+  await page.close();
+});
+
+await check("undo after a new delivery day moves the box back to the day it had", async () => {
+  const page = await open({ view: "overview" });
+  await click(page, '.hf-hero [data-action="reschedule"]', 600);
+  await page.evaluate(() => window.__card.shadowRoot.querySelectorAll('.hf-sheet [data-action="pick-day"]')[1].click());
+  await sleep(1000);
+  assert((await toastState(page)).undo, "the new day offers Undo");
+  await pressUndo(page);
+  await sleep(1200);
+  const moves = (await calls(page, "hellofresh.reschedule_week")).map((c) => c.data.delivery_option);
+  assert(JSON.stringify(moves) === JSON.stringify(["tue-8-20", "mon-8-20"]), JSON.stringify(moves));
+  await page.close();
+});
+
+await check("undo of a new delivery day finds the old day among the moved week's other days", async () => {
+  // HelloFresh lists a week's OTHER days as its one-off options, never the day the box is on.
+  // Make the fake do the same, so the old day appears only once the box has moved.
+  const init = () => {
+    const others = (w) => {
+      const all = [0, 1, 2].map((k) => {
+        const [y, m, d] = w.base_date.split("-").map(Number);
+        const o = new Date(y, m - 1, d + k);
+        const pad = (n) => String(n).padStart(2, "0");
+        return { handle: ["mon-8-20", "tue-8-20", "wed-8-20"][k], delivery_date: `${o.getFullYear()}-${pad(o.getMonth() + 1)}-${pad(o.getDate())}` };
+      });
+      w.available_one_off_options = all.filter((o) => o.delivery_date !== w.delivery_date);
+    };
+    window.__otherDaysOnly = () => {
+      for (const w of window.__fx.weeks) {
+        if (!(w.available_one_off_options || []).length) continue;
+        w.base_date = w.available_one_off_options[0].delivery_date;
+        others(w);
+      }
+      const real = window.__hass.callService.bind(window.__hass);
+      window.__hass.callService = async (domain, service, data, ...rest) => {
+        const result = await real(domain, service, data, ...rest);
+        if (service === "reschedule_week") others(window.__fx.weeks.find((w) => w.week_id === data.week_id));
+        return result;
+      };
+    };
+  };
+  const page = await open({ view: "overview" }, undefined, undefined, init);
+  await page.evaluate(() => {
+    window.__otherDaysOnly();
+    return window.__card.refresh({ quiet: true });
+  });
+  await sleep(600);
+  await click(page, '.hf-hero [data-action="reschedule"]', 600);
+  await page.evaluate(() => window.__card.shadowRoot.querySelectorAll('.hf-sheet [data-action="pick-day"]')[0].click());
+  await sleep(1000);
+  assert((await toastState(page)).undo, "the new day offers Undo although its old day was not an option before");
+  await pressUndo(page);
+  await sleep(1200);
+  const moves = (await calls(page, "hellofresh.reschedule_week")).map((c) => c.data.delivery_option);
+  assert(JSON.stringify(moves) === JSON.stringify(["tue-8-20", "mon-8-20"]), JSON.stringify(moves));
+  await page.close();
+});
+
+await check("undo after a recurring plan change selects the option the plan had", async () => {
+  const page = await open({ view: "account" });
+  await page.evaluate(() => {
+    const s = window.__card.shadowRoot.querySelector('[data-plan-control="box_size"]');
+    s.value = "4 meals for 2 people";
+    s.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  });
+  await sleep(300);
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-plan"]').click());
+  await sleep(900);
+  const changed = await toastState(page);
+  assert(/Box size changed/.test(changed.text) && changed.undo, JSON.stringify(changed));
+  await pressUndo(page);
+  await sleep(900);
+  const options = (await calls(page, "select.select_option")).map((c) => c.data.option);
+  assert(JSON.stringify(options) === JSON.stringify(["4 meals for 2 people", "3 meals for 2 people"]), JSON.stringify(options));
+  const shown = await page.evaluate(() => {
+    const s = window.__card.shadowRoot.querySelector('[data-plan-control="box_size"]');
+    return [s.value, s.disabled];
+  });
+  assert(shown[0] === "3 meals for 2 people" && !shown[1], JSON.stringify(shown));
+  assert(/Change undone/.test((await toastState(page)).text), "the undo's toast");
+  await page.close();
+});
+
+const recipesState = (page) =>
+  page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    const ids = [...root.querySelectorAll(".js-results .hf-tile .hf-open")].map((b) => b.getAttribute("data-id"));
+    return {
+      tiles: ids.length,
+      unique: new Set(ids).size,
+      note: root.querySelector(".js-results .hf-resultnote")?.textContent.trim() || "",
+      more: root.querySelector('.js-results [data-action="load-more"]')?.textContent.replace(/\s+/g, " ").trim() || "",
+      row: root.querySelector(".js-results .hf-more-row")?.textContent.replace(/\s+/g, " ").trim() || "",
+      ids,
+    };
+  });
+
+await check("recipes: Load more adds the next page, says how many came, and the keyboard moves to the first new recipe", async () => {
+  const page = await open({ view: "recipes", config: JSON.stringify({ recipes_limit: 12 }) });
+  await sleep(600);
+  let s = await recipesState(page);
+  assert(s.tiles === 12 && s.note === "Showing 12 of 30 recipes" && s.more === "Load more", JSON.stringify(s));
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('[data-action="load-more"]').focus());
+  await page.keyboard.press("Enter");
+  await sleep(700);
+  s = await recipesState(page);
+  assert(s.tiles === 24 && s.unique === 24 && s.note === "Showing 24 of 30 recipes" && s.more === "Load more", JSON.stringify(s));
+  const focused = await page.evaluate(() => window.__card.shadowRoot.activeElement?.getAttribute("data-id"));
+  assert(focused === s.ids[12], `focus on the first new recipe: ${focused}, expected ${s.ids[12]}`);
+  const said = await page.evaluate(() => {
+    const live = [...window.__card.shadowRoot.querySelectorAll('.sr-only[role="status"]')].map((n) => n.textContent);
+    return live.join("|");
+  });
+  assert(/12 more recipes loaded/.test(said), `announced: ${said}`);
+  const pages = (await calls(page, "hellofresh.get_catalog_recipes")).map((c) => [c.data.offset ?? null, c.data.limit]);
+  assert(JSON.stringify(pages) === JSON.stringify([[null, 12], [12, 12]]), JSON.stringify(pages));
+  await click(page, '[data-action="load-more"]', 700);
+  s = await recipesState(page);
+  assert(s.tiles === 30 && s.unique === 30 && !s.more && !s.note, `the last page: ${JSON.stringify(s)}`);
+  await page.close();
+});
+
+await check("recipes: a failed page shows Retry in place of Load more; a page for a category left behind is dropped", async () => {
+  const page = await open({ view: "recipes", config: JSON.stringify({ recipes_limit: 12 }) });
+  await sleep(600);
+  // Next pages (an offset) fail while window.__pagesDown is set, and take window.__pageDelay.
+  await page.evaluate(() => {
+    window.__pagesDown = true;
+    const real = window.__hass.callService.bind(window.__hass);
+    window.__hass.callService = async (domain, service, data, ...rest) => {
+      if (service === "get_catalog_recipes" && data && data.offset) {
+        await new Promise((r) => setTimeout(r, window.__pageDelay || 0));
+        if (window.__pagesDown) throw new Error("HelloFresh is down");
+      }
+      return real(domain, service, data, ...rest);
+    };
+  });
+  await click(page, '[data-action="load-more"]', 600);
+  let s = await recipesState(page);
+  assert(s.tiles === 12 && /Couldn't load more recipes: HelloFresh is down/.test(s.row) && s.more === "Retry", JSON.stringify(s));
+  await page.evaluate(() => {
+    window.__pagesDown = false;
+  });
+  await click(page, '[data-action="load-more"]', 700);
+  s = await recipesState(page);
+  assert(s.tiles === 24 && s.more === "Load more", `after Retry: ${JSON.stringify(s)}`);
+  await page.evaluate(() => {
+    window.__pageDelay = 900;
+  });
+  await click(page, '[data-action="load-more"]', 100);
+  await click(page, '[data-action="collection"][data-slug="chicken-recipes"]', 1600);
+  s = await recipesState(page);
+  assert(s.tiles === 12 && s.note === "Showing 12 of 30 recipes" && s.more === "Load more", `the new category alone: ${JSON.stringify(s)}`);
+  await page.close();
+});
+
+await check("servings: Change lists this box's sizes, asks first (this week only, with the price), re-reads the week, and Undo changes it back", async () => {
+  const page = await open({ view: "menu" });
+  const people = () => text(page, ".hf-weekpeople");
+  assert(/For 2 people\s*Change/.test(await people()), `week head: ${await people()}`);
+  await click(page, '.hf-weekpeople [data-action="servings"]', 700);
+  const rows = await page.evaluate(() =>
+    [...window.__card.shadowRoot.querySelectorAll('.hf-sheet [data-action="servings-pick"]')].map((b) => [
+      Number(b.getAttribute("data-servings")),
+      b.disabled,
+      b.textContent.replace(/\s+/g, " ").trim(),
+    ])
+  );
+  // This week's three meals in its own (Classic) family: not the Veggie boxes.
+  assert(JSON.stringify(rows.map(([n, d]) => [n, d])) === "[[2,true],[4,false],[6,false]]", JSON.stringify(rows));
+  assert(/Current/.test(rows[0][2]) && /\$131\.88/.test(rows[1][2]) && /\$179\.82/.test(rows[2][2]), JSON.stringify(rows));
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-servings="4"]').click());
+  await sleep(300);
+  const confirm = await text(page, ".hf-sheet");
+  assert(/Change this box to 4 people\?/.test(confirm) && /Only your box for Monday, October 5 changes/.test(confirm), confirm.slice(0, 200));
+  assert(/\$131\.88/.test(confirm), `the price: ${confirm}`);
+  assert((await calls(page, "hellofresh.change_week_servings")).length === 0, "nothing written before confirming");
+  const from = (await calls(page)).length;
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-servings"]').click());
+  await sleep(1300);
+  const after = (await calls(page)).slice(from).filter((c) => c.domain === "hellofresh");
+  const writes = after.filter((c) => c.service === "change_week_servings");
+  const week = await page.evaluate(() => window.__card.selectedWeekId);
+  assert(writes.length === 1 && writes[0].data.servings === 4 && writes[0].data.week_id === week, JSON.stringify(writes));
+  const reads = after.filter((c) => c.service === "get_weeks");
+  assert(reads.length === 1 && reads[0].data.week_id === week, `re-reads: ${JSON.stringify(reads.map((c) => c.data))}`);
+  assert(/For 4 people/.test(await people()), `after: ${await people()}`);
+  const done = await toastState(page);
+  assert(/This box is now for 4 people/.test(done.text) && done.undo, JSON.stringify(done));
+  await pressUndo(page);
+  await sleep(1300);
+  const servings = (await calls(page, "hellofresh.change_week_servings")).map((c) => c.data.servings);
+  assert(JSON.stringify(servings) === "[4,2]" && /For 2 people/.test(await people()), JSON.stringify(servings));
+  assert(/Change undone/.test((await toastState(page)).text), "the undo's toast");
+  // HelloFresh refuses: its own message is what the card says. The sizes were read once.
+  await page.evaluate(() => {
+    const real = window.__hass.callService.bind(window.__hass);
+    window.__hass.callService = async (domain, service, ...rest) => {
+      if (service === "change_week_servings") throw new Error("HelloFresh doesn't offer changing the number of people for one week");
+      return real(domain, service, ...rest);
+    };
+  });
+  await click(page, '.hf-weekpeople [data-action="servings"]', 400);
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-servings="4"]').click());
+  await sleep(200);
+  await page.evaluate(() => window.__card.shadowRoot.querySelector('.hf-sheet [data-action="confirm-servings"]').click());
+  await sleep(1200);
+  const refused = await toastState(page);
+  assert(refused.role === "alert" && /Couldn't change this box: HelloFresh doesn't offer changing the number of people for one week/.test(refused.text), JSON.stringify(refused));
+  assert((await calls(page, "hellofresh.get_plan_options")).length === 1, "the sizes were read again");
+  await page.close();
+});
+
+await check("a payment problem: the Overview and Account name the boxes and link to HelloFresh; other sections don't", async () => {
+  const page = await open({ view: "overview", scenario: "payment" });
+  const banner = () =>
+    page.evaluate(() => {
+      const n = window.__card.shadowRoot.querySelector(".js-banners .hf-paymentnotice");
+      const a = n && n.querySelector("a");
+      return n && { text: n.textContent.replace(/\s+/g, " ").trim(), href: a?.getAttribute("href"), target: a?.getAttribute("target"), rel: a?.getAttribute("rel") };
+    });
+  let b = await banner();
+  assert(b, "no payment banner on the Overview");
+  assert(/payments for 2 boxes: Monday, September 28 \(\$84\.93\) and Monday, September 21/.test(b.text), b.text);
+  assert(b.href === "https://www.hellofresh.com" && b.target === "_blank" && b.rel === "noopener noreferrer", JSON.stringify(b));
+  await click(page, '[data-action="nav"][data-view="menu"]', 500);
+  assert(!(await banner()), "the Menu shows the payment banner");
+  await click(page, '[data-action="nav"][data-view="account"]', 500);
+  b = await banner();
+  assert(b && /Update your payment details on HelloFresh/.test(b.text), `Account: ${JSON.stringify(b)}`);
+  await page.close();
+  const clean = await open({ view: "overview" });
+  assert(!(await clean.evaluate(() => Boolean(window.__card.shadowRoot.querySelector(".hf-paymentnotice")))), "a banner without a problem");
+  await clean.close();
+});
+
+await check("account: HelloFresh Cash, bonus credit and the boxes until a free one sit under the credit", async () => {
+  const page = await open({ view: "account" });
+  const rows = await page.evaluate(() =>
+    [...window.__card.shadowRoot.querySelectorAll(".hf-kv > div")].map((d) => [d.querySelector(".hf-k").textContent, d.querySelector(".hf-v").textContent])
+  );
+  const at = rows.findIndex(([k]) => k === "Credit");
+  const got = JSON.stringify(rows.slice(at, at + 4));
+  assert(got === JSON.stringify([["Credit", "$12.50"], ["HelloFresh Cash", "$10.00"], ["Bonus credit", "$2.50"], ["Rewards", "3 boxes until a free box"]]), got);
+  await page.close();
+});
+
+await check("a box HelloFresh moved: the next box, its week's card and row, and the Menu say when it now arrives", async () => {
+  const page = await open({ view: "overview", scenario: "delayed" });
+  const hero = await text(page, ".hf-hero .hf-revisednotice");
+  assert(/Delayed — now arriving Tuesday, October 6/.test(hero), `hero: ${hero}`);
+  const cards = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-weekcard .hf-revised")].map((e) => e.textContent.trim()));
+  assert(JSON.stringify(cards) === JSON.stringify(["Early — now arriving Sun, Oct 11"]), `week cards: ${JSON.stringify(cards)}`);
+  await click(page, '[data-action="mode"][data-mode="calendar"]', 400);
+  await click(page, '[data-action="cal-shift"][data-delta="1"]', 400);
+  const rows = await page.evaluate(() => [...window.__card.shadowRoot.querySelectorAll(".hf-row .hf-revised")].map((e) => e.textContent.trim()));
+  assert(JSON.stringify(rows) === JSON.stringify(["Delayed — now arriving Tue, Oct 6", "Early — now arriving Sun, Oct 11"]), `rows: ${JSON.stringify(rows)}`);
+  await click(page, '[data-action="nav"][data-view="menu"]', 600);
+  assert(/Delayed — now arriving Tuesday, October 6/.test(await text(page, ".hf-stack .hf-revisednotice")), "the Menu's week header");
+  await page.close();
+});
+
+await check("a favourite toggled on Recipes changes its heart without redrawing the grid", async () => {
+  const page = await open({ view: "recipes" });
+  await sleep(600);
+  const from = await page.evaluate(() => {
+    for (const tile of window.__card.shadowRoot.querySelectorAll(".js-results .hf-tile")) tile.__mark = true;
+    return window.__calls.length;
+  });
+  await click(page, ".hf-favbtn:not(.on)", 1500);
+  const state = await page.evaluate((start) => {
+    const tiles = [...window.__card.shadowRoot.querySelectorAll(".js-results .hf-tile")];
+    return {
+      kept: tiles.length > 0 && tiles.every((t) => t.__mark),
+      hearts: tiles.filter((t) => t.querySelector(".hf-favbtn.on")).length,
+      reads: window.__calls.slice(start).filter((c) => c.service === "get_weeks").length,
+    };
+  }, from);
+  assert(state.reads >= 1, "the Menu's hearts weren't re-read");
+  assert(state.kept, "the weeks read redrew the Recipes grid");
+  await page.close();
+});
+
+await check("the video sheet has the shared header, named for the clip it closes", async () => {
+  const page = await open({ view: "menu" });
+  await click(page, ".hf-tile .hf-play", 500);
+  const head = await page.evaluate(() => {
+    const root = window.__card.shadowRoot;
+    return {
+      kind: window.__card.sheetKind,
+      title: root.querySelector(".hf-sheet .hf-sheethead h2")?.textContent || "",
+      close: root.querySelector(".hf-sheet .hf-sheethead [data-close-sheet]")?.getAttribute("aria-label"),
+    };
+  });
+  assert(head.kind === "video" && head.title && head.close === "Close video", JSON.stringify(head));
+  await page.keyboard.press("Escape");
+  await sleep(200);
+  assert(!(await q(page, ".hf-sheet")), "Escape closes it");
   await page.close();
 });
 

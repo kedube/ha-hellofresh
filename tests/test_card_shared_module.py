@@ -73,6 +73,66 @@ def test_safe_url_rejects_non_http_schemes() -> None:
     assert out[2].startswith("https://hellofresh.com")
 
 
+def test_safe_url_returns_the_url_itself_for_esc_at_the_sink() -> None:
+    """One URL check for every payload URL, with one contract: http(s) or "", returned as the URL
+    and not as HTML, so a query keeps its "&" and esc() where it enters markup escapes it once.
+    The characters that could end an attribute come back percent-encoded, so a sink that forgot
+    its esc() still can't be broken out of. `httpsOnly` is for what loads by itself from a host
+    a payload names (delivery photos): plain http would be mixed content."""
+    out = _eval(
+        "return ["
+        'S.safeUrl("https://img.example/a.jpg?w=1&h=2"),'
+        "S.safeUrl('https://x.example/\"><img src=x onerror=alert(1)>'),"
+        'S.safeUrl("https://x.example/a b"),'
+        'S.safeUrl("http://photos.example/p.jpg", { httpsOnly: true }),'
+        'S.safeUrl("HTTPS://photos.example/p.jpg", { httpsOnly: true }),'
+        "S.safeUrl(null), S.safeUrl(undefined), S.safeUrl(42),"
+        'S.esc(S.safeUrl("https://img.example/a.jpg?w=1&h=2")),'
+        "];"
+    )
+    assert out == [
+        "https://img.example/a.jpg?w=1&h=2",
+        "https://x.example/%22%3E%3Cimg%20src=x%20onerror=alert(1)%3E",
+        "https://x.example/a%20b",
+        "",
+        "HTTPS://photos.example/p.jpg",
+        "",
+        "",
+        "",
+        "https://img.example/a.jpg?w=1&amp;h=2",
+    ]
+
+
+def test_each_helper_has_one_definition() -> None:
+    """The recipe sheet kept its own HTML escape, URL check, image resizer and duration
+    formatter, and the copies drifted. Each now exists once: the escape in the text layer (which
+    every module imports), the rest in the shared module."""
+    definitions = {
+        "esc": "hellofresh-i18n.js",
+        "safeUrl": "hellofresh-shared.js",
+        "resizedImage": "hellofresh-shared.js",
+        "formatMinutes": "hellofresh-shared.js",
+    }
+    for name, home in definitions.items():
+        owners = [
+            path.name
+            for path in sorted(WWW.glob("*.js"))
+            if f"function {name}(" in path.read_text(encoding="utf-8")
+        ]
+        assert owners == [home], (name, owners)
+    for path in WWW.glob("*.js"):
+        source = path.read_text(encoding="utf-8")
+        assert "escapeHtml" not in source and "safeHttpUrl" not in source, path.name
+
+
+def test_format_minutes_reads_durations() -> None:
+    out = _eval(
+        "return [S.formatMinutes(35), S.formatMinutes(65), S.formatMinutes(120),"
+        " S.formatMinutes(0), S.formatMinutes(null), S.formatMinutes(undefined)];"
+    )
+    assert out == ["35 min", "1 h 5 min", "2 h", "0 min", "", ""]
+
+
 def test_parse_local_date_does_not_shift_bare_dates_west_of_utc() -> None:
     """`new Date("2026-08-20")` is UTC midnight and reads a day early west of UTC."""
     out = _eval(
@@ -97,6 +157,17 @@ def test_fmt_price_keeps_the_currency_in_its_fallback() -> None:
     assert "12.5" in out[0].replace(",", "") or "12.50" in out[0]
     assert "XYZ" in out[1]
     assert out[2] == "n/a"
+
+
+def test_fmt_price_shows_a_dash_for_a_missing_amount() -> None:
+    """Number(null) is 0 and String(undefined) is "undefined", so a missing amount read as a
+    real "$0.00" or as the word. It is a dash; a real zero still reads as one."""
+    out = _eval(
+        'return [S.fmtPrice(null, "USD"), S.fmtPrice(undefined, "USD"), S.fmtPrice("", "USD"),'
+        ' S.fmtPrice(0, "USD")];'
+    )
+    assert out[:3] == ["—", "—", "—"]
+    assert "0.00" in out[3] and "$" in out[3]
 
 
 def test_fmt_date_guards_invalid_dates() -> None:
@@ -124,6 +195,24 @@ def test_broadcasts_always_carry_the_account_key() -> None:
     assert out == [
         ["hellofresh-data-changed", "abc"],
         ["hellofresh-week-selected", "abc"],
+    ]
+
+
+def test_a_write_to_one_week_names_that_week() -> None:
+    """After a save, a skip or a day change the event names the week, so sibling cards re-read
+    that week alone; without one it is the event it always was (re-read everything)."""
+    out = _eval(
+        "globalThis.__events = [];"
+        'const cfg = {config_entry_id:"abc"};'
+        'S.broadcastDataChanged(cfg, "card-1", "2026-W41");'
+        'S.broadcastDataChanged(cfg, "card-1");'
+        "S.broadcastDataChanged(cfg);"
+        "return globalThis.__events.map((e) => e.detail);"
+    )
+    assert out == [
+        {"accountKey": "abc", "source": "card-1", "weekId": "2026-W41"},
+        {"accountKey": "abc", "source": "card-1"},
+        {"accountKey": "abc"},
     ]
 
 

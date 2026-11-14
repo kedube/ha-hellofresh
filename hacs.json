@@ -18,5 +18,6 @@
     "SE",
     "US"
   ],
-  "render_readme": true
+  "render_readme": true,
+  "homeassistant": "2025.8.0"
 }

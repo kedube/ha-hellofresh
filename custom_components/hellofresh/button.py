@@ -7,12 +7,11 @@ from homeassistant.components.button import (
     ButtonEntity,
     ButtonEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 
 BUTTONS: tuple[ButtonEntityDescription, ...] = (
@@ -33,11 +32,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh buttons."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     async_add_entities(HelloFreshButton(coordinator, description) for description in BUTTONS)
 
 
@@ -50,10 +49,7 @@ class HelloFreshButton(HelloFreshCoordinatorEntity, ButtonEntity):
         description: ButtonEntityDescription,
     ) -> None:
         """Initialize the button."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
 
     async def async_press(self) -> None:
         """Handle the button press."""

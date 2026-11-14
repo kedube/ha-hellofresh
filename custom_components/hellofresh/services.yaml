@@ -5,23 +5,35 @@ refresh_data:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_weeks:
   name: Get weeks
   description: >-
     Return HelloFresh delivery weeks with full recipe and selection detail
     (recipes are not exposed as entity attributes). Read-only; returns a
-    response. Optionally filter to a single week.
+    response. Optionally filter to a single week, or leave the menus out for a
+    much smaller response.
   fields:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: false
       selector:
         text:
+    include_recipes:
+      required: false
+      default: true
+      description: >-
+        Whether each week comes with its menu: the recipes, the Market items and
+        the menu's sections and filters. Turn it off for a much smaller response
+        when only the schedule, the selection counts and the order are needed.
+      selector:
+        boolean:
 
 get_menu_courses:
   name: Get menu courses
@@ -35,7 +47,8 @@ get_menu_courses:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       example: 2026-W37
@@ -57,7 +70,8 @@ get_account_summary:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_food_profile:
   name: Get food profile
@@ -69,7 +83,8 @@ get_food_profile:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 set_food_profile:
   name: Set food profile
@@ -80,7 +95,8 @@ set_food_profile:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     taste:
       required: false
       description: >-
@@ -110,7 +126,8 @@ select_meals:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       selector:
@@ -148,7 +165,8 @@ select_market_items:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       selector:
@@ -169,7 +187,8 @@ skip_week:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       selector:
@@ -182,7 +201,8 @@ unskip_week:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       selector:
@@ -197,7 +217,8 @@ reschedule_week:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       selector:
@@ -207,22 +228,56 @@ reschedule_week:
       selector:
         text:
 
-change_delivery_weekday:
-  name: Change delivery weekday
+change_week_servings:
+  name: Change week servings
   description: >-
-    Change the recurring delivery option and interval for a subscription's plan.
-    Affects all future deliveries.
+    Experimental. Change how many people one delivery week's box is for; the
+    plan and the other weeks stay as they are, and the box keeps its number of
+    meals. Only sizes your plan offers for that many meals are accepted. The
+    new box is priced first and the price returned. HelloFresh's app makes this
+    change; whether HelloFresh accepts it from here isn't confirmed, and if it
+    doesn't, a Repairs issue says so. Optionally returns a response.
   fields:
     config_entry_id:
       required: false
       selector:
+        config_entry:
+          integration: hellofresh
+    week_id:
+      required: true
+      example: 2026-W47
+      selector:
         text:
+    servings:
+      required: true
+      example: 4
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+
+change_delivery_weekday:
+  name: Change delivery weekday
+  description: >-
+    Change the recurring delivery day and time slot for a subscription's plan.
+    Affects all future deliveries. It cannot change how often boxes come.
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: hellofresh
     delivery_option:
       required: true
       selector:
         text:
     delivery_interval:
       required: false
+      default: 1
+      description: >-
+        Only 1 (every week) is accepted. This action cannot change how often
+        boxes come, so any other value is refused.
       selector:
         number:
           min: 1
@@ -243,7 +298,8 @@ get_plan_options:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     subscription_id:
       required: false
       selector:
@@ -258,7 +314,8 @@ change_plan:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     product_handle:
       required: true
       example: US-CBU-3-2-0
@@ -279,7 +336,8 @@ get_delivery_options:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_delivery_tracking:
   name: Get delivery tracking
@@ -294,7 +352,8 @@ get_delivery_tracking:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_plans:
   name: Get plans
@@ -305,7 +364,8 @@ get_plans:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_presets:
   name: Get presets
@@ -316,7 +376,8 @@ get_presets:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_spending:
   name: Get spending
@@ -328,7 +389,8 @@ get_spending:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_favorites:
   name: Get favorites
@@ -342,7 +404,8 @@ get_favorites:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     recipe_ids:
       required: false
       example: '["694053fe353e00bd89ba2d3e"]'
@@ -357,7 +420,8 @@ add_favorite:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     recipe_id:
       required: true
       example: 694053fe353e00bd89ba2d3e
@@ -372,7 +436,8 @@ remove_favorite:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     recipe_id:
       required: true
       example: 694053fe353e00bd89ba2d3e
@@ -389,7 +454,8 @@ get_recipe_collections:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 get_catalog_recipes:
   name: Get catalog recipes
@@ -401,7 +467,8 @@ get_catalog_recipes:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     collection:
       required: false
       example: chicken-recipes
@@ -420,6 +487,18 @@ get_catalog_recipes:
           min: 1
           max: 200
           mode: box
+    offset:
+      required: false
+      default: 0
+      description: >-
+        How many recipes to pass over before this page starts. The response's
+        offset, total and has_more say where the page stands; the next page
+        starts at offset + limit.
+      selector:
+        number:
+          min: 0
+          max: 10000
+          mode: box
 
 preview_meal_price:
   name: Preview meal price
@@ -432,7 +511,8 @@ preview_meal_price:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     week_id:
       required: true
       example: 2026-W39
@@ -460,7 +540,8 @@ get_recipe_detail:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     recipe_id:
       required: true
       example: 6819dfd55efe69a088447ef3
@@ -484,7 +565,8 @@ get_meal_plan:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
 
 set_planned_meal:
   name: Set planned meal
@@ -496,7 +578,8 @@ set_planned_meal:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     date:
       required: true
       example: "2026-10-13"
@@ -552,7 +635,8 @@ clear_planned_meal:
     config_entry_id:
       required: false
       selector:
-        text:
+        config_entry:
+          integration: hellofresh
     date:
       required: true
       example: "2026-10-13"

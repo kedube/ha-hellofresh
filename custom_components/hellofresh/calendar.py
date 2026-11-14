@@ -9,13 +9,12 @@ from homeassistant.components.calendar import (
     CalendarEntity,
     CalendarEvent,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .meal_plan import MEAL_CALENDAR_KEY, MEALS, MealPlan, async_meal_labels, slot_title
 
@@ -41,11 +40,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh calendar entities."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     entities: list[CalendarEntity] = [HelloFreshDeliveryCalendar(coordinator)]
     meal_plan = getattr(coordinator, "meal_plan", None)
     if meal_plan is not None:
@@ -65,20 +64,22 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
 
     def __init__(self, coordinator: HelloFreshDataUpdateCoordinator) -> None:
         """Initialize the calendar."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_delivery_schedule"
-        self._pin_entity_id(ENTITY_ID_FORMAT, "delivery_schedule")
+        super().__init__(coordinator, ENTITY_ID_FORMAT, "delivery_schedule")
         self._events = self._build_events()
 
     @property
     def event(self) -> CalendarEvent | None:
-        """Return the next upcoming event."""
-        if not self._events:
-            return None
+        """Return the delivery under way today, else the next one; None when none is left.
 
+        Home Assistant turns the entity on while ``event.start <= now < event.end``, so the
+        event to report is the earliest one that has not ended. Choosing by start instead
+        skipped today's delivery from one second past midnight (an all-day event starts at
+        00:00), which left the calendar off all delivery day and describing next week's box.
+        With nothing left it reports no event, not the oldest delivery in the history window.
+        """
         now = dt_util.now()
-        future_events = [item for item in self._events if self._event_sort_key(item, now) >= now]
-        return min(future_events or self._events, key=lambda item: self._event_sort_key(item, now))
+        ahead = [event for event in self._events if _get_datetime_local(event.end) > now]
+        return min(ahead, key=lambda event: _get_datetime_local(event.start)) if ahead else None
 
     async def async_get_events(
         self,
@@ -116,18 +117,6 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
         self.async_update_event_listeners()
         super()._handle_coordinator_update()
 
-    @staticmethod
-    def _event_sort_key(event: CalendarEvent, fallback: datetime) -> datetime:
-        """Normalize calendar event start values for sorting.
-
-        Every branch must return an *aware* datetime, or sorting a mix of all-day and timed
-        events raises TypeError.
-        """
-        start = event.start
-        if isinstance(start, (date, datetime)):
-            return _get_datetime_local(start)
-        return fallback
-
     def _build_events(self) -> list[CalendarEvent]:
         """Build all calendar events from coordinator data."""
         events: list[CalendarEvent] = []
@@ -135,6 +124,14 @@ class HelloFreshDeliveryCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
 
         for order in data.orders:
             if order.delivery_date is None:
+                continue
+            # HelloFresh lists an order for every week, skipped and paused ones included.
+            # No box comes on those days, so they are not deliveries: the rule that keeps
+            # them out of the upcoming-delivery count (models.finalize()), with the week found
+            # the same way. Two subscriptions share ISO week ids, so it is this order's own
+            # subscription's week.
+            week = data.get_week(order.week_id, order.subscription_id)
+            if week is not None and (week.is_skipped or week.is_paused):
                 continue
 
             summary = "HelloFresh delivery"
@@ -181,10 +178,8 @@ class HelloFreshMealsCalendar(HelloFreshCoordinatorEntity, CalendarEntity):
 
     def __init__(self, coordinator: HelloFreshDataUpdateCoordinator, meal_plan: MealPlan) -> None:
         """Initialize the calendar."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, MEAL_CALENDAR_KEY)
         self._meal_plan = meal_plan
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{MEAL_CALENDAR_KEY}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, MEAL_CALENDAR_KEY)
         self._labels: dict[str, str] = {}
         self._events: list[CalendarEvent] = []
 

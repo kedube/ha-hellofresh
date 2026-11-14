@@ -7,10 +7,14 @@ validation) to stay consistent with the suite's lightweight, hass-free style.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+from pathlib import Path
+import re
 from types import SimpleNamespace
 from urllib.parse import quote
 
+from homeassistant.data_entry_flow import AbortFlow
 import pytest
 
 from custom_components.hellofresh.config_flow import HelloFreshConfigFlow, HelloFreshOptionsFlow
@@ -62,6 +66,7 @@ def _make_flow() -> HelloFreshConfigFlow:
     """Build a flow with the HA flow-manager helpers stubbed to record calls."""
     flow = HelloFreshConfigFlow()
     flow.hass = SimpleNamespace()  # type: ignore[assignment]
+    flow.context = {"source": "user"}  # type: ignore[assignment]
     created: dict = {}
 
     def async_create_entry(*, title, data, options=None, **_kwargs):
@@ -77,8 +82,9 @@ def _make_flow() -> HelloFreshConfigFlow:
     def async_show_menu(*, step_id, menu_options, **_kwargs):
         return {"type": "menu", "step_id": step_id, "menu_options": menu_options}
 
-    async def async_set_unique_id(uid):
-        flow._uid = uid  # type: ignore[attr-defined]
+    async def async_set_unique_id(uid, **_kwargs):
+        # Where Home Assistant keeps it, so its own unique-id checks read what was set.
+        flow.context["unique_id"] = uid  # type: ignore[typeddict-unknown-key]
         return None
 
     flow.async_create_entry = async_create_entry  # type: ignore[method-assign]
@@ -332,6 +338,9 @@ def test_credentials_bot_block_gets_its_own_error(monkeypatch) -> None:
         async def async_validate_credentials(self):
             raise raised[-1]
 
+        async def async_close(self) -> None:
+            pass
+
     monkeypatch.setattr(config_flow, "HelloFreshClient", _Client)
     monkeypatch.setattr(
         config_flow,
@@ -367,37 +376,49 @@ _LOGIN_TOKENS = {
 
 
 def _stub_login_client(
-    monkeypatch, *, raises: Exception | None = None, registered: bool | None = None
+    monkeypatch,
+    *,
+    raises: Exception | None = None,
+    registered: bool | None = None,
+    account_id: str = "acct-1",
+    lifecycle: list[str] | None = None,
 ) -> list[str]:
     """Replace the flow's client with one whose validation login reports ``_LOGIN_TOKENS``.
 
     Returns the emails the flow asked ``async_email_registered`` about (answered ``registered``).
+    ``lifecycle`` collects, in order, what the flow did with the client and its session.
     """
     from custom_components.hellofresh import config_flow  # noqa: PLC0415
 
     email_checks: list[str] = []
+    events = lifecycle if lifecycle is not None else []
 
     class _Client:
         def __init__(self, *, token_refresh_callback=None, **_kwargs) -> None:
             self._token_refresh_callback = token_refresh_callback
 
         async def async_validate_credentials(self):
+            events.append("validate")
             if raises is not None:
                 raise raises
             if self._token_refresh_callback is not None:
                 self._token_refresh_callback(dict(_LOGIN_TOKENS))
-            return {"account_id": "acct-1"}
+            return {"account_id": account_id}
 
         async def async_email_registered(self, email):
+            events.append("email_check")
             email_checks.append(email)
             return registered
 
+        async def async_close(self) -> None:
+            events.append("client_closed")
+
+    class _Session:
+        def detach(self) -> None:
+            events.append("session_detached")
+
     monkeypatch.setattr(config_flow, "HelloFreshClient", _Client)
-    monkeypatch.setattr(
-        config_flow,
-        "async_create_clientsession",
-        lambda _hass, **_kwargs: type("Session", (), {"detach": lambda self: None})(),
-    )
+    monkeypatch.setattr(config_flow, "async_create_clientsession", lambda _hass, **_kw: _Session())
     return email_checks
 
 
@@ -479,7 +500,9 @@ def test_reauth_explains_a_rejected_login_too(monkeypatch) -> None:
     checks = _stub_login_client(
         monkeypatch, raises=HelloFreshLoginRejectedError("HTTP 401"), registered=False
     )
-    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_USERNAME: "old@example.com"})
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "uk", CONF_USERNAME: "old@example.com"}, source="reauth"
+    )
 
     _run(flow.async_step_reauth({}))
     result = _run(
@@ -520,7 +543,8 @@ def test_reauth_replaces_dead_tokens_with_the_validation_login_tokens(monkeypatc
             CONF_USERNAME: "u@example.com",
             CONF_ACCESS_TOKEN: "dead-access",
             CONF_REFRESH_TOKEN: "dead-refresh",
-        }
+        },
+        source="reauth",
     )
 
     _run(flow.async_step_reauth({}))
@@ -647,14 +671,35 @@ def test_reauth_routes_credential_entry_to_confirm_step() -> None:
     assert result["step_id"] == "reauth_confirm"
 
 
-def _make_reconfigure_flow(entry_data: dict, *, mismatch: bool = False):
-    """Build a flow positioned on ``entry_data`` with the reconfigure helpers stubbed."""
+def _make_reconfigure_flow(
+    entry_data: dict,
+    *,
+    source: str = "reconfigure",
+    unique_id: str | None = "us::acct-1",
+    other_entries: dict[str, str] | None = None,
+):
+    """Build a reconfigure (or reauth) flow positioned on an entry holding ``entry_data``.
+
+    Home Assistant's own ``_abort_if_unique_id_mismatch`` runs for real: it reads the flow's
+    source and the entry from the context, so both are set as Home Assistant sets them.
+    ``other_entries`` maps the unique ids of other configured entries to their entry ids.
+    """
     flow = _make_flow()
-    entry = SimpleNamespace(data=entry_data, options={})
+    entry = SimpleNamespace(entry_id="e1", unique_id=unique_id, data=entry_data, options={})
+    others = {
+        uid: SimpleNamespace(entry_id=entry_id, unique_id=uid)
+        for uid, entry_id in (other_entries or {}).items()
+    }
     flow.hass = SimpleNamespace(  # type: ignore[assignment]
-        config_entries=SimpleNamespace(async_get_entry=lambda _id: entry)
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda _id: entry,
+            async_get_known_entry=lambda _id: entry,
+            async_entry_for_domain_unique_id=lambda _domain, uid: (
+                entry if uid == entry.unique_id else others.get(uid)
+            ),
+        )
     )
-    flow.context = {"entry_id": "e1"}  # type: ignore[attr-defined]
+    flow.context = {"source": source, "entry_id": "e1"}  # type: ignore[assignment]
 
     updated: dict = {}
 
@@ -662,23 +707,10 @@ def _make_reconfigure_flow(entry_data: dict, *, mismatch: bool = False):
         updated.update({"entry": target, "reason": reason, **kwargs})
         return {"type": "abort", "reason": reason, **kwargs}
 
-    def _abort_if_unique_id_mismatch(*, reason):
-        if mismatch:
-            raise _Aborted(reason)
-
     flow.async_update_reload_and_abort = async_update_reload_and_abort  # type: ignore[method-assign]
-    flow._abort_if_unique_id_mismatch = _abort_if_unique_id_mismatch  # type: ignore[method-assign]
     flow._updated = updated  # type: ignore[attr-defined]
     flow._entry = entry  # type: ignore[attr-defined]
     return flow
-
-
-class _Aborted(Exception):
-    """Stands in for HA's AbortFlow, which the real helper raises on a unique-id mismatch."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
 
 
 def test_reconfigure_routes_token_entry_to_token_step() -> None:
@@ -698,7 +730,11 @@ def test_reconfigure_routes_credential_entry_to_confirm_step() -> None:
 
 
 def test_reconfigure_updates_entry_and_allows_country_change() -> None:
-    """Reconfiguring rewrites credentials and the country, then reloads the entry."""
+    """Reconfiguring rewrites credentials and the country, then reloads the entry.
+
+    The unique id names the country, so Home Assistant's own mismatch check (run for real
+    here) refused every change of country as "a different account".
+    """
     flow = _make_reconfigure_flow({CONF_COUNTRY: "us", CONF_USERNAME: "old@example.com"})
 
     async def fake_validate(username, password, country, errors, **_kwargs):
@@ -720,14 +756,60 @@ def test_reconfigure_updates_entry_and_allows_country_change() -> None:
         CONF_PASSWORD: "pw",
         CONF_COUNTRY: "uk",
     }
-    # The title follows the corrected country.
+    # The title and the unique id follow the corrected country.
     assert flow._updated["title"] == "HelloFresh (UK)"
+    assert flow._updated["unique_id"] == "uk::acct-1"
 
 
 def test_reconfigure_refuses_a_different_account() -> None:
     """Credentials for another account abort rather than repointing the entry."""
+    flow = _make_reconfigure_flow({CONF_COUNTRY: "us", CONF_USERNAME: "old@example.com"})
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        return {"account_id": "somebody-else"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    with pytest.raises(AbortFlow) as aborted:
+        _run(
+            flow.async_step_reconfigure_confirm(
+                {CONF_COUNTRY: "us", CONF_USERNAME: "other@example.com", CONF_PASSWORD: "pw"}
+            )
+        )
+
+    assert aborted.value.reason == "account_mismatch"
+    # Nothing was written to the entry.
+    assert flow._updated == {}
+
+
+@pytest.mark.parametrize("legacy_unique_id", [None, "acct-1"])
+def test_reconfigure_accepts_an_entry_with_a_legacy_unique_id(legacy_unique_id) -> None:
+    """An old entry has no unique id, or the bare account id; it is the same account still."""
     flow = _make_reconfigure_flow(
-        {CONF_COUNTRY: "us", CONF_USERNAME: "old@example.com"}, mismatch=True
+        {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com"}, unique_id=legacy_unique_id
+    )
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        return {"account_id": "acct-1"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    result = _run(
+        flow.async_step_reconfigure_confirm(
+            {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+        )
+    )
+
+    assert result["reason"] == "reconfigure_successful"
+    assert flow._updated["unique_id"] == "us::acct-1"  # the entry gets a current id
+
+
+def test_reconfigure_refuses_a_different_account_on_a_legacy_unique_id() -> None:
+    """A bare account id is still compared: another account is refused."""
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com"}, unique_id="acct-1"
     )
 
     async def fake_validate(username, password, country, errors, **_kwargs):
@@ -736,18 +818,38 @@ def test_reconfigure_refuses_a_different_account() -> None:
     flow._async_validate = fake_validate  # type: ignore[method-assign]
 
     _run(flow.async_step_reconfigure())
-    try:
+    with pytest.raises(AbortFlow) as aborted:
         _run(
             flow.async_step_reconfigure_confirm(
-                {CONF_COUNTRY: "us", CONF_USERNAME: "other@example.com", CONF_PASSWORD: "pw"}
+                {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
             )
         )
-    except _Aborted as err:
-        assert err.reason == "account_mismatch"
-    else:  # pragma: no cover - guard must fire
-        raise AssertionError("expected the mismatch guard to abort the flow")
 
-    # Nothing was written to the entry.
+    assert aborted.value.reason == "account_mismatch"
+    assert flow._updated == {}
+
+
+def test_reconfigure_will_not_take_the_unique_id_of_another_entry() -> None:
+    """Changing the country must not give two entries the same unique id."""
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com"},
+        other_entries={"uk::acct-1": "e2"},
+    )
+
+    async def fake_validate(username, password, country, errors, **_kwargs):
+        return {"account_id": "acct-1"}
+
+    flow._async_validate = fake_validate  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    with pytest.raises(AbortFlow) as aborted:
+        _run(
+            flow.async_step_reconfigure_confirm(
+                {CONF_COUNTRY: "uk", CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+            )
+        )
+
+    assert aborted.value.reason == "already_configured"
     assert flow._updated == {}
 
 
@@ -763,8 +865,20 @@ def test_reconfigure_token_step_rejects_unparseable_token() -> None:
 
 
 def test_reconfigure_token_step_updates_entry_on_success() -> None:
-    """A valid token paste rewrites the stored tokens for the same account."""
-    flow = _make_reconfigure_flow({CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "old-token"})
+    """A valid token paste replaces the stored tokens for the same account.
+
+    Replaces, not merges: pasting a bare access token used to leave the old refresh token in
+    the entry, dated as if it had just been issued, and the client then posted that dead token.
+    """
+    flow = _make_reconfigure_flow(
+        {
+            CONF_COUNTRY: "uk",
+            CONF_ACCESS_TOKEN: "old-token",
+            CONF_REFRESH_TOKEN: "old-refresh",
+            "refresh_expires_in": 5184000,
+        },
+        unique_id="uk::acct-9",
+    )
 
     async def fake_validate_token(country, token_data, errors):
         return {"account_id": "acct-9"}
@@ -778,4 +892,213 @@ def test_reconfigure_token_step_updates_entry_on_success() -> None:
 
     assert result["type"] == "abort"
     assert result["reason"] == "reconfigure_successful"
-    assert flow._updated["data_updates"][CONF_ACCESS_TOKEN] == "fresh-token"
+    assert "data_updates" not in flow._updated
+    assert flow._updated["data"] == {CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "fresh-token"}
+    assert flow._updated["unique_id"] == "uk::acct-9"
+
+
+def test_reconfigure_token_step_refuses_a_different_account() -> None:
+    """A token for another account aborts rather than repointing the entry."""
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "uk", CONF_ACCESS_TOKEN: "old-token"}, unique_id="uk::acct-9"
+    )
+
+    async def fake_validate_token(country, token_data, errors):
+        return {"account_id": "somebody-else"}
+
+    flow._async_validate_token = fake_validate_token  # type: ignore[method-assign]
+
+    _run(flow.async_step_reconfigure())
+    with pytest.raises(AbortFlow) as aborted:
+        _run(flow.async_step_reconfigure_token({CONF_COUNTRY: "uk", CONF_TOKEN: "fresh-token"}))
+
+    assert aborted.value.reason == "account_mismatch"
+    assert flow._updated == {}
+
+
+# ---- reauth keeps the entry on its own account -------------------------------------------
+
+
+def test_reauth_with_another_accounts_password_is_refused(monkeypatch) -> None:
+    """Reauth used to repoint the entry at whichever account the new details belonged to."""
+    _stub_login_client(monkeypatch, account_id="somebody-else")
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "us", CONF_USERNAME: "u@example.com"}, source="reauth"
+    )
+
+    _run(flow.async_step_reauth({}))
+    with pytest.raises(AbortFlow) as aborted:
+        _run(
+            flow.async_step_reauth_confirm(
+                {CONF_USERNAME: "other@example.com", CONF_PASSWORD: "pw"}
+            )
+        )
+
+    assert aborted.value.reason == "account_mismatch"
+    assert flow._updated == {}
+
+
+def test_reauth_with_another_accounts_token_is_refused(monkeypatch) -> None:
+    """The token path has the same guard."""
+    _stub_login_client(monkeypatch, account_id="somebody-else")
+    flow = _make_reconfigure_flow(
+        {CONF_COUNTRY: "us", CONF_ACCESS_TOKEN: "dead-token"}, source="reauth"
+    )
+
+    _run(flow.async_step_reauth({}))
+    with pytest.raises(AbortFlow) as aborted:
+        _run(flow.async_step_reauth_token({CONF_TOKEN: "another-accounts-token"}))
+
+    assert aborted.value.reason == "account_mismatch"
+    assert flow._updated == {}
+
+
+@pytest.mark.parametrize("unique_id", ["us::acct-1", "acct-1", None])
+@pytest.mark.parametrize("token_entry", [False, True])
+def test_reauth_of_the_same_account_succeeds(monkeypatch, unique_id, token_entry) -> None:
+    """The entry's own account passes, on a current unique id and on either legacy form."""
+    _stub_login_client(monkeypatch)
+    entry_data = {CONF_COUNTRY: "us"} | (
+        {CONF_ACCESS_TOKEN: "dead-token"} if token_entry else {CONF_USERNAME: "u@example.com"}
+    )
+    flow = _make_reconfigure_flow(entry_data, source="reauth", unique_id=unique_id)
+
+    _run(flow.async_step_reauth({}))
+    if token_entry:
+        result = _run(flow.async_step_reauth_token({CONF_TOKEN: "fresh-token"}))
+    else:
+        result = _run(
+            flow.async_step_reauth_confirm({CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"})
+        )
+
+    assert result["reason"] == "reauth_successful"
+    # Reauth changes the sign-in, never the entry's identity.
+    assert "unique_id" not in flow._updated
+
+
+# ---- an account without a subscription ---------------------------------------------------
+
+
+def _flow_for(path: str):
+    """Build a flow positioned on one of the paths that validate a sign-in."""
+    if path in ("credentials", "token"):
+        return _make_flow()
+    token_entry = path.endswith("token")
+    entry_data = {CONF_COUNTRY: "us"} | (
+        {CONF_ACCESS_TOKEN: "old-token"} if token_entry else {CONF_USERNAME: "u@example.com"}
+    )
+    source = "reauth" if path.startswith("reauth") else "reconfigure"
+    flow = _make_reconfigure_flow(entry_data, source=source)
+    _run(flow.async_step_reauth({}) if source == "reauth" else flow.async_step_reconfigure())
+    return flow
+
+
+_SIGN_IN = {CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw"}
+
+
+@pytest.mark.parametrize(
+    ("path", "step", "user_input"),
+    [
+        ("credentials", "async_step_credentials", {CONF_COUNTRY: "us", **_SIGN_IN}),
+        ("token", "async_step_token", {CONF_COUNTRY: "us", CONF_TOKEN: "a-token"}),
+        ("reauth", "async_step_reauth_confirm", _SIGN_IN),
+        ("reauth_token", "async_step_reauth_token", {CONF_TOKEN: "a-token"}),
+        ("reconfigure", "async_step_reconfigure_confirm", {CONF_COUNTRY: "us", **_SIGN_IN}),
+        (
+            "reconfigure_token",
+            "async_step_reconfigure_token",
+            {CONF_COUNTRY: "us", CONF_TOKEN: "a-token"},
+        ),
+    ],
+)
+def test_an_account_without_a_subscription_is_not_an_authentication_error(
+    monkeypatch, path, step, user_input
+) -> None:
+    """A sign-in that works but finds no subscription says so, on every path.
+
+    It used to read "Invalid authentication" (or "token rejected"), for details that were
+    correct, and no amount of re-entering them could help.
+    """
+    from custom_components.hellofresh.models import (  # noqa: PLC0415
+        HelloFreshNoSubscriptionError,
+    )
+
+    checks = _stub_login_client(
+        monkeypatch, raises=HelloFreshNoSubscriptionError("no subscription")
+    )
+    flow = _flow_for(path)
+
+    result = _run(getattr(flow, step)(user_input))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "no_subscription"}
+    assert checks == []  # the email and password were right; nothing to explain
+
+
+def test_validation_closes_its_client_before_letting_go_of_the_session(monkeypatch) -> None:
+    """Each check uses a one-off client and session; both are released, pass or fail."""
+    from custom_components.hellofresh.api import HelloFreshLoginRejectedError  # noqa: PLC0415
+
+    events: list[str] = []
+    _stub_login_client(monkeypatch, lifecycle=events)
+    flow = _make_flow()
+    _run(flow.async_step_credentials({CONF_COUNTRY: "us", **_SIGN_IN}))
+    assert events == ["validate", "client_closed", "session_detached"]
+
+    events.clear()
+    _stub_login_client(
+        monkeypatch, raises=HelloFreshLoginRejectedError("HTTP 401"), lifecycle=events
+    )
+    _run(_make_flow().async_step_credentials({CONF_COUNTRY: "us", **_SIGN_IN}))
+    # The email check still needs the client's connection, so it runs before the close.
+    assert events == ["validate", "email_check", "client_closed", "session_detached"]
+
+
+# ---- every message the flow can show exists ----------------------------------------------
+
+_STRINGS = Path(__file__).resolve().parents[1] / "custom_components" / "hellofresh" / "strings.json"
+
+
+def test_every_error_and_abort_the_flow_can_show_has_a_message() -> None:
+    """A key without a string reaches the user as the bare key.
+
+    The flow mapped ``no_subscription`` before any string file had it, and the reauth steps
+    aborted with ``invalid_auth``, which exists only as a form error.
+    """
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+
+    source = inspect.getsource(config_flow)
+    strings = json.loads(_STRINGS.read_text(encoding="utf-8"))["config"]
+    errors = {
+        key
+        for value in re.findall(r'errors\["base"\] = (.+)', source)
+        for key in re.findall(r'"(\w+)"', value)
+    }
+    # The keys _async_auth_error_key returns, read from its code below the docstring.
+    auth_error_code = inspect.getsource(config_flow.HelloFreshConfigFlow._async_auth_error_key)
+    errors |= set(re.findall(r'"(\w+)"', auth_error_code.split('"""')[-1]))
+    aborts = set(re.findall(r'reason="(\w+)"', source))
+    aborts |= set(re.findall(r'AbortFlow\("(\w+)"', source))
+
+    # The scan finds what it is meant to find.
+    assert {"no_subscription", "wrong_password", "bot_blocked_token"} <= errors
+    assert {"account_mismatch", "already_configured", "reauth_failed"} <= aborts
+    assert not errors - set(strings["error"]), "errors without a string"
+    assert not aborts - set(strings["abort"]), "aborts without a string"
+
+
+def test_reauth_of_an_entry_that_was_removed_aborts_with_a_message() -> None:
+    """The entry went away while its reauth form was open."""
+    flow = _make_flow()
+    flow.hass = SimpleNamespace(  # type: ignore[assignment]
+        config_entries=SimpleNamespace(async_get_entry=lambda _id: None)
+    )
+    flow.context = {"source": "reauth", "entry_id": "gone"}  # type: ignore[assignment]
+    flow.flow_id = "flow-1"
+    flow.handler = "hellofresh"
+
+    result = _run(flow.async_step_reauth({}))
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reauth_failed"
+    assert "reauth_failed" in json.loads(_STRINGS.read_text(encoding="utf-8"))["config"]["abort"]

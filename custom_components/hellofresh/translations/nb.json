@@ -79,14 +79,16 @@
       "password_reset_required": "HelloFresh-passordet ditt er utløpt. Følg instruksjonene HelloFresh har sendt til e-posten din for å oppdatere det, og skriv deretter inn det nye passordet her.",
       "too_many_attempts": "HelloFresh-kontoen din er midlertidig låst på grunn av for mange innloggingsforsøk. Prøv igjen om noen minutter.",
       "wrong_password": "HelloFresh godtok ikke dette passordet. Hvis du logger inn på HelloFresh med Google, Apple eller Facebook, har kontoen din kanskje ikke noe passord; bruk alternativet «Tilgangstoken (avansert)» i stedet.",
-      "invalid_token": "Dette tokenet kunne ikke leses eller ble avvist"
+      "invalid_token": "Dette tokenet kunne ikke leses eller ble avvist",
+      "no_subscription": "HelloFresh godtok opplysningene, men kontoen har ikke noe abonnement, så Home Assistant har ingenting å vise. Kontroller at landet er det abonnementet ditt hører til."
     },
     "abort": {
       "already_configured": "Denne HelloFresh-kontoen er allerede satt opp",
       "reauth_successful": "HelloFresh ble koblet til på nytt",
       "reconfigure_successful": "HelloFresh ble konfigurert på nytt",
       "reconfigure_failed": "Denne HelloFresh-oppføringen ble ikke funnet lenger",
-      "account_mismatch": "Disse opplysningene tilhører en annen HelloFresh-konto. Legg den til som en ny integrasjonsoppføring i stedet for å konfigurere denne på nytt."
+      "reauth_failed": "Denne HelloFresh-oppføringen ble ikke funnet lenger",
+      "account_mismatch": "Disse opplysningene tilhører en annen HelloFresh-konto enn denne oppføringen. Legg den til som en ny integrasjonsoppføring for å bruke den kontoen."
     }
   },
   "options": {
@@ -168,6 +170,10 @@
       "title": "HelloFresh-kontodata er endret for {entry_title}",
       "description": "HelloFresh returnerte autentiserte data for **{entry_title}**, men formatet svarte ikke lenger til leveringsstrukturene denne integrasjonen kan tolke. Diagnostikk fra denne konfigurasjonen hjelper med å avklare om en regional API-variant eller en endring på nettstedet må støttes."
     },
+    "payment_problem": {
+      "title": "HelloFresh kunne ikke trekke en betaling for {entry_title}",
+      "description": "HelloFresh melder om et problem med betalingen for matkassen din til {date} ({amount}) på **{entry_title}**. En matkasse som ikke er betalt, blir kanskje ikke levert. Sjekk betalingsopplysningene dine på HelloFreshs nettsted (**Les mer**). Varselet forsvinner av seg selv når HelloFresh ikke lenger melder om problemet."
+    },
     "write_actions_unavailable": {
       "title": "HelloFresh-skrivehandlinger er ikke bekreftet for {entry_title}",
       "description": "Du prøvde å bruke en HelloFresh-handling som endrer kontodata for **{entry_title}**, for eksempel å velge retter eller hoppe over en uke. Integrasjonen forsøkte de kjente skriveendepunktene for kontoen din, men ingen godtok forespørselen, så handlingen ble blokkert i stedet for å gjette videre."
@@ -229,6 +235,15 @@
       },
       "account_credit": {
         "name": "Kreditt"
+      },
+      "account_credit_cash": {
+        "name": "HelloFresh Cash-kreditt"
+      },
+      "account_credit_bonus": {
+        "name": "Bonuskreditt"
+      },
+      "loyalty_boxes_until_free_box": {
+        "name": "Matkasser til en gratis kasse"
       },
       "selected_plan": {
         "name": "Valgt abonnement"
@@ -366,6 +381,9 @@
       },
       "payment_method_expiring": {
         "name": "Betalingsmetode utløper"
+      },
+      "payment_problem": {
+        "name": "Betalingsproblem"
       }
     },
     "button": {
@@ -393,7 +411,10 @@
               "week_skipped": "Uke hoppet over",
               "week_unskipped": "Uke reaktivert",
               "selection_locked": "Valg låst",
-              "menu_published": "Meny publisert"
+              "menu_published": "Meny publisert",
+              "box_delayed": "Kasse forsinket",
+              "box_early": "Kasse kommer tidligere",
+              "selection_deadline_approaching": "Frist for valg nærmer seg"
             }
           }
         }
@@ -434,7 +455,7 @@
     },
     "get_weeks": {
       "name": "Hent uker",
-      "description": "Returnerer HelloFresh-leveringsukene med fullstendige oppskrifts- og valgdetaljer. Kun lesing; returnerer et svar. Kan eventuelt filtreres til én enkelt uke.",
+      "description": "Returnerer HelloFresh-leveringsukene med fullstendige oppskrifts- og valgdetaljer. Kun lesing; returnerer et svar. Kan eventuelt filtreres til én enkelt uke, eller returneres uten menyer, slik at svaret blir mye mindre.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -443,6 +464,10 @@
         "week_id": {
           "name": "Uke-ID",
           "description": "Valgfri identifikator for en HelloFresh-leveringsuke for å returnere bare den uken."
+        },
+        "include_recipes": {
+          "name": "Ta med oppskrifter",
+          "description": "Om hver uke returneres med menyen sin: oppskriftene, tilleggsproduktene og menyens seksjoner og filtre. Slått på som standard. Slå det av for å få et mye mindre svar når du bare trenger leveringsplanen, antall valgte retter og bestillingen."
         }
       }
     },
@@ -554,9 +579,27 @@
         }
       }
     },
+    "change_week_servings": {
+      "name": "Endre antall personer for en uke",
+      "description": "Eksperimentell. Endre hvor mange personer én leveringsukes matkasse er for. Den beholder antallet retter, og abonnementet og de andre ukene forblir som de er. Bare størrelser abonnementet ditt tilbyr, godtas. Returnerer den nye kassen og prisen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurasjons-ID",
+          "description": "HelloFresh-kontoen handlingen gjelder når det er satt opp flere kontoer."
+        },
+        "week_id": {
+          "name": "Uke-ID",
+          "description": "Identifikatoren for HelloFresh-leveringsuken."
+        },
+        "servings": {
+          "name": "Personer",
+          "description": "Hvor mange personer ukens matkasse er for etter endringen."
+        }
+      }
+    },
     "change_delivery_weekday": {
       "name": "Endre leveringsdag",
-      "description": "Endre det faste leveringsalternativet og intervallet for abonnementets plan. Gjelder alle fremtidige leveringer.",
+      "description": "Endre den faste leveringsdagen og det faste leveringstidsrommet for abonnementets plan. Gjelder alle fremtidige leveringer. Kan ikke endre hvor ofte matkassene kommer.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurasjons-ID",
@@ -568,7 +611,7 @@
         },
         "delivery_interval": {
           "name": "Leveringsintervall",
-          "description": "Hvor ofte det leveres, i uker. Standard er ukentlig."
+          "description": "Bare 1 (hver uke) godtas, og det er standardverdien. Handlingen kan ikke endre hvor ofte matkassene kommer, så alle andre verdier avvises."
         },
         "subscription_id": {
           "name": "Abonnements-ID",
@@ -647,6 +690,10 @@
         "limit": {
           "name": "Grense",
           "description": "Høyeste antall oppskrifter som returneres."
+        },
+        "offset": {
+          "name": "Forskyvning",
+          "description": "Hvor mange oppskrifter som hoppes over før denne siden begynner (standard 0). Neste side begynner ved forskyvning + grense."
         }
       }
     },
@@ -932,7 +979,8 @@
           "one": "{count} uke trenger valg av retter",
           "other": "{count} uker trenger valg av retter"
         },
-        "load_failed": "Kunne ikke laste leveringene dine: {error}"
+        "load_failed": "Kunne ikke laste leveringene dine: {error}",
+        "view_failed": "Denne delen kunne ikke vises: {error}"
       },
       "banner": {
         "refresh_failed": "Kunne ikke oppdatere: {error}",
@@ -941,7 +989,14 @@
         "card_expired_date": "Kortet ditt, {card}, har utløpt ({date}). Oppdater det hos HelloFresh, ellers blir kanskje ikke neste kasse sendt.",
         "card_expiring": "Kortet ditt, {card}, utløper snart. Oppdater det hos HelloFresh før neste kasse belastes.",
         "card_expiring_date": "Kortet ditt, {card}, utløper snart ({date}). Oppdater det hos HelloFresh før neste kasse belastes.",
-        "holiday_date": "Ny leveringsdato: {date}."
+        "holiday_date": "Ny leveringsdato: {date}.",
+        "payment_boxes": {
+          "one": "Det er et problem med betalingen for kassen din {boxes}.",
+          "other": "Det er et problem med betalingene for {count} kasser: {boxes}."
+        },
+        "payment_any": "Det er et problem med en betaling på HelloFresh-kontoen din.",
+        "payment_box": "{date} ({amount})",
+        "payment_fix": "Oppdater betalingsopplysningene dine hos HelloFresh"
       },
       "state": {
         "ready": {
@@ -1050,7 +1105,10 @@
         "skipped_title": "Denne uken er hoppet over.",
         "unskip_to_choose": "Reaktiver den for å velge retter.",
         "autopicked_before": "Behold dem eller bytt noen før {date}.",
-        "closed": "Endringer er stengt for denne kassen — den sendes slik den er."
+        "closed": "Endringer er stengt for denne kassen — den sendes slik den er.",
+        "skip_closed": "Fristen for denne uken har gått ut, så den kan ikke lenger endres.",
+        "delayed": "Forsinket — kommer nå {date}",
+        "early": "Tidligere — kommer nå {date}"
       },
       "skip": {
         "title": "Hoppe over {date}?",
@@ -1068,6 +1126,30 @@
         "none": "Ingen andre dager er tilgjengelige.",
         "failed": "Kunne ikke endre dag: {error}",
         "done": "Leveringsdagen er endret for den uken."
+      },
+      "undo": {
+        "action": "Angre",
+        "undoing": "Angrer …",
+        "done": "Endringen er angret.",
+        "failed": "Kunne ikke angre: {error}",
+        "closed": "Det er for sent å angre: fristen for denne uken har gått ut."
+      },
+      "servings": {
+        "for": "For {people}",
+        "change": "Endre",
+        "change_aria": "Endre hvor mange personer kassen er for",
+        "title": "Personer i denne kassen",
+        "only_this_box": "Bare for kassen som er planlagt {date}",
+        "loading": "Henter kassestørrelsene …",
+        "load_failed": "Kunne ikke hente kassestørrelsene: {error}",
+        "none": "HelloFresh tilbyr ingen annen størrelse for denne kassen.",
+        "confirm_title": "Endre denne kassen til {people}?",
+        "confirm_body": "Bare kassen din for {date} endres. Abonnementet og de andre kassene dine forblir som de er.",
+        "confirm_price": "HelloFresh oppgir {size} til {price}.",
+        "confirm": "Endre denne kassen",
+        "saving": "Endrer kassen …",
+        "done": "Kassen er nå for {people}.",
+        "failed": "Kunne ikke endre kassen: {error}"
       },
       "pantry": {
         "update_failed": "Kunne ikke oppdatere listen: {error}",
@@ -1243,6 +1325,9 @@
         "filters": "Filtre",
         "in_my_box": "I kassen min",
         "filtering": "Filtrerer …",
+        "allergen_checking": "Sjekker med HelloFresh hvilke retter som unngår disse ingrediensene. Til svaret kommer, vises bare rettene i kassen din.",
+        "allergen_failed": "HelloFresh klarte ikke å sjekke ingrediensene du vil unngå. Derfor er retter utenfor kassen din skjult i stedet for å vises usjekket.",
+        "filter_failed": "Filtertjenesten til HelloFresh svarte ikke. Disse filtrene bruker foreløpig bare menyens egne data og kan gå glipp av noen retter.",
         "remove_filter": "Fjern: {label}",
         "clear_all": "Fjern alle",
         "no_match_query": "Ingen retter passer med «{query}».",
@@ -1368,7 +1453,14 @@
         "min_notice": "Velg minst {min} retter — HelloFresh har ingen mindre kasse.",
         "resized_notice": "Kassen denne uken er endret til {meals} (abonnementet ditt har {required}). HelloFresh beregner ny pris; selve abonnementet endres ikke.",
         "unsaved_lower": "endringer som ikke er lagret",
-        "keep_editing": "Fortsett å endre"
+        "keep_editing": "Fortsett å endre",
+        "changed_title": "Den lagrede kassen din er endret siden du begynte.",
+        "changed_body": "Den ble endret et annet sted, for eksempel på en annen enhet eller på hellofresh.com. {keep_mine} legger endringene dine oppå kassen slik den er lagret nå; {use_saved} forkaster dem.",
+        "keep_mine": "Behold mine",
+        "use_saved": "Bruk den lagrede",
+        "changed_toast": "Den lagrede kassen din er endret siden du begynte. Velg «{keep_mine}» eller «{use_saved}» før du lagrer.",
+        "estimate_unavailable": "Ingen prisberegning",
+        "estimate_unavailable_note": "Det finnes ingen prisberegning akkurat nå. HelloFresh beregner prisen når kassen belastes."
       },
       "market": {
         "group": {
@@ -1454,12 +1546,30 @@
           "one": "{count} treff i alle kategorier",
           "other": "{count} treff i alle kategorier"
         },
+        "results_capped": {
+          "one": "Viser det første {count} treffet i alle kategorier",
+          "other": "Viser de første {count} treffene i alle kategorier"
+        },
+        "capped": {
+          "one": "Viser den første {count} oppskriften",
+          "other": "Viser de første {count} oppskriftene"
+        },
         "cookbook_empty": "Kokeboken din er tom. Trykk på hjertet på en oppskrift for å lagre den her.",
         "no_saved_match": "Ingen lagrede oppskrifter passer med «{query}».",
         "remove_aria": "Fjern fra kokeboken: {name}",
         "save_aria": "Lagre i kokeboken: {name}",
         "remove_title": "Fjern fra kokeboken",
-        "save_title": "Lagre i kokeboken"
+        "save_title": "Lagre i kokeboken",
+        "load_more": "Last inn flere",
+        "loading_more": "Laster inn flere …",
+        "more_failed": "Kunne ikke laste inn flere oppskrifter: {error}",
+        "shown_of": "Viser {count} av {total} oppskrifter",
+        "results_of": "Viser {count} av {total} treff i alle kategorier",
+        "added": {
+          "one": "{count} oppskrift til er lastet inn",
+          "other": "{count} oppskrifter til er lastet inn"
+        },
+        "none_added": "Det er ingen flere oppskrifter å laste inn."
       },
       "account": {
         "credit_card": "Betalingskort",
@@ -1493,10 +1603,19 @@
         "presets_loading": "Laster måltidsprofiler …",
         "presets_none": "Ingen måltidsprofiler tilgjengelig.",
         "yours": "Din",
-        "presets_note": "Hva hver profil betyr — HelloFresh bruker din til å velge retter. Du endrer den hos HelloFresh."
+        "presets_note": "Hva hver profil betyr — HelloFresh bruker din til å velge retter. Du endrer den hos HelloFresh.",
+        "credit_cash": "HelloFresh Cash",
+        "credit_bonus": "Bonuskreditt",
+        "rewards": "Belønninger",
+        "boxes_until_free": {
+          "one": "{count} kasse igjen til en gratis kasse",
+          "other": "{count} kasser igjen til en gratis kasse"
+        },
+        "free_box_earned": "Du har tjent opp en gratis kasse"
       },
       "plan": {
         "options_loading": "Valgene lastes straks …",
+        "saving": "Oppdaterer abonnementet …",
         "settings": "Abonnementsinnstillinger",
         "settings_note": "Disse endrer alle fremtidige kasser — og hva du belastes. For å endre én uke bruker du {change_day} eller {skip} på den uken.",
         "from_to": "Fra {from} til {to}",
@@ -1689,6 +1808,7 @@
         "save_failed": "Kunne ikke lagre preferansene dine: {error}",
         "tell_us_more": "Fortell oss mer",
         "load_failed": "Kunne ikke laste matpreferansene dine: {error}",
+        "reload_failed": "Kunne ikke laste inn matpreferansene dine på nytt: {error}",
         "none": "Ingen matprofil tilgjengelig.",
         "completion": "Profil {completed} av {total} ferdig",
         "hero_title": "Middager tilpasset smaken din",
@@ -1775,6 +1895,8 @@
         "something_else_hint": "Rester, pizzakveld, spise ute …",
         "saving": "Lagrer planen …",
         "save_failed": "Kunne ikke lagre planen: {error}",
+        "save_partial": "Bare en del av planen ble lagret. Lagret: {saved}. Ikke lagret: {failed} ({error}).",
+        "start_time": "Starttid",
         "saved": "Planen er lagret",
         "cleared": "Planen er fjernet",
         "item_title": "Planlegg {name}",

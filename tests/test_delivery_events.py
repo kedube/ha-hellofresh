@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
     HelloFreshOrder,
@@ -95,6 +97,39 @@ def test_shipped_from_week_state_or_carrier_status() -> None:
     assert _events(via_carrier, via_carrier) == []
 
 
+def test_a_week_is_judged_by_the_order_record_that_carries_the_shipment() -> None:
+    """A week can have a state-only order record next to the one with the carrier's tracking.
+
+    The snapshot used whichever record came first, so a box the carrier had out for delivery
+    went unannounced (the state-only record has no carrier status), or was announced without
+    its carrier and tracking number.
+    """
+    state_only = HelloFreshOrder(
+        order_id="2026-W37",
+        week_id="2026-W37",
+        status="RUNNING",
+        subscription_id="sub-1",
+        delivery_date=TODAY,
+    )
+    tracked = HelloFreshOrder(
+        order_id="o1",
+        week_id="2026-W37",
+        status="RUNNING",
+        subscription_id="sub-1",
+        delivery_date=TODAY,
+        tracking_status="out_for_delivery",
+        carrier="Veho",
+        tracking_number="TRACK1",
+    )
+    events = delivery_transitions(
+        delivery_snapshot(_data([_week()], [state_only])),
+        delivery_snapshot(_data([_week()], [state_only, tracked])),
+    )
+    assert [t for t, _ in events] == [EVENT_BOX_SHIPPED]
+    assert events[0][1]["carrier"] == "Veho"
+    assert events[0][1]["tracking_number"] == "TRACK1"
+
+
 def test_skip_unskip_lock_and_failure_transitions() -> None:
     open_week = _week()
     assert _events(_data([open_week]), _data([_week(is_skipped=True)])) == [EVENT_WEEK_SKIPPED]
@@ -139,9 +174,25 @@ def test_delivery_in_progress_only_around_the_due_day() -> None:
     delivered = _week(status="DELIVERED", delivered_at=datetime.now(UTC))
     assert delivery_in_progress(_data([delivered]), TODAY) is False
     assert delivery_in_progress(_data([_week(is_skipped=True)]), TODAY) is False
-    # A box already on the truck counts whatever the calendar says.
+    # A box already on the truck counts however early it shipped.
     early = _week(status="ON_THE_WAY", delivery_date=TODAY + timedelta(days=3))
     assert delivery_in_progress(_data([early]), TODAY) is True
+
+
+@pytest.mark.parametrize("status", ["ON_THE_WAY", "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"])
+def test_a_box_stuck_in_a_shipped_status_stops_counting_after_three_days(status: str) -> None:
+    """A lost or never-confirmed box must not keep the delivery watch running for weeks.
+
+    Its week keeps the shipped status until it leaves the data window, about 12 weeks later.
+    Until then every watch tick re-read the deliveries and the carrier, and every open card
+    stayed on the fast refresh cadence.
+    """
+    late = _week(status=status, delivery_date=TODAY - timedelta(days=3))
+    assert delivery_in_progress(_data([late]), TODAY) is True  # late, still plausibly coming
+    stuck = _week(status=status, delivery_date=TODAY - timedelta(days=4))
+    assert delivery_in_progress(_data([stuck]), TODAY) is False
+    lost = _week(status=status, delivery_date=TODAY - timedelta(days=40))
+    assert delivery_in_progress(_data([lost]), TODAY) is False
 
 
 def test_event_entity_fires_only_new_events_and_never_replays_history() -> None:

@@ -2,8 +2,10 @@
  * HelloFresh card — shared UI fragments
  * -------------------------------------
  * Small HTML builders used by more than one view of the unified card (state pills, meal
- * thumbnails, the delivery tracker, deadline countdowns). They return strings, like the rest of
- * the card, and escape every payload-derived value on the way in.
+ * thumbnails, the delivery tracker, deadline countdowns, search fields, steppers, sheet headers),
+ * and the few DOM steps the views share (putting focus back on a control, swapping one tile).
+ * The builders return strings, like the rest of the card, and escape every payload-derived value
+ * on the way in.
  */
 
 const UI_VERSION = new URL(import.meta.url).searchParams.get("v") || "unknown";
@@ -13,14 +15,19 @@ const L = await import(
 
 const { esc, t, ht, html } = L;
 
-// A Material Design icon through Home Assistant's own <ha-icon>. Names are literals from the
-// card source, never payload data.
+// A Material Design icon through Home Assistant's own <ha-icon>. Every caller passes a literal
+// from the card source; the name is escaped all the same, so one that ever passed payload data
+// could not write markup.
 export function icon(name) {
-  return `<ha-icon icon="${name}"></ha-icon>`;
+  return `<ha-icon icon="${esc(name)}"></ha-icon>`;
 }
 
+// The pill colours the stylesheet has (.tone-*). A tone goes into a class name, so anything else
+// (a status string passed straight through, say) reads as "muted" instead of becoming markup.
+const PILL_TONES = new Set(["muted", "ok", "warn", "info", "danger"]);
+
 export function pill(text, tone = "muted", iconName = null, title = "") {
-  return `<span class="hf-pill tone-${tone}"${title ? ` title="${esc(title)}"` : ""}>${
+  return `<span class="hf-pill tone-${PILL_TONES.has(tone) ? tone : "muted"}"${title ? ` title="${esc(title)}"` : ""}>${
     iconName ? icon(iconName) : ""
   }${esc(text)}</span>`;
 }
@@ -148,7 +155,8 @@ export function thumbRow(meals, { max = 4, width = 120, empty = t("meals.none_ch
         : `<span class="hf-thumb" title="${esc(recipe.name)}"></span>`;
     })
     .join("");
-  return `<div class="hf-thumbs${size ? ` ${size}` : ""}">${imgs}${extra > 0 ? `<span class="hf-thumb more">+${extra}</span>` : ""}</div>`;
+  // `size` is a class name: only the one the stylesheet has (.hf-thumbs.sm).
+  return `<div class="hf-thumbs${size === "sm" ? " sm" : ""}">${imgs}${extra > 0 ? `<span class="hf-thumb more">+${extra}</span>` : ""}</div>`;
 }
 
 // Delivery progress for a shipped/delivered box: a four-step bar, the carrier's latest step,
@@ -177,7 +185,7 @@ export function trackingBlock(week, { historyOpen = false } = {}) {
   if (order.tracking_number) {
     const href = L.safeUrl(order.tracking_url);
     const num = esc(order.tracking_number);
-    parts.push(href ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>` : `<span>${num}</span>`);
+    parts.push(href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${num}</a>` : `<span>${num}</span>`);
   }
   const events = Array.isArray(order.tracking_events) ? order.tracking_events : [];
   if (events.length) {
@@ -196,18 +204,11 @@ export function trackingBlock(week, { historyOpen = false } = {}) {
           })
           .join("")}</ul>`
       : "";
-  const photos = L.deliveryPhotos(week);
+  const photos = deliveryPhotoLinks(week);
   const signed = order.delivery_signed_by;
   const pod =
     photos.length || signed
-      ? `<div class="hf-pod">${photos
-          .map(
-            (url, i) =>
-              `<a href="${url}" target="_blank" rel="noopener noreferrer" title="${ht("tracking.open_photo")}"><img src="${url}" alt="${
-                photos.length > 1 ? ht("tracking.photo_n", { number: i + 1 }) : ht("tracking.photo")
-              }" loading="lazy"></a>`
-          )
-          .join("")}${signed ? `<span>${ht("tracking.signed_by", { name: signed })}</span>` : ""}</div>`
+      ? `<div class="hf-pod">${photos.join("")}${signed ? `<span>${ht("tracking.signed_by", { name: signed })}</span>` : ""}</div>`
       : "";
   return `<div class="hf-tracker">
       <div class="hf-steps" aria-label="${ht("tracking.progress")}">${steps}</div>
@@ -227,7 +228,7 @@ export function orderCells(week, account) {
     if (order.tracking_number) {
       const href = L.safeUrl(order.tracking_url);
       const num = esc(order.tracking_number);
-      cells.push([t("order.tracking"), href ? `<a href="${href}" target="_blank" rel="noopener">${num}</a>` : num]);
+      cells.push([t("order.tracking"), href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${num}</a>` : num]);
     }
     if (L.isDelivered(week)) {
       const when = week.delivered_at || week.delivery_date;
@@ -257,13 +258,8 @@ export function pantryList(entityId, items, { limit = 0 } = {}) {
   return `<div class="hf-pantry">${shown
     .map((item) => {
       const isDone = item.status === "completed";
-      // Summaries read "Butter — 2 tablespoon (tbsp)" (todo.py); the amount is split off so it
-      // can follow the name in a quieter, abbreviated form ("2 tbsp").
-      const summary = String(item.summary || "");
-      const cut = summary.indexOf(" — ");
-      const name = cut >= 0 ? summary.slice(0, cut) : summary;
-      const amount = cut >= 0 ? summary.slice(cut + 3) : "";
-      const short = L.shortAmount(amount);
+      // The amount is split off the name so it can follow it in a quieter, abbreviated form.
+      const { name, amount, short } = L.pantryParts(item.summary);
       return `<button class="hf-pantryitem${isDone ? " done" : ""}" data-action="pantry-toggle"
           data-entity="${esc(entityId)}" data-uid="${esc(item.uid)}" aria-pressed="${isDone}">
           <span class="hf-check">${isDone ? icon("mdi:check") : ""}</span>
@@ -273,4 +269,201 @@ export function pantryList(entityId, items, { limit = 0 } = {}) {
         </button>`;
     })
     .join("")}</div>`;
+}
+
+// ---- fragments and small behaviours the views share ---------------------------------------
+// One copy of what Menu, Market, Recipes, Week, Overview and Account each used to spell out.
+
+// Emphasis inside a sentence built by ht(): the text is escaped here, only the tag passes.
+export function strong(text) {
+  return html(`<strong>${esc(text)}</strong>`);
+}
+
+// "N extras" is the sum of the quantities everywhere it is said (two of one add-on are two).
+export function extrasCount(selection) {
+  let total = 0;
+  for (const qty of selection.values()) total += Number(qty) || 0;
+  return total;
+}
+
+// A search field. Its input node stays in the page while the user types (the views redraw only
+// their results), so the clear button is always there and merely hidden while the field is empty.
+export function searchBox(key, value, placeholder, { label = placeholder, wide = false } = {}) {
+  return `<label class="hf-search"${wide ? ' style="max-width:none"' : ""}><span class="sr-only">${esc(label)}</span>${icon("mdi:magnify")}
+      <input type="search" data-focus-key="${esc(key)}" data-input="${esc(key)}" value="${esc(value)}"
+        placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off">
+      <button class="hf-iconbtn hf-clear" data-action="clear-search" aria-label="${ht("common.clear_search")}"${value ? "" : " hidden"}>${icon("mdi:close")}</button>
+    </label>`;
+}
+
+// A keystroke in a view's search field: keep the text on the view, show or hide the clear
+// button, and run `apply` once the typing pauses. Returns the input, or null when the event
+// came from somewhere else.
+export function searchTyped(view, ev, key, apply, wait = 160) {
+  const input = ev.target && ev.target.closest ? ev.target.closest(`[data-input='${key}']`) : null;
+  if (!input) return null;
+  view.query = input.value;
+  syncSearchBox(input);
+  clearTimeout(view._searchTimer);
+  view._searchTimer = setTimeout(apply, wait);
+  return input;
+}
+
+// Bring a search field in the page in line with the view's text without replacing its input
+// (the clear button empties it this way, keeping focus in the field).
+export function syncSearchBox(input, value = input ? input.value : "") {
+  if (!input) return;
+  if (input.value !== value) input.value = value;
+  const clear = input.parentElement && input.parentElement.querySelector(".hf-clear");
+  if (clear) clear.hidden = !value;
+}
+
+// A sheet's header: its title, an optional line under it, and the close button (`close` names
+// it, "Close" unless the sheet says what closes). `extra` is markup the caller built (a pill);
+// the texts are escaped here.
+export function sheetHead(title, sub = "", extra = "", { close = t("common.close") } = {}) {
+  return `<div class="hf-sheethead"><div class="hf-sheettitle"><h2>${esc(title)}</h2>
+      ${sub ? `<div class="hf-sheetsub">${esc(sub)}</div>` : ""}</div>${extra}
+      <button class="hf-iconbtn" data-close-sheet aria-label="${esc(close)}">${icon("mdi:close")}</button></div>`;
+}
+
+// A payment HelloFresh couldn't collect (L.paymentProblem): the boxes it is about, by delivery
+// date and amount, and the way to the account's HelloFresh site to put it right. `site` is that
+// site's address; without one (or with anything but an https URL) only the words say it.
+//
+// It is part of the section it heads, not news arriving while you look, so it carries no live
+// role: as one it would be read out again every time the Overview or Account is opened.
+export function paymentBanner(problem, site = "") {
+  if (!problem) return "";
+  const boxes = problem.boxes.map((box) => (box.amount ? t("banner.payment_box", { date: box.date, amount: box.amount }) : box.date));
+  const text = boxes.length
+    ? ht("banner.payment_boxes", { count: boxes.length, boxes: L.listText(boxes) })
+    : ht("banner.payment_any");
+  const href = L.safeUrl(site, { httpsOnly: true });
+  const fix = href
+    ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${ht("banner.payment_fix")}</a>`
+    : `<span>${ht("banner.payment_fix")}</span>`;
+  return `<div class="hf-notice tone-warn hf-paymentnotice">${icon("mdi:credit-card-remove-outline")}
+      <div class="hf-noticebody">${text} ${fix}</div></div>`;
+}
+
+// A view or panel that couldn't load: the message and a button that tries again.
+export function loadError(message, action, { primary = false } = {}) {
+  return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${esc(message)}
+      <div class="hf-actions" style="justify-content:center;margin-top:12px">
+      <button class="hf-btn${primary ? " primary" : ""}" data-action="${esc(action)}">${ht("common.try_again")}</button></div></div>`;
+}
+
+// A − N + stepper. `attrs` is the data-attribute markup both buttons carry (its values escaped
+// by the caller). Each button has a focus key, so the keyboard stays on it when its tile or
+// panel is redrawn; `dec` and `inc` are {label, disabled, icon}.
+export function stepper({ label, attrs, focusKey, qty, unit = "", dec, inc, wide = false }) {
+  const button = (side, delta, spec, fallbackIcon) =>
+    `<button ${attrs} data-delta="${delta}" data-focus-key="${esc(`${focusKey}:${side}`)}" aria-label="${esc(spec.label)}" ${
+      spec.disabled ? "disabled" : ""
+    }>${icon(spec.icon || fallbackIcon)}</button>`;
+  return `<span class="hf-stepper${wide ? " wide" : ""}" role="group" aria-label="${esc(label)}">
+      ${button("dec", -1, dec, "mdi:minus")}
+      <span class="hf-qty">${Number(qty) || 0}${unit ? ` <span class="hf-unit">${esc(unit)}</span>` : ""}</span>
+      ${button("inc", 1, inc, "mdi:plus")}
+    </span>`;
+}
+
+// Put keyboard focus on the first of these controls (by focus key) that is in the page and
+// enabled: the one just used, else what took its place (+ Add turns into a stepper and back).
+export function focusKeyed(root, keys) {
+  if (!root) return false;
+  for (const key of keys) {
+    const el = root.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+    if (el && !el.disabled) {
+      el.focus({ preventScroll: true });
+      return true;
+    }
+  }
+  return false;
+}
+
+// Swap one rendered element for fresh markup (a single tile, a heart), leaving everything
+// around it — images already loaded, scroll, the search field — untouched.
+export function replaceNode(node, markup) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = String(markup).trim();
+  const fresh = tpl.content.firstElementChild;
+  if (!fresh) return null;
+  node.replaceWith(fresh);
+  return fresh;
+}
+
+// "Make changes by Thu, Oct 1, 2:59 AM · 1d 14h left": the week header's line, or the next
+// box's block on the Overview (`hero`). The countdown keeps ticking without a re-render.
+export function deadlineLine(deadline, { hero = false } = {}) {
+  const urgent = L.deadlineTone(deadline) === "urgent" ? " urgent" : "";
+  const text = `${ht("week.make_changes_by", { date: strong(L.fmtDateTime(deadline)) })} · ${countdownHtml(deadline)}`;
+  return hero
+    ? `<div class="hf-deadline${urgent}">${icon("mdi:timer-outline")}
+        <div>${text}</div></div>`
+    : `<div class="hf-weekdeadline${urgent}">${icon("mdi:timer-outline")}${text}</div>`;
+}
+
+// A box HelloFresh moved (L.revisedDelivery): "Delayed — now arriving Tuesday, October 6" as a
+// notice (the next box, a week's header) or as a short line on a week card or row; "" for a box
+// that wasn't moved.
+const REVISED_ICONS = { delayed: "mdi:truck-alert-outline", early: "mdi:truck-fast-outline" };
+
+export function revisedNotice(week) {
+  const revised = L.revisedDelivery(week);
+  if (!revised) return "";
+  return `<div class="hf-notice ${revised.kind === "delayed" ? "tone-warn" : "tone-info"} hf-revisednotice">${icon(REVISED_ICONS[revised.kind])}
+      <div class="hf-noticebody">${L.revisedDeliveryText(week, { markup: true })}</div></div>`;
+}
+
+export function revisedLine(week) {
+  const revised = L.revisedDelivery(week);
+  if (!revised) return "";
+  return `<span class="hf-revised ${revised.kind}">${icon(REVISED_ICONS[revised.kind])}${esc(L.revisedDeliveryText(week, { long: false }))}</span>`;
+}
+
+// The button that opens a week's pantry list, with how many staples are still to tick off; ""
+// when the integration has no prep list for that week.
+export function pantryButton(card, week, { small = false, label = t("week.pantry") } = {}) {
+  const entityId = card.pantryEntityFor(week);
+  if (!entityId) return "";
+  const state = card.entityState(entityId);
+  const count = state && Number(state.state);
+  return `<button class="hf-btn${small ? " sm" : ""}" data-action="pantry" data-entity="${esc(entityId)}" data-week-id="${esc(week.week_id)}">
+      ${icon("mdi:basket-outline")}${esc(label)}${Number.isFinite(count) && count > 0 ? ` · ${count}` : ""}</button>`;
+}
+
+// Proof-of-delivery photos as links to the full picture. They load from whatever host the
+// carrier names, so only https ones are shown (L.deliveryPhotos: plain http would be mixed
+// content on an https Home Assistant) and the browser is told to send that host no referrer.
+export function deliveryPhotoLinks(week, { title = t("tracking.open_photo") } = {}) {
+  const photos = L.deliveryPhotos(week);
+  return photos.map(
+    (url, i) =>
+      `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}"><img src="${esc(url)}" alt="${
+        photos.length > 1 ? ht("tracking.photo_n", { number: i + 1 }) : ht("tracking.photo")
+      }" loading="lazy" referrerpolicy="no-referrer"></a>`
+  );
+}
+
+// A skipped week's Unskip is offered until its deadline, and that deadline passing changes
+// nothing the card's minute tick watches (the week was not editable before or after). So the
+// view showing such a week re-renders itself when the soonest of those deadlines goes by.
+export function watchSkipCutoff(card, view) {
+  clearTimeout(view._cutoffTimer);
+  view._cutoffTimer = null;
+  let soonest = Infinity;
+  for (const week of card.weeks || []) {
+    if (!L.isSkipped(week) || !L.canSkip(week)) continue;
+    const deadline = week.selection_deadline ? Date.parse(week.selection_deadline) : NaN;
+    if (Number.isFinite(deadline)) soonest = Math.min(soonest, deadline);
+  }
+  const wait = soonest - Date.now();
+  // Only a cutoff within the day gets a timer; the card refreshes long before a later one.
+  if (!(wait > 0 && wait < 86400000)) return;
+  view._cutoffTimer = setTimeout(() => {
+    view._cutoffTimer = null;
+    if (card.isConnected !== false) card.renderView();
+  }, wait + 1000);
 }

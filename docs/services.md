@@ -1,6 +1,6 @@
 # Service reference
 
-Every action the integration exposes. All 29 are also listed in Home Assistant under
+Every action the integration exposes. All 30 are also listed in Home Assistant under
 **Developer tools → Actions**, which renders each field with inline help and is usually the
 fastest way to call one by hand — this page adds the response detail and cross-references that
 the picker cannot show.
@@ -9,7 +9,13 @@ Services marked **returns a response** produce data. Call them with `response_va
 script or automation, or tick *Return response* in Developer tools.
 
 With more than one HelloFresh account configured, pass `config_entry_id` to pick which account a
-call targets. With a single account it can be omitted.
+call targets (Developer tools offers a picker of your HelloFresh accounts). With a single account
+it can be omitted. Only an account that is loaded can be used: while one is reloading, or after
+its setup failed, calls for it are refused.
+
+Every Home Assistant user can call these services, not only administrators, and that includes the
+ones that change what HelloFresh bills you (`change_plan`, `change_week_servings`, `select_meals`,
+`select_market_items`, `skip_week`, `unskip_week`).
 
 ## Contents
 
@@ -27,7 +33,7 @@ Change what is in a box.
 
 ### `hellofresh.get_weeks`
 
-**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, the menu `badge` (BESTSELLER, NEW, Premium Picks, …) with HelloFresh's own hex-gated `badge_foreground`/`badge_background` colors, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons), its `menu_categories` (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, … — as `{name, slug, recipe_ids}` rows, present only on weeks with a browsable menu payload), and its matching `order` (tracking, status, carrier, billed total). Optionally filter to one `week_id`. Powers the HelloFresh card's [Overview](dashboard.md#overview), [Menu](dashboard.md#menu) and [Market](dashboard.md#market) cards. Each week's summary now includes `benefits` — the wallet promises (weekly discounts such as "$10 off premium meals") HelloFresh will apply to that box — and the `account` payload carries `next_box_discount`, the promise that applies to the next box, as `sensor.next_box_discount` reports it.
+**Returns a response.** Delivery weeks with full recipe, selection, market, and order detail (none of which are exposed as entity attributes). Each recipe carries its name, image, description, tags, nutrition, `is_selected`, `selected_quantity`, `course_index`, any surcharge, the variant modifier (`variation_title`, e.g. "2x Bacon"), a `video_url` when HelloFresh published a promo clip for it (only a few meals per week, on past and upcoming weeks alike), `is_favorite` (`true`/`false`, or `null` when the cookbook lookup was skipped or failed), the meal's own per-serving `price`/`price_cents`/`currency` and `price_group` (`premium`/`classic`), `is_sold_out`, the menu `badge` (BESTSELLER, NEW, Premium Picks, …) with HelloFresh's own hex-gated `badge_foreground`/`badge_background` colors, and HelloFresh's `delivered_count`/`last_delivered_week` plus your own `rating` where it has them; each week also includes its `market_items` (HelloFresh Market add-ons), its `menu_categories` (the website's menu sections — This Week's Menu, Health Conscious Menu, Family Menu, … — as `{name, slug, recipe_ids}` rows, present only on weeks with a browsable menu payload), and its matching `order` (tracking, status, carrier, billed total; with two subscriptions, each week gets its own subscription's order). Optionally filter to one `week_id` (with two subscriptions, each subscription's week with that id). Pass `include_recipes: false` to leave each week's menu out (`recipes`, `market_items`, `menu_categories` and `menu_filters`): the weeks keep their schedule, selection counts, allowed actions and order, and the response is far smaller, since one week's menu can run to several hundred kilobytes. Powers the HelloFresh card's [Overview](dashboard.md#overview), [Menu](dashboard.md#menu) and [Market](dashboard.md#market) cards. Each week's summary now includes `benefits` — the wallet promises (weekly discounts such as "$10 off premium meals") HelloFresh will apply to that box — and the `account` payload carries `next_box_discount`, the promise that applies to the next box, as `sensor.next_box_discount` reports it. Each week also says how many people its own box is for (`servings`, which can differ from the plan's after [`change_week_servings`](#hellofreshchange_week_servings); `null` when the week has no box of its own, as on delivered history) and, while HelloFresh has moved the box (`sub_status` `DELAYED` or `EARLY`), the day it now comes (`revised_delivery_date`; `delivery_date` stays the day it was scheduled for).
 
 ### `hellofresh.get_menu_courses`
 
@@ -44,6 +50,31 @@ set the HelloFresh Market add-on (extras) selection for a week (`week_id` + a `q
 ### `hellofresh.preview_meal_price`
 
 **Returns a response.** What a hypothetical meal selection *would* cost, without saving it — `grand_total`, `sub_total`, `shipping_amount`, `tax_amount`, `discount_amount`, and per-meal premium `surcharges`. Takes `week_id` + `recipe_ids` (plus an optional `quantities` map). Read-only: nothing is written to your account. Only works for weeks that are still bookable.
+
+### `hellofresh.change_week_servings`
+
+**Experimental.** Change how many people one week's box is for (`week_id` + `servings`); the plan
+and every other week stay as they are, and the box keeps its number of meals. HelloFresh's own app
+makes this change, but the website has not been seen making it, so it may not be offered here: if
+HelloFresh doesn't accept it, the call fails and a Repairs issue says that changes cannot be made
+this way (see [When a call fails](#when-a-call-fails)).
+
+The new box is the week's box with its number of people replaced (`US-CBU-3-2-0` for 4 people is
+`US-CBU-3-4-0`). Before anything is sent, the call is refused for a week the account doesn't have,
+a skipped week, a week past its deadline, and a number of people your plan's box sizes (see
+[`get_plan_options`](#hellofreshget_plan_options)) don't offer for that number of meals. The box
+is read from HelloFresh first, so a meal change made just before keeps its meal count; it is then
+priced the way HelloFresh's app prices it and changed. **Optionally returns a response**
+`{week_id, servings, product_handle, price, currency}`, the price in major units (`null` when
+HelloFresh didn't price it). The next `get_weeks` already shows the week's new `servings`. A box
+already for that many people is left alone. Changes what HelloFresh bills you for that week.
+
+```yaml
+action: hellofresh.change_week_servings
+data:
+  week_id: "2026-W47"
+  servings: 4
+```
 
 ## Delivery schedule
 
@@ -63,7 +94,7 @@ move a single week's delivery to a different delivery option (one-off)
 
 ### `hellofresh.change_delivery_weekday`
 
-change the recurring delivery day (affects all future deliveries)
+change the recurring delivery day and time slot (`delivery_option`; affects all future deliveries). It cannot change how often boxes come: `delivery_interval` accepts only `1` (every week, the default), and any other value is refused before anything is sent. Earlier versions accepted another interval, reported success and kept delivering every week.
 
 ### `hellofresh.get_delivery_options`
 
@@ -79,7 +110,7 @@ Read or change the subscription itself.
 
 ### `hellofresh.get_account_summary`
 
-**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit, number of people, boxes received, address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Read-only. Powers the HelloFresh card's header and [Account › Plan & billing](dashboard.md#account).
+**Returns a response.** The account/subscription headline values (status, plan and plan total with its `selected_plan_price_breakdown`, credit with its parts `account_credit_cash` and `account_credit_bonus`, number of people, boxes received, boxes until the loyalty programme's next free box (`loyalty_boxes_until_free_box`), address, upcoming/skipped counters, coupon, payment date, preselected flag, holiday notice) in one call — the same values the corresponding sensors report — plus the payment-method health behind `binary_sensor.payment_method_expiring` (`payment_method_expiring`, `payment_method_expired`, `payment_card_type`, `payment_card_provider`, `payment_card_brand`, `payment_card_last4`, `payment_card_expiry`; never the billing address), the payment problems behind `binary_sensor.payment_problem` (`payment_problem`, and `payment_problem_weeks`: each box HelloFresh could not charge as `{week_id, delivery_date, status, amount, currency}`, where `status` is `payment_failed`, `failed` or `chargeback`) and the refresh contract (`refresh_interval_minutes`, `delivery_watch_interval_minutes`, `delivery_in_progress`) the cards use to pace their re-fetches. Credit amounts are in `account_credit_currency`. Read-only. Powers the HelloFresh card's header and [Account › Plan & billing](dashboard.md#account).
 
 ### `hellofresh.get_plan_options`
 
@@ -123,7 +154,7 @@ The public recipe catalog and your cookbook.
 
 ### `hellofresh.get_catalog_recipes`
 
-**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50). Pass `search` to **text-search the whole catalog** instead — every category at once, via HelloFresh's own recipes-service search API (`collection` is ignored then, and no `subcollections` are returned since results span categories). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
+**Returns a response.** Recipes from the public catalog (~10,000 recipes), optionally within one `collection`, with `limit` (1–200, default 50) from `offset` on (default 0). The response says where that page stands — `offset`, `total` (how many there are, or `null` when HelloFresh doesn't say) and `has_more` — so the next page is `offset` + `limit`. A category is one list HelloFresh sends whole, so its later pages come from the copy read for the first (kept for an hour); a search asks HelloFresh for each page. Pass `search` to **text-search the whole catalog** instead — every category at once, via HelloFresh's own recipes-service search API (`collection` is ignored then, and no `subcollections` are returned since results span categories). Each recipe carries its name, headline, image, rating, ratings count, prep time, canonical URL, and `is_favorite`. Also returns `subcollections` — that category's child categories (Noodle Recipes → Ramen / Udon / Rice / Soba / Yakisoba), which do **not** appear in `get_recipe_collections`. Pass a child's `path` (e.g. `noodle-recipes/ramen-noodles`), not its bare slug, as the `collection` to browse it. This is browse content shared by all customers — it is **not** tied to your subscription or delivery weeks. Read-only.
 
 ### `hellofresh.get_recipe_detail`
 
@@ -196,5 +227,21 @@ by hand:
 | `skip_week` for the next editable week | The **Skip next selectable delivery week** switch |
 
 Write actions (meal/Market selection, skip/unskip) use the website's verified endpoints first and
-stop with a clear error — raising a Repairs issue — rather than guessing. See
-[Current Scope](../README.md#current-scope).
+stop with a clear error rather than guessing. See [Current Scope](../README.md#current-scope).
+
+## When a call fails
+
+Every service reports a failure as an ordinary Home Assistant error with HelloFresh's reason.
+Two failures also do more, because they do not pass by themselves:
+
+- **HelloFresh rejected the sign-in.** Home Assistant asks you to sign in again
+  (**Settings → Devices & services**).
+- **HelloFresh has no endpoint for that action on your account.** A Repairs issue says that
+  changes cannot be made from Home Assistant (unless **Show data-quality repair warnings** is
+  off); it clears itself after the next change that works.
+
+A timeout, an outage or a rate limit is only reported: try again later. Input that cannot work —
+an unknown or unloaded account, a `delivery_interval` other than 1, `set_food_profile` with
+nothing to change, a `change_week_servings` for a skipped or locked week or a box size the plan
+doesn't offer — is refused before anything is sent to HelloFresh. The **Skip next selectable
+delivery week** switch and the **Box size** and **Delivery day** selects follow the same rules.

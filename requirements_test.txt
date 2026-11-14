@@ -2,7 +2,11 @@ beautifulsoup4>=4.12.3
 # The integration depends on frontend, so tests/test_ha_lifecycle.py, which loads it through
 # Home Assistant, needs the frontend's files.
 home-assistant-frontend
+# The static type check CI's Types job runs (see [tool.mypy] in pyproject.toml).
+mypy>=2.4.1
 pytest>=8.2.0
+# Coverage for the CI run (see [tool.coverage] in pyproject.toml).
+pytest-cov>=5.0.0
 pytest-homeassistant-custom-component>=0.13.218
 # Used by tests/test_repo_consistency.py to parse services.yaml. Available transitively via
 # Home Assistant, but declared explicitly so the suite does not depend on a transitive pin.

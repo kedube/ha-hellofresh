@@ -23,8 +23,8 @@ const [L, UI, { ProfileEditor }] = await Promise.all([
   import(new URL(`./hellofresh-card-profile.js?v=${stamp}`, import.meta.url).href),
 ]);
 
-const { esc, t, ht, html } = L;
-const { icon, pill } = UI;
+const { esc, t, ht } = L;
+const { icon, pill, strong } = UI;
 
 // `label` reads account.tab.<key> when shown.
 const TABS = [
@@ -35,6 +35,11 @@ const TABS = [
 
 // The recurring plan controls (plan.<key>.*): which select entity, and what its confirmation says.
 const PLAN_CONTROLS = ["box_size", "delivery_day"];
+
+// How long a plan change HelloFresh accepted waits for its select entity to report the new
+// option. Home Assistant's state normally follows within the write itself; should it never
+// arrive, the control goes back to showing what the entity says rather than stay closed.
+const PLAN_SETTLE_MS = 30000;
 
 // How a plan option reads. The integration names box sizes in English ("3 meals for 2 people");
 // the card shows them in its own language and still writes the option exactly as it is. Delivery
@@ -58,6 +63,10 @@ export class AccountView {
     this.presetsLoading = false;
     this.presetsOpen = false;
     this.healthOpen = false;
+    // A recurring plan change on its way: {entityId, key, option, written}. While it is set the
+    // control shows the option being written and neither control takes another change; it is
+    // cleared when the write fails, or once the entity reports the new option (_settlePlan).
+    this.planPending = null;
   }
 
   onRefresh() {
@@ -65,15 +74,49 @@ export class AccountView {
     if (this.spending || this.spendingError) this._fetchSpending();
   }
 
+  // A real tablist: the chosen tab is aria-selected (a tab is not a toggle, so no aria-pressed)
+  // and the only one in the Tab order; the arrow keys move between them (_onTabKey), and the
+  // section below is their tabpanel.
   render() {
-    const tabs = `<div class="hf-segment hf-subtabs" role="tablist" aria-label="${ht("account.sections")}">${TABS.map(
-      (t) => `<button role="tab" data-action="acct-tab" data-tab="${t.key}" aria-pressed="${this.tab === t.key}" aria-selected="${this.tab === t.key}">${icon(t.icon)}${esc(t.label)}</button>`
-    ).join("")}</div>`;
+    const tabs = `<div class="hf-segment hf-subtabs" role="tablist" aria-label="${ht("account.sections")}">${TABS.map((tab) => {
+      const on = this.tab === tab.key;
+      return `<button role="tab" id="hf-acct-tab-${tab.key}" data-action="acct-tab" data-tab="${tab.key}" data-focus-key="acct-tab-${tab.key}"
+          aria-selected="${on}" aria-controls="hf-acct-panel" tabindex="${on ? 0 : -1}">${icon(tab.icon)}${esc(tab.label)}</button>`;
+    }).join("")}</div>`;
     let body = "";
     if (this.tab === "profile") body = this.profile.render();
     else if (this.tab === "spending") body = this._spendingView();
     else body = this._planView();
-    return `${tabs}${body}`;
+    return `${tabs}<div role="tabpanel" id="hf-acct-panel" aria-labelledby="hf-acct-tab-${this.tab}">${body}</div>`;
+  }
+
+  afterRender(root) {
+    const tablist = root.querySelector(".hf-subtabs");
+    if (tablist) tablist.addEventListener("keydown", (ev) => this._onTabKey(ev));
+  }
+
+  // Left / Right (and Up / Down) move to the neighbouring tab and open it, wrapping at the
+  // ends; Home and End go to the first and last.
+  _onTabKey(ev) {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+    const index = TABS.findIndex((tab) => tab.key === this.tab);
+    let next;
+    if (ev.key === "Home") next = 0;
+    else if (ev.key === "End") next = TABS.length - 1;
+    else if (step) next = (index + step + TABS.length) % TABS.length;
+    else return;
+    ev.preventDefault();
+    this._selectTab(TABS[next].key, { focus: true });
+  }
+
+  _selectTab(key, { focus = false } = {}) {
+    if (!TABS.some((tab) => tab.key === key)) return;
+    const card = this.card;
+    this.tab = key;
+    L.storageSet(L.STORAGE_KEYS.accountTab, key);
+    card.renderView();
+    const root = focus && card.shadowRoot ? card.shadowRoot.querySelector(".js-main") : null;
+    if (root) UI.focusKeyed(root, [`acct-tab-${key}`]);
   }
 
   // ---- plan & billing ------------------------------------------------------------------------
@@ -82,8 +125,9 @@ export class AccountView {
     const card = this.card;
     const s = card.summary;
     if (!s) {
+      // "refresh" is the card's own reload, as on the other sections' error states.
       return card.error
-        ? `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("account.load_failed")}</div>`
+        ? UI.loadError(t("account.load_failed"), "refresh")
         : `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
     if (s.plan_preference && this.presets === null && !this.presetsLoading) this._fetchPresets();
@@ -102,6 +146,8 @@ export class AccountView {
       [t("box.shipping"), shipping == null ? null : price(shipping, s.selected_plan_total_price_currency)],
       [t("money.discount"), discount == null ? null : `−${price(discount, s.selected_plan_total_price_currency)}`],
       [t("account.credit"), price(s.account_credit, s.account_credit_currency)],
+      // HelloFresh Cash, bonus credit and boxes until a free one, under the credit.
+      ...L.creditDetails(s),
       [
         t("account.card_on_file"),
         cardOnFile
@@ -158,16 +204,23 @@ export class AccountView {
     const card = this.card;
     const ids = card.entities();
     const rows = [];
+    this._settlePlan();
+    const pending = this.planPending;
     const control = (entityId, key) => {
       const state = card.entityState(entityId);
       if (!state) return;
       const options = (state.attributes && state.attributes.options) || [];
       const unavailable = state.state === "unavailable" || state.state === "unknown" || !options.length;
+      // A change on its way shows as chosen: snapping back to the old option for the seconds
+      // HelloFresh takes looked like the change had failed.
+      const shown = pending && pending.entityId === entityId ? pending.option : state.state;
       const select = unavailable
         ? `<span class="hf-muted hf-small">${ht("plan.options_loading")}</span>`
         : `<select class="hf-select" style="min-width:200px" data-plan-control="${esc(key)}" data-entity="${esc(entityId)}"
-            data-focus-key="plan-${esc(key)}" ${card.busy ? "disabled" : ""} aria-label="${ht(`plan.${key}.label`)}">
-            ${options.map((o) => `<option value="${esc(o)}" ${o === state.state ? "selected" : ""}>${esc(planOptionLabel(key, o))}</option>`).join("")}</select>`;
+            data-focus-key="plan-${esc(key)}" ${card.busy || pending ? "disabled" : ""} aria-label="${ht(`plan.${key}.label`)}"${
+              pending && pending.entityId === entityId ? ' aria-busy="true"' : ""
+            }>
+            ${options.map((o) => `<option value="${esc(o)}" ${o === shown ? "selected" : ""}>${esc(planOptionLabel(key, o))}</option>`).join("")}</select>`;
       rows.push(`<div class="hf-controlrow"><div><div class="hf-controllabel">${ht(`plan.${key}.label`)}</div>
           <div class="hf-controlhint">${ht(`plan.${key}.hint`)}</div></div>${select}</div>`);
     };
@@ -190,33 +243,89 @@ export class AccountView {
       narrow: true,
       label: t(`plan.${key}.change`),
       render: () => `
-        <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${ht(`plan.${key}.title`)}</h2>
-          <div class="hf-sheetsub">${ht("plan.from_to", {
-            from: current ? planOptionLabel(key, current.state) : "—",
-            to: planOptionLabel(key, option),
-          })}</div></div>
-          <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+        ${UI.sheetHead(
+          t(`plan.${key}.title`),
+          t("plan.from_to", { from: current ? planOptionLabel(key, current.state) : "—", to: planOptionLabel(key, option) })
+        )}
         <div class="hf-sheetbody"><p class="hf-confirmtext" style="margin:0">${ht(`plan.${key}.body`, {
-          every_future_box: html(`<strong>${ht("plan.every_future_box")}</strong>`),
+          every_future_box: strong(t("plan.every_future_box")),
         })}</p></div>
         <div class="hf-sheetfoot"><button class="hf-btn" data-close-sheet>${ht("common.cancel")}</button>
-          <button class="hf-btn primary" data-action="confirm-plan">${ht(`plan.${key}.change`)}</button></div>`,
-      onClick: async (_ev, el) => {
-        if (!el || el.getAttribute("data-action") !== "confirm-plan") return;
-        card.closeSheet();
-        try {
-          await card.hass.callService("select", "select_option", { option }, { entity_id: entityId });
-          card.toast(t(`plan.${key}.changed`));
-          card.broadcastDataChanged();
-          card.reloadWeeks();
-        } catch (err) {
-          card.toast(t(`plan.${key}.failed`, { error: (err && err.message) || err }), true);
-          card.renderView();
-        }
+          <button class="hf-btn primary" data-action="confirm-plan" ${card.busy || this.planPending ? "disabled" : ""}>${ht(`plan.${key}.change`)}</button></div>`,
+      onClick: (_ev, el) => {
+        if (el && el.getAttribute("data-action") === "confirm-plan") this._changePlan(entityId, key, option);
       },
-      // Cancelling puts the select back to the real value.
+      // Cancelling puts the select back to the real value (confirming, to the one being written).
       onClose: () => card.renderView(),
     });
+  }
+
+  // Write a confirmed plan change. It changes every future box and the bill, so it runs as one
+  // of the card's saves: the card is busy (both selects disabled, "Updating your plan…" shown)
+  // until HelloFresh has answered, the select shows the option being written, and nothing else
+  // can be written meanwhile. A failed write gives the control back at once; an accepted one
+  // keeps showing its option, still closed to another change, until the entity reports it.
+  //
+  // Its toast offers Undo, which selects the option the plan had before through this same path
+  // (`undoing`).
+  async _changePlan(entityId, key, option, { undoing = false } = {}) {
+    const card = this.card;
+    if (card.busy) return;
+    if (this.planPending) {
+      // A change waiting only for its entity to report it is no reason to refuse taking it back.
+      if (!undoing || !this.planPending.written) return;
+      clearTimeout(this.planPending.timer);
+      this.planPending = null;
+    }
+    const state = card.entityState(entityId);
+    const options = (state && state.attributes && state.attributes.options) || [];
+    const before = state && options.includes(state.state) ? state.state : null;
+    const pending = { entityId, key, option, written: false, timer: null };
+    this.planPending = pending;
+    card.setSaving(t(undoing ? "undo.undoing" : "plan.saving"));
+    // The confirmation's onClose re-renders the view, now busy and showing the new option.
+    if (undoing) card.renderView();
+    else card.closeSheet();
+    let failed = null;
+    try {
+      // The card says what happened itself; no second "Failed to perform action" from Home Assistant.
+      await card.hass.callService("select", "select_option", { option }, { entity_id: entityId }, false);
+    } catch (err) {
+      failed = (err && err.message) || String(err);
+    }
+    card.setSaving(null);
+    if (failed) {
+      this.planPending = null;
+      if (undoing) card.undoResult(failed);
+      else card.toast(t(`plan.${key}.failed`, { error: failed }), true);
+      card.renderView();
+      return;
+    }
+    pending.written = true;
+    pending.timer = setTimeout(() => {
+      if (this.planPending !== pending) return;
+      this.planPending = null;
+      if (card.view === "account") card.renderView();
+    }, PLAN_SETTLE_MS);
+    if (undoing) card.undoResult(null);
+    else {
+      const undo = before && before !== option ? { weekId: null, run: () => this._changePlan(entityId, key, before, { undoing: true }) } : null;
+      card.toast(t(`plan.${key}.changed`), false, { undo });
+    }
+    card.broadcastDataChanged();
+    card.renderView(); // settles at once when the entity already says the new option
+    await card.reloadWeeks();
+  }
+
+  // An accepted plan change is over once its entity reports the new option (the card re-renders
+  // this view when a plan entity changes) or is gone; until then the control shows the option.
+  _settlePlan() {
+    const pending = this.planPending;
+    if (!pending || !pending.written) return;
+    const state = this.card.entityState(pending.entityId);
+    if (state && state.state !== pending.option) return;
+    clearTimeout(pending.timer);
+    this.planPending = null;
   }
 
   _presetsPanel(s) {
@@ -310,10 +419,7 @@ export class AccountView {
   _spendingView() {
     if (!this.spending && !this.spendingError && !this.spendingLoading) queueMicrotask(() => this._fetchSpending());
     if (!this.spending) {
-      if (this.spendingError) {
-        return `<div class="hf-empty">${icon("mdi:cloud-alert-outline")}${ht("spending.load_failed", { error: this.spendingError })}
-          <div class="hf-actions" style="justify-content:center;margin-top:12px"><button class="hf-btn" data-action="spending-retry">${ht("common.try_again")}</button></div></div>`;
-      }
+      if (this.spendingError) return UI.loadError(t("spending.load_failed", { error: this.spendingError }), "spending-retry");
       return `<div class="hf-skeletons"><div class="hf-skeleton"></div><div class="hf-skeleton"></div></div>`;
     }
     const s = this.spending;
@@ -428,9 +534,7 @@ export class AccountView {
     const card = this.card;
     switch (el.getAttribute("data-action")) {
       case "acct-tab":
-        this.tab = el.getAttribute("data-tab");
-        L.storageSet(L.STORAGE_KEYS.accountTab, this.tab);
-        card.renderView();
+        this._selectTab(el.getAttribute("data-tab"));
         break;
       case "toggle-presets":
         this.presetsOpen = !this.presetsOpen;
@@ -470,6 +574,12 @@ export class AccountView {
     }
     const select = ev.target.closest("[data-plan-control]");
     if (!select) return;
+    this._settlePlan();
+    if (this.card.busy || this.planPending) {
+      // A write is on its way: this change is not taken, and the select goes back to showing it.
+      this.card.renderView();
+      return;
+    }
     const entityId = select.getAttribute("data-entity");
     const current = this.card.entityState(entityId);
     if (current && select.value === current.state) return;

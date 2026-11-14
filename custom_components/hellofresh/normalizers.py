@@ -6,11 +6,12 @@ HelloFresh payloads into integration models.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 import logging
 import re
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 from .const import DEFAULT_MENU_GRACE_WEEKS, RECIPE_IMAGE_BASE
@@ -21,19 +22,26 @@ from .models import (
     HelloFreshRecipe,
     HelloFreshSubscription,
     HelloFreshWeek,
+    WeekLookup,
     _iso_duration_to_minutes,
     _usable_image_url,
 )
 from .parsers import (
     MAX_SEARCH_DEPTH,
+    box_handle_parts,
     clean_optional_str,
     coerce_float,
     coerce_int,
     date_from_iso_week,
+    dict_or_empty,
+    dict_path,
     extract_allowed_actions,
     extract_name_list,
     extract_tracking_details,
     find_nested_collection,
+    http_url_or_none,
+    local_date,
+    local_today,
     looks_like_recipe_collection,
     money_to_cents,
     normalize_candidate_dict_list,
@@ -136,6 +144,14 @@ def _safe_css_color(value: Any) -> str | None:
     return None
 
 
+# What building a model from an entry of an unexpected shape raises (a string where an object
+# was expected, a missing key, ...). Caught per entry, so one bad week or meal is left out
+# instead of failing the whole refresh.
+_MALFORMED_PAYLOAD_ERRORS = (AttributeError, KeyError, TypeError, ValueError, IndexError)
+# How many skipped entries one diagnostics trace keeps.
+_MAX_SKIPPED_ENTRIES = 50
+
+
 def _template_debug_path(path: str) -> str:
     """Replace per-account id segments in a diagnostics path with ``{id}`` placeholders."""
     for pattern, replacement in _DEBUG_PATH_REDACTIONS:
@@ -143,8 +159,23 @@ def _template_debug_path(path: str) -> str:
     return path
 
 
+class _ModularityMaps(NamedTuple):
+    """What a week's ``modularity`` block says about its meals, keyed by meal ``index``.
+
+    See ``HelloFreshPayloadNormalizer._modularity_maps`` for what each map holds.
+    """
+
+    titles: dict[int, str]
+    groups: dict[int, int]
+    details: dict[int, dict[str, Any]]
+
+
 class HelloFreshPayloadNormalizer:
     """Mixin for pure-ish HelloFresh payload normalization methods."""
+
+    # The diagnostics trace: event lists by category. The client creates it, and
+    # _reset_debug_trace starts it over for each refresh.
+    _debug_trace: dict[str, list[dict[str, Any]]]
 
     # ``subStatus`` phases that follow delivery: the meals are to be cooked, then rated.
     _DELIVERED_SUB_STATUSES = frozenset({"COOK_IT", "RATING"})
@@ -167,8 +198,10 @@ class HelloFreshPayloadNormalizer:
         A live ``state`` still outranks that ``subStatus``: ``COOK_IT`` can come on the morning
         of delivery day, before the box arrives (issue #18).
         """
-        state = raw_week.get("state")
-        state_key = state.strip().upper() if isinstance(state, str) else ""
+        # A state that is not a string is never returned: its key is empty either way.
+        raw_state = raw_week.get("state")
+        state = raw_state if isinstance(raw_state, str) else ""
+        state_key = state.strip().upper()
         if state_key and state_key not in ("DELIVERED", "UNKNOWN"):
             return state
         sub_status = str(raw_week.get("subStatus") or "").strip().upper()
@@ -234,136 +267,200 @@ class HelloFreshPayloadNormalizer:
 
         for index, raw_week in enumerate(raw_weeks):
             try:
-                raw_subscription_id = raw_week.get("subscriptionId") or raw_week.get(
-                    "subscription_id"
-                )
-                if (
-                    raw_subscription_id is not None
-                    and str(raw_subscription_id) != subscription.subscription_id
-                ):
+                week = self._week_from_raw_delivery(index, raw_week, subscription)
+                if week is None:
                     continue
-                week_id = (
-                    raw_week.get("id")
-                    or raw_week.get("week")
-                    or raw_week.get("deliveryWeek")
-                    or raw_week.get("calendarWeek")
-                    or f"week-{index}"
-                )
-                display_name = (
-                    raw_week.get("label")
-                    or raw_week.get("title")
-                    or raw_week.get("displayName")
-                    or self._find_first_nested_value(
-                        raw_week, ("name", "displayName", "deliveryName")
-                    )
-                    or str(week_id)
-                )
-                raw_meals = self._extract_delivery_week_recipe_candidates(raw_week)
-                recipes = [self._recipe_from_raw_meal(raw_meal) for raw_meal in raw_meals]
-
-                # Explicit None checks, not ``or``: a real ``mealsSelected: 0`` (nothing chosen
-                # yet) must win over the recipe-derived fallback, which counts HelloFresh's
-                # auto-fill picks as selected and would fabricate a full selection.
-                meals_selected_raw: Any = raw_week.get("mealsSelected")
-                if meals_selected_raw is None:
-                    meals_selected_raw = raw_week.get("selectedMealCount")
-                if meals_selected_raw is None:
-                    meals_selected_raw = self._find_first_nested_value(
-                        raw_week,
-                        (
-                            "mealsSelected",
-                            "selectedMealCount",
-                            "selectedRecipesCount",
-                            "mealCountSelected",
-                        ),
-                    )
-                if meals_selected_raw is None and raw_meals:
-                    meals_selected_raw = sum(1 for recipe in recipes if recipe.is_selected)
-                meals_selected = coerce_int(meals_selected_raw)
-                # A week's required meal count is the size of ITS OWN box, which can differ from the
-                # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
-                # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
-                # to fuzzier fields and the subscription plan when the week doesn't carry its own box.
-                meals_required = coerce_int(
-                    self._week_box_meal_count(raw_week)
-                    or raw_week.get("mealsRequired")
-                    or raw_week.get("requiredMealCount")
-                    or raw_week.get("recipeCount")
-                    or self._find_first_nested_value(
-                        raw_week,
-                        (
-                            "mealsRequired",
-                            "requiredMealCount",
-                            "recipeCount",
-                            "numberOfRecipes",
-                            "meals",
-                        ),
-                    )
-                    or subscription.meals_required
-                )
-
-                week = HelloFreshWeek(
-                    week_id=str(week_id),
-                    display_name=display_name,
-                    subscription_id=(
-                        str(raw_subscription_id)
-                        if raw_subscription_id is not None
-                        else subscription.subscription_id
-                    ),
-                    # A holiday-shifted box arrives on ``holidayDelivery``, so that is the date
-                    # shown everywhere (calendar, next order, the Week tab), as HelloFresh's own
-                    # app does. Writes still send the raw ``deliveryDate`` (see
-                    # ``_async_patch_delivery_status``), and the shifted date is also kept as
-                    # ``holiday_delivery_date`` for the holiday notices.
-                    delivery_date=parse_date(
-                        raw_week.get("holidayDelivery")
-                        or raw_week.get("deliveryDate")
-                        or raw_week.get("date")
-                        or raw_week.get("shipmentDate")
-                        or raw_week.get("expectedDeliveryDate")
-                    ),
-                    delivered_at=self._delivered_at_from_raw(raw_week),
-                    selection_deadline=parse_datetime(
-                        raw_week.get("selectionDeadline")
-                        or raw_week.get("cutoffDate")
-                        or raw_week.get("deadline")
-                    ),
-                    status=self._effective_week_status(raw_week),
-                    meals_required=meals_required,
-                    meals_selected=meals_selected,
-                    is_skipped=self._raw_week_is_skipped(raw_week),
-                    recipes=recipes,
-                    source="account",
-                    menu_title=raw_week.get("menuTitle")
-                    or raw_week.get("title")
-                    or self._find_first_nested_value(raw_week, ("name", "displayName")),
-                    slot_label=raw_week.get("timeSlot")
-                    or raw_week.get("slotLabel")
-                    or self._find_first_nested_value(
-                        raw_week,
-                        ("deliveryName", "deliveryFrom", "deliveryTo"),
-                    ),
-                    shipping_method=raw_week.get("shippingMethod")
-                    or self._find_first_nested_value(raw_week, ("type", "deliveryType"))
-                    or subscription.shipping_method,
-                    box_size=raw_week.get("boxSize") or subscription.box_size,
-                    **self._common_week_fields(raw_week),
-                )
                 weeks.append(week)
                 orders.append(self._order_from_raw_week(raw_week=raw_week, week=week))
-
-            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
+            except _MALFORMED_PAYLOAD_ERRORS as err:
                 # One malformed week must cost THAT week, not the whole poll — an
                 # unguarded raise here failed the entire refresh. Drop it with a
                 # warning and let every other week land.
-                _LOGGER.warning(
-                    "HelloFresh week entry %s could not be parsed and was skipped: %s",
-                    index,
-                    err,
-                )
+                self._skip_malformed("HelloFresh week entry", index, err)
                 continue
 
         return weeks, orders
+
+    def _week_from_raw_delivery(
+        self,
+        index: int,
+        raw_week: dict[str, Any],
+        subscription: HelloFreshSubscription,
+    ) -> HelloFreshWeek | None:
+        """Build one week of a deliveries payload; None when it is another subscription's."""
+        raw_subscription_id = raw_week.get("subscriptionId") or raw_week.get("subscription_id")
+        if (
+            raw_subscription_id is not None
+            and str(raw_subscription_id) != subscription.subscription_id
+        ):
+            return None
+        week_id = (
+            raw_week.get("id")
+            or raw_week.get("week")
+            or raw_week.get("deliveryWeek")
+            or raw_week.get("calendarWeek")
+            or f"week-{index}"
+        )
+        # The week's box (`product.displayName`) names it when the week has no label of its
+        # own; the delivery window is `deliveryOption.deliveryName`, and what kind of delivery
+        # it is `deliveryOption.type`. These are read from where the API reference puts them:
+        # the first `name` or `type` found anywhere in the week could be a meal tag's.
+        box_name = dict_path(raw_week, "product", "displayName")
+        display_name = (
+            raw_week.get("label")
+            or raw_week.get("title")
+            or raw_week.get("displayName")
+            or box_name
+            or str(week_id)
+        )
+        raw_meals = self._extract_delivery_week_recipe_candidates(raw_week)
+        recipes = self._recipes_from_raw_meals(raw_meals, where=f"week {week_id}")
+
+        # A week's required meal count is the size of ITS OWN box, which can differ from the
+        # subscription's base plan when the week has been resized (e.g. a 2-meal box on a
+        # 3-meal plan). The per-week ``product.specs.meals`` is authoritative; only fall back
+        # to other spellings and the subscription plan when the week doesn't carry its own box.
+        meals_required = coerce_int(
+            self._week_box_meal_count(raw_week)
+            or raw_week.get("mealsRequired")
+            or raw_week.get("requiredMealCount")
+            or raw_week.get("recipeCount")
+            # The reference documents no other home for a box size. These names say what they
+            # are wherever they sit, so an older or regional payload that nests one is still
+            # read; a bare `meals` is not searched for, since it is also the name of meal lists.
+            or self._find_first_nested_value(
+                raw_week,
+                ("mealsRequired", "requiredMealCount", "recipeCount", "numberOfRecipes"),
+            )
+            or subscription.meals_required
+        )
+
+        return HelloFreshWeek(
+            week_id=str(week_id),
+            display_name=display_name,
+            subscription_id=(
+                str(raw_subscription_id)
+                if raw_subscription_id is not None
+                else subscription.subscription_id
+            ),
+            # A holiday-shifted box arrives on ``holidayDelivery``, so that is the date
+            # shown everywhere (calendar, next order, the Week tab), as HelloFresh's own
+            # app does. Writes still send the raw ``deliveryDate`` (see
+            # ``_async_patch_delivery_status``), and the shifted date is also kept as
+            # ``holiday_delivery_date`` for the holiday notices.
+            delivery_date=parse_date(
+                raw_week.get("holidayDelivery")
+                or raw_week.get("deliveryDate")
+                or raw_week.get("date")
+                or raw_week.get("shipmentDate")
+                or raw_week.get("expectedDeliveryDate")
+            ),
+            delivered_at=self._delivered_at_from_raw(raw_week),
+            selection_deadline=parse_datetime(
+                raw_week.get("selectionDeadline")
+                or raw_week.get("cutoffDate")
+                or raw_week.get("deadline")
+            ),
+            status=self._effective_week_status(raw_week),
+            meals_required=meals_required,
+            meals_selected=self._meals_selected_from_raw(
+                raw_week, recipes if raw_meals else None, search_nested=True
+            ),
+            is_skipped=self._raw_week_is_skipped(raw_week),
+            recipes=recipes,
+            source="account",
+            menu_title=raw_week.get("menuTitle") or raw_week.get("title") or box_name,
+            slot_label=raw_week.get("timeSlot")
+            or raw_week.get("slotLabel")
+            or dict_path(raw_week, "deliveryOption", "deliveryName"),
+            shipping_method=raw_week.get("shippingMethod")
+            or dict_path(raw_week, "deliveryOption", "type")
+            or subscription.shipping_method,
+            box_size=raw_week.get("boxSize") or subscription.box_size,
+            **self._common_week_fields(raw_week),
+        )
+
+    @staticmethod
+    def _selected_portions(recipes: Iterable[HelloFreshRecipe]) -> int:
+        """Return how many meals of a box the selected recipes fill.
+
+        HelloFresh counts portions, not dishes: a meal at quantity 2 is two of the box's meals,
+        so one doubled recipe is a complete 2-meal box.
+        """
+        return sum(recipe.selected_quantity or 1 for recipe in recipes if recipe.is_selected)
+
+    def _meals_selected_from_raw(
+        self,
+        raw_week: dict[str, Any],
+        recipes: Sequence[HelloFreshRecipe] | None,
+        *,
+        search_nested: bool,
+    ) -> int | None:
+        """Return a week's selected-meal count: the payload's own, else from its recipes.
+
+        Explicit None checks, not ``or``: a real ``mealsSelected: 0`` (nothing chosen yet)
+        must win over the recipe-derived fallback, which counts HelloFresh's auto-fill picks
+        as selected and would fabricate a full selection. ``recipes`` is None when the payload
+        listed no meals at all, which says nothing about the selection.
+
+        ``search_nested`` looks for the count anywhere in the week. The API reference gives a
+        deliveries week no selected count at all, so there is no path to read it from, and the
+        names are specific enough that a match is the count. A menu week is not searched: its
+        selection is documented, on each meal.
+        """
+        selected: Any = raw_week.get("mealsSelected")
+        if selected is None:
+            selected = raw_week.get("selectedMealCount")
+        if selected is None and search_nested:
+            selected = self._find_first_nested_value(
+                raw_week,
+                (
+                    "mealsSelected",
+                    "selectedMealCount",
+                    "selectedRecipesCount",
+                    "mealCountSelected",
+                ),
+            )
+        if selected is None and recipes is not None:
+            selected = self._selected_portions(recipes)
+        return coerce_int(selected)
+
+    def _recipes_from_raw_meals(
+        self,
+        raw_meals: Sequence[dict[str, Any]],
+        *,
+        where: str,
+        **options: Any,
+    ) -> list[HelloFreshRecipe]:
+        """Build a recipe per raw meal, leaving out any that cannot be parsed.
+
+        A menu holds hundreds of meals. One with an unexpected shape costs that meal, not the
+        week it is in and not the refresh; the skips are reported once per week.
+        """
+        recipes: list[HelloFreshRecipe] = []
+        skipped = 0
+        first_error: Exception | None = None
+        for raw_meal in raw_meals:
+            try:
+                recipes.append(self._recipe_from_raw_meal(raw_meal, **options))
+            except _MALFORMED_PAYLOAD_ERRORS as err:
+                skipped += 1
+                first_error = first_error or err
+        if skipped and first_error is not None:
+            self._skip_malformed(f"{skipped} meal(s) in HelloFresh {where}", None, first_error)
+        return recipes
+
+    def _skip_malformed(self, what: str, index: int | None, err: Exception) -> None:
+        """Log an entry that was left out, and note it in the diagnostics trace."""
+        label = what if index is None else f"{what} {index}"
+        _LOGGER.warning("%s could not be parsed and was skipped: %s", label, err)
+        trace = getattr(self, "_debug_trace", None)
+        if isinstance(trace, dict):
+            skipped = trace.setdefault("skipped_entries", [])
+            # Capped: the delivery-day fast poll re-reads the same weeks into one trace. The
+            # error's type only, since its message can quote the payload.
+            if len(skipped) < _MAX_SKIPPED_ENTRIES:
+                skipped.append({"entry": label, "error": type(err).__name__})
 
     def _extract_delivery_week_recipe_candidates(
         self, raw_week: dict[str, Any]
@@ -398,12 +495,23 @@ class HelloFreshPayloadNormalizer:
             return nested
         return raw_meal
 
+    @staticmethod
+    def _recipe_name(recipe_data: dict[str, Any]) -> str:
+        """Return a meal's name from its recipe node, or a stand-in when it has none.
+
+        Text only: every later pass strips and compares names, so a name of another type
+        would fail the refresh there instead of costing one meal its label here.
+        """
+        for key in ("name", "title", "slug"):
+            value = recipe_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return "Meal"
+
     def _extract_recipe_id_from_raw_meal(self, raw_meal: dict[str, Any]) -> str:
         """Extract just the recipe id from a raw meal dict without full object construction."""
         recipe_data = self._recipe_node(raw_meal)
-        name = (
-            recipe_data.get("name") or recipe_data.get("title") or recipe_data.get("slug") or "Meal"
-        )
+        name = self._recipe_name(recipe_data)
         return str(
             recipe_data.get("id")
             or recipe_data.get("slug")
@@ -421,9 +529,7 @@ class HelloFreshPayloadNormalizer:
     ) -> HelloFreshRecipe:
         """Create a recipe from a recipe-like payload."""
         recipe_data = self._recipe_node(raw_meal)
-        name = (
-            recipe_data.get("name") or recipe_data.get("title") or recipe_data.get("slug") or "Meal"
-        )
+        name = self._recipe_name(recipe_data)
         nutrition = self._extract_nutrition(recipe_data)
         ingredients = extract_name_list(
             recipe_data.get("ingredients")
@@ -453,7 +559,7 @@ class HelloFreshPayloadNormalizer:
             or recipe_data.get("totalTimeMinutes")
             or ((cook_time or 0) + (prep_time or 0) if cook_time or prep_time else None)
         )
-        selection = raw_meal.get("selection") if isinstance(raw_meal.get("selection"), dict) else {}
+        selection = dict_or_empty(raw_meal.get("selection"))
         selection_quantity = coerce_int(selection.get("quantity"))
         selection_selected = selection.get("selected")
         if isinstance(selection_selected, bool):
@@ -478,14 +584,14 @@ class HelloFreshPayloadNormalizer:
         # Per-serving surcharge for premium/variant meals lives on the menu item's `charge`
         # object (`{label, unitAmount, ...}`); it's the clearest signal distinguishing
         # same-named portion/premium variants the catalog lists separately.
-        charge = raw_meal.get("charge") if isinstance(raw_meal.get("charge"), dict) else {}
+        charge = dict_or_empty(raw_meal.get("charge"))
         surcharge_label = charge.get("label") or None
         surcharge_cents = coerce_int(charge.get("unitAmount"))
 
         # Menu badge (e.g. "Premium Picks") from the recipe's `label` object, with HelloFresh's
         # own colors so cards can paint the badge as the website does. Colors are gated to
         # #RGB/#RRGGBB(AA) hex: they land in inline styles, so a payload can't smuggle CSS.
-        label = recipe_data.get("label") if isinstance(recipe_data.get("label"), dict) else {}
+        label = dict_or_empty(recipe_data.get("label"))
         badge = label.get("text") or None
         badge_foreground = _safe_css_color(label.get("foregroundColor"))
         badge_background = _safe_css_color(label.get("backgroundColor"))
@@ -507,13 +613,7 @@ class HelloFreshPayloadNormalizer:
             preference = "Veggie"
 
         return HelloFreshRecipe(
-            recipe_id=str(
-                recipe_data.get("id")
-                or recipe_data.get("slug")
-                or raw_meal.get("id")
-                or slugify(name)
-                or name
-            ),
+            recipe_id=self._extract_recipe_id_from_raw_meal(raw_meal),
             name=name,
             preference=preference,
             is_selected=is_selected,
@@ -536,9 +636,10 @@ class HelloFreshPayloadNormalizer:
             # simply absent on most meals, so a missing value is normal rather than an error.
             # It appears on the RECIPE node in my-deliveries/menu and menus-service, but on the
             # MEAL wrapper in past-deliveries — so both are checked, recipe node first. Reading
-            # only one of them silently drops the clip for the other payload shape.
-            video_url=clean_optional_str(recipe_data.get("videoLink"))
-            or clean_optional_str(raw_meal.get("videoLink")),
+            # only one of them silently drops the clip for the other payload shape. Only an
+            # http(s) link is kept: it ends up in a <video src>.
+            video_url=http_url_or_none(recipe_data.get("videoLink"))
+            or http_url_or_none(raw_meal.get("videoLink")),
             description=recipe_data.get("description") or recipe_data.get("headline"),
             ingredients=ingredients,
             allergens=allergens,
@@ -620,6 +721,9 @@ class HelloFreshPayloadNormalizer:
         """
         return {
             "sub_status": raw_week.get("subStatus"),
+            "revised_delivery_date": self._revised_delivery_date(raw_week),
+            "servings": self._week_servings(raw_week),
+            "payment_failed": str(raw_week.get("status") or "").strip().upper() == "PAYMENT_FAILED",
             "delivery_state": raw_week.get("state"),
             "actionable": bool(raw_week.get("actionable")),
             "prepaid": bool(raw_week.get("prepaid")),
@@ -665,89 +769,50 @@ class HelloFreshPayloadNormalizer:
         items = group.get("variations") if isinstance(group, dict) else None
         return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
-    @staticmethod
-    def _build_variation_titles(raw_week: dict[str, Any]) -> dict[int, str]:
-        """Map a meal `index` to its variant modifier title from the `modularity` block.
+    @classmethod
+    def _modularity_maps(cls, raw_week: dict[str, Any]) -> _ModularityMaps:
+        """Read a week's ``modularity`` block once, into three maps keyed by meal ``index``.
 
-        HelloFresh lists portion/ingredient variants of a dish as separate meals sharing the
-        same name; the `modularity` array names how each variant differs ("2x Bacon",
-        "Ground Turkey", ...) via the variation `index`, which equals the meal's `index`.
+        * titles: an option's modifier title ("2x Bacon", "Ground Turkey"). HelloFresh lists
+          the options of a dish as separate meals sharing its name, and this is how each
+          differs.
+        * groups: the base dish (the group's ``defaultCourseIndex``) of every member of a
+          variant set, the base itself included, so a dish and its options share one key even
+          when their names differ (a Salmon dish with an "Icelandic Cod" swap). Every meal also
+          has an entry of its own, options included, usually without variations; such an entry
+          is not a variant set and claims no key.
+        * details: what the dish's customization list shows. An option gets ``order`` (its
+          position in the website's list) and ``image_url`` (its ingredient photo); a base dish
+          with options gets ``default_title``, the site's label for the unchanged version
+          (``noVariationsDefaultTitle``: "No Change", "No Protein", "Ground Beef", ...).
 
-        The block can sit on the week payload directly or, for weeks assembled by merging the
-        authenticated menu catalog into an account/deliveries week, under ``_menu_payload``.
-        Both locations are checked so the modifier is resolved regardless of which endpoint
-        produced the week.
+        The block sits on the week payload directly or, for a week assembled by merging the
+        menu into a deliveries week, under ``_menu_payload``; both are checked.
         """
         titles: dict[int, str] = {}
-        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
-        if modularity is None:
-            return titles
-        for group in modularity:
-            for item in HelloFreshPayloadNormalizer._modularity_options(group):
-                idx = coerce_int(item.get("index"))
+        groups: dict[int, int] = {}
+        details: dict[int, dict[str, Any]] = {}
+        for group in cls._menu_block(raw_week, "modularity", list) or []:
+            options = cls._modularity_options(group)
+            indexes = [coerce_int(item.get("index")) for item in options]
+            for item, idx in zip(options, indexes, strict=True):
                 title = item.get("title")
                 if idx is not None and isinstance(title, str) and title.strip():
                     titles.setdefault(idx, title.strip())
-        return titles
 
-    @staticmethod
-    def _build_variation_groups(raw_week: dict[str, Any]) -> dict[int, int]:
-        """Map every meal `index` in a variant group to that group's base dish index.
-
-        Keyed on the modularity group's ``defaultCourseIndex`` (the base dish). Each of the
-        group's option indexes — AND the base index itself — maps to that base index, so all
-        members of a dish's variant set share one group key even when their names differ (e.g.
-        a Salmon dish whose variants include an "Icelandic Cod" swap). Used to show a dish and
-        its options as one tile in the cards.
-
-        Every meal also has a modularity entry of its own, options included, usually with no
-        variations; such an entry is not a variant set, so a dish without options — and an
-        option's own entry, wherever it sits in the list — never claims a group key.
-        """
-        groups: dict[int, int] = {}
-        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
-        if modularity is None:
-            return groups
-        for group in modularity:
-            if not isinstance(group, dict):
-                continue
-            base = coerce_int(group.get("defaultCourseIndex"))
+            base = coerce_int(group.get("defaultCourseIndex")) if isinstance(group, dict) else None
             if base is None:
                 continue
-            member_indexes = {base}
-            for item in HelloFreshPayloadNormalizer._modularity_options(group):
-                idx = coerce_int(item.get("index"))
-                if idx is not None:
-                    member_indexes.add(idx)
-            if len(member_indexes) < 2:
+            members = {base, *(idx for idx in indexes if idx is not None)}
+            if len(members) >= 2:
+                for idx in members:
+                    groups.setdefault(idx, base)
+            if not options:
                 continue
-            for idx in member_indexes:
-                groups.setdefault(idx, base)
-        return groups
-
-    @staticmethod
-    def _build_variation_options(raw_week: dict[str, Any]) -> dict[int, dict[str, Any]]:
-        """Per meal `index`, what the dish's customization list shows for it.
-
-        An option gets ``order`` (its position in the website's list) and ``image_url`` (its
-        ingredient photo); a base dish with options gets ``default_title``, the site's label
-        for the unchanged version (`noVariationsDefaultTitle`: "No Change", "No Protein",
-        "Ground Beef", ...).
-        """
-        details: dict[int, dict[str, Any]] = {}
-        modularity = HelloFreshPayloadNormalizer._menu_block(raw_week, "modularity", list)
-        if modularity is None:
-            return details
-        for group in modularity:
-            options = HelloFreshPayloadNormalizer._modularity_options(group)
-            base = coerce_int(group.get("defaultCourseIndex")) if options else None
-            if base is None:
-                continue
-            title = clean_optional_str(group.get("noVariationsDefaultTitle"))
-            if title and "default_title" not in details.get(base, {}):
-                details.setdefault(base, {})["default_title"] = title
-            for order, item in enumerate(options):
-                idx = coerce_int(item.get("index"))
+            default_title = clean_optional_str(group.get("noVariationsDefaultTitle"))
+            if default_title and "default_title" not in details.get(base, {}):
+                details.setdefault(base, {})["default_title"] = default_title
+            for order, (item, idx) in enumerate(zip(options, indexes, strict=True)):
                 if idx is None or idx == base or "order" in details.get(idx, {}):
                     continue
                 ingredient = item.get("ingredient")
@@ -757,7 +822,12 @@ class HelloFreshPayloadNormalizer:
                     if isinstance(ingredient, dict)
                     else None,
                 )
-        return details
+        return _ModularityMaps(titles, groups, details)
+
+    @classmethod
+    def _build_variation_titles(cls, raw_week: dict[str, Any]) -> dict[int, str]:
+        """Map a meal ``index`` to its variant modifier title (see ``_modularity_maps``)."""
+        return cls._modularity_maps(raw_week).titles
 
     def _apply_variation_titles(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Fill in each recipe's ``variation_*`` fields from the week's ``modularity`` block.
@@ -772,9 +842,7 @@ class HelloFreshPayloadNormalizer:
         for week in weeks:
             if not week.recipes or not isinstance(week.raw, dict):
                 continue
-            titles = self._build_variation_titles(week.raw)
-            group_by_index = self._build_variation_groups(week.raw)
-            options = self._build_variation_options(week.raw)
+            titles, group_by_index, options = self._modularity_maps(week.raw)
             if not titles and not group_by_index and not options:
                 continue
             for recipe in week.recipes:
@@ -799,20 +867,17 @@ class HelloFreshPayloadNormalizer:
         group_sku: str | None = None,
     ) -> HelloFreshMarketItem | None:
         """Build a market item (Market add-on) from one ``addOns.groups[].addOns[]`` entry."""
-        recipe_data = (
-            raw_item.get("recipe") if isinstance(raw_item.get("recipe"), dict) else raw_item
-        )
+        nested_recipe = raw_item.get("recipe")
+        recipe_data = nested_recipe if isinstance(nested_recipe, dict) else raw_item
         name = recipe_data.get("name") or recipe_data.get("title")
         index = coerce_int(raw_item.get("index"))
-        if not name or index is None:
+        if not isinstance(name, str) or not name.strip() or index is None:
             return None
 
         nutrition = self._extract_nutrition(recipe_data)
         calories = coerce_float(nutrition.get("calories") or recipe_data.get("calories"))
 
-        price_catalog = (
-            raw_item.get("priceCatalog") if isinstance(raw_item.get("priceCatalog"), dict) else {}
-        )
+        price_catalog = dict_or_empty(raw_item.get("priceCatalog"))
         price_cents = coerce_int(price_catalog.get("basePrice"))
         price = round(price_cents / 100, 2) if price_cents is not None else None
 
@@ -822,7 +887,7 @@ class HelloFreshPayloadNormalizer:
         # HelloFresh's Android app (`ExtrasDomainMapper.getQuantityChosen`), the week's quantity is
         # `oneOffQuantity` when one is set or the item is skipped for the week, otherwise the
         # recurring `preselectedQuantity`; the two are never added together.
-        selection = raw_item.get("selection") if isinstance(raw_item.get("selection"), dict) else {}
+        selection = dict_or_empty(raw_item.get("selection"))
         one_off = coerce_int(selection.get("oneOffQuantity")) or 0
         preselected = coerce_int(selection.get("preselectedQuantity")) or 0
         if selection.get("skipped") or one_off > 0:
@@ -833,20 +898,23 @@ class HelloFreshPayloadNormalizer:
             selected_quantity = coerce_int(selection.get("quantity") or raw_item.get("quantity"))
         is_selected = bool(selected_quantity and selected_quantity > 0)
         # Pairing add-ons (`groupType: "modularity"`) are linked to a meal through their
-        # selection's `courses`; a re-sent selection must keep that link.
-        courses = [
-            index
+        # selection's `courses`; a re-sent selection must keep that link. These are the MEALS'
+        # indexes and stay apart from the item's own `index`, which is what the cart orders it
+        # by: an assignment expression here once reused that name and overwrote it.
+        course_indexes = (
+            coerce_int(course.get("index"))
             for course in selection.get("courses") or []
-            if isinstance(course, dict) and (index := coerce_int(course.get("index"))) is not None
-        ]
+            if isinstance(course, dict)
+        )
+        courses = [course_index for course_index in course_indexes if course_index is not None]
         # HelloFresh's app has no `maxQuantity`: an item's limit is its largest quantity option.
+        option_quantities = (
+            coerce_int(option.get("quantity"))
+            for option in raw_item.get("quantityOptions") or []
+            if isinstance(option, dict)
+        )
         max_quantity = coerce_int(raw_item.get("maxQuantity")) or max(
-            (
-                quantity
-                for option in raw_item.get("quantityOptions") or []
-                if isinstance(option, dict)
-                and (quantity := coerce_int(option.get("quantity"))) is not None
-            ),
+            (quantity for quantity in option_quantities if quantity is not None),
             default=None,
         )
 
@@ -901,30 +969,67 @@ class HelloFreshPayloadNormalizer:
             return []
 
         items: list[HelloFreshMarketItem] = []
-        seen_indexes: set[int] = set()
-        for group in addons.get("groups") or []:
+        # A market item's index is optional on the model, though one built here always has it.
+        seen_indexes: set[int | None] = set()
+        groups = addons.get("groups")
+        for group in groups if isinstance(groups, list) else []:
             if not isinstance(group, dict):
                 continue
             group_type = group.get("groupType")
             group_sku = group.get("sku") if isinstance(group.get("sku"), str) else None
-            for raw_item in group.get("addOns") or []:
+            raw_items = group.get("addOns")
+            for raw_item in raw_items if isinstance(raw_items, list) else []:
                 if not isinstance(raw_item, dict):
                     continue
-                item = self._market_item_from_raw(raw_item, group_type, group_sku)
+                try:
+                    item = self._market_item_from_raw(raw_item, group_type, group_sku)
+                except _MALFORMED_PAYLOAD_ERRORS:
+                    # One add-on of an unexpected shape is left out of the Market; the rest of
+                    # the catalog, and the refresh, carry on.
+                    continue
                 if item is None or item.index in seen_indexes:
                     continue
                 seen_indexes.add(item.index)
                 items.append(item)
         return items
 
+    @staticmethod
+    def _attach_menu_block(
+        weeks: Sequence[HelloFreshWeek],
+        attribute: str,
+        build: Callable[[dict[str, Any]], list[Any]],
+    ) -> None:
+        """Fill ``attribute`` on each week that lacks it with what ``build`` reads from its raw.
+
+        The menu's blocks (Market catalog, sections, filter panel) are parsed in one pass over
+        the assembled weeks, whichever endpoint produced each. A week that already has the
+        attribute keeps it: a past week's purchased add-ons must not be replaced by a catalog.
+        """
+        for week in weeks:
+            if getattr(week, attribute) or not isinstance(week.raw, dict):
+                continue
+            parsed = build(week.raw)
+            if parsed:
+                setattr(week, attribute, parsed)
+
     def _apply_market_items(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Attach each week's Market add-on catalog, parsed from its menu payload."""
+        self._attach_menu_block(weeks, "market_items", self._build_market_items)
+        # The catalog prices its items in bare minor units. Their currency is the one the
+        # week's meals are priced in, or failing that the market's own.
         for week in weeks:
-            if week.market_items or not isinstance(week.raw, dict):
+            priced = [
+                item
+                for item in week.market_items
+                if item.price_cents is not None and item.currency is None
+            ]
+            if not priced:
                 continue
-            items = self._build_market_items(week.raw)
-            if items:
-                week.market_items = items
+            currency = next(
+                (recipe.currency for recipe in week.recipes if recipe.currency), None
+            ) or _COUNTRY_CURRENCIES.get(getattr(self, "_country", None) or "")
+            for item in priced:
+                item.currency = currency
 
     def _build_menu_categories(self, raw_week: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse the menu payload's ``categories`` block into the week's menu sections.
@@ -967,12 +1072,7 @@ class HelloFreshPayloadNormalizer:
 
     def _apply_menu_categories(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Attach each week's menu sections, parsed from its menu payload."""
-        for week in weeks:
-            if week.menu_categories or not isinstance(week.raw, dict):
-                continue
-            categories = self._build_menu_categories(week.raw)
-            if categories:
-                week.menu_categories = categories
+        self._attach_menu_block(weeks, "menu_categories", self._build_menu_categories)
 
     def _build_menu_filters(self, raw_week: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse the menu payload's ``filters`` block into the website's filter groups.
@@ -1023,12 +1123,7 @@ class HelloFreshPayloadNormalizer:
 
     def _apply_menu_filters(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Attach each week's filter-panel definitions, parsed from its menu payload."""
-        for week in weeks:
-            if week.menu_filters or not isinstance(week.raw, dict):
-                continue
-            filters = self._build_menu_filters(week.raw)
-            if filters:
-                week.menu_filters = filters
+        self._attach_menu_block(weeks, "menu_filters", self._build_menu_filters)
 
     def _clear_paused_week_selection(self, weeks: Sequence[HelloFreshWeek]) -> None:
         """Clear phantom selections on paused/skipped weeks — nothing was ever delivered.
@@ -1047,7 +1142,7 @@ class HelloFreshPayloadNormalizer:
         """
         # Delivery dates are local-market calendar dates — use LOCAL today, matching
         # models.py, so week classification can't flip near midnight UTC.
-        today = date.today()
+        today = local_today()
         grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for week in weeks:
             if not (week.is_paused or week.is_skipped):
@@ -1134,6 +1229,48 @@ class HelloFreshPayloadNormalizer:
 
         return {}
 
+    # ``subStatus`` values of a box HelloFresh moved to another day; its new date is the week's
+    # ``tracking.delivery_date`` (see the API reference, "Weeks").
+    _MOVED_SUB_STATUSES = frozenset({"DELAYED", "EARLY"})
+
+    @classmethod
+    def _revised_delivery_date(cls, raw_week: dict[str, Any]) -> date | None:
+        """Return the day a delayed or early box now comes, else None.
+
+        The new date is a carrier timestamp, so its day is read in Home Assistant's time zone,
+        as "Last delivery day" reads the arrival; a bare date is taken as it is.
+        """
+        sub_status = str(raw_week.get("subStatus") or "").strip().upper()
+        if sub_status not in cls._MOVED_SUB_STATUSES:
+            return None
+        tracking = raw_week.get("tracking")
+        if not isinstance(tracking, dict):
+            return None
+        value = tracking.get("delivery_date") or tracking.get("estimated_delivery_time")
+        if isinstance(value, str) and "T" not in value:
+            return parse_date(value)
+        moved = parse_datetime(value)
+        return local_date(moved) if moved is not None else None
+
+    @staticmethod
+    def _week_servings(raw_week: dict[str, Any]) -> int | None:
+        """Return how many people a week's own box is for, else None.
+
+        Its ``product.specs.size``, as the menu request reads it, then the people segment of
+        the box's handle. A week without a box of its own (delivered history) has none.
+        """
+        product = raw_week.get("product")
+        if not isinstance(product, dict):
+            return None
+        size = coerce_int(dict_path(product, "specs", "size"))
+        if size:
+            return size
+        for key in ("handle", "sku"):
+            parts = box_handle_parts(product.get(key))
+            if parts is not None:
+                return parts[2]
+        return None
+
     @staticmethod
     def _week_box_meal_count(raw_week: dict[str, Any]) -> int | None:
         """Return the meal count of a week's OWN box from its ``product.specs.meals``.
@@ -1209,6 +1346,16 @@ class HelloFreshPayloadNormalizer:
             slot_label=week.slot_label,
         )
 
+    def _stated_amount(self, raw_week: dict[str, Any], *keys: str) -> float | None:
+        """Return the first amount a payload states under one of ``keys``, at any depth.
+
+        For the totals and subtotals only. The API reference lists none of them on a week (it
+        gives the box's price parts under ``product``), so there is no path to read them from;
+        their names are specific enough that a match anywhere is that amount. Field names that
+        many objects share (``price``, ``total``, ``amount``) are never searched for this way.
+        """
+        return coerce_float(self._find_first_nested_value(raw_week, keys))
+
     def _extract_total_price(self, raw_week: dict[str, Any]) -> float | None:
         """Return the best available total price, including shipping when split out."""
         direct_total = coerce_float(
@@ -1216,115 +1363,72 @@ class HelloFreshPayloadNormalizer:
             or raw_week.get("totalPrice")
             or raw_week.get("total")
             or raw_week.get("amount")
-            or self._find_first_nested_value(
-                raw_week, ("grandTotal", "totalPrice", "total", "amount")
-            )
         )
+        if direct_total is None:
+            direct_total = self._stated_amount(raw_week, "grandTotal", "totalPrice")
         if direct_total is not None:
             return direct_total
 
-        direct_total_cents = coerce_float(
-            raw_week.get("grandTotalInCents")
-            or raw_week.get("totalPriceInCents")
-            or raw_week.get("totalInCents")
-            or self._find_first_nested_value(
-                raw_week,
-                ("grandTotalInCents", "totalPriceInCents", "totalInCents"),
-            )
+        direct_total_cents = self._stated_amount(
+            raw_week, "grandTotalInCents", "totalPriceInCents", "totalInCents"
         )
         if direct_total_cents is not None:
             return direct_total_cents / 100
 
-        subtotal = coerce_float(
-            raw_week.get("subTotal")
-            or raw_week.get("subtotal")
-            or self._find_first_nested_value(raw_week, ("subTotal", "subtotal"))
-        )
-        shipping = coerce_float(
-            raw_week.get("shippingAmount")
-            or raw_week.get("shipping")
-            or self._find_first_nested_value(raw_week, ("shippingAmount", "shipping"))
-        )
+        subtotal = self._stated_amount(raw_week, "subTotal", "subtotal")
+        shipping = coerce_float(raw_week.get("shippingAmount") or raw_week.get("shipping"))
+        if shipping is None:
+            shipping = self._stated_amount(raw_week, "shippingAmount")
         if subtotal is not None and shipping is not None:
             return subtotal + shipping
 
-        subtotal_cents = coerce_float(
-            raw_week.get("subTotalInCents")
-            or raw_week.get("subtotalInCents")
-            or self._find_first_nested_value(raw_week, ("subTotalInCents", "subtotalInCents"))
-        )
-        shipping_cents = coerce_float(
-            raw_week.get("shippingAmountInCents")
-            or raw_week.get("shippingInCents")
-            or self._find_first_nested_value(
-                raw_week,
-                ("shippingAmountInCents", "shippingInCents"),
-            )
-        )
+        subtotal_cents = self._stated_amount(raw_week, "subTotalInCents", "subtotalInCents")
+        shipping_cents = self._stated_amount(raw_week, "shippingAmountInCents", "shippingInCents")
         if subtotal_cents is not None and shipping_cents is not None:
             return (subtotal_cents + shipping_cents) / 100
 
+        # What the API reference documents on a week: its box under `product`, priced in minor
+        # units, with the fees beside the price.
         product_price_cents = coerce_float(
-            self._find_first_nested_value(raw_week.get("product"), ("price", "unitPrice"))
+            dict_path(raw_week, "product", "price") or dict_path(raw_week, "product", "unitPrice")
         )
         if product_price_cents is not None:
             return product_price_cents / 100 + self._extract_delivery_fee(raw_week)
 
         single_cents = coerce_float(
-            raw_week.get("priceInCents")
-            or self._find_first_nested_value(raw_week, ("priceInCents",))
+            raw_week.get("priceInCents") or dict_path(raw_week, "deliveryOption", "priceInCents")
         )
         if single_cents is not None:
             return single_cents / 100
 
-        return coerce_float(
-            raw_week.get("price") or self._find_first_nested_value(raw_week, ("price",))
-        )
+        return coerce_float(raw_week.get("price"))
 
-    def _extract_delivery_fee(self, raw_week: dict[str, Any]) -> float:
-        """Return the best available shipping or special fee in currency units."""
-        fee_candidates = (
-            coerce_float(
-                self._find_first_nested_value(
-                    raw_week,
-                    (
-                        "specialFee",
-                        "shippingPrice",
-                        "shippingAmountInCents",
-                        "shippingInCents",
-                        "priceInCents",
-                    ),
-                )
-            ),
-            coerce_float(
-                self._find_first_nested_value(
-                    raw_week,
-                    (
-                        "shippingAmount",
-                        "shipping",
-                    ),
-                )
-            ),
+    @staticmethod
+    def _extract_delivery_fee(raw_week: dict[str, Any]) -> float:
+        """Return the fees on a week's box, in currency units.
+
+        ``product.specialFee`` and ``product.shippingPrice`` are both charged on top of the
+        box's price and both in minor units. Each is read from its own field and they are
+        added: a zero in one is a real zero, not a reason to look for a fee somewhere else.
+        """
+        fees = (
+            coerce_float(dict_path(raw_week, "product", "specialFee")),
+            coerce_float(dict_path(raw_week, "product", "shippingPrice")),
         )
-        cents_fee, amount_fee = fee_candidates
-        if cents_fee is not None and cents_fee >= 100:
-            return cents_fee / 100
-        if amount_fee is not None:
-            return amount_fee
-        if cents_fee is not None:
-            return cents_fee / 100
-        return 0.0
+        return sum(fee for fee in fees if fee is not None) / 100
 
     def _extract_currency_code(self, raw_week: dict[str, Any]) -> str | None:
         """Return the best available currency code for an order."""
         currency = (
             raw_week.get("currency")
             or raw_week.get("currencyCode")
+            # The API reference gives a week no currency field, so there is no path to read
+            # one from; a `currency` or `currencyCode` anywhere in it is the week's.
             or self._find_first_nested_value(raw_week, ("currency", "currencyCode"))
         )
         if isinstance(currency, str) and currency.strip():
             return currency.strip().upper()
-        return _COUNTRY_CURRENCIES.get(self._country)
+        return _COUNTRY_CURRENCIES.get(getattr(self, "_country", None) or "")
 
     # Default weeks of past history to request when the client doesn't supply one (~6 months).
     # The instance value ``self._history_lookback_weeks`` (set from the user option,
@@ -1371,7 +1475,7 @@ class HelloFreshPayloadNormalizer:
         """
         # Delivery dates are local-market calendar dates — use LOCAL today, matching
         # models.py, so week classification can't flip near midnight UTC.
-        today = date.today()
+        today = local_today()
         start = today - timedelta(weeks=self._history_weeks)
         end = today + timedelta(weeks=self._FUTURE_DELIVERY_WEEKS)
         start_iso = start.isocalendar()
@@ -1385,35 +1489,53 @@ class HelloFreshPayloadNormalizer:
         self, raw_subscription: dict[str, Any]
     ) -> HelloFreshSubscription:
         """Normalize a subscription payload."""
-        customer = raw_subscription.get("customer") or {}
-        plan = raw_subscription.get("plan") or self._find_first_nested_dict(
-            raw_subscription,
-            {"plan", "activePlan", "subscriptionPlan"},
-        )
+        # `customer` and the plan are objects in every capture. A null or a bare string in
+        # their place must cost those fields, not the sign-in and every poll.
+        customer = raw_subscription.get("customer")
+        if not isinstance(customer, dict):
+            customer = {}
+        loyalty = customer.get("loyalty")
+        if not isinstance(loyalty, dict):
+            loyalty = {}
+        plan = raw_subscription.get("plan")
+        if not isinstance(plan, dict) or not plan:
+            # The API reference documents no plan object on a subscription (its size is under
+            # `productType`), so there is no path to read one from; these key names say what
+            # they are wherever an older or regional payload nests one.
+            plan = self._find_first_nested_dict(
+                raw_subscription,
+                {"plan", "activePlan", "subscriptionPlan"},
+            )
+        # What the API reference documents: `productType` is {productName, specs: {meals,
+        # size}}, the plan's name, meals per week and number of people. They are read from
+        # there, not from the first `name`, `meals` or `size` anywhere in the subscription,
+        # which is how the delivery address's region once became the plan's name.
+        product_type = raw_subscription.get("productType")
+        if not isinstance(product_type, dict):
+            product_type = {}
         meals_required = coerce_int(
             plan.get("numberOfRecipes")
             or plan.get("recipesPerWeek")
+            or dict_path(product_type, "specs", "meals")
+            # No documented home besides `productType.specs`; these names say what they are
+            # wherever an older or regional payload puts them.
             or self._find_first_nested_value(
                 raw_subscription, ("numberOfRecipes", "recipesPerWeek")
             )
-            or self._find_first_nested_value(raw_subscription, ("meals",))
             or raw_subscription.get("mealsPerWeek")
-            or raw_subscription.get("recipesPerWeek")
         )
         servings = coerce_int(
             plan.get("numberOfPersons")
             or plan.get("servings")
+            or dict_path(product_type, "specs", "size")
+            # As above: no documented home besides `productType.specs`.
             or self._find_first_nested_value(raw_subscription, ("numberOfPersons", "servings"))
-            or self._find_first_nested_value(raw_subscription, ("size",))
-            or raw_subscription.get("numberOfPersons")
-            or raw_subscription.get("servings")
+        )
+        plan_name = (
+            plan.get("name") or plan.get("displayName") or product_type.get("productName") or None
         )
         display_name = (
-            raw_subscription.get("name")
-            or raw_subscription.get("displayName")
-            or plan.get("name")
-            or plan.get("displayName")
-            or self._find_first_nested_value(raw_subscription, ("name", "displayName"))
+            raw_subscription.get("name") or raw_subscription.get("displayName") or plan_name
         )
 
         return HelloFreshSubscription(
@@ -1422,7 +1544,7 @@ class HelloFreshPayloadNormalizer:
             locale=customer.get("locale"),
             status=self._derive_subscription_status(raw_subscription),
             display_name=display_name,
-            plan_name=plan.get("name") or plan.get("displayName"),
+            plan_name=plan_name,
             meals_required=meals_required,
             servings=servings,
             delivery_address=self._format_subscription_address(
@@ -1449,18 +1571,14 @@ class HelloFreshPayloadNormalizer:
             payment_method=raw_subscription.get("paymentMethod"),
             payment_gateway=raw_subscription.get("paymentGateway"),
             coupon_code=raw_subscription.get("couponCode"),
+            # The API reference lists no loyalty counters on a subscription, so there is no
+            # path to read them from: `customer.loyalty` first, then these names wherever they
+            # sit. They are specific enough that a match is the counter.
             loyalty_boxes_received=coerce_int(
                 raw_subscription.get("loyaltyBoxesReceived")
                 or raw_subscription.get("totalBoxesReceived")
-                or (
-                    self._find_first_nested_value(
-                        raw_subscription["customer"].get("loyalty"),
-                        ("value", "boxesReceived"),
-                    )
-                    if isinstance(raw_subscription.get("customer"), dict)
-                    and isinstance(raw_subscription["customer"].get("loyalty"), dict)
-                    else None
-                )
+                or loyalty.get("value")
+                or loyalty.get("boxesReceived")
                 or self._find_first_nested_value(
                     raw_subscription,
                     ("loyaltyBoxesReceived", "totalBoxesReceived", "boxesReceived"),
@@ -1469,10 +1587,8 @@ class HelloFreshPayloadNormalizer:
             loyalty_boxes_until_next_freebie=coerce_int(
                 raw_subscription.get("loyaltyBoxesUntilNextFreebie")
                 or raw_subscription.get("boxesUntilNextFreebie")
-                or self._find_first_nested_value(
-                    raw_subscription.get("customer", {}).get("loyalty") or {},
-                    ("boxesUntilNextFreebie", "loyaltyBoxesUntilNextFreebie"),
-                )
+                or loyalty.get("boxesUntilNextFreebie")
+                or loyalty.get("loyaltyBoxesUntilNextFreebie")
                 or self._find_first_nested_value(
                     raw_subscription,
                     ("loyaltyBoxesUntilNextFreebie", "boxesUntilNextFreebie"),
@@ -1490,14 +1606,14 @@ class HelloFreshPayloadNormalizer:
         boolean, so status is derived from those. An explicit ``status`` / ``state`` field, if
         a region or future payload ever provides one, still wins. (``endlessPausedAt`` is NOT
         used: it carries a stale historical date even on active accounts.)
+
+        Only the subscription's own field counts. A ``state`` or ``status`` nested further
+        down belongs to something else (a US address has a ``state``), so it is not looked for.
         """
         explicit = (
             raw_subscription.get("status")
             or raw_subscription.get("subscriptionStatus")
             or raw_subscription.get("state")
-            or self._find_first_nested_value(
-                raw_subscription, ("status", "subscriptionStatus", "state")
-            )
         )
         if isinstance(explicit, list):
             # Some regions return a status history instead of a single status. The final
@@ -1615,6 +1731,7 @@ class HelloFreshPayloadNormalizer:
                 existing_week.shipping_method or fallback_week.shipping_method
             )
             existing_week.box_size = existing_week.box_size or fallback_week.box_size
+            existing_week.servings = existing_week.servings or fallback_week.servings
             existing_week.raw = {
                 **fallback_week.raw,
                 **existing_week.raw,
@@ -1634,27 +1751,28 @@ class HelloFreshPayloadNormalizer:
         if not isinstance(week_id, str) or not week_id.strip():
             return None
 
-        delivery_option = (
-            raw_subscription.get("nextDeliveryOption")
-            if isinstance(raw_subscription.get("nextDeliveryOption"), dict)
-            else raw_subscription.get("deliveryOption")
-            if isinstance(raw_subscription.get("deliveryOption"), dict)
+        next_option = raw_subscription.get("nextDeliveryOption")
+        plan_option = raw_subscription.get("deliveryOption")
+        delivery_option: dict[str, Any] = (
+            next_option
+            if isinstance(next_option, dict)
+            else plan_option
+            if isinstance(plan_option, dict)
             else {}
         )
+        # The plan's name and size from where the API reference puts them (`productType`),
+        # then the box's own name.
         product_name = (
-            self._find_first_nested_value(
-                raw_subscription.get("productType"), ("productName", "name")
-            )
-            or self._find_first_nested_value(
-                raw_subscription.get("product"), ("displayName", "name")
-            )
+            dict_path(raw_subscription, "productType", "productName")
+            or dict_path(raw_subscription, "productType", "name")
+            or dict_path(raw_subscription, "product", "displayName")
+            or dict_path(raw_subscription, "product", "name")
             or subscription.display_name
             or str(week_id)
         )
         meals_required = coerce_int(
-            self._find_first_nested_value(
-                raw_subscription.get("productType"), ("meals", "numberOfRecipes")
-            )
+            dict_path(raw_subscription, "productType", "specs", "meals")
+            or dict_path(raw_subscription, "productType", "numberOfRecipes")
             or subscription.meals_required
         )
         return HelloFreshWeek(
@@ -1678,6 +1796,8 @@ class HelloFreshPayloadNormalizer:
             slot_label=delivery_option.get("deliveryName"),
             shipping_method=delivery_option.get("type") or subscription.shipping_method,
             box_size=subscription.box_size,
+            # Built from the plan, so the week's box is the plan's.
+            servings=subscription.servings,
             # The subscriptions payload has no allowedActions dict, but a week surfaced via
             # nextModifiableDeliveryWeek is by definition still changeable — mark meal swaps
             # allowed so models.is_editable (which requires the flag, mirroring the card)
@@ -1711,11 +1831,11 @@ class HelloFreshPayloadNormalizer:
         # (most recipes) per (subscription, week) so the week gets its full browsable catalog
         # instead of whichever variant happened to be last.
         menu_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
-        for menu_week in menu_weeks:
-            key = (menu_week.subscription_id, menu_week.week_id)
+        for variant in menu_weeks:
+            key = (variant.subscription_id, variant.week_id)
             existing = menu_by_key.get(key)
-            if existing is None or len(menu_week.recipes) > len(existing.recipes):
-                menu_by_key[key] = menu_week
+            if existing is None or len(variant.recipes) > len(existing.recipes):
+                menu_by_key[key] = variant
         merged_weeks: list[HelloFreshWeek] = []
 
         for account_week in account_weeks:
@@ -1736,9 +1856,12 @@ class HelloFreshPayloadNormalizer:
             #    has already turned into is_selected. In that case we must PRESERVE the menu
             #    week's own flags; recomputing from the (empty) account week would blank every
             #    recipe even though the menu payload said which were chosen.
-            # Project the account week's selection onto the full menu catalog.
-            account_selected_ids = {
-                recipe.recipe_id for recipe in account_week.recipes if recipe.is_selected
+            # Project the account week's selection onto the full menu catalog: each chosen
+            # recipe id with the portions the account week has it at.
+            account_selected = {
+                recipe.recipe_id: recipe.selected_quantity
+                for recipe in account_week.recipes
+                if recipe.is_selected
             }
             # When nothing is explicitly flagged, fall back to "presence == selection" ONLY if
             # the account week is a selection-sized list (the deliveries endpoint lists just the
@@ -1746,11 +1869,24 @@ class HelloFreshPayloadNormalizer:
             # recipes as the menu week — that fallback would mark the whole catalog selected,
             # which is what fabricated the wrong selection on past weeks. In that case derive
             # nothing here and let the menu week's own flags / past-deliveries decide.
-            if not account_selected_ids and len(account_week.recipes) < len(menu_week.recipes):
-                account_selected_ids = {recipe.recipe_id for recipe in account_week.recipes}
-            if account_selected_ids:
+            if not account_selected and len(account_week.recipes) < len(menu_week.recipes):
+                account_selected = {
+                    recipe.recipe_id: recipe.selected_quantity for recipe in account_week.recipes
+                }
+            if account_selected:
                 for recipe in menu_week.recipes:
-                    recipe.is_selected = recipe.recipe_id in account_selected_ids
+                    if recipe.recipe_id not in account_selected:
+                        recipe.is_selected = False
+                        recipe.selected_quantity = None
+                        continue
+                    # The quantity moves with the flag. A selected meal has at least one
+                    # portion; where both payloads count them, the larger count stands, since
+                    # a side that gives no count reads as 1.
+                    menu_quantity = recipe.selected_quantity if recipe.is_selected else None
+                    recipe.is_selected = True
+                    recipe.selected_quantity = max(
+                        account_selected[recipe.recipe_id] or 1, menu_quantity or 1
+                    )
 
             account_week.recipes = menu_week.recipes
             account_week.menu_title = menu_week.menu_title or account_week.menu_title
@@ -1762,6 +1898,8 @@ class HelloFreshPayloadNormalizer:
                 account_week.meals_required = menu_week.meals_required
             if account_week.meals_selected in (None, 0) and menu_week.meals_selected is not None:
                 account_week.meals_selected = menu_week.meals_selected
+            # The menu week's raw is already only the blocks read later (see
+            # _menu_payload_essentials), not the whole menu.
             account_week.raw = {
                 **account_week.raw,
                 "_menu_payload": menu_week.raw,
@@ -1769,6 +1907,42 @@ class HelloFreshPayloadNormalizer:
             merged_weeks.append(account_week)
 
         return merged_weeks
+
+    # The blocks of a week's menu payload that are read after it is normalized: the dish
+    # options (variation titles), the Market catalog, the menu sections and the filter panel,
+    # by the per-week passes and the get_weeks debug view. The meals themselves (hundreds per
+    # week, each with its whole recipe) are already in the week's recipes; only the ones in
+    # the box are kept, with the fields cart pricing builds the priced selection from.
+    _MENU_BLOCKS_KEPT = frozenset({"week", "id", "modularity", "addOns", "categories", "filters"})
+    _MEAL_FIELDS_KEPT = ("index", "selection", "charge", "handle", "sku", "boxSku")
+    _MEAL_LIST_KEYS = frozenset(
+        {"recipes", "meals", "menuItems", "items", "dishes", "entries", "courses"}
+    )
+
+    def _menu_payload_essentials(self, raw_week: dict[str, Any]) -> dict[str, Any]:
+        """Return the parts of a week's menu payload that are read after normalization.
+
+        A week's menu runs to about 1 MB of JSON, several times that as Python objects, and
+        each week kept the whole of it for the life of the data (on the menu week and, merged,
+        on the account week). Keeps the keys' order, so code walking the result meets the
+        blocks in the order it met them in the payload.
+        """
+        selected = [
+            {key: meal[key] for key in self._MEAL_FIELDS_KEPT if key in meal}
+            for meal in self._extract_menu_week_recipe_candidates(raw_week)
+            if isinstance(meal, dict)
+            and isinstance(meal.get("selection"), dict)
+            and meal["selection"].get("quantity") not in (None, 0, "0")
+        ]
+        kept: dict[str, Any] = {}
+        for key, value in raw_week.items():
+            if key in self._MENU_BLOCKS_KEPT:
+                kept[key] = value
+            elif key in self._MEAL_LIST_KEYS and selected and "meals" not in kept:
+                kept["meals"] = selected
+        if selected and "meals" not in kept:
+            kept["meals"] = selected
+        return kept
 
     def _merge_past_delivery_recipes_into_account_weeks(
         self,
@@ -1787,19 +1961,13 @@ class HelloFreshPayloadNormalizer:
         if not past_delivery_weeks:
             return list(account_weeks)
 
-        past_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
-        past_by_week_id: dict[str, HelloFreshWeek] = {}
-        for past_week in past_delivery_weeks:
-            if not past_week.recipes:
-                continue
-            past_by_key[(past_week.subscription_id, past_week.week_id)] = past_week
-            # id-only index used ONLY when a subscription id is missing on one side; with
-            # two subscriptions the same ISO week maps to two different delivered menus.
-            past_by_week_id[past_week.week_id] = past_week
+        # Matched by (week, subscription): with two subscriptions the same ISO week maps to
+        # two different delivered menus (see WeekLookup).
+        delivered_history = WeekLookup(week for week in past_delivery_weeks if week.recipes)
 
         # Delivery dates are local-market calendar dates — use LOCAL today, matching
         # models.py, so week classification can't flip near midnight UTC.
-        today = date.today()
+        today = local_today()
         grace_floor = today - timedelta(weeks=self.menu_grace_weeks)
         for account_week in account_weeks:
             # Only touch weeks that are actually in the PAST. The deliveries/past-deliveries
@@ -1811,17 +1979,7 @@ class HelloFreshPayloadNormalizer:
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
-            past_week = past_by_key.get((account_week.subscription_id, account_week.week_id))
-            if past_week is None:
-                candidate = past_by_week_id.get(account_week.week_id)
-                # Fall back to the id-only match ONLY when a subscription id is missing on
-                # either side. When both sides carry (different) subscription ids, matching
-                # by week id alone would stamp another subscription's delivered meals onto
-                # this week.
-                if candidate is not None and (
-                    candidate.subscription_id is None or account_week.subscription_id is None
-                ):
-                    past_week = candidate
+            past_week = delivered_history.find(account_week.week_id, account_week.subscription_id)
             if past_week is None:
                 continue
 
@@ -1831,7 +1989,7 @@ class HelloFreshPayloadNormalizer:
             # wrongly badge a week you personally chose as "Preselected".
             account_week.meals_preselected = False
 
-            delivered = self._delivered_meals_only(account_week, past_week.recipes)
+            delivered = self._delivered_meals_only(account_week, past_week)
             if not delivered:
                 continue
 
@@ -1844,38 +2002,91 @@ class HelloFreshPayloadNormalizer:
             # delivered-only replacement below, same as an old week.
             if account_week.delivery_date >= grace_floor and account_week.recipes:
                 self._overlay_delivered_selection(account_week, delivered)
-                account_week.menu_title = account_week.menu_title or past_week.menu_title
-                account_week.meals_selected = past_week.meals_selected or len(delivered)
-                account_week.meals_required = (
-                    past_week.meals_required or account_week.meals_required
-                )
-                continue
+            else:
+                # An OLDER past week shows exactly the meals that were DELIVERED. We deliberately
+                # do NOT keep whatever the planning-menu endpoint attached as a "browsable
+                # catalog": for an old week HelloFresh has no real menu, so it returns a bloated
+                # multi-week AGGREGATE (~1000+ dishes spanning many weeks), and there is no
+                # reliable structural signal to tell that apart from a genuine per-week menu
+                # (only fragile size heuristics). Rather than risk flooding a past week with
+                # meals that were never available that week, the delivered set (from
+                # past-deliveries, with images) is authoritative and replaces it.
+                self._mark_delivered(account_week.recipes, delivered)
+                account_week.recipes = delivered
+                # The browsable catalog was replaced by the delivered set, so the (possibly
+                # multi-MB aggregate) menu payload stashed on this week is now dead weight kept
+                # alive for the whole poll interval. Drop it — nothing reads it back for an old
+                # week (writes/pricing only touch editable current/future weeks). It goes only
+                # after the Market has taken what it alone knows: how many of each add-on.
+                if past_week.market_items:
+                    account_week.market_items = self._purchased_market_items(
+                        account_week, past_week
+                    )
+                account_week.raw.pop("_menu_payload", None)
 
-            # An OLDER past week shows exactly the meals that were DELIVERED. We deliberately do
-            # NOT keep whatever the planning-menu endpoint attached as a "browsable catalog": for
-            # an old week HelloFresh has no real menu, so it returns a bloated multi-week
-            # AGGREGATE (~1000+ dishes spanning many weeks), and there is no reliable structural
-            # signal to tell that apart from a genuine per-week menu (only fragile size
-            # heuristics). Rather than risk flooding a past week with meals that were never
-            # available that week, the delivered set (from past-deliveries, with images) is
-            # authoritative and replaces it.
-            for recipe in delivered:
-                recipe.is_selected = True
-            account_week.recipes = delivered
             account_week.menu_title = account_week.menu_title or past_week.menu_title
-            # Counts follow what actually shipped, overriding any stale menu/plan values.
-            account_week.meals_selected = past_week.meals_selected or len(delivered)
-            account_week.meals_required = past_week.meals_required or account_week.meals_required
-            # The browsable catalog was replaced by the delivered set, so the (possibly
-            # multi-MB aggregate) menu payload stashed on this week is now dead weight kept
-            # alive for the whole poll interval. Drop it — nothing reads it back for an old
-            # week (writes/pricing only touch editable current/future weeks).
-            account_week.raw.pop("_menu_payload", None)
+            # Counts follow what actually shipped, overriding any stale menu/plan values, and
+            # they count portions: a doubled meal fills two of the box's meals. A box held at
+            # least what it delivered, which history (one line per dish) can undercount.
+            portions = self._selected_portions(account_week.recipes)
+            account_week.meals_selected = portions
+            required = past_week.meals_required or account_week.meals_required
+            account_week.meals_required = max(required, portions) if required else required
 
         return list(account_weeks)
 
     @staticmethod
+    def _catalog_matcher(
+        recipes: Sequence[HelloFreshRecipe],
+    ) -> Callable[[HelloFreshRecipe], HelloFreshRecipe | None]:
+        """Return a function that finds a delivered meal's entry among ``recipes``.
+
+        By recipe id, falling back to a case-insensitive name match: past-deliveries ids don't
+        always line up with menu ids.
+        """
+        by_id = {recipe.recipe_id: recipe for recipe in recipes}
+        by_name: dict[str, HelloFreshRecipe] = {}
+        for recipe in recipes:
+            if recipe.name:
+                by_name.setdefault(recipe.name.strip().casefold(), recipe)
+
+        def find(delivered: HelloFreshRecipe) -> HelloFreshRecipe | None:
+            match = by_id.get(delivered.recipe_id)
+            if match is None and delivered.name:
+                match = by_name.get(delivered.name.strip().casefold())
+            return match
+
+        return find
+
+    @staticmethod
+    def _ordered_portions(recipe: HelloFreshRecipe | None) -> int:
+        """Return how many portions a catalog entry was ordered at (0 when it wasn't)."""
+        if recipe is None or not recipe.is_selected:
+            return 0
+        return recipe.selected_quantity or 1
+
+    @classmethod
+    def _mark_delivered(
+        cls,
+        catalog: Sequence[HelloFreshRecipe],
+        delivered: Sequence[HelloFreshRecipe],
+    ) -> None:
+        """Mark the delivered meals selected, at the portions the week's catalog had them.
+
+        History lists each delivered dish once, whatever its quantity. Where the week's menu
+        is still at hand it says how many portions were ordered, and the larger count stands:
+        otherwise a double portion became a single one the day after it arrived, and the meal
+        plan refused its second night.
+        """
+        find = cls._catalog_matcher(catalog)
+        for recipe in delivered:
+            ordered = cls._ordered_portions(find(recipe))
+            recipe.is_selected = True
+            recipe.selected_quantity = max(recipe.selected_quantity or 1, ordered)
+
+    @classmethod
     def _overlay_delivered_selection(
+        cls,
         account_week: HelloFreshWeek,
         delivered: Sequence[HelloFreshRecipe],
     ) -> None:
@@ -1887,25 +2098,26 @@ class HelloFreshPayloadNormalizer:
         entries matching a delivered meal by recipe id, falling back to a case-insensitive name
         match (past-deliveries ids don't always line up with menu ids). A delivered meal with no
         catalog match at all is appended, so what shipped is always visible.
+
+        A delivered meal keeps the portions the catalog had it at (see ``_mark_delivered``).
         """
-        catalog_by_id = {recipe.recipe_id: recipe for recipe in account_week.recipes}
-        catalog_by_name: dict[str, HelloFreshRecipe] = {}
+        find = cls._catalog_matcher(account_week.recipes)
+        ordered = {id(recipe): cls._ordered_portions(recipe) for recipe in account_week.recipes}
         for recipe in account_week.recipes:
             recipe.is_selected = False
             recipe.selected_quantity = None
-            if recipe.name:
-                catalog_by_name.setdefault(recipe.name.strip().casefold(), recipe)
 
         for delivered_recipe in delivered:
-            match = catalog_by_id.get(delivered_recipe.recipe_id)
-            if match is None and delivered_recipe.name:
-                match = catalog_by_name.get(delivered_recipe.name.strip().casefold())
+            match = find(delivered_recipe)
             if match is None:
                 delivered_recipe.is_selected = True
+                delivered_recipe.selected_quantity = delivered_recipe.selected_quantity or 1
                 account_week.recipes.append(delivered_recipe)
                 continue
             match.is_selected = True
-            match.selected_quantity = delivered_recipe.selected_quantity
+            match.selected_quantity = max(
+                delivered_recipe.selected_quantity or 1, ordered.get(id(match), 0)
+            )
 
     def _merge_past_delivery_market_items(
         self,
@@ -1925,20 +2137,11 @@ class HelloFreshPayloadNormalizer:
         everything that was merely on offer. Weeks with no recorded purchase are left untouched
         so an in-grace week keeps its catalog and still renders normally.
         """
-        if not past_delivery_weeks:
-            return
+        # Same pairing as the recipe merge: two subscriptions sharing an ISO week can't
+        # inherit each other's purchases (see WeekLookup).
+        purchase_history = WeekLookup(week for week in past_delivery_weeks if week.market_items)
 
-        past_by_key: dict[tuple[str | None, str], HelloFreshWeek] = {}
-        past_by_week_id: dict[str, HelloFreshWeek] = {}
-        for past_week in past_delivery_weeks:
-            if not past_week.market_items:
-                continue
-            past_by_key[(past_week.subscription_id, past_week.week_id)] = past_week
-            past_by_week_id[past_week.week_id] = past_week
-        if not past_by_key:
-            return
-
-        today = date.today()
+        today = local_today()
         for account_week in account_weeks:
             # Only PAST weeks. A current/future week's live catalog is what makes it editable,
             # and past-deliveries can list the current week once its cutoff passes -- replacing
@@ -1946,60 +2149,90 @@ class HelloFreshPayloadNormalizer:
             if account_week.delivery_date is None or account_week.delivery_date >= today:
                 continue
 
-            past_week = past_by_key.get((account_week.subscription_id, account_week.week_id))
-            if past_week is None:
-                candidate = past_by_week_id.get(account_week.week_id)
-                # Same guard as the recipe merge: fall back to an id-only match ONLY when a
-                # subscription id is absent on one side, so two subscriptions sharing an ISO
-                # week can't inherit each other's purchases.
-                if candidate is not None and (
-                    candidate.subscription_id is None or account_week.subscription_id is None
-                ):
-                    past_week = candidate
+            past_week = purchase_history.find(account_week.week_id, account_week.subscription_id)
             if past_week is None:
                 continue
 
-            account_week.market_items = list(past_week.market_items)
+            account_week.market_items = self._purchased_market_items(account_week, past_week)
 
-    def _delivered_meals_only(
+    def _known_market_items(self, account_week: HelloFreshWeek) -> list[HelloFreshMarketItem]:
+        """Return every Market item a week is known to have: attached ones and its catalog's."""
+        items = list(account_week.market_items)
+        if isinstance(account_week.raw, dict):
+            items.extend(self._build_market_items(account_week.raw))
+        return items
+
+    def _purchased_market_items(
         self,
         account_week: HelloFreshWeek,
-        delivered_recipes: Sequence[HelloFreshRecipe],
-    ) -> list[HelloFreshRecipe]:
-        """Return the delivered MEALS, with market add-ons filtered out.
+        past_week: HelloFreshWeek,
+    ) -> list[HelloFreshMarketItem]:
+        """Return the add-ons a past week shipped with, at the quantities it ordered them.
 
-        The delivered record includes ordered market add-ons (appetizers/sides/desserts)
-        alongside the box meals, but those belong to the Market view, not the meal list. A
-        delivered item that is a known market item for the week is dropped so it never shows in
-        My Menu; the market merge marks those selected separately. Known items come from BOTH the
-        week's raw ``addOns`` catalog and its already-merged purchased add-ons -- past the
-        menu-grace window no catalog survives, so the purchased list is the only thing that can
-        still identify an add-on and keep it out of the meal list.
+        History lists each add-on once, without a count. While the week's catalog survives it
+        says how many were ordered, so that count is carried over by item id before the catalog
+        is replaced; otherwise two of an add-on became one the day after delivery.
         """
+        ordered: dict[str, int] = {}
+        for item in self._known_market_items(account_week):
+            if not item.is_selected or not item.selected_quantity:
+                continue
+            for key in (item.item_id, item.recipe_id):
+                if key:
+                    ordered[key] = max(ordered.get(key, 0), item.selected_quantity)
+
+        purchased: list[HelloFreshMarketItem] = []
+        for item in past_week.market_items:
+            quantity = max(ordered.get(item.item_id, 0), ordered.get(item.recipe_id or "", 0))
+            if quantity > (item.selected_quantity or 1):
+                # A copy: the history week keeps what history said.
+                item = replace(item, selected_quantity=quantity)
+            purchased.append(item)
+        return purchased
+
+    @staticmethod
+    def _without_market_items(
+        recipes: Iterable[HelloFreshRecipe],
+        market_items: Iterable[HelloFreshMarketItem],
+    ) -> list[HelloFreshRecipe]:
+        """Return ``recipes`` without those that are one of ``market_items``, by id or name."""
         market_ids: set[str] = set()
         market_names: set[str] = set()
-
-        def _remember(item: HelloFreshMarketItem) -> None:
+        for item in market_items:
             if item.item_id:
                 market_ids.add(item.item_id)
             if item.recipe_id:
                 market_ids.add(item.recipe_id)
             if item.name:
                 market_names.add(item.name.strip().casefold())
+        return [
+            recipe
+            for recipe in recipes
+            if recipe.recipe_id not in market_ids
+            and (recipe.name.strip().casefold() if recipe.name else "") not in market_names
+        ]
 
-        for item in account_week.market_items:
-            _remember(item)
-        if isinstance(account_week.raw, dict):
-            for item in self._build_market_items(account_week.raw):
-                _remember(item)
+    def _delivered_meals_only(
+        self,
+        account_week: HelloFreshWeek,
+        past_week: HelloFreshWeek,
+    ) -> list[HelloFreshRecipe]:
+        """Return the delivered MEALS, with market add-ons filtered out.
 
-        meals: list[HelloFreshRecipe] = []
-        for delivered in delivered_recipes:
-            delivered_name = delivered.name.strip().casefold() if delivered.name else ""
-            if delivered.recipe_id in market_ids or delivered_name in market_names:
-                continue
-            meals.append(delivered)
-        return meals
+        The delivered record includes ordered market add-ons (appetizers/sides/desserts)
+        alongside the box meals, but those belong to the Market view, not the meal list. A
+        delivered item that is a known market item for the week is dropped so it never shows in
+        My Menu; the market merge marks those selected separately.
+
+        Known items are, first, the history week's OWN purchased add-ons: past the menu-grace
+        window no catalog survives, and the account week only gets its purchased list in a
+        later pass, so the history record is the one source that is always there. The account
+        week's catalog and attached items are added for an add-on history left out of its list.
+        """
+        return self._without_market_items(
+            past_week.recipes,
+            (*past_week.market_items, *self._known_market_items(account_week)),
+        )
 
     def _normalize_menu_weeks(
         self,
@@ -2009,74 +2242,75 @@ class HelloFreshPayloadNormalizer:
         """Normalize menu-style payloads into public menu week models."""
         weeks: list[HelloFreshWeek] = []
         for index, raw_week in enumerate(raw_weeks):
-            raw_recipes = self._extract_menu_week_recipe_candidates(raw_week)
-            variation_titles = self._build_variation_titles(raw_week)
-            recipes = [
-                self._recipe_from_raw_meal(
-                    raw_recipe,
-                    default_selected=False,
-                    variation_titles=variation_titles,
-                )
-                for raw_recipe in raw_recipes
-            ]
-            if not recipes:
+            try:
+                week = self._week_from_raw_menu(index, raw_week, subscription)
+            except _MALFORMED_PAYLOAD_ERRORS as err:
+                # As for a deliveries week: a menu of an unexpected shape costs that week's
+                # menu, not the refresh.
+                self._skip_malformed("HelloFresh menu week entry", index, err)
                 continue
-
-            # Prefer the ISO calendar week (``week``: "2026-W26") over ``id``. The
-            # ``/gw/menus-service/menus`` items carry BOTH an internal Mongo ``id`` and the
-            # ISO ``week``; keying by ``id`` produced ObjectId week ids that never match the
-            # account weeks in the merge, so a week's catalog got mis-attached (and the
-            # menus-service "first item" absorbed ~all courses → 1000+ recipes on one week).
-            # Account weeks and past-deliveries are keyed by the ISO week, so use it here too.
-            week_id = str(
-                raw_week.get("week")
-                or raw_week.get("calendarWeek")
-                or raw_week.get("id")
-                or f"menu-week-{index}"
-            )
-            display_name = (
-                raw_week.get("label")
-                or raw_week.get("title")
-                or raw_week.get("displayName")
-                or f"Menu {index + 1}"
-            )
-            meals_selected = coerce_int(
-                raw_week.get("mealsSelected")
-                or raw_week.get("selectedMealCount")
-                or self._find_first_nested_value(
-                    raw_week,
-                    (
-                        "mealsSelected",
-                        "selectedMealCount",
-                        "selectedRecipesCount",
-                        "mealCountSelected",
-                    ),
-                )
-                or (sum(1 for recipe in recipes if recipe.is_selected) if raw_recipes else None)
-            )
-            weeks.append(
-                HelloFreshWeek(
-                    week_id=week_id,
-                    display_name=display_name,
-                    subscription_id=subscription.subscription_id,
-                    delivery_date=parse_date(raw_week.get("deliveryDate") or raw_week.get("date")),
-                    selection_deadline=parse_datetime(
-                        raw_week.get("selectionDeadline") or raw_week.get("cutoffDate")
-                    ),
-                    status=raw_week.get("status") or "menu",
-                    # The week's own box size wins over the subscription's base plan (a resized
-                    # week can hold fewer/more meals than the plan default).
-                    meals_required=self._week_box_meal_count(raw_week)
-                    or subscription.meals_required,
-                    meals_selected=meals_selected,
-                    meals_preselected=bool(raw_week.get("mealsPreselected")),
-                    recipes=recipes,
-                    source="account_menu_api",
-                    menu_title=raw_week.get("title") or raw_week.get("displayName"),
-                    raw=raw_week,
-                )
-            )
+            if week is not None:
+                weeks.append(week)
         return weeks
+
+    def _week_from_raw_menu(
+        self,
+        index: int,
+        raw_week: dict[str, Any],
+        subscription: HelloFreshSubscription,
+    ) -> HelloFreshWeek | None:
+        """Build one menu week; None when the payload lists no meals."""
+        if not isinstance(raw_week, dict):
+            return None
+        # Prefer the ISO calendar week (``week``: "2026-W26") over ``id``. The
+        # ``/gw/menus-service/menus`` items carry BOTH an internal Mongo ``id`` and the
+        # ISO ``week``; keying by ``id`` produced ObjectId week ids that never match the
+        # account weeks in the merge, so a week's catalog got mis-attached (and the
+        # menus-service "first item" absorbed ~all courses → 1000+ recipes on one week).
+        # Account weeks and past-deliveries are keyed by the ISO week, so use it here too.
+        week_id = str(
+            raw_week.get("week")
+            or raw_week.get("calendarWeek")
+            or raw_week.get("id")
+            or f"menu-week-{index}"
+        )
+        raw_recipes = self._extract_menu_week_recipe_candidates(raw_week)
+        recipes = self._recipes_from_raw_meals(
+            raw_recipes,
+            where=f"menu week {week_id}",
+            default_selected=False,
+            variation_titles=self._build_variation_titles(raw_week),
+        )
+        if not recipes:
+            return None
+
+        display_name = (
+            raw_week.get("label")
+            or raw_week.get("title")
+            or raw_week.get("displayName")
+            or f"Menu {index + 1}"
+        )
+        return HelloFreshWeek(
+            week_id=week_id,
+            display_name=display_name,
+            subscription_id=subscription.subscription_id,
+            delivery_date=parse_date(raw_week.get("deliveryDate") or raw_week.get("date")),
+            selection_deadline=parse_datetime(
+                raw_week.get("selectionDeadline") or raw_week.get("cutoffDate")
+            ),
+            status=raw_week.get("status") or "menu",
+            # The week's own box size wins over the subscription's base plan (a resized
+            # week can hold fewer/more meals than the plan default).
+            meals_required=self._week_box_meal_count(raw_week) or subscription.meals_required,
+            # The menu marks each chosen meal itself (`selection.quantity`), so the count is
+            # the portions selected; a count the payload states outright still wins.
+            meals_selected=self._meals_selected_from_raw(raw_week, recipes, search_nested=False),
+            meals_preselected=bool(raw_week.get("mealsPreselected")),
+            recipes=recipes,
+            source="account_menu_api",
+            menu_title=raw_week.get("title") or raw_week.get("displayName"),
+            raw=self._menu_payload_essentials(raw_week),
+        )
 
     def _extract_menu_week_candidates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         """Return the most likely list of menu-week objects from a nested payload."""
@@ -2203,8 +2437,17 @@ class HelloFreshPayloadNormalizer:
         self,
         payload: dict[str, Any],
         subscriptions: Sequence[HelloFreshSubscription],
+        requested_subscription: HelloFreshSubscription | None = None,
     ) -> list[HelloFreshWeek]:
-        """Normalize delivered history payloads into stable week models."""
+        """Normalize delivered history payloads into stable week models.
+
+        ``requested_subscription`` is the subscription the payload was asked for
+        (``/gw/my-deliveries/past-deliveries?subscription=...``). That endpoint's rows carry no
+        subscription id of their own, so they are stamped with the one they were requested
+        for; stamping the account's first subscription instead gave a second subscription's
+        history to the first. Without it (an account-wide endpoint) a row that names no
+        subscription still falls back to the first.
+        """
         raw_weeks = self._extract_past_delivery_candidates(payload)
         if not raw_weeks:
             return []
@@ -2212,79 +2455,104 @@ class HelloFreshPayloadNormalizer:
         subscriptions_by_id = {
             subscription.subscription_id: subscription for subscription in subscriptions
         }
-        default_subscription = subscriptions[0] if subscriptions else None
+        default_subscription = requested_subscription or (
+            subscriptions[0] if subscriptions else None
+        )
         weeks: list[HelloFreshWeek] = []
 
         for index, raw_week in enumerate(raw_weeks):
-            week_id = str(raw_week.get("week") or raw_week.get("id") or f"past-week-{index}")
-            delivery_date = parse_date(
-                raw_week.get("delivery_date")
-                or raw_week.get("deliveryDate")
-                or raw_week.get("date")
-            )
-            # The /gw/my-deliveries/past-deliveries payload identifies each delivered week by its
-            # ISO ``week`` id ONLY (no explicit date), so stamp the week with that ISO week's
-            # Monday as a sortable PLACEHOLDER rather than leaving it date-less. It is not a
-            # delivery date: ``HelloFreshAccountData.finalize`` replaces it with the matching
-            # account week's real scheduled ``deliveryDate``, and "Last delivery day" never reads
-            # it — that sensor follows the carrier's ``tracking.delivery_date`` (issue #6).
-            if delivery_date is None:
-                delivery_date = date_from_iso_week(week_id)
-            if week_id.startswith("past-week-") and delivery_date is None:
-                continue
-
-            subscription_id = str(
-                raw_week.get("subscription_id")
-                or raw_week.get("subscriptionId")
-                or default_subscription.subscription_id
-                if default_subscription is not None
-                else ""
-            )
-            if not subscription_id:
-                continue
-
-            subscription = subscriptions_by_id.get(subscription_id, default_subscription)
-            recipes = [
-                self._recipe_from_raw_meal(raw_recipe)
-                for raw_recipe in self._extract_past_delivery_recipes(raw_week)
-            ]
-            display_name = raw_week.get("label") or raw_week.get("title") or week_id
-            # The Market add-ons this week actually shipped with. Carried on the history week so
-            # _merge_past_delivery_market_items can stamp them onto the matching account week.
-            purchased_market_items = self._build_purchased_market_items(raw_week)
-            weeks.append(
-                HelloFreshWeek(
-                    week_id=week_id,
-                    display_name=str(display_name),
-                    subscription_id=subscription_id,
-                    delivery_date=delivery_date,
-                    status=raw_week.get("status") or "delivered",
-                    # For a HISTORICAL week, the number of meals actually delivered (len(recipes))
-                    # is the truth for that week — prefer it over the CURRENT subscription's plan,
-                    # which can differ (e.g. a 4-meal box that week vs a 3-meal plan today) and
-                    # would otherwise cap a past week at the wrong count.
-                    meals_required=coerce_int(raw_week.get("recipe_count"))
-                    or len(recipes)
-                    or (subscription.meals_required if subscription is not None else None)
-                    or None,
-                    meals_selected=len(recipes) or None,
-                    recipes=recipes,
-                    market_items=purchased_market_items,
-                    source="past_deliveries",
-                    slot_label=self._find_first_nested_value(
-                        raw_week,
-                        ("deliveryName", "timeSlot", "slotLabel"),
-                    ),
-                    shipping_method=self._find_first_nested_value(
-                        raw_week,
-                        ("type", "deliveryType"),
-                    ),
-                    box_size=self._find_first_nested_value(raw_week, ("boxSize", "size")),
-                    **self._common_week_fields(raw_week),
+            try:
+                week = self._week_from_raw_past_delivery(
+                    index, raw_week, subscriptions_by_id, default_subscription
                 )
-            )
+            except _MALFORMED_PAYLOAD_ERRORS as err:
+                # As for a deliveries week: one delivered week of an unexpected shape is left
+                # out of the history, and the rest of the refresh carries on.
+                self._skip_malformed("HelloFresh past delivery entry", index, err)
+                continue
+            if week is not None:
+                weeks.append(week)
 
         return weeks
+
+    def _week_from_raw_past_delivery(
+        self,
+        index: int,
+        raw_week: dict[str, Any],
+        subscriptions_by_id: dict[str, HelloFreshSubscription],
+        default_subscription: HelloFreshSubscription | None,
+    ) -> HelloFreshWeek | None:
+        """Build one delivered week; None when it has no week, date or subscription to key on."""
+        week_id = str(raw_week.get("week") or raw_week.get("id") or f"past-week-{index}")
+        delivery_date = parse_date(
+            raw_week.get("delivery_date") or raw_week.get("deliveryDate") or raw_week.get("date")
+        )
+        # The /gw/my-deliveries/past-deliveries payload identifies each delivered week by its
+        # ISO ``week`` id ONLY (no explicit date), so stamp the week with that ISO week's
+        # Monday as a sortable PLACEHOLDER rather than leaving it date-less. It is not a
+        # delivery date: ``HelloFreshAccountData.finalize`` replaces it with the matching
+        # account week's real scheduled ``deliveryDate``, and "Last delivery day" never reads
+        # it — that sensor follows the carrier's ``tracking.delivery_date`` (issue #6).
+        if delivery_date is None:
+            delivery_date = date_from_iso_week(week_id)
+        if week_id.startswith("past-week-") and delivery_date is None:
+            return None
+
+        # The row's own subscription id wins; only without one does the default stand in.
+        subscription_id = str(
+            raw_week.get("subscription_id")
+            or raw_week.get("subscriptionId")
+            or (default_subscription.subscription_id if default_subscription is not None else "")
+        )
+        if not subscription_id:
+            return None
+
+        subscription = subscriptions_by_id.get(subscription_id, default_subscription)
+        # The Market add-ons this week actually shipped with. Carried on the history week so
+        # _merge_past_delivery_market_items can stamp them onto the matching account week.
+        purchased_market_items = self._build_purchased_market_items(raw_week)
+        # History can list a bought add-on among the meals as well. The week's own `addons`
+        # say which those are, so they are taken out here: the meal list and the counts below
+        # are then right for every reader, in whatever order the later merges run.
+        recipes = self._without_market_items(
+            self._recipes_from_raw_meals(
+                self._extract_past_delivery_recipes(raw_week),
+                where=f"past delivery {week_id}",
+            ),
+            purchased_market_items,
+        )
+        portions = self._selected_portions(recipes)
+        display_name = raw_week.get("label") or raw_week.get("title") or week_id
+        return HelloFreshWeek(
+            week_id=week_id,
+            display_name=str(display_name),
+            subscription_id=subscription_id,
+            delivery_date=delivery_date,
+            status=raw_week.get("status") or "delivered",
+            # For a HISTORICAL week, the number of meals actually delivered is the truth for
+            # that week — prefer it over the CURRENT subscription's plan, which can differ
+            # (e.g. a 4-meal box that week vs a 3-meal plan today) and would otherwise cap a
+            # past week at the wrong count.
+            meals_required=coerce_int(raw_week.get("recipe_count"))
+            or max(len(recipes), portions)
+            or (subscription.meals_required if subscription is not None else None)
+            or None,
+            # Portions, as everywhere: a meal at quantity 2 counts as two.
+            meals_selected=portions or len(recipes) or None,
+            recipes=recipes,
+            market_items=purchased_market_items,
+            source="past_deliveries",
+            # A delivered week is read from its documented fields only. Searching it for the
+            # first `type` or `size` at any depth returned a meal tag's type as the shipping
+            # method: its meals carry tags shaped {name, type}.
+            slot_label=raw_week.get("timeSlot")
+            or raw_week.get("slotLabel")
+            or dict_path(raw_week, "deliveryOption", "deliveryName"),
+            shipping_method=raw_week.get("shippingMethod")
+            or dict_path(raw_week, "deliveryOption", "type"),
+            box_size=raw_week.get("boxSize"),
+            **self._common_week_fields(raw_week),
+        )
 
     def _extract_past_delivery_candidates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         """Return the most likely delivered-history list from a payload."""

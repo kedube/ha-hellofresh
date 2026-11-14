@@ -18,11 +18,12 @@ only mounted for countries in ``TRACEY_COUNTRIES``.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -39,6 +40,11 @@ from .const import (
     TRACEY_SITES,
 )
 from .token_manager import _BROWSER_USER_AGENT
+
+if TYPE_CHECKING:
+    # Annotations only: at runtime this module stays independent of the account coordinator,
+    # which imports the whole client.
+    from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +112,10 @@ class TraceyData:
     ``active`` is the headline flag: True only when a token exists AND the endpoint reports
     a live (non-invalid) delivery. All detail fields are None when inactive, so the sensors
     read as Unknown outside a delivery window rather than carrying stale values.
+
+    Two snapshots are equal when they describe the same delivery state. When it was fetched
+    and the raw answer are left out of the comparison: the fetch time differs on every poll,
+    so counting it made every poll look like a change and rewrote every tracking sensor.
     """
 
     active: bool = False
@@ -119,8 +129,8 @@ class TraceyData:
     driver_location: dict[str, float] | None = None
     customer_location: dict[str, float] | None = None
     tracking_url: str | None = None
-    fetched_at: datetime | None = None
-    raw: dict[str, Any] = field(default_factory=dict)
+    fetched_at: datetime | None = field(default=None, compare=False)
+    raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         """JSON-safe form for the ``get_delivery_tracking`` service response."""
@@ -207,12 +217,15 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
     idle tick performs a single unauthenticated GET at most (none when no token exists at all).
     """
 
+    # Always passed in (see __init__), so never None as the base class allows.
+    config_entry: HelloFreshConfigEntry
+
     def __init__(
         self,
         hass: HomeAssistant,
         session: aiohttp.ClientSession,
-        main_coordinator,
-        config_entry,
+        main_coordinator: HelloFreshDataUpdateCoordinator,
+        config_entry: HelloFreshConfigEntry,
     ) -> None:
         """Initialize with the shared aiohttp session and the account coordinator."""
         super().__init__(
@@ -227,7 +240,10 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         )
         self._session = session
         self._main_coordinator = main_coordinator
-        self._last_fetch_monotonic: float | None = None
+        # When the endpoint was last asked, whether or not it answered, and the lock that
+        # makes service callers arriving together share one request (see async_fetch_latest).
+        self._last_attempt_monotonic: float | None = None
+        self._fetch_lock = asyncio.Lock()
 
     @property
     def active_update_interval(self) -> timedelta:
@@ -249,7 +265,8 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
     @property
     def tracking_site(self) -> str:
         """The account's tracking site, whose page normally makes the cloud-function call."""
-        return TRACEY_SITES.get(self.config_entry.data.get(CONF_COUNTRY), TRACEY_SITES["nl"])
+        country = self.config_entry.data.get(CONF_COUNTRY, "")
+        return TRACEY_SITES.get(country, TRACEY_SITES["nl"])
 
     def _current_tracking_url(self) -> str | None:
         """Return the tracked order's tracking URL from the latest account data."""
@@ -271,6 +288,7 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
             self.update_interval = IDLE_UPDATE_INTERVAL
             return TraceyData(fetched_at=dt_util.utcnow())
 
+        self._last_attempt_monotonic = time.monotonic()
         try:
             async with self._session.get(
                 TRACEY_ENDPOINT,
@@ -289,9 +307,13 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         except UpdateFailed:
             raise
         except (aiohttp.ClientError, TimeoutError) as err:
-            raise UpdateFailed(f"Tracey endpoint unreachable: {err}") from err
+            # Only the error's type, and no chained cause: aiohttp puts the request URL in
+            # some of its messages, and this URL carries the delivery's tracking token.
+            raise UpdateFailed(f"Tracey endpoint unreachable: {type(err).__name__}") from None
+        except ValueError as err:
+            # A 200 whose body is not JSON (an error page, an empty answer).
+            raise UpdateFailed("Tracey endpoint returned a body that is not JSON") from err
 
-        self._last_fetch_monotonic = time.monotonic()
         data = parse_tracey_payload(payload, tracking_url=tracking_url)
         self.update_interval = (
             self.active_update_interval if live_polling_phase(data) else IDLE_UPDATE_INTERVAL
@@ -302,15 +324,18 @@ class HelloFreshTraceyCoordinator(DataUpdateCoordinator[TraceyData]):
         """Return a fresh snapshot for the service, throttled to one fetch a minute.
 
         Reusing a snapshot younger than the floor keeps repeated or concurrent calls from
-        multiplying requests. A failed refresh degrades to the last snapshot rather than
+        multiplying requests. The age is checked under a lock: callers arriving together wait
+        for the first one's request and then find it recent, where each used to send its own.
+        A failed request counts as an attempt too, so an endpoint that is down is not asked
+        again by every call. A failed refresh degrades to the last snapshot rather than
         raising, so callers still get the most recent known state.
         """
-        age = (
-            time.monotonic() - self._last_fetch_monotonic
-            if self._last_fetch_monotonic is not None
-            else None
-        )
-        if self.data is not None and age is not None and age < MIN_SERVICE_FETCH_INTERVAL_SECONDS:
-            return self.data
-        await self.async_refresh()
+        async with self._fetch_lock:
+            if not self._asked_recently():
+                await self.async_refresh()
         return self.data if self.data is not None else TraceyData(fetched_at=dt_util.utcnow())
+
+    def _asked_recently(self) -> bool:
+        """Return whether the endpoint was asked within the service's one-minute floor."""
+        asked = self._last_attempt_monotonic
+        return asked is not None and time.monotonic() - asked < MIN_SERVICE_FETCH_INTERVAL_SECONDS

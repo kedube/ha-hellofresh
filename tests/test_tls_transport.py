@@ -8,6 +8,7 @@ requiring curl_cffi to be installed: the curl_cffi path is simulated by injectin
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -53,9 +54,16 @@ class _FakeAiohttpSession:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def post(self, url, params=None, json=None, headers=None):
+    async def post(self, url, params=None, json=None, headers=None, **kwargs):
         self.calls.append(
-            {"method": "POST", "url": url, "params": params, "json": json, "headers": headers}
+            {
+                "method": "POST",
+                "url": url,
+                "params": params,
+                "json": json,
+                "headers": headers,
+                **kwargs,
+            }
         )
         return _FakeAiohttpResponse()
 
@@ -90,6 +98,7 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
             impersonate=None,
             default_headers=None,
             verify=None,
+            allow_redirects=None,
         ):
             return await post(
                 method=method,
@@ -102,6 +111,7 @@ def _install_fake_curl_cffi(monkeypatch, *, post):
                 default_headers=default_headers,
                 curl_options=self.curl_options,
                 verify=verify,
+                allow_redirects=allow_redirects,
             )
 
     requests_module = ModuleType("curl_cffi.requests")
@@ -137,6 +147,8 @@ def test_falls_back_to_aiohttp_when_curl_cffi_absent(monkeypatch) -> None:
     assert len(session.calls) == 1
     assert session.calls[0]["url"].endswith("/gw/login")
     assert session.calls[0]["json"] == {"username": "a", "password": "b"}
+    # aiohttp follows redirects by default too, and re-posts the body on a 307 or 308.
+    assert session.calls[0]["allow_redirects"] is False
     assert _run(response.json(content_type=None)) == {"access_token": "from-aiohttp"}
 
 
@@ -156,6 +168,7 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
         default_headers,
         curl_options,
         verify=None,
+        allow_redirects=None,
     ):
         seen.update(
             {
@@ -169,6 +182,7 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
                 "default_headers": default_headers,
                 "curl_options": curl_options,
                 "verify": verify,
+                "allow_redirects": allow_redirects,
             }
         )
         return SimpleNamespace(
@@ -201,6 +215,8 @@ def test_uses_curl_cffi_with_chrome_impersonation_when_available(monkeypatch) ->
     assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_AUTH_HEADER_ORDER}
     # TLS cert verification is explicitly enabled on the credential-carrying auth POST.
     assert seen["verify"] is True
+    # A redirect is never followed: the body would be posted again to wherever it points.
+    assert seen["allow_redirects"] is False
     assert seen["json"] == {"username": "a", "password": "b"}
     assert isinstance(response, AuthResponse)
     assert response.status == 200
@@ -235,6 +251,37 @@ def test_curl_cffi_mid_request_failure_never_resends_auth_post(monkeypatch) -> N
     assert session.calls == []
 
 
+def test_failed_auth_post_logs_which_curl_error_it_was(monkeypatch, caplog) -> None:
+    """Callers only see ClientError, so the curl error's type is logged where it is known.
+
+    Without it every failed sign-in read "transport error: ClientError", whether the cause
+    was a timeout, a refused connection or a TLS failure. Only the type and the templated
+    path are logged: never the query string or the error's own text.
+    """
+
+    class CurlTimeout(Exception):
+        """Stands in for curl_cffi's timeout error."""
+
+    async def failing_post(**_kwargs):
+        raise CurlTimeout("timed out posting to /gw/refresh?country=GB with token r")
+
+    _install_fake_curl_cffi(monkeypatch, post=failing_post)
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(ClientError) as raised:
+        _run(
+            async_auth_post(
+                _FakeAiohttpSession(),  # type: ignore[arg-type]
+                "https://www.hellofresh.co.uk/gw/refresh",
+                params={"country": "GB"},
+                json_payload={"refresh_token": "r"},
+            )
+        )
+
+    assert "curl_cffi auth POST to /gw/refresh failed (CurlTimeout)" in caplog.text
+    assert "country=GB" not in caplog.text and "token r" not in caplog.text
+    assert isinstance(raised.value.__cause__, CurlTimeout)
+
+
 def test_auth_response_exposes_status_headers_text_and_json() -> None:
     """AuthResponse mirrors the aiohttp slice the token manager relies on."""
     resp = AuthResponse(status=403, headers={"Content-Type": "text/html"}, body="<html>blocked")
@@ -259,6 +306,7 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
         default_headers,
         curl_options,
         verify=None,
+        allow_redirects=None,
     ):
         seen.update(
             {
@@ -270,6 +318,7 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
                 "accept_encoding": accept_encoding,
                 "curl_options": curl_options,
                 "verify": verify,
+                "allow_redirects": allow_redirects,
             }
         )
         return SimpleNamespace(
@@ -297,6 +346,8 @@ def test_data_request_uses_curl_cffi_with_method_when_available(monkeypatch) -> 
     assert seen["accept_encoding"] == "gzip, deflate, br, zstd"
     assert seen["headers"] == {"Authorization": "Bearer t"}
     assert seen["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_XHR_HEADER_ORDER}
+    # Data and page requests keep following redirects, as a browser does.
+    assert seen["allow_redirects"] is True
     assert isinstance(response, AuthResponse)
     assert _run(response.json(content_type=None)) == {"weeks": []}
 
@@ -659,6 +710,56 @@ def test_close_shared_session_closes_and_drops_it(monkeypatch) -> None:
     assert _CountingAsyncSession.instances == 1
 
 
+def test_a_closed_entry_gets_no_new_pooled_session(monkeypatch) -> None:
+    """A request still running when its entry unloads must not open a session nobody closes.
+
+    The pool is keyed by the entry's aiohttp session. After unload closed it, a late request
+    simply re-created a pooled curl session under the old key, and it stayed there for good.
+    The late request now fails as a connection error, and is not passed to aiohttp instead.
+    """
+    _use_counting_session(monkeypatch)
+    owner = _FakeAiohttpSession()
+    other_owner = _FakeAiohttpSession()
+
+    async def _close_then_request():
+        await async_request(owner, "GET", "https://www.hellofresh.com/gw/api/one")
+        await tls_transport.async_close_shared_session(owner)
+        errors = []
+        for late_request in (
+            async_request(owner, "GET", "https://www.hellofresh.com/gw/api/late"),
+            async_auth_post(owner, "https://www.hellofresh.com/gw/refresh"),
+        ):
+            try:
+                await late_request
+            except ClientError as err:
+                errors.append(err)
+        # Another entry is not affected, and is the only one left in the pool.
+        await async_request(other_owner, "GET", "https://www.hellofresh.com/gw/api/two")
+        return errors, list(tls_transport._SHARED_SESSIONS)
+
+    errors, pooled_keys = _run(_close_then_request())
+
+    assert len(errors) == 2
+    assert all(isinstance(err.__cause__, tls_transport.OwnerClosedError) for err in errors)
+    assert [key[2] for key in pooled_keys] == [other_owner]
+    assert _CountingAsyncSession.instances == 2  # one each; none for the late requests
+    assert owner.calls == []  # and no fallback to the entry's aiohttp session
+
+
+def test_closing_every_session_does_not_shut_out_their_owners(monkeypatch) -> None:
+    """Only a named owner stays closed; closing the whole pool is not an entry unloading."""
+    _use_counting_session(monkeypatch)
+    owner = _FakeAiohttpSession()
+
+    async def _close_all_then_request():
+        await async_request(owner, "GET", "https://www.hellofresh.com/gw/api/one")
+        await tls_transport.async_close_shared_session()
+        return await async_request(owner, "GET", "https://www.hellofresh.com/gw/api/two")
+
+    assert _run(_close_all_then_request()).status == 200
+    assert _CountingAsyncSession.instances == 2
+
+
 def test_close_shared_session_is_a_noop_without_one(monkeypatch) -> None:
     """Closing when nothing was ever created must not raise (unload runs unconditionally)."""
     _use_counting_session(monkeypatch)
@@ -691,6 +792,28 @@ def test_close_shared_session_survives_a_failing_close(monkeypatch) -> None:
     _run(_request_then_close())  # must not raise
 
     assert tls_transport._SHARED_SESSIONS == {}
+
+
+def test_a_failing_close_is_logged_by_type_only(monkeypatch, caplog) -> None:
+    """curl's error text can carry the URL of the last request, query string included."""
+
+    class _BadCloseSession(_CountingAsyncSession):
+        async def close(self) -> None:
+            raise RuntimeError("closed after https://www.hellofresh.com/gw/x?token=FAKE-TOKEN")
+
+    _use_counting_session(monkeypatch)
+    monkeypatch.setattr(tls_transport, "_ASYNC_SESSION_CLS", _BadCloseSession)
+    session = _FakeAiohttpSession()
+
+    async def _request_then_close():
+        await async_request(session, "GET", "https://www.hellofresh.com/gw/api/thing")
+        await tls_transport.async_close_shared_session(session)
+
+    with caplog.at_level(logging.DEBUG, logger=tls_transport.__name__):
+        _run(_request_then_close())
+
+    assert "Closing pooled curl_cffi session failed: RuntimeError" in caplog.text
+    assert "FAKE-TOKEN" not in caplog.text
 
 
 # ---- browser identity matches the impersonated Chrome --------------------------------------

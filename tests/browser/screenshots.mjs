@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./chrome.mjs";
+import { launchBrowser, serveDeliveryPhotos } from "./chrome.mjs";
 import { startServer } from "./server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +13,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
 const { server, port } = await startServer(0);
 const browser = await launchBrowser();
+serveDeliveryPhotos(browser, port);
 const problems = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

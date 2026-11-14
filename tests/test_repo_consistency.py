@@ -114,8 +114,9 @@ def test_services_yaml_matches_registered_services() -> None:
     const_src = (COMPONENT / "const.py").read_text(encoding="utf-8")
     service_consts = dict(re.findall(r'^(SERVICE_[A-Z_0-9]+)\s*=\s*"([^"]+)"', const_src, re.M))
 
-    init_src = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
-    registered_consts = set(re.findall(r"async_register\w*\(\s*DOMAIN,\s*([A-Z_0-9]+)", init_src))
+    # Services are registered from the SERVICES table in services.py, one ServiceSpec a row.
+    services_src = (COMPONENT / "services.py").read_text(encoding="utf-8")
+    registered_consts = set(re.findall(r"ServiceSpec\(\s*([A-Z_0-9]+)", services_src))
     registered = {service_consts.get(name, name) for name in registered_consts}
 
     assert registered, "no registered services found -- the detection regex needs updating"
@@ -226,3 +227,30 @@ def test_documentation_links_resolve() -> None:
                 broken.append(f"{name}: {target}#{fragment}")
 
     assert not broken, "broken documentation links:\n  " + "\n  ".join(broken)
+
+
+def test_documented_service_counts_match_services_yaml() -> None:
+    """Every "N services" in the docs is the real number.
+
+    The README, CONTRIBUTING and the services reference each state how many services there
+    are, and three different numbers (24, 26 and 29) were in them at once.
+    """
+    count = len(yaml.safe_load((COMPONENT / "services.yaml").read_text(encoding="utf-8")))
+    stated: list[tuple[str, int]] = []
+    # The tracked docs only: a local, git-ignored notes file in docs/ is not published.
+    for doc in {*DOCS, "QUALITY_SCALE.md"}:
+        text = (REPO / doc).read_text(encoding="utf-8")
+        stated += [(doc, int(n)) for n in re.findall(r"\b(\d+) services\b", text)]
+
+    assert stated, "no service counts found -- the pattern needs updating"
+    wrong = [(doc, n) for doc, n in stated if n != count]
+    assert not wrong, f"services.yaml has {count} services, but the docs say: {wrong}"
+
+
+def test_hacs_minimum_home_assistant_matches_the_readme() -> None:
+    """hacs.json's minimum version is the one the README states."""
+    minimum = _load(REPO / "hacs.json")["homeassistant"]
+    major, minor = minimum.split(".")[:2]
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+
+    assert f"Home Assistant {major}.{minor} or newer" in readme

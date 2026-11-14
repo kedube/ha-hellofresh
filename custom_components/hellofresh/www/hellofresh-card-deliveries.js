@@ -24,8 +24,7 @@ const [L, UI] = await Promise.all([
 ]);
 
 const { esc, t, ht, html } = L;
-const { icon, pill } = UI;
-const strong = (text) => html(`<strong>${esc(text)}</strong>`);
+const { icon, pill, strong } = UI;
 
 const PAST_STEP = 6;
 
@@ -57,6 +56,11 @@ export class OverviewView {
     ].join("");
   }
 
+  afterRender() {
+    UI.watchSkipCutoff(this.card, this);
+    this._announceLive();
+  }
+
   // ---- today's meals (the Week tab's plan) -------------------------------------------------
 
   // "Tonight: Creamy Tuscan Chicken at 5:30 PM" — what's still to come today, linking to Week.
@@ -66,7 +70,8 @@ export class OverviewView {
     const today = L.todayPlan(card.mealPlan);
     if (!today.length) return "";
     // The time stays on one line ("5:30 PM", never "5:30" then "PM").
-    const when = (slot) => html(`<span style="white-space:nowrap">${esc(slot.start ? L.fmtTime(new Date(slot.start)) : "")}</span>`);
+    // On Home Assistant's clock: the plan's times are its wall time, wherever this browser is.
+    const when = (slot) => html(`<span style="white-space:nowrap">${esc(slot.start ? L.fmtHaTime(slot.start) : "")}</span>`);
     const text =
       today.length === 1 && today[0].meal === "dinner"
         ? ht("weekplan.tonight", { name: strong(L.slotTitle(today[0].slot)), time: when(today[0].slot) })
@@ -96,8 +101,16 @@ export class OverviewView {
     const selection = card.box.displayMeals(week);
     const meals = UI.chosenMeals(week, selection);
     const days = L.daysUntil(week.delivery_date);
+    // Delivered comes first: a box that came this morning (or a day early) is not "arriving",
+    // it is the last box (its pill beside this says Delivered).
     const eyebrow = t(
-      !upcoming ? "overview.last_box" : days === 0 ? "overview.arriving_today" : days === 1 ? "overview.arriving_tomorrow" : "overview.next_box"
+      !upcoming || L.isDelivered(week)
+        ? "overview.last_box"
+        : days === 0
+          ? "overview.arriving_today"
+          : days === 1
+            ? "overview.arriving_tomorrow"
+            : "overview.next_box"
     );
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
 
@@ -112,11 +125,10 @@ export class OverviewView {
     }
 
     const blocks = [];
-    if (editable && deadline) {
-      const tone = L.deadlineTone(deadline);
-      blocks.push(`<div class="hf-deadline${tone === "urgent" ? " urgent" : ""}">${icon("mdi:timer-outline")}
-        <div>${ht("week.make_changes_by", { date: strong(L.fmtDateTime(deadline)) })} · ${UI.countdownHtml(deadline)}</div></div>`);
-    }
+    if (editable && deadline) blocks.push(UI.deadlineLine(deadline, { hero: true }));
+    // HelloFresh moved the box: when it comes now.
+    const revised = UI.revisedNotice(week);
+    if (revised) blocks.push(revised);
     if (skipped) {
       blocks.push(`<div class="hf-notice tone-muted">${icon("mdi:calendar-remove-outline")}<div class="hf-noticebody">
         <strong>${ht("overview.skipped_title")}</strong> ${ht(L.canSkip(week) ? "overview.skipped_body_unskip" : "overview.skipped_body")}</div></div>`);
@@ -168,12 +180,7 @@ export class OverviewView {
     } else if (!skipped && card.hasView("menu")) {
       actions.push(`<button class="hf-btn" data-action="goto" data-view="menu" ${weekAttr}>${icon("mdi:silverware-fork-knife")}${ht("overview.view_meals")}</button>`);
     }
-    const pantryId = card.pantryEntityFor(week);
-    if (pantryId && !skipped) {
-      const s = card.entityState(pantryId);
-      const count = s && Number(s.state);
-      actions.push(`<button class="hf-btn" data-action="pantry" data-entity="${esc(pantryId)}" ${weekAttr}>${icon("mdi:basket-outline")}${ht("pantry.list")}${Number.isFinite(count) && count > 0 ? ` · ${count}` : ""}</button>`);
-    }
+    if (!skipped) actions.push(UI.pantryButton(card, week, { label: t("pantry.list") }));
     if (L.canSkip(week) && skipped) {
       actions.push(`<button class="hf-btn primary" data-action="skip" ${weekAttr} ${card.busy ? "disabled" : ""}>${icon("mdi:restore")}${ht("week.unskip_this_week")}</button>`);
     }
@@ -191,7 +198,7 @@ export class OverviewView {
           ${meta.length ? `<div class="hf-herometa">${meta.join("")}</div>` : ""}
           ${blocks.join("")}
           ${money.length ? `<div class="hf-herometa">${money.join("")}</div>` : ""}
-          ${actions.length ? `<div class="hf-actions">${actions.join("")}</div>` : ""}
+          ${actions.some(Boolean) ? `<div class="hf-actions">${actions.join("")}</div>` : ""}
           ${links.length ? `<div class="hf-linkrow">${links.join("")}</div>` : ""}
         </div>
         ${this._heroMeals(week, meals, editable, skipped)}
@@ -226,17 +233,50 @@ export class OverviewView {
     }
     if (live.driver) facts.push(`<span>${icon("mdi:account-outline")}${ht("live.driver", { name: strong(live.driver) })}</span>`);
     if (live.window) facts.push(`<span>${icon("mdi:calendar-clock-outline")}${ht("live.window", { window: live.window })}</span>`);
-    return `<div class="hf-live${live.tone ? ` tone-${live.tone}` : ""}" aria-live="polite">
+    // Not a live region itself: this block is rebuilt with every render, and a screen reader
+    // only follows a region that stays in the page. _announceLive() keeps that one.
+    return `<div class="hf-live${live.tone === "warn" || live.tone === "danger" ? ` tone-${live.tone}` : ""}">
         <div class="hf-livehead">
           <span class="hf-livebadge"><span class="hf-livedot"></span>${ht("live.badge")}</span>
           <span class="hf-livephase">${esc(live.label)}</span>
-          ${live.mapUrl ? `<a class="hf-livemap" href="${live.mapUrl}" target="_blank" rel="noopener noreferrer">${icon("mdi:map-marker-radius-outline")}${ht("live.map")}</a>` : ""}
+          ${live.mapUrl ? `<a class="hf-livemap" href="${esc(live.mapUrl)}" target="_blank" rel="noopener noreferrer">${icon("mdi:map-marker-radius-outline")}${ht("live.map")}</a>` : ""}
         </div>
         ${live.step >= 0 ? `<ol class="hf-livesteps" aria-label="${ht("tracking.progress")}">${steps}</ol>` : ""}
         ${facts.length ? `<div class="hf-livefacts">${facts.join("")}</div>` : ""}
         ${live.message ? `<div class="hf-livemsg">${icon("mdi:message-text-outline")}<span>${esc(live.message)}</span></div>` : ""}
         ${live.updated ? `<div class="hf-livefoot">${ht("live.updated", { ago: L.agoText(live.updated) })}</div>` : ""}
       </div>`;
+  }
+
+  // What a screen reader is told as the live delivery moves on: its phase, when it arrives and
+  // how many stops are left. The visible tracker is redrawn with the view (and again in the
+  // delivery sheet), so the announcement lives in one hidden status node that stays in the card
+  // for as long as it exists; only a change in what it says is spoken.
+  _liveSummary(live) {
+    const parts = [live.label];
+    if (live.eta && live.step < 2) parts.push(t("live.arrives", { time: L.fmtTime(live.eta) }));
+    if (live.stops != null && live.step === 1) {
+      parts.push(live.stops === 0 ? t("live.youre_next") : t("live.stops_before", { stops: t("live.stops", { count: live.stops }) }));
+    }
+    return `${t("live.badge")}: ${parts.filter(Boolean).join(". ")}`;
+  }
+
+  _announceLive() {
+    const card = this.card;
+    const root = card.shadowRoot;
+    if (!root) return;
+    const live = card.liveTracking();
+    const text = live ? this._liveSummary(live) : "";
+    let node = root.querySelector(".js-live-status");
+    if (!node) {
+      if (!text) return;
+      node = document.createElement("div");
+      node.className = "sr-only js-live-status";
+      node.setAttribute("role", "status");
+      node.setAttribute("aria-live", "polite");
+      root.appendChild(node);
+    }
+    if (node.textContent !== text) node.textContent = text;
   }
 
   _heroMeals(week, meals, editable, skipped) {
@@ -247,7 +287,7 @@ export class OverviewView {
     const extras = [...card.box.displayMarket(week).entries()];
     const extrasLine = extras.length
       ? `<div class="hf-small hf-muted" style="grid-column:1/-1">${icon("mdi:plus-circle-outline")} ${ht("overview.extras_line", {
-          extras: t("meals.extras", { count: extras.reduce((a, [, q]) => a + q, 0) }),
+          extras: t("meals.extras", { count: UI.extrasCount(card.box.displayMarket(week)) }),
           names: `${extras
             .map(([id]) => ((week.market_items || []).find((i) => i.item_id === id) || {}).name)
             .filter(Boolean)
@@ -349,7 +389,7 @@ export class OverviewView {
     const skipped = L.isSkipped(week);
     const editable = L.isWeekEditable(week);
     const meals = UI.chosenMeals(week, card.box.displayMeals(week));
-    const extras = card.box.displayMarket(week).size;
+    const extras = UI.extrasCount(card.box.displayMarket(week));
     const deadline = week.selection_deadline ? new Date(week.selection_deadline) : null;
     const benefit = L.weekBenefit(week);
     const meta = [];
@@ -369,13 +409,20 @@ export class OverviewView {
     if (L.canSkip(week)) {
       buttons.push(`<button class="hf-btn sm${skipped ? " primary" : " ghost"}" data-action="skip" ${weekAttr} ${card.busy ? "disabled" : ""}>${ht(skipped ? "week.unskip" : "week.skip")}</button>`);
     }
-    return `<div class="hf-weekcard${skipped ? " skipped" : ""}" role="button" tabindex="0" data-action="goto" data-view="menu" ${weekAttr}
-        aria-label="${esc(`${L.fmtLongDate(week.delivery_date)}: ${L.stateLabel(week, state)}`)}">
+    // A plain container: the date is the card's one "open" button, and Review / Change day /
+    // Skip are its siblings rather than buttons inside a button. (A click anywhere else on the
+    // card still opens the week: the container keeps the action for the mouse.)
+    const holiday = L.isHolidayShifted(week)
+      ? ` <span role="img" aria-label="${esc(week.holiday_message || t("week.holiday_change"))}" title="${esc(week.holiday_message || t("week.holiday_change"))}">${icon("mdi:calendar-star")}</span>`
+      : "";
+    return `<div class="hf-weekcard${skipped ? " skipped" : ""}" data-action="goto" data-view="menu" ${weekAttr}>
         <div class="hf-weekcardhead">
-          <div><div class="hf-wdate">${esc(L.fmtDate(week.delivery_date))}${L.isHolidayShifted(week) ? ` <span title="${esc(week.holiday_message || t("week.holiday_change"))}">${icon("mdi:calendar-star")}</span>` : ""}</div>
+          <div><div class="hf-wdate"><button class="hf-open" data-action="goto" data-view="menu" ${weekAttr} data-focus-key="weekcard:${esc(week.week_id)}"
+              aria-label="${esc(`${L.fmtLongDate(week.delivery_date)}: ${L.stateLabel(week, state)}`)}">${esc(L.fmtDate(week.delivery_date))}</button>${holiday}</div>
             <div class="hf-wsub">${esc([L.relativeWeek(week), week.display_name].filter(Boolean).join(" · "))}</div></div>
           ${UI.statePill(week, state)}
         </div>
+        ${L.revisedDelivery(week) ? `<div>${UI.revisedLine(week)}</div>` : ""}
         ${skipped ? `<div class="hf-thumbs empty">${ht("week.nothing_ships")}</div>` : UI.thumbRow(meals, { max: 4 })}
         ${benefit ? `<div>${pill(benefit.label, "ok", "mdi:ticket-percent-outline")}</div>` : ""}
         <div class="hf-weekcardfoot">
@@ -513,12 +560,14 @@ export class OverviewView {
       } else if (meals) {
         parts.push(`<strong>${ht("meals.count", { count: meals })}</strong>${required && required !== meals ? ` <span class="hf-muted">(${ht("week.plan_n", { count: required })})</span>` : ""}`);
       }
-      const market = L.marketCount(week);
+      const market = UI.extrasCount(card.box.displayMarket(week));
       if (market) parts.push(ht("meals.extras", { count: market }));
       const price = L.weekPriceParts(week);
       if (price) parts.push(esc(L.fmtPrice(price.amount, price.currency)));
       const status = L.rowStatus(week, label);
       if (status) parts.push(esc(status));
+      const revised = UI.revisedLine(week);
+      if (revised) parts.push(revised);
     }
     const extra = [];
     if (past && !skipped) {
@@ -540,14 +589,18 @@ export class OverviewView {
     const when = L.weekDay(week);
     const details = this._hasDelivery(week);
     if (details) side.push(`<span class="hf-rowchev" aria-hidden="true">${icon("mdi:chevron-right")}</span>`);
-    const open = details
-      ? `data-action="delivery" ${weekAttr} aria-label="${ht("delivery.row_label", { date: L.fmtLongDate(when), state: label })}"`
-      : `data-action="goto" data-view="menu" ${weekAttr} aria-label="${esc(`${L.fmtLongDate(when)}: ${label}`)}"`;
+    const open = details ? `data-action="delivery" ${weekAttr}` : `data-action="goto" data-view="menu" ${weekAttr}`;
+    const openLabel = details ? ht("delivery.row_label", { date: L.fmtLongDate(when), state: label }) : esc(`${L.fmtLongDate(when)}: ${label}`);
     const actions = L.canReschedule(week) || L.canSkip(week);
-    return `<div class="hf-row${actions ? " actions" : ""}" role="button" tabindex="0" ${open}>
+    const holiday = L.isHolidayShifted(week)
+      ? ` <span role="img" aria-label="${esc(week.holiday_message || t("week.holiday_change"))}" title="${esc(week.holiday_message || t("week.holiday_change"))}">${icon("mdi:calendar-star")}</span>`
+      : "";
+    // As with the week cards: a plain container whose date is the one "open" button, with
+    // Change day and Skip beside it, not inside it.
+    return `<div class="hf-row${actions ? " actions" : ""}" ${open}>
         <span class="hf-rowicon tone-${meta.tone}">${icon(meta.icon)}</span>
         <div style="min-width:0">
-          <div class="hf-rowtitle">${esc(L.fmtDate(when))}${L.isHolidayShifted(week) ? ` <span title="${esc(week.holiday_message || t("week.holiday_change"))}">${icon("mdi:calendar-star")}</span>` : ""}
+          <div class="hf-rowtitle"><button class="hf-open" ${open} data-focus-key="row:${esc(week.week_id)}" aria-label="${openLabel}">${esc(L.fmtDate(when))}</button>${holiday}
             <span class="hf-muted">${esc(week.display_name || week.week_id)}</span></div>
           ${parts.length ? `<div class="hf-rowsub">${parts.join(" · ")}</div>` : ""}
           ${extra.length ? `<div class="hf-rowextra">${extra.join("")}</div>` : ""}
@@ -614,11 +667,9 @@ export class OverviewView {
     // Proof of delivery. HelloFresh passes on the carrier's photo and signer only when the
     // carrier provides them; Veho, the main US carrier, doesn't — so say so rather than leave
     // a gap that looks like a loading failure.
-    const photos = L.deliveryPhotos(week);
+    const photos = UI.deliveryPhotoLinks(week, { title: t("delivery.open_full_photo") });
     if (photos.length || order.delivery_signed_by) {
-      sections.push(`<div class="hf-dphotos">${photos
-        .map((url) => `<a href="${url}" target="_blank" rel="noopener noreferrer" title="${ht("delivery.open_full_photo")}"><img src="${url}" alt="${ht("tracking.photo")}" loading="lazy"></a>`)
-        .join("")}</div>${order.delivery_signed_by ? `<div class="hf-dnote">${icon("mdi:draw")}${ht("tracking.signed_by", { name: order.delivery_signed_by })}</div>` : ""}`);
+      sections.push(`<div class="hf-dphotos">${photos.join("")}</div>${order.delivery_signed_by ? `<div class="hf-dnote">${icon("mdi:draw")}${ht("tracking.signed_by", { name: order.delivery_signed_by })}</div>` : ""}`);
     } else if (delivered) {
       sections.push(`<div class="hf-dnote">${icon("mdi:camera-off-outline")}${
         order.carrier ? ht("delivery.no_photo_carrier", { carrier: order.carrier }) : ht("delivery.no_photo")
@@ -632,7 +683,7 @@ export class OverviewView {
       const href = L.safeUrl(order.tracking_url);
       const number = order.tracking_number
         ? href
-          ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${esc(order.tracking_number)}</a>`
+          ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(order.tracking_number)}</a>`
           : `<span>${esc(order.tracking_number)}</span>`
         : "";
       track.push(`<div class="hf-dcarrier">${icon("mdi:truck-outline")}<span>${esc(order.carrier || t("order.carrier"))}</span>${number}</div>`);
@@ -684,10 +735,7 @@ export class OverviewView {
       ? `<button class="hf-btn ghost" data-action="delivery-menu">${icon("mdi:silverware-fork-knife")}${ht("delivery.view_menu")}</button>`
       : "";
     return `
-      <div class="hf-sheethead"><div class="hf-sheettitle"><h2>${esc(title)}</h2>
-        <div class="hf-sheetsub">${esc(sub.join(" · "))}</div></div>
-        ${delivered ? "" : pill(label, "info")}
-        <button class="hf-iconbtn" data-close-sheet aria-label="${ht("common.close")}">${icon("mdi:close")}</button></div>
+      ${UI.sheetHead(title, sub.join(" · "), delivered ? "" : pill(label, "info"))}
       <div class="hf-sheetbody">${sections.join("") || `<div class="hf-empty">${ht("delivery.no_details")}</div>`}</div>
       ${menuButton ? `<div class="hf-sheetfoot">${menuButton}</div>` : ""}`;
   }
@@ -714,6 +762,13 @@ export class OverviewView {
     const week = card.weekById(el.getAttribute("data-week-id"));
     switch (action) {
       case "skip":
+        if (week && !L.canSkip(week)) {
+          // The deadline went by while the button was on screen: take it away and say why,
+          // rather than send HelloFresh a change it will refuse.
+          card.renderView();
+          card.toast(t("week.skip_closed"), true);
+          break;
+        }
         card.confirmSkip(week);
         break;
       case "reschedule":

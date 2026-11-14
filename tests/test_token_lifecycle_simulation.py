@@ -13,6 +13,11 @@ API calls (which trigger the real refresh decision), periodically "rebooting" (r
 the client from persisted data, as Home Assistant does), and injecting concurrent requests.
 It asserts the access token is NEVER dead when the client believes it is usable, and that a
 true end-of-life only ever surfaces as a clean auth error (reauth), never a silent hang.
+
+A second simulation runs Home Assistant's own two clocks against the same fake server: the
+refresh timer, ticking every 7.5 minutes, and the data poll. It pins how often the refresh
+token is spent: the timer keeps a token fresh while requests are using it, and leaves an idle
+one to lapse until the next poll renews it on demand.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ class _FakeAuth0:
     access_expiry: dict[str, float] = field(default_factory=dict)  # token -> expires_at
     _counter: int = 0
     refresh_calls: int = 0
+    stale_requests: int = 0  # data requests that arrived with a dead access token
 
     def seed_login(self) -> dict:
         """Mint the initial access+refresh token pair, as a fresh login would."""
@@ -116,7 +122,7 @@ class _SimSession:
     def __init__(self, auth0: _FakeAuth0) -> None:
         self._auth0 = auth0
 
-    async def post(self, url: str, params=None, json=None, headers=None):
+    async def post(self, url: str, params=None, json=None, headers=None, **_kwargs):
         # The app-token primer (POST /gw/auth/token) carries no refresh token; ignore it.
         if url.endswith("/gw/auth/token"):
             return _SimResponse(200, {"access_token": "app-token"})
@@ -127,6 +133,7 @@ class _SimSession:
         bearer = (headers or {}).get("Authorization", "").removeprefix("Bearer ")
         if self._auth0.access_token_accepted(bearer):
             return _SimResponse(200, {"ok": True})
+        self._auth0.stale_requests += 1
         return _SimResponse(401, {"error": "expired"})
 
 
@@ -180,8 +187,8 @@ async def _simulate_policy_async(clock, auth0, persisted, start) -> dict:
     return summary
 
 
-def _simulate_policy(monkeypatch, rotate: bool, sliding: bool, echo: bool) -> dict:
-    """Set up the fake server/clock for one policy and run the full simulation."""
+def _start_simulation(monkeypatch, rotate: bool, sliding: bool, echo: bool):
+    """Set up the fake server, clock and stored tokens for one policy, as after a login."""
     start = 1_700_000_000.0
     clock = _Clock(start)
 
@@ -209,7 +216,11 @@ def _simulate_policy(monkeypatch, rotate: bool, sliding: bool, echo: bool) -> di
         "refresh_expires_in": REFRESH_TTL,
         "refresh_token_issued_at": int(clock.now),
     }
+    return clock, auth0, persisted, start
 
+
+def _run_simulation(coro):
+    """Run one simulation on its own event loop."""
     # Deliberately NOT closed. `set_event_loop` makes this the current loop, and
     # pytest-homeassistant-custom-component's autouse `verify_cleanup` fixture calls
     # `asyncio.get_event_loop().shutdown_default_executor()` at teardown — on a closed loop that
@@ -217,7 +228,13 @@ def _simulate_policy(monkeypatch, rotate: bool, sliding: bool, echo: bool) -> di
     # test file happened to run next. Leaving it open matches every other test module here.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    return loop.run_until_complete(_simulate_policy_async(clock, auth0, persisted, start))
+    return loop.run_until_complete(coro)
+
+
+def _simulate_policy(monkeypatch, rotate: bool, sliding: bool, echo: bool) -> dict:
+    """Set up the fake server/clock for one policy and run the full simulation."""
+    clock, auth0, persisted, start = _start_simulation(monkeypatch, rotate, sliding, echo)
+    return _run_simulation(_simulate_policy_async(clock, auth0, persisted, start))
 
 
 def test_token_lifecycle_survives_60_days_across_all_auth0_policies(monkeypatch) -> None:
@@ -252,3 +269,68 @@ def test_token_lifecycle_survives_60_days_across_all_auth0_policies(monkeypatch)
             assert summary["reauth_at_day"] >= 60, (
                 f"{label}: reauth came too early at day {summary['reauth_at_day']}"
             )
+
+
+# The coordinator's refresh-timer tick for a 30-minute token (a quarter of its life).
+TIMER_TICK = 450
+
+
+async def _simulate_timer_and_poll_async(clock, auth0, persisted, poll_every: int, days: int):
+    """Run the refresh timer and the data poll on their own cadences; return the poll count."""
+    client = _build_client(auth0, persisted)
+    polls = 0
+    since_poll = poll_every  # setup polls at once
+    for _ in range(int(days * DAY / TIMER_TICK)):
+        if since_poll >= poll_every:
+            since_poll = 0
+            results = await asyncio.gather(
+                client._async_api_get("/gw/a"),
+                client._async_api_get("/gw/b"),
+            )
+            assert [r.status for r in results] == [200, 200]
+            polls += 1
+        clock.advance(TIMER_TICK)
+        since_poll += TIMER_TICK
+        await client.async_ensure_token_fresh()  # what the coordinator's timer calls
+    return polls
+
+
+def test_refresh_timer_lets_an_idle_token_lapse(monkeypatch) -> None:
+    """With the default 3-hour poll, the refresh token is spent twice per poll, not all day.
+
+    The timer used to renew every token once it was half spent, used or not: 64 to 96
+    /gw/refresh posts a day, each rotating the refresh token and rewriting the config entry,
+    for 8 polls. Now the token a poll used is renewed once (in case more requests follow),
+    its unused successor lapses, and the next poll renews on demand before its first request.
+    """
+    days = 30
+    clock, auth0, persisted, _start = _start_simulation(monkeypatch, True, True, False)
+
+    polls = _run_simulation(
+        _simulate_timer_and_poll_async(clock, auth0, persisted, poll_every=3 * 3600, days=days)
+    )
+
+    assert polls == days * 8
+    assert auth0.refresh_calls <= 2 * polls
+    assert auth0.refresh_calls < days * 20  # it was 64 or more a day
+    # Renewing on demand happens before the request: none ever went out on a dead token.
+    assert auth0.stale_requests == 0
+    # Every rotation was saved, so the stored refresh token is the one the server accepts.
+    assert persisted["refresh_token"] in auth0.valid_refresh_tokens
+
+
+def test_refresh_timer_keeps_a_token_in_use_fresh(monkeypatch) -> None:
+    """While requests keep coming (a delivery-day watch), the timer still renews ahead of them.
+
+    No request ever has to wait for a renewal or meets a dead token.
+    """
+    clock, auth0, persisted, _start = _start_simulation(monkeypatch, True, True, False)
+
+    polls = _run_simulation(
+        _simulate_timer_and_poll_async(clock, auth0, persisted, poll_every=900, days=3)
+    )
+
+    assert polls == 3 * 96
+    assert auth0.stale_requests == 0
+    # One renewal per token lifetime or so: the timer is doing the renewing.
+    assert 3 * 48 <= auth0.refresh_calls <= 3 * 96

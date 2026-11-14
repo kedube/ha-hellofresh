@@ -15,6 +15,9 @@ thing a later "improvement" would plausibly get wrong:
    ``US-2`` returns ``US-1``, and a ``GET`` one second later returns ``US-2``. The write commits
    immediately; only the response body is stale. Adopting it would roll state back.
 2. ``deliveryInterval`` is not part of the request at all -- the web app sends only the handle.
+
+The PATCH is the only request sent: a rejected one is raised, never retried against the
+Android app's ``changePlanDeliveryDetails``, which no web capture shows.
 """
 
 from __future__ import annotations
@@ -152,27 +155,20 @@ def test_default_interval_does_not_warn(caplog) -> None:
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
-def test_rejected_patch_falls_back_to_the_plans_endpoint() -> None:
-    """The Android app's endpoint is the fallback, with the app's body: the handle only."""
+def test_a_rejected_patch_is_raised_and_nothing_else_is_sent() -> None:
+    """The verified PATCH is the only request: its failure is the error the caller sees.
+
+    A rejected or timed-out PATCH used to be retried as the Android app's
+    ``POST /gw/api/plans/{planId}/changePlanDeliveryDetails``, which no web capture shows. A
+    timeout may already have committed the PATCH, so a second, unverified write is not sent.
+    """
     client, sent = _client(fail_patch=True)
 
-    _run(client.async_change_delivery_weekday(TUESDAY))
+    with pytest.raises(HelloFreshError, match="rejected"):
+        _run(client.async_change_delivery_weekday(TUESDAY))
 
-    assert [request["method"] for request in sent] == ["PATCH", "POST"]
-    fallback = sent[1]
-    assert fallback["path"] == (
-        "/gw/api/plans/00000000-0000-4000-8000-a00000000001/changePlanDeliveryDetails"
-    )
-    assert fallback["json"] == {"deliveryOption": TUESDAY}
-
-
-def test_plans_fallback_sends_an_interval_only_when_asked() -> None:
-    """No client sends ``deliveryInterval``; it is added only for a non-weekly request."""
-    client, sent = _client(fail_patch=True)
-
-    _run(client.async_change_delivery_weekday(TUESDAY, delivery_interval=2))
-
-    assert sent[1]["json"] == {"deliveryOption": TUESDAY, "deliveryInterval": 2}
+    assert [request["method"] for request in sent] == ["PATCH"]
+    assert not any("changePlanDeliveryDetails" in request["path"] for request in sent)
 
 
 def test_auth_failure_is_not_swallowed_by_the_fallback() -> None:
@@ -184,13 +180,6 @@ def test_auth_failure_is_not_swallowed_by_the_fallback() -> None:
     with pytest.raises(HelloFreshAuthError):
         _run(client.async_change_delivery_weekday(TUESDAY))
     assert [request["method"] for request in sent] == ["PATCH"]
-
-
-def test_fallback_without_a_plan_id_raises_not_implemented() -> None:
-    client, _ = _client(fail_patch=True)
-    client._cached_subscriptions = [_subscription(plan_id=None)]
-    with pytest.raises(HelloFreshNotImplementedError):
-        _run(client.async_change_delivery_weekday(TUESDAY))
 
 
 def test_not_implemented_is_not_retried_against_the_legacy_endpoint() -> None:

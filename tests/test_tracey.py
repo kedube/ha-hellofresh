@@ -10,8 +10,11 @@ that the sensors exist ONLY for supported countries.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime
 from types import SimpleNamespace
+
+import pytest
 
 from custom_components.hellofresh.const import (
     CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
@@ -181,7 +184,9 @@ def _bare_coordinator(
     coordinator.config_entry = SimpleNamespace(
         entry_id="test-entry", title="HelloFresh (NL)", options={}, data={"country": country}
     )
-    coordinator._last_fetch_monotonic = None
+    coordinator._last_attempt_monotonic = None
+    coordinator._fetch_lock = asyncio.Lock()
+    coordinator.data = None
     coordinator._update_interval_seconds = None
     coordinator.update_interval = IDLE_UPDATE_INTERVAL
     return coordinator
@@ -279,6 +284,162 @@ def test_coordinator_http_error_raises_update_failed() -> None:
         pass
     else:
         raise AssertionError("expected UpdateFailed for HTTP 503")
+
+
+def test_coordinator_non_json_answer_raises_update_failed() -> None:
+    """A 200 whose body is not JSON is a failed update, not an unexpected error.
+
+    The decode error used to escape, and Home Assistant logged "Unexpected error" with a
+    traceback on every tick for as long as the endpoint served an error page.
+    """
+    import json  # noqa: PLC0415
+
+    from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: PLC0415
+
+    class _HtmlResponse(_FakeResponse):
+        async def json(self, content_type=None):
+            return json.loads("<html>Service Unavailable</html>")
+
+    class _HtmlSession(_FakeSession):
+        def get(self, url, params=None, headers=None, timeout=None):
+            return _HtmlResponse(None)
+
+    coordinator = _bare_coordinator(_HtmlSession(None), "https://www.hftrack.nl/abc123")
+    with pytest.raises(UpdateFailed, match="not JSON"):
+        _run(coordinator._async_update_data())
+
+
+def test_coordinator_connection_error_never_carries_the_tracking_token() -> None:
+    """aiohttp puts the request URL in some error messages, and this URL holds the token.
+
+    The token opens the unauthenticated tracking page, and the coordinator logs this message
+    at ERROR, so only the error's type may be named, and the cause is not chained.
+    """
+    import aiohttp  # noqa: PLC0415
+    from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: PLC0415
+    from multidict import CIMultiDict, CIMultiDictProxy  # noqa: PLC0415
+    from yarl import URL  # noqa: PLC0415
+
+    from custom_components.hellofresh.tracey import TRACEY_ENDPOINT  # noqa: PLC0415
+
+    url = URL(TRACEY_ENDPOINT).with_query({"token": "FAKE-TOKEN-123", "screenWidth": "500"})
+    request_info = aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+    error = aiohttp.TooManyRedirects(request_info, ())
+    assert "FAKE-TOKEN-123" in str(error)  # what made the old message a leak
+
+    class _FailingSession(_FakeSession):
+        def get(self, url, params=None, headers=None, timeout=None):
+            raise error
+
+    coordinator = _bare_coordinator(_FailingSession(None), "https://www.hftrack.nl/FAKE-TOKEN-123")
+    with pytest.raises(UpdateFailed) as raised:
+        _run(coordinator._async_update_data())
+
+    assert str(raised.value) == "Tracey endpoint unreachable: TooManyRedirects"
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__ is True
+
+
+def test_snapshots_of_the_same_state_are_equal_whenever_they_were_fetched() -> None:
+    """The fetch time differs on every poll; it must not make every poll look like a change.
+
+    The coordinator skips its listeners when the new data equals the old. With the fetch
+    time in the comparison that never happened, so every tracking sensor was rewritten on
+    every tick.
+    """
+    first = parse_tracey_payload(
+        LIVE_PAYLOAD, tracking_url="u", now=datetime.fromisoformat("2026-08-27T16:00:00+00:00")
+    )
+    later = parse_tracey_payload(
+        {**LIVE_PAYLOAD, "somethingNotParsed": 1},
+        tracking_url="u",
+        now=datetime.fromisoformat("2026-08-27T16:05:00+00:00"),
+    )
+    assert first.fetched_at != later.fetched_at
+    assert first == later
+
+    moved = parse_tracey_payload({**LIVE_PAYLOAD, "amountOfStopsBefore": 2}, tracking_url="u")
+    assert moved != first  # a real change still counts
+    assert TraceyData(fetched_at=first.fetched_at) == TraceyData(fetched_at=later.fetched_at)
+
+
+class _SlowSession(_FakeSession):
+    """A session whose answer takes a moment, so callers can pile up behind a request."""
+
+    def __init__(self, payload: object, status: int = 200) -> None:
+        super().__init__(payload, status)
+        self.gate = asyncio.Event()
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.requests.append({"url": url, "params": params, "headers": headers})
+        gate, payload, status = self.gate, self._payload, self._status
+
+        class _Response(_FakeResponse):
+            async def __aenter__(self):
+                await gate.wait()
+                return self
+
+        return _Response(payload, status)
+
+
+def _service_coordinator(session) -> HelloFreshTraceyCoordinator:
+    """A bare coordinator whose refresh does what Home Assistant's does with a failure."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: PLC0415
+
+    coordinator = _bare_coordinator(session, "https://www.hftrack.nl/abc123")
+
+    async def async_refresh() -> None:
+        # On a failure the last snapshot stays, as with the real coordinator.
+        with suppress(UpdateFailed):
+            coordinator.data = await coordinator._async_update_data()
+
+    coordinator.async_refresh = async_refresh  # type: ignore[method-assign]
+    return coordinator
+
+
+def test_service_callers_arriving_together_share_one_request() -> None:
+    """Several get_delivery_tracking calls at once make one request, not one each.
+
+    The age of the last fetch was checked before the request started, so every caller that
+    arrived while it was in flight saw a stale snapshot and sent its own.
+    """
+    session = _SlowSession(LIVE_PAYLOAD)
+    coordinator = _service_coordinator(session)
+
+    async def _three_callers():
+        callers = [asyncio.ensure_future(coordinator.async_fetch_latest()) for _ in range(3)]
+        await asyncio.sleep(0)
+        session.gate.set()
+        results = await asyncio.gather(*callers)
+        # A later call within the minute reuses the snapshot as well.
+        results.append(await coordinator.async_fetch_latest())
+        return results
+
+    results = _run(_three_callers())
+
+    assert len(session.requests) == 1
+    assert all(result.phase == "ON_THE_WAY" for result in results)
+
+
+def test_service_does_not_retry_a_failed_request_within_the_minute(monkeypatch) -> None:
+    """A failing endpoint is asked once a minute at most, not once per service call."""
+    from custom_components.hellofresh import tracey  # noqa: PLC0415
+
+    now = [5000.0]
+    monkeypatch.setattr(tracey.time, "monotonic", lambda: now[0])
+    session = _FakeSession({}, status=503)
+    coordinator = _service_coordinator(session)
+
+    async def _calls():
+        first = await coordinator.async_fetch_latest()
+        second = await coordinator.async_fetch_latest()
+        now[0] += 61
+        await coordinator.async_fetch_latest()
+        return first, second
+
+    first, second = _run(_calls())
+
+    assert first.active is False and second.active is False  # no snapshot, but no error
+    assert len(session.requests) == 2  # one, then one more after the minute
 
 
 def test_coordinator_falls_back_to_next_order_link() -> None:

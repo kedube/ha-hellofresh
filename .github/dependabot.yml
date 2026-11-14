@@ -10,6 +10,9 @@
 # would have surfaced the actions/setup-node@v4 Node 20 deprecation as a PR rather than as a
 # warning annotation on a finished run.
 #
+# The browser tests' npm packages (Puppeteer, ESLint) are tracked too: they are test-only, but
+# Puppeteer had drifted a major version behind with several advisories against it.
+#
 # Python dependencies are deliberately NOT tracked here: requirements_test.txt pins loose lower
 # bounds, and the integration's runtime requirements live in manifest.json, which Dependabot does
 # not understand. Both are better reviewed by hand against Home Assistant's own pins.
@@ -30,3 +33,16 @@ updates:
       actions:
         patterns:
           - "actions/*"
+
+  - package-ecosystem: "npm"
+    directory: "/tests/browser"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "test"
+    groups:
+      browser-tests:
+        patterns:
+          - "*"

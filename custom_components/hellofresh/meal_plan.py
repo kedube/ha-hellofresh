@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
@@ -284,7 +284,7 @@ def _candidate_weeks(weeks: Iterable[HelloFreshWeek], day: date) -> list[HelloFr
 def _note_snapshot(text: str) -> dict[str, Any]:
     clean = " ".join(text.split())
     if not clean:
-        raise HomeAssistantError("Write something for the note, such as Leftovers.")
+        raise ServiceValidationError("Write something for the note, such as Leftovers.")
     return {"kind": KIND_NOTE, "name": clean[:MAX_NOTE_LENGTH]}
 
 
@@ -383,6 +383,8 @@ class MealPlan:
             hass, STORAGE_VERSION, storage_key(entry.entry_id)
         )
         self.days: dict[str, dict[str, Any]] = {}
+        # Whether a change is waiting on its delayed save; the unload flush writes only then.
+        self._unsaved = False
         # When the plan last changed: the Meals calendar exposes it so an open card can notice a
         # change made elsewhere (another device, an automation) and re-read the plan.
         self.updated: datetime = dt_util.utcnow()
@@ -409,7 +411,12 @@ class MealPlan:
         return remove
 
     def _schedule_save(self) -> None:
-        self._store.async_delay_save(lambda: {"days": self.days}, _SAVE_DELAY_SECONDS)
+        self._unsaved = True
+        self._store.async_delay_save(self._data_to_save, _SAVE_DELAY_SECONDS)
+
+    def _data_to_save(self) -> dict[str, Any]:
+        self._unsaved = False
+        return {"days": self.days}
 
     def _changed(self) -> None:
         self.updated = dt_util.utcnow()
@@ -427,8 +434,13 @@ class MealPlan:
         return bool(stale)
 
     async def async_flush(self) -> None:
-        """Write any pending change now (the entry is unloading)."""
-        await self._store.async_save({"days": self.days})
+        """Write a change still waiting on its delayed save now (the entry is unloading).
+
+        Nothing is written when nothing changed: an account that never planned a meal has no
+        file, and a reload does not rewrite an unchanged one.
+        """
+        if self._unsaved:
+            await self._store.async_save(self._data_to_save())
 
     # ---- reading ----------------------------------------------------------------------------
 
@@ -482,7 +494,7 @@ class MealPlan:
             for recipe in week.recipes:
                 if recipe.recipe_id == recipe_id and recipe_quantity(recipe) > 0:
                     return week, recipe, recipe_quantity(recipe)
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Meal {recipe_id} isn't in any of your boxes, so it can't be planned."
         )
 
@@ -497,9 +509,11 @@ class MealPlan:
                 if item.item_id != item_id or market_quantity(item) <= 0:
                     continue
                 if (item.group_type or "") in EXCLUDED_MARKET_GROUPS:
-                    raise HomeAssistantError(f"{item.name} isn't something to plan a meal around.")
+                    raise ServiceValidationError(
+                        f"{item.name} isn't something to plan a meal around."
+                    )
                 return week, item, market_quantity(item)
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Market item {item_id} wasn't bought in any of your boxes, so it can't be planned."
         )
 
@@ -538,14 +552,18 @@ class MealPlan:
     ) -> None:
         """Plan one course of one meal, and/or move that meal's start time for the day."""
         if meal not in MEALS:
-            raise HomeAssistantError(f"Unknown meal {meal}; use breakfast, lunch or dinner.")
+            raise ServiceValidationError(f"Unknown meal {meal}; use breakfast, lunch or dinner.")
         if course not in COURSES:
-            raise HomeAssistantError(f"Unknown course {course}; use main, appetizer or dessert.")
+            raise ServiceValidationError(
+                f"Unknown course {course}; use main, appetizer or dessert."
+            )
         if course in DINNER_ONLY_COURSES and meal != "dinner":
-            raise HomeAssistantError("Only dinner has an appetizer and a dessert.")
+            raise ServiceValidationError("Only dinner has an appetizer and a dessert.")
         given = [value for value in (recipe_id, market_item_id, text) if value is not None]
         if len(given) > 1:
-            raise HomeAssistantError("Give one of recipe_id, market_item_id or text, not several.")
+            raise ServiceValidationError(
+                "Give one of recipe_id, market_item_id or text, not several."
+            )
 
         key = day.isoformat()
         item: dict[str, Any] | None = None
@@ -576,14 +594,14 @@ class MealPlan:
 
         existing = self.slot(key, meal)
         if item is None and start_time is None:
-            raise HomeAssistantError("Give a meal, a Market item, a note or a start time.")
+            raise ServiceValidationError("Give a meal, a Market item, a note or a start time.")
         if item is None and existing is None:
-            raise HomeAssistantError("Plan something for this meal before changing its time.")
+            raise ServiceValidationError("Plan something for this meal before changing its time.")
 
         if item is not None and item["kind"] != KIND_NOTE:
             used = planned_count(self.days, item, skip=(key, meal, course))
             if used >= quantity:
-                raise HomeAssistantError(
+                raise ServiceValidationError(
                     f"{item['name']} is already planned {used} time(s), as many as your box has."
                 )
 
@@ -601,7 +619,7 @@ class MealPlan:
     def clear(self, day: date, meal: str = "dinner", course: str | None = None) -> None:
         """Clear one course, or the whole meal when no course is given."""
         if meal not in MEALS:
-            raise HomeAssistantError(f"Unknown meal {meal}; use breakfast, lunch or dinner.")
+            raise ServiceValidationError(f"Unknown meal {meal}; use breakfast, lunch or dinner.")
         key = day.isoformat()
         meals = self.days.get(key)
         if not isinstance(meals, dict) or meal not in meals:

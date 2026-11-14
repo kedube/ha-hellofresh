@@ -6,7 +6,10 @@ Thanks for helping improve the HelloFresh Home Assistant integration.
 
 1. Fork the repository and create a feature branch.
 2. Create a Python 3.14 virtual environment (Home Assistant has required 3.14 since 2026.3; an
-   older Python installs an old Home Assistant to test against).
+   older Python installs an old Home Assistant to test against). If an existing `.venv` reports
+   Python 3.13, rebuild it: `uv venv --python 3.14 --clear .venv` (or `python3.14 -m venv
+   --clear .venv`), then install again. The Home Assistant lifecycle tests also need
+   `home-assistant-frontend`, which `requirements_test.txt` installs.
 3. Install test dependencies:
 
 ```bash
@@ -21,17 +24,25 @@ pytest -q
 
 ## Running the CI checks locally
 
-CI runs five jobs; all of them except the two hosted actions (HACS validation and hassfest) can
-be reproduced locally. Running these before pushing avoids a round-trip:
+CI runs seven jobs (HACS, Hassfest, Ruff, Types, Cards, Browser flows, Pytest); all of them except
+the two hosted actions (HACS validation and hassfest) can be reproduced locally. Running these
+before pushing avoids a round-trip:
 
 ```bash
 ruff check .                                  # lint
 ruff format --check .                         # formatting (enforced -- see note below)
-pytest -q                                     # Python test suite
+python -m mypy                                # type check (Types); settings in pyproject.toml
+pytest -q --cov                               # Python test suite, with the coverage floor CI enforces
 python .github/scripts/check_card_syntax.py   # every Lovelace card parses (needs node)
 node .github/scripts/check_card_logic.mjs     # card week-selection behaviour
 python .github/scripts/generate_card_strings.py --check   # the card's English module is current
+(cd tests/browser && npm ci && npm test)      # the card's flows in headless Chrome (about 3 minutes)
+tests/browser/node_modules/.bin/eslint .      # lint the card, browser tests and CI scripts
 ```
+
+The coverage floor is `fail_under` in `pyproject.toml`. It sits a little under what the suite
+reaches, so a change that leaves new code untested fails; raise it as coverage grows rather than
+lowering it to get a change through.
 
 Formatting is enforced, so run `ruff format .` before committing rather than hand-aligning code.
 
@@ -58,6 +69,23 @@ roll-ups — so change them there deliberately, not by accident.
 ## Project layout
 
 - `custom_components/hellofresh/` contains the integration code.
+- Client modules: `HelloFreshClient` is composed of one mixin per area of HelloFresh's API, each
+  in its own module, all built on `client_core._ClientCore`:
+  - `client.py`: the composed client, the poll, the subscriptions and the token surface.
+  - `client_core.py`: the client's state and shared plumbing (requests, JSON, probing, gathers,
+    the write lock, publishing a snapshot), and the methods mixins call on each other.
+  - `client_cart.py`: meal and Market selection, cart building, box resizing, one week's servings.
+  - `client_delivery.py`: skip and restore, one-off reschedule, delivery day, plan size, options.
+  - `client_profile.py`: the food profile.
+  - `client_catalog.py`: the public recipe catalog, search and recipe detail.
+  - `client_menus.py`: week menus and fallbacks, sold-out overlay, plan preference, public menu.
+  - `client_history.py`: delivered-week history.
+  - `client_billing.py`: the orders ledger, payment dates, spending, failed charges, card status.
+  - `client_wallet.py`: account credit and the wallet's discounts.
+  - `client_pricing.py`: cart prices, `/gw/calculate` and the poll's price overlays.
+  - `client_favorites.py`: the cookbook (favorites).
+  - `client_tracking.py`: carrier tracking and the delivery-day watch.
+  - `client_snapshot.py`: re-reading what a write changed and publishing it.
 - `custom_components/hellofresh/www/` contains the Lovelace card (plain ES modules, no build step):
   `hellofresh-card.js` with its view, logic and style modules (`hellofresh-card-*.js`), the shared
   helpers (`hellofresh-shared.js`), the recipe sheet (`hellofresh-recipe-detail.js`), the card's
@@ -80,7 +108,7 @@ roll-ups — so change them there deliberately, not by accident.
   - [`docs/entities.md`](docs/entities.md) — every sensor, binary sensor, switch, button, the delivery calendar, and the prep-list to-do entities.
   - [`docs/dashboard.md`](docs/dashboard.md) — the HelloFresh card, section by section, its options, and moving from the
     classic cards it replaced.
-  - [`docs/services.md`](docs/services.md) — all 24 services, grouped by purpose.
+  - [`docs/services.md`](docs/services.md) — all 30 services, grouped by purpose.
   - [`docs/hellofresh-api.md`](docs/hellofresh-api.md) — what is known about HelloFresh's API: each
     endpoint, what it takes and returns, and what isn't known yet. This one is for contributors
     rather than users. Read it before changing anything in `client.py` or `normalizers.py`, and

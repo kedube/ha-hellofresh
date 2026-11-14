@@ -79,14 +79,16 @@
       "password_reset_required": "Dein HelloFresh-Passwort ist abgelaufen. Folge den Anweisungen, die HelloFresh an deine E-Mail-Adresse geschickt hat, um es zu aktualisieren, und gib dann hier das neue Passwort ein.",
       "too_many_attempts": "Dein HelloFresh-Konto wurde wegen zu vieler Anmeldeversuche vorübergehend gesperrt. Warte ein paar Minuten und versuche es dann erneut.",
       "wrong_password": "HelloFresh hat dieses Passwort nicht akzeptiert. Wenn du dich bei HelloFresh mit Google, Apple oder Facebook anmeldest, hat dein Konto vielleicht kein Passwort; nutze stattdessen die Option „Zugriffstoken (fortgeschritten)“.",
-      "invalid_token": "Dieses Token konnte nicht gelesen werden oder wurde abgelehnt"
+      "invalid_token": "Dieses Token konnte nicht gelesen werden oder wurde abgelehnt",
+      "no_subscription": "HelloFresh hat diese Angaben akzeptiert, aber das Konto hat kein Abo, daher kann Home Assistant nichts anzeigen. Prüfe, ob das Land das ist, in dem dein Abo läuft."
     },
     "abort": {
       "already_configured": "Dieses HelloFresh-Konto ist bereits eingerichtet",
       "reauth_successful": "HelloFresh wurde erfolgreich neu verbunden",
       "reconfigure_successful": "HelloFresh wurde erfolgreich neu konfiguriert",
       "reconfigure_failed": "Dieser HelloFresh-Eintrag wurde nicht mehr gefunden",
-      "account_mismatch": "Diese Daten gehören zu einem anderen HelloFresh-Konto. Füge es als neuen Integrationseintrag hinzu, statt diesen neu zu konfigurieren."
+      "reauth_failed": "Dieser HelloFresh-Eintrag wurde nicht mehr gefunden",
+      "account_mismatch": "Diese Daten gehören zu einem anderen HelloFresh-Konto als dieser Eintrag. Um dieses Konto zu nutzen, füge es als neuen Integrationseintrag hinzu."
     }
   },
   "options": {
@@ -168,6 +170,10 @@
       "title": "HelloFresh-Kontodaten haben sich für {entry_title} geändert",
       "description": "HelloFresh hat authentifizierte Daten für **{entry_title}** zurückgegeben, aber das Format entsprach nicht mehr den Lieferstrukturen, die diese Integration auswerten kann. Die Diagnose dieses Konfigurationseintrags hilft festzustellen, ob eine regionale API-Variante oder eine Website-Änderung unterstützt werden muss."
     },
+    "payment_problem": {
+      "title": "HelloFresh konnte eine Zahlung für {entry_title} nicht abbuchen",
+      "description": "HelloFresh meldet ein Problem mit der Zahlung für deine Kochbox vom {date} ({amount}) bei **{entry_title}**. Eine Kochbox, die nicht bezahlt ist, wird möglicherweise nicht geliefert. Prüfe deine Zahlungsdaten auf der HelloFresh-Website (**Mehr erfahren**). Dieser Hinweis verschwindet von selbst, sobald HelloFresh das Problem nicht mehr meldet."
+    },
     "write_actions_unavailable": {
       "title": "HelloFresh-Schreibaktionen sind für {entry_title} nicht bestätigt",
       "description": "Du hast versucht, eine HelloFresh-Aktion zu nutzen, die Kontodaten für **{entry_title}** ändert, etwa Gerichte auswählen oder eine Woche pausieren. Die Integration hat die bekannten Schreib-Endpunkte für dein Konto versucht, aber keiner hat die Anfrage angenommen. Die Aktion wurde daher blockiert, statt weiter zu raten."
@@ -229,6 +235,15 @@
       },
       "account_credit": {
         "name": "Guthaben"
+      },
+      "account_credit_cash": {
+        "name": "HelloFresh-Cash-Guthaben"
+      },
+      "account_credit_bonus": {
+        "name": "Bonusguthaben"
+      },
+      "loyalty_boxes_until_free_box": {
+        "name": "Kochboxen bis zur Gratisbox"
       },
       "selected_plan": {
         "name": "Gewählter Plan"
@@ -366,6 +381,9 @@
       },
       "payment_method_expiring": {
         "name": "Zahlungsmethode läuft ab"
+      },
+      "payment_problem": {
+        "name": "Zahlungsproblem"
       }
     },
     "button": {
@@ -393,7 +411,10 @@
               "week_skipped": "Woche pausiert",
               "week_unskipped": "Woche wieder aktiviert",
               "selection_locked": "Auswahl gesperrt",
-              "menu_published": "Menü veröffentlicht"
+              "menu_published": "Menü veröffentlicht",
+              "box_delayed": "Box verspätet",
+              "box_early": "Box kommt früher",
+              "selection_deadline_approaching": "Auswahlfrist läuft bald ab"
             }
           }
         }
@@ -434,7 +455,7 @@
     },
     "get_weeks": {
       "name": "Wochen abrufen",
-      "description": "Gibt die HelloFresh-Lieferwochen mit vollständigen Rezept- und Auswahldetails zurück. Nur lesend; liefert eine Antwort. Optional auf eine einzelne Woche filterbar.",
+      "description": "Gibt die HelloFresh-Lieferwochen mit vollständigen Rezept- und Auswahldetails zurück. Nur lesend; liefert eine Antwort. Optional auf eine einzelne Woche filterbar oder ohne Menüs abrufbar, was die Antwort deutlich kleiner macht.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -443,6 +464,10 @@
         "week_id": {
           "name": "Wochen-ID",
           "description": "Optionale Kennung einer HelloFresh-Lieferwoche, um nur diese Woche zurückzugeben."
+        },
+        "include_recipes": {
+          "name": "Rezepte einschließen",
+          "description": "Ob jede Woche mit ihrem Menü geliefert wird: den Rezepten, den Markt-Artikeln sowie den Bereichen und Filtern des Menüs. Standardmäßig eingeschaltet. Ausschalten für eine deutlich kleinere Antwort, wenn nur der Lieferplan, die Anzahl gewählter Gerichte und die Bestellung gebraucht werden."
         }
       }
     },
@@ -554,9 +579,27 @@
         }
       }
     },
+    "change_week_servings": {
+      "name": "Personen einer Woche ändern",
+      "description": "Experimentell. Ändert, für wie viele Personen die Kochbox einer Lieferwoche ist. Die Anzahl der Gerichte bleibt, und der Plan und die anderen Wochen bleiben, wie sie sind. Nur Größen, die dein Plan anbietet, werden angenommen. Gibt die neue Kochbox und ihren Preis zurück.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationseintrags-ID",
+          "description": "Der HelloFresh-Kontoeintrag, auf den sich die Aktion bezieht, wenn mehrere Konten eingerichtet sind."
+        },
+        "week_id": {
+          "name": "Wochen-ID",
+          "description": "Die Kennung der HelloFresh-Lieferwoche."
+        },
+        "servings": {
+          "name": "Personen",
+          "description": "Für wie viele Personen die Kochbox der Woche nach der Änderung ist."
+        }
+      }
+    },
     "change_delivery_weekday": {
       "name": "Liefertag ändern",
-      "description": "Die wiederkehrende Lieferoption und das Intervall für den Plan eines Abos ändern. Betrifft alle künftigen Lieferungen.",
+      "description": "Den wiederkehrenden Liefertag und das Lieferzeitfenster für den Plan eines Abos ändern. Betrifft alle künftigen Lieferungen. Wie oft Kochboxen kommen, lässt sich damit nicht ändern.",
       "fields": {
         "config_entry_id": {
           "name": "Konfigurationseintrags-ID",
@@ -568,7 +611,7 @@
         },
         "delivery_interval": {
           "name": "Lieferintervall",
-          "description": "Wie oft geliefert wird, in Wochen. Standard ist wöchentlich."
+          "description": "Nur 1 (jede Woche) wird akzeptiert und ist der Standard. Diese Aktion kann nicht ändern, wie oft Kochboxen kommen; jeder andere Wert wird abgelehnt."
         },
         "subscription_id": {
           "name": "Abo-ID",
@@ -647,6 +690,10 @@
         "limit": {
           "name": "Anzahl",
           "description": "Maximale Anzahl zurückzugebender Rezepte."
+        },
+        "offset": {
+          "name": "Versatz",
+          "description": "Wie viele Rezepte vor dieser Seite übersprungen werden (Standard 0). Die nächste Seite beginnt bei Versatz + Anzahl."
         }
       }
     },
@@ -932,7 +979,8 @@
           "one": "{count} Woche braucht deine Auswahl",
           "other": "{count} Wochen brauchen deine Auswahl"
         },
-        "load_failed": "Deine Lieferungen konnten nicht geladen werden: {error}"
+        "load_failed": "Deine Lieferungen konnten nicht geladen werden: {error}",
+        "view_failed": "Dieser Bereich konnte nicht angezeigt werden: {error}"
       },
       "banner": {
         "refresh_failed": "Aktualisierung fehlgeschlagen: {error}",
@@ -941,7 +989,14 @@
         "card_expired_date": "Deine Karte ({card}) ist abgelaufen ({date}). Aktualisiere sie bei HelloFresh, sonst wird deine nächste Box eventuell nicht verschickt.",
         "card_expiring": "Deine Karte ({card}) läuft bald ab. Aktualisiere sie bei HelloFresh, bevor deine nächste Box abgebucht wird.",
         "card_expiring_date": "Deine Karte ({card}) läuft bald ab ({date}). Aktualisiere sie bei HelloFresh, bevor deine nächste Box abgebucht wird.",
-        "holiday_date": "Neues Lieferdatum: {date}."
+        "holiday_date": "Neues Lieferdatum: {date}.",
+        "payment_boxes": {
+          "one": "Bei der Zahlung für deine Box vom {boxes} gibt es ein Problem.",
+          "other": "Bei den Zahlungen für {count} Boxen gibt es ein Problem: {boxes}."
+        },
+        "payment_any": "Bei einer Zahlung in deinem HelloFresh-Konto gibt es ein Problem.",
+        "payment_box": "{date} ({amount})",
+        "payment_fix": "Zahlungsdaten bei HelloFresh aktualisieren"
       },
       "state": {
         "ready": {
@@ -1050,7 +1105,10 @@
         "skipped_title": "Diese Woche ist pausiert.",
         "unskip_to_choose": "Aktiviere sie wieder, um Gerichte zu wählen.",
         "autopicked_before": "Behalte sie oder tausche welche vor {date} aus.",
-        "closed": "Diese Box kann nicht mehr geändert werden — sie wird wie angezeigt geliefert."
+        "closed": "Diese Box kann nicht mehr geändert werden — sie wird wie angezeigt geliefert.",
+        "skip_closed": "Die Frist für diese Woche ist abgelaufen, sie kann nicht mehr geändert werden.",
+        "delayed": "Verspätet — kommt jetzt am {date}",
+        "early": "Früher — kommt jetzt am {date}"
       },
       "skip": {
         "title": "{date} pausieren?",
@@ -1068,6 +1126,30 @@
         "none": "Es sind keine anderen Tage verfügbar.",
         "failed": "Der Tag konnte nicht geändert werden: {error}",
         "done": "Liefertag für diese Woche geändert."
+      },
+      "undo": {
+        "action": "Rückgängig",
+        "undoing": "Wird rückgängig gemacht …",
+        "done": "Änderung rückgängig gemacht.",
+        "failed": "Konnte nicht rückgängig gemacht werden: {error}",
+        "closed": "Zu spät zum Rückgängigmachen: Die Frist für diese Woche ist abgelaufen."
+      },
+      "servings": {
+        "for": "Für {people}",
+        "change": "Ändern",
+        "change_aria": "Ändern, für wie viele Personen diese Box ist",
+        "title": "Personen in dieser Box",
+        "only_this_box": "Nur für die Box am {date}",
+        "loading": "Boxgrößen werden geladen …",
+        "load_failed": "Die Boxgrößen konnten nicht geladen werden: {error}",
+        "none": "HelloFresh bietet für diese Box keine andere Größe an.",
+        "confirm_title": "Diese Box auf {people} ändern?",
+        "confirm_body": "Nur deine Box am {date} ändert sich. Dein Plan und deine anderen Boxen bleiben, wie sie sind.",
+        "confirm_price": "HelloFresh nennt für {size} einen Preis von {price}.",
+        "confirm": "Diese Box ändern",
+        "saving": "Box wird geändert …",
+        "done": "Diese Box ist jetzt für {people}.",
+        "failed": "Die Box konnte nicht geändert werden: {error}"
       },
       "pantry": {
         "update_failed": "Die Liste konnte nicht aktualisiert werden: {error}",
@@ -1243,6 +1325,9 @@
         "filters": "Filter",
         "in_my_box": "In meiner Box",
         "filtering": "Wird gefiltert …",
+        "allergen_checking": "HelloFresh prüft, welche Gerichte diese Zutaten vermeiden. Bis die Antwort da ist, werden nur die Gerichte in deiner Box angezeigt.",
+        "allergen_failed": "HelloFresh konnte deine zu vermeidenden Zutaten nicht prüfen. Gerichte außerhalb deiner Box werden deshalb ausgeblendet, statt ungeprüft angezeigt zu werden.",
+        "filter_failed": "Der Filterdienst von HelloFresh hat nicht geantwortet. Diese Filter nutzen vorerst nur die Menüdaten und können einzelne Gerichte übersehen.",
         "remove_filter": "Entfernen: {label}",
         "clear_all": "Alle entfernen",
         "no_match_query": "Keine Gerichte passen zu „{query}“.",
@@ -1368,7 +1453,14 @@
         "min_notice": "Wähle mindestens {min} Gerichte — kleiner geht die Box bei HelloFresh nicht.",
         "resized_notice": "Die Box dieser Woche ist auf {meals} geändert (dein Plan hat {required}). HelloFresh berechnet den Preis neu; dein Plan selbst bleibt gleich.",
         "unsaved_lower": "ungespeicherte Änderungen",
-        "keep_editing": "Weiter bearbeiten"
+        "keep_editing": "Weiter bearbeiten",
+        "changed_title": "Deine gespeicherte Box hat sich geändert, seit du angefangen hast.",
+        "changed_body": "Sie wurde woanders geändert, etwa auf einem anderen Gerät oder auf hellofresh.com. {keep_mine} überträgt deine Änderungen auf die Box, wie sie jetzt gespeichert ist; {use_saved} verwirft sie.",
+        "keep_mine": "Meine behalten",
+        "use_saved": "Gespeicherte verwenden",
+        "changed_toast": "Deine gespeicherte Box hat sich geändert, seit du angefangen hast. Wähle vor dem Speichern „{keep_mine}“ oder „{use_saved}“.",
+        "estimate_unavailable": "Schätzung nicht verfügbar",
+        "estimate_unavailable_note": "Im Moment gibt es keine Preisschätzung. HelloFresh berechnet den Preis bei der Abbuchung."
       },
       "market": {
         "group": {
@@ -1454,12 +1546,30 @@
           "one": "{count} Ergebnis aus allen Kategorien",
           "other": "{count} Ergebnisse aus allen Kategorien"
         },
+        "results_capped": {
+          "one": "Das erste {count} Ergebnis aus allen Kategorien wird angezeigt",
+          "other": "Die ersten {count} Ergebnisse aus allen Kategorien werden angezeigt"
+        },
+        "capped": {
+          "one": "Das erste {count} Rezept wird angezeigt",
+          "other": "Die ersten {count} Rezepte werden angezeigt"
+        },
         "cookbook_empty": "Dein Kochbuch ist leer. Tippe bei einem Rezept auf das Herz, um es hier zu speichern.",
         "no_saved_match": "Keine gespeicherten Rezepte passen zu „{query}“.",
         "remove_aria": "Aus dem Kochbuch entfernen: {name}",
         "save_aria": "Im Kochbuch speichern: {name}",
         "remove_title": "Aus dem Kochbuch entfernen",
-        "save_title": "Im Kochbuch speichern"
+        "save_title": "Im Kochbuch speichern",
+        "load_more": "Mehr laden",
+        "loading_more": "Weitere werden geladen …",
+        "more_failed": "Weitere Rezepte konnten nicht geladen werden: {error}",
+        "shown_of": "{count} von {total} Rezepten werden angezeigt",
+        "results_of": "{count} von {total} Ergebnissen aus allen Kategorien werden angezeigt",
+        "added": {
+          "one": "{count} weiteres Rezept geladen",
+          "other": "{count} weitere Rezepte geladen"
+        },
+        "none_added": "Es gibt keine weiteren Rezepte."
       },
       "account": {
         "credit_card": "Kreditkarte",
@@ -1493,10 +1603,19 @@
         "presets_loading": "Menü-Vorlieben werden geladen …",
         "presets_none": "Keine Menü-Vorlieben verfügbar.",
         "yours": "Deine",
-        "presets_note": "Was die einzelnen Vorlieben bedeuten — HelloFresh wählt damit deine Gerichte aus. Ändern kannst du sie bei HelloFresh."
+        "presets_note": "Was die einzelnen Vorlieben bedeuten — HelloFresh wählt damit deine Gerichte aus. Ändern kannst du sie bei HelloFresh.",
+        "credit_cash": "HelloFresh Cash",
+        "credit_bonus": "Bonusguthaben",
+        "rewards": "Prämien",
+        "boxes_until_free": {
+          "one": "Noch {count} Box bis zu einer Gratisbox",
+          "other": "Noch {count} Boxen bis zu einer Gratisbox"
+        },
+        "free_box_earned": "Du hast eine Gratisbox verdient"
       },
       "plan": {
         "options_loading": "Optionen werden gleich geladen …",
+        "saving": "Dein Plan wird aktualisiert …",
         "settings": "Plan-Einstellungen",
         "settings_note": "Das ändert alle künftigen Boxen — und was dir berechnet wird. Um nur eine Woche zu ändern, nutze dort {change_day} oder {skip}.",
         "from_to": "Von {from} auf {to}",
@@ -1689,6 +1808,7 @@
         "save_failed": "Deine Vorlieben konnten nicht gespeichert werden: {error}",
         "tell_us_more": "Erzähl uns mehr",
         "load_failed": "Deine Essensvorlieben konnten nicht geladen werden: {error}",
+        "reload_failed": "Deine Essensvorlieben konnten nicht neu geladen werden: {error}",
         "none": "Kein Ernährungsprofil verfügbar.",
         "completion": "{completed} von {total} Profilangaben ausgefüllt",
         "hero_title": "Gerichte nach deinem Geschmack",
@@ -1775,6 +1895,8 @@
         "something_else_hint": "Reste, Pizzaabend, auswärts essen …",
         "saving": "Plan wird gespeichert …",
         "save_failed": "Der Plan konnte nicht gespeichert werden: {error}",
+        "save_partial": "Nur ein Teil des Plans wurde gespeichert. Gespeichert: {saved}. Nicht gespeichert: {failed} ({error}).",
+        "start_time": "Startzeit",
         "saved": "Plan gespeichert",
         "cleared": "Plan entfernt",
         "item_title": "{name} planen",

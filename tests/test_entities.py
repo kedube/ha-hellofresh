@@ -9,11 +9,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from custom_components.hellofresh import switch as switch_module
+from homeassistant.const import EntityCategory
+from homeassistant.exceptions import HomeAssistantError
+import pytest
+
+from custom_components.hellofresh import coordinator as coordinator_module
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
+    HelloFreshAuthError,
     HelloFreshCapabilities,
+    HelloFreshError,
     HelloFreshMarketItem,
+    HelloFreshNotImplementedError,
     HelloFreshOrder,
     HelloFreshSubscription,
     HelloFreshWeek,
@@ -24,6 +31,7 @@ from custom_components.hellofresh.binary_sensor import (
 from custom_components.hellofresh.binary_sensor import (
     HelloFreshBinarySensor,
 )
+from custom_components.hellofresh.parsers import local_today
 from custom_components.hellofresh.sensor import SENSORS as SENSOR_DESCRIPTIONS
 from custom_components.hellofresh.sensor import HelloFreshSensor
 from custom_components.hellofresh.switch import SWITCHES, HelloFreshSwitch
@@ -35,7 +43,7 @@ def _build_coordinator() -> SimpleNamespace:
     # ``finalize()`` (which filters orders to ``delivery_date >= today``) stays deterministic
     # regardless of when the suite runs. Payment and holiday dates remain fixed literals --
     # those are asserted by value and aren't gated on today.
-    today = date.today()
+    today = local_today()
     next_delivery = today + timedelta(days=2)
     tracked_delivery = today + timedelta(days=5)
     skipped_delivery = today + timedelta(days=9)
@@ -177,7 +185,7 @@ def test_new_sensor_entities_reflect_account_data() -> None:
     assert _sensor_for("skipped_week_count").native_value == 1
     assert _sensor_for("next_skipped_week").native_value == "Week 26"
     assert _sensor_for("boxes_received").native_value == 14
-    assert _sensor_for("last_delivery_date").native_value == date.today() - timedelta(days=7)
+    assert _sensor_for("last_delivery_date").native_value == local_today() - timedelta(days=7)
     assert _sensor_for("next_box_coupon").native_value == "WELCOME20"
     assert (
         _sensor_for("next_delivery_tracking_url").native_value
@@ -434,7 +442,6 @@ def test_status_entities_use_state_aware_icons() -> None:
 
 def test_next_order_status_icons_cover_box_lifecycle_states() -> None:
     """Each box-lifecycle state maps to a meaningful icon."""
-    from datetime import date as _date
 
     from custom_components.hellofresh.sensor_helpers import sensor_icon
 
@@ -454,7 +461,7 @@ def test_next_order_status_icons_cover_box_lifecycle_states() -> None:
                     week_id="w",
                     status=state,
                     subscription_id="sub-1",
-                    delivery_date=_date.today(),
+                    delivery_date=local_today(),
                 )
             ]
         ).finalize()
@@ -786,7 +793,7 @@ def test_weeks_needing_selection_sensor_counts_auto_picked_weeks() -> None:
     deadline (when known) still ahead. A locked week ships with its auto-picks no matter
     what, so it stops counting — the sensor is a call to action.
     """
-    today = date.today()
+    today = local_today()
     editable = {"mealSwap": True}
     open_deadline = datetime.now(UTC) + timedelta(days=3)
     data = HelloFreshAccountData(
@@ -1036,7 +1043,9 @@ def _switch(data: HelloFreshAccountData) -> HelloFreshSwitch:
     coordinator = SimpleNamespace(
         data=data,
         hass=None,
-        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        config_entry=SimpleNamespace(
+            entry_id="entry-1", title="HelloFresh", async_start_reauth=mock.Mock()
+        ),
         client=SimpleNamespace(skipped=[], unskipped=[]),
         last_update_success=True,
     )
@@ -1053,6 +1062,11 @@ def _switch(data: HelloFreshAccountData) -> HelloFreshSwitch:
     coordinator.client.async_skip_week = _skip
     coordinator.client.async_unskip_week = _unskip
     coordinator.async_request_refresh = _refresh
+
+    async def _after_write(*, full_refresh: bool = True) -> None:
+        coordinator.refreshed = full_refresh
+
+    coordinator.async_after_write = _after_write
     description = next(d for d in SWITCHES if d.key == "skip_next_modifiable_week")
     switch = HelloFreshSwitch(coordinator, description)
     switch.coordinator = coordinator
@@ -1082,7 +1096,7 @@ def test_skip_switch_unavailable_without_modifiable_week() -> None:
 def test_skip_switch_turn_on_skips_the_modifiable_week() -> None:
     """Turning on calls skip for the modifiable week's id and clears the write warning."""
     switch = _switch(_modifiable_week_data(skipped=False))
-    with mock.patch.object(switch_module, "async_delete_write_actions_issue") as clear:
+    with mock.patch.object(coordinator_module, "async_delete_write_actions_issue") as clear:
         _run(switch.async_turn_on())
     assert switch.coordinator.client.skipped == ["2026-W26"]
     assert switch.coordinator.client.unskipped == []
@@ -1092,7 +1106,7 @@ def test_skip_switch_turn_on_skips_the_modifiable_week() -> None:
 def test_skip_switch_turn_off_restores_the_modifiable_week() -> None:
     """Turning off calls unskip for the modifiable week's id and clears the write warning."""
     switch = _switch(_modifiable_week_data(skipped=True))
-    with mock.patch.object(switch_module, "async_delete_write_actions_issue") as clear:
+    with mock.patch.object(coordinator_module, "async_delete_write_actions_issue") as clear:
         _run(switch.async_turn_off())
     assert switch.coordinator.client.unskipped == ["2026-W26"]
     assert switch.coordinator.client.skipped == []
@@ -1104,6 +1118,55 @@ def test_skip_switch_noop_when_already_in_target_state() -> None:
     switch = _switch(_modifiable_week_data(skipped=True))
     _run(switch.async_turn_on())
     assert switch.coordinator.client.skipped == []
+
+
+def _failing_switch(error: Exception) -> HelloFreshSwitch:
+    switch = _switch(_modifiable_week_data(skipped=False))
+
+    async def _skip(_week_id: str) -> None:
+        raise error
+
+    switch.coordinator.client.async_skip_week = _skip
+    switch.coordinator.refreshed = False
+    return switch
+
+
+def test_skip_switch_reports_a_passing_failure_without_a_repair() -> None:
+    """A timeout is an error for the user, not a "write actions unavailable" repair.
+
+    The switch used to raise the repair for any failure, so one slow request left a warning
+    saying the account could not be changed at all.
+    """
+    switch = _failing_switch(HelloFreshError("HelloFresh did not answer"))
+    with (
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="did not answer"),
+    ):
+        _run(switch.async_turn_on())
+    raised.assert_not_called()
+    switch.coordinator.config_entry.async_start_reauth.assert_not_called()
+    assert switch.coordinator.refreshed is False
+
+
+def test_skip_switch_raises_the_repair_when_skipping_is_unsupported() -> None:
+    switch = _failing_switch(HelloFreshNotImplementedError("no verified endpoint"))
+    with (
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="no verified endpoint"),
+    ):
+        _run(switch.async_turn_on())
+    raised.assert_called_once_with(None, "entry-1", "HelloFresh")
+
+
+def test_skip_switch_starts_reauth_when_the_sign_in_is_rejected() -> None:
+    switch = _failing_switch(HelloFreshAuthError("token rejected"))
+    with (
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="token rejected"),
+    ):
+        _run(switch.async_turn_on())
+    switch.coordinator.config_entry.async_start_reauth.assert_called_once_with(None)
+    raised.assert_not_called()
 
 
 def test_switch_descriptions_have_translation_names() -> None:
@@ -1132,3 +1195,176 @@ def test_humanize_status_normalizes_casing_and_separators() -> None:
     assert humanize_status(3) == 3
     assert humanize_status(True) is True
     assert humanize_status("") == ""
+
+
+# ---- what the recorder keeps, and where personal data sits --------------------------------
+
+
+def _recorded(entity) -> dict[str, object]:
+    """The attributes Home Assistant's recorder would store for the entity's state."""
+    unrecorded = type(entity)._unrecorded_attributes
+    return {
+        key: value
+        for key, value in (entity.extra_state_attributes or {}).items()
+        if key not in unrecorded
+    }
+
+
+def test_personal_and_bulky_sensor_attributes_stay_out_of_the_recorder() -> None:
+    """Tracking links, voucher codes and whole order/week objects are not written to the DB.
+
+    They remain on the live state (dashboards and templates read them there); only the
+    recorder skips them. Nothing was excluded before, so every one of these was stored with
+    each state change, and the weeks list could pass the 16 KB limit by itself.
+    """
+    for key, hidden in {
+        "next_order_status": {"tracking_url", "week"},
+        "shipment_tracking_status": {
+            "order",
+            "tracking_url",
+            "tracking_events",
+            "delivery_photo_urls",
+            "delivery_signed_by",
+        },
+        "next_delivery_date": {"order", "week"},
+        "next_box_total_price": {"order", "week", "price_breakdown"},
+        "next_selection_deadline": {"weeks", "next_selection_week"},
+        "weeks_needing_selection": {"weeks"},
+        "next_box_discount": {"voucher_code", "benefits"},
+        "selected_plan_total_price": {"price_breakdown"},
+        "last_delivery_date": {"last_delivery_week"},
+        "access_token_minutes_remaining": {"seconds_remaining"},
+    }.items():
+        sensor = _sensor_for(key)
+        live = sensor.extra_state_attributes
+        assert hidden <= set(live), f"{key}: the live state lost an attribute"
+        assert hidden.isdisjoint(_recorded(sensor)), f"{key}: {hidden} would be recorded"
+
+
+def test_card_details_stay_out_of_the_recorder() -> None:
+    sensor = _binary_sensor_for("payment_method_expiring")
+    assert {"card_last4", "card_expiry"} <= set(sensor.extra_state_attributes)
+    assert set(_recorded(sensor)) == {
+        "expiring",
+        "expired",
+        "card_type",
+        "card_provider",
+        "card_brand",
+    }
+
+
+def test_entities_holding_personal_data_are_diagnostic() -> None:
+    """The address, the account id and the card entity are filed under Diagnostic.
+
+    Diagnostic entities are left out of generated dashboards and are not offered to voice
+    assistants by default. Their ids and enabled state are unchanged.
+    """
+    for key in ("delivery_address", "account_id"):
+        description = next(d for d in SENSOR_DESCRIPTIONS if d.key == key)
+        assert description.entity_category is EntityCategory.DIAGNOSTIC
+        assert description.entity_registry_enabled_default is True
+    card = next(d for d in BINARY_SENSORS if d.key == "payment_method_expiring")
+    assert card.entity_category is EntityCategory.DIAGNOSTIC
+    assert card.entity_registry_enabled_default is True
+    assert _sensor_for("delivery_address").entity_id == "sensor.hellofresh_delivery_address"
+    assert _sensor_for("account_id").unique_id == "entry-1_account_id"
+
+
+def test_order_sensors_describe_the_next_orders_own_week() -> None:
+    """With two subscriptions, the ``week`` attribute belongs to the next order's subscription.
+
+    ISO week ids are shared between subscriptions. Looked up by week id alone, the second
+    subscription's next box was described with the first subscription's week: its dates,
+    deadline and meal counts.
+    """
+    today = local_today()
+    days = {"sub-1": today + timedelta(days=5), "sub-2": today + timedelta(days=3)}
+    data = HelloFreshAccountData(
+        weeks=[
+            HelloFreshWeek(
+                week_id="2026-W47",
+                display_name=f"Week of {sub}",
+                subscription_id=sub,
+                delivery_date=day,
+            )
+            for sub, day in days.items()
+        ],
+        orders=[
+            HelloFreshOrder(
+                order_id=f"order-{sub}",
+                week_id="2026-W47",
+                status="scheduled",
+                subscription_id=sub,
+                delivery_date=day,
+            )
+            for sub, day in days.items()
+        ],
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1"),
+            HelloFreshSubscription(subscription_id="sub-2"),
+        ],
+    ).finalize()
+    coordinator = SimpleNamespace(
+        data=data,
+        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        client=SimpleNamespace(base_url="https://www.hellofresh.com"),
+    )
+    assert data.next_order.order_id == "order-sub-2"  # the second plan's box comes first
+
+    for key in ("next_order_status", "next_delivery_date", "next_box_total_price"):
+        description = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
+        attributes = HelloFreshSensor(coordinator, description).extra_state_attributes
+        assert attributes["week"]["display_name"] == "Week of sub-2", key
+
+
+def test_the_scan_history_is_exposed_once_not_inside_every_embedded_order() -> None:
+    """``tracking_events`` is a top-level attribute of the shipment sensors only.
+
+    It was also inside every embedded ``order``, so the same list was stored up to six times
+    over and rewritten on each delivery-watch change.
+    """
+    events = [{"time": "2026-11-12T08:00:00+00:00", "status": "in_transit", "detail": None}]
+    coordinator = _build_coordinator()
+    for order in coordinator.data.orders:
+        order.tracking_events = list(events)
+    coordinator.data.finalize()
+
+    def _attributes(key: str) -> dict:
+        description = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
+        return HelloFreshSensor(coordinator, description).extra_state_attributes
+
+    for key in ("shipment_tracking_status", "shipment_tracking_number"):
+        attributes = _attributes(key)
+        assert attributes["tracking_events"] == events
+        assert "tracking_events" not in attributes["order"]
+    for key in ("next_delivery_date", "next_box_total_price", "next_delivery_slot"):
+        assert "tracking_events" not in _attributes(key)["order"]
+        # The rest of the order is still there.
+        assert _attributes(key)["order"]["order_id"] == "ord-1"
+
+
+def test_token_sensors_follow_the_token_not_the_account_poll() -> None:
+    """The two token sensors are rewritten when the token rotates or its timer ticks.
+
+    Their value comes from the clock, but a poll only writes state when account data
+    changed, so "27 min" could stand for hours while the token rotated every half hour.
+    """
+    coordinator = _build_coordinator()
+    coordinator.async_add_listener = lambda *_args, **_kwargs: lambda: None
+    token_listeners: list = []
+    coordinator.async_add_token_listener = lambda update: (
+        token_listeners.append(update) or (lambda: None)
+    )
+
+    def _added(key: str) -> HelloFreshSensor:
+        description = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
+        sensor = HelloFreshSensor(coordinator, description)
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(sensor.async_added_to_hass())
+        return sensor
+
+    access = _added("access_token_minutes_remaining")
+    refresh = _added("refresh_token_days_remaining")
+    _added("next_order_status")  # an ordinary sensor does not subscribe
+
+    assert token_listeners == [access.async_write_ha_state, refresh.async_write_ha_state]

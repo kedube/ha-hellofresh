@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
@@ -14,6 +17,9 @@ ISSUE_ACCOUNT_DATA_UNAVAILABLE = "account_data_unavailable"
 ISSUE_ACCOUNT_MENU_FALLBACK = "account_menu_fallback"
 ISSUE_PAYLOAD_SHAPE_CHANGED = "payload_shape_changed"
 ISSUE_WRITE_ACTIONS_UNAVAILABLE = "write_actions_unavailable"
+# A box HelloFresh could not charge. A problem with the account, not with the integration's
+# data, so it is not among the data-quality issues the options can turn off.
+ISSUE_PAYMENT_PROBLEM = "payment_problem"
 # Not per entry: dashboards belong to the whole Home Assistant, not to one account. Not the
 # deprecation notice's id ("deprecated_classic_cards") either, so it shows even to those who
 # dismissed that one.
@@ -51,7 +57,7 @@ def async_cleanup_stale_issues(hass, valid_entry_ids: set[str]) -> None:
     them. Entry ids never contain underscores, so the id's last segment is the entry.
     """
     registry = ir.async_get(hass)
-    prefixes = tuple(f"{key}_" for key in _ALL_ISSUE_KEYS)
+    prefixes = tuple(f"{key}_" for key in (*_ALL_ISSUE_KEYS, ISSUE_PAYMENT_PROBLEM))
     stale = [
         issue_id
         for domain, issue_id in registry.issues
@@ -151,6 +157,54 @@ def async_create_write_actions_issue(hass, entry_id: str, entry_title: str) -> N
 def async_delete_write_actions_issue(hass, entry_id: str) -> None:
     """Delete the write-actions issue."""
     ir.async_delete_issue(hass, DOMAIN, _issue_id(ISSUE_WRITE_ACTIONS_UNAVAILABLE, entry_id))
+
+
+def _payment_amount(problem: Mapping[str, Any]) -> str:
+    """A box's amount as the notice shows it ("65.94 USD"), or a dash when it is unknown."""
+    amount = problem.get("amount")
+    if not isinstance(amount, int | float):
+        return "–"
+    return f"{amount:.2f} {problem.get('currency') or ''}".strip()
+
+
+def async_update_payment_problem_issue(
+    hass,
+    entry_id: str,
+    entry_title: str,
+    problems: Sequence[Mapping[str, Any]],
+    learn_more_url: str,
+) -> None:
+    """Raise the payment warning while a box has a payment problem, and clear it after.
+
+    ``problems`` is the account data's ``payment_problem_weeks``, oldest first; the notice
+    names the first box by its date and amount and links to the account's HelloFresh site,
+    where the payment details are changed. Not persistent: every poll decides it afresh, so
+    a restart does not keep a warning HelloFresh has stopped reporting.
+    """
+    if not problems:
+        async_delete_payment_problem_issue(hass, entry_id)
+        return
+    first = problems[0]
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _issue_id(ISSUE_PAYMENT_PROBLEM, entry_id),
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_PAYMENT_PROBLEM,
+        translation_placeholders={
+            "entry_title": entry_title,
+            "date": str(first.get("delivery_date") or first.get("week_id") or "–"),
+            "amount": _payment_amount(first),
+        },
+        learn_more_url=learn_more_url,
+    )
+
+
+def async_delete_payment_problem_issue(hass, entry_id: str) -> None:
+    """Delete the payment warning."""
+    ir.async_delete_issue(hass, DOMAIN, _issue_id(ISSUE_PAYMENT_PROBLEM, entry_id))
 
 
 def async_update_removed_cards_issue(hass, in_use: dict[str, list[str]]) -> None:

@@ -32,3 +32,36 @@ export async function launchBrowser() {
     return puppeteer.launch({ ...options, dumpio: true });
   }
 }
+
+// Proof-of-delivery photos come from a carrier's own host, and the card only shows https ones.
+// The harness is plain http on localhost, so the fixtures name their photo on this made-up https
+// host and the pages opened by `browser` answer it themselves, with the harness's own picture
+// (/img/<name> on `port`). Nothing leaves the machine: .test never resolves, and the request is
+// answered before it is sent.
+export const PHOTO_HOST = "https://delivery-photos.test";
+
+export function serveDeliveryPhotos(browser, port) {
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (...args) => {
+    const page = await newPage(...args);
+    const client = await page.createCDPSession();
+    await client.send("Fetch.enable", { patterns: [{ urlPattern: `${PHOTO_HOST}/*` }] });
+    client.on("Fetch.requestPaused", async ({ requestId, request }) => {
+      try {
+        const name = new URL(request.url).pathname.slice(1);
+        const picture = await fetch(`http://localhost:${port}/img/${name}`);
+        await client.send("Fetch.fulfillRequest", {
+          requestId,
+          responseCode: picture.status,
+          responseHeaders: [{ name: "content-type", value: picture.headers.get("content-type") || "image/svg+xml" }],
+          body: Buffer.from(await picture.arrayBuffer()).toString("base64"),
+        });
+      } catch (_err) {
+        // The page closed under the request, or the harness server is gone.
+        client.send("Fetch.failRequest", { requestId, errorReason: "Failed" }).catch(() => {});
+      }
+    });
+    return page;
+  };
+}
+

@@ -20,10 +20,11 @@ Amounts are never summed *across* weeks: each box is its own shopping trip. See
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import Any, TypeGuard
 
 from homeassistant.components.todo import (
     ENTITY_ID_FORMAT,
@@ -32,14 +33,15 @@ from homeassistant.components.todo import (
     TodoListEntity,
     TodoListEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 from .models import HelloFreshWeek
+from .parsers import local_today
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,10 +49,17 @@ _LOGGER = logging.getLogger(__name__)
 # so a single shopping trip can serve both.
 _WEEKS_COVERED = 2
 
-# Cap the recipe-detail fetches per refresh, across all covered weeks. Each week holds a
-# handful of selected meals, but a malformed payload could nominate far more; this keeps one
-# bad poll from issuing dozens of round-trips.
+# Cap the recipes one list reads. A week holds a handful of selected meals, but a malformed
+# payload could nominate far more; this keeps one bad poll from issuing dozens of round-trips.
 _MAX_RECIPE_FETCHES = 24
+
+# How many recipe details one list fetches at a time. Enough that a week's meals no longer
+# queue up one behind another, few enough to stay a polite client.
+_FETCH_CONCURRENCY = 3
+
+# How long a list that could not read every recipe waits before asking for the missing ones
+# again. Long enough not to hammer HelloFresh through an outage.
+_RETRY_AFTER = timedelta(minutes=10)
 
 
 # Coordinator-based: entities never poll on their own, so entity-update parallelism is
@@ -60,17 +69,17 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up one prep-list entity per covered delivery week."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     async_add_entities(HelloFreshPrepListTodo(coordinator, slot) for slot in range(_WEEKS_COVERED))
 
 
 @dataclass
 class _PrepTicksExtraData(ExtraStoredData):
-    """Restore-state payload: the ticked-off (week_id, ingredient_key) pairs."""
+    """Restore-state payload: the ticked-off (box key, ingredient_key) pairs."""
 
     ticks: list[list[str]]
 
@@ -86,6 +95,18 @@ def _ingredient_key(name: str) -> str:
     whitespace-insensitive because the same staple is not spelled consistently across recipes.
     """
     return " ".join(name.split()).casefold()
+
+
+def _box_key(week: HelloFreshWeek) -> str:
+    """Return the identity a week's prep list and its check-offs are kept under.
+
+    A week id is shared by every subscription on the account: with two boxes in the same
+    week, keying on the id alone let one box hide the other and would have mixed their
+    check-offs. A week without a subscription id keeps its bare week id, which is also how
+    every tick was saved before boxes were told apart.
+    """
+    subscription_id = getattr(week, "subscription_id", None)
+    return f"{subscription_id}/{week.week_id}" if subscription_id else week.week_id
 
 
 def _week_label(week: HelloFreshWeek) -> str:
@@ -346,20 +367,23 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
 
     def __init__(self, coordinator: HelloFreshDataUpdateCoordinator, slot: int) -> None:
         """Initialize the prep list for one week slot."""
-        super().__init__(coordinator)
-        self._slot = slot
         key = "prep_list" if slot == 0 else f"prep_list_week_{slot + 1}"
+        super().__init__(coordinator, ENTITY_ID_FORMAT, key)
+        self._slot = slot
         self._attr_translation_key = key
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, key)
         self._items: list[TodoItem] = []
-        self._built_for: tuple[tuple[str, tuple[str, ...]], ...] = ()
+        # What the current items were built from: (week id, selected recipe ids, servings).
+        # Empty until a build has read every recipe, so an incomplete one is tried again.
+        self._built_for: tuple[Any, ...] = ()
+        self._rebuild_task: asyncio.Task[None] | None = None
+        self._rebuild_again = False
+        self._cancel_retry: CALLBACK_TYPE | None = None
 
     @property
     def _completed(self) -> set[tuple[str, str]]:
-        """Ticked-off items, keyed by (week_id, ingredient_key).
+        """Ticked-off items, keyed by (box key, ingredient_key); see ``_box_key``.
 
-        Keying on the week id (not the slot) AND sharing one set across both entities via
+        Keying on the box (not the slot) AND sharing one set across both entities via
         the coordinator means a box landing — which shifts every week up one slot, onto the
         OTHER entity — carries the ticks with the week they belong to. A per-entity set
         stranded them on the old slot.
@@ -381,9 +405,10 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         """
         week = self._target_week()
         if week is None:
-            return {"week_id": None, "delivery_date": None}
+            return {"week_id": None, "subscription_id": None, "delivery_date": None}
         return {
             "week_id": week.week_id,
+            "subscription_id": getattr(week, "subscription_id", None),
             "delivery_date": week.delivery_date.isoformat() if week.delivery_date else None,
         }
 
@@ -398,10 +423,11 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         if data is None:
             return []
 
-        today = date.today()
+        today = local_today()
         anchor = data.next_delivery_week_obj or data.next_configurable_week
 
-        def _eligible(week: HelloFreshWeek | None) -> bool:
+        # A TypeGuard, not a TypeIs: False also covers a real week that is skipped or past.
+        def _eligible(week: HelloFreshWeek | None) -> TypeGuard[HelloFreshWeek]:
             return (
                 week is not None
                 and not week.is_skipped
@@ -417,7 +443,7 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         remaining = [
             week
             for week in data.weeks
-            if _eligible(week) and week.week_id not in {w.week_id for w in ordered}
+            if _eligible(week) and _box_key(week) not in {_box_key(w) for w in ordered}
         ]
         remaining.sort(key=lambda w: (w.delivery_date is None, w.delivery_date or today))
         ordered.extend(remaining)
@@ -429,6 +455,37 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         if self._slot < len(weeks):
             return weeks[self._slot]
         return None
+
+    def _subscription_for(self, week: HelloFreshWeek) -> Any | None:
+        """Return the subscription the week's box belongs to, else the account's first.
+
+        Its serving count sets the amounts. Reading the first subscription's count for every
+        week gave a second subscription's box the wrong amounts.
+        """
+        data = self.coordinator.data
+        if data is None:
+            return None
+        subscription_id = getattr(week, "subscription_id", None)
+        for subscription in getattr(data, "subscriptions", None) or []:
+            if subscription_id and subscription.subscription_id == subscription_id:
+                return subscription
+        return data.primary_subscription
+
+    def _adopt_legacy_ticks(self, covered_weeks: list[HelloFreshWeek]) -> None:
+        """Move check-offs saved under a bare week id onto that week's box.
+
+        Ticks were keyed by week id alone until boxes were told apart by subscription. A
+        restored tick of that kind belongs to the first covered box of its week, which is the
+        one it was ticked on; it is moved there before ticks for uncovered boxes are dropped.
+        """
+        box_for_week: dict[str, str] = {}
+        for week in covered_weeks:
+            box_for_week.setdefault(week.week_id, _box_key(week))
+        for box, key in [entry for entry in self._completed if "/" not in entry[0]]:
+            adopted = box_for_week.get(box)
+            if adopted is not None and adopted != box:
+                self._completed.discard((box, key))
+                self._completed.add((adopted, key))
 
     def _selected_recipe_ids(self, week: HelloFreshWeek) -> list[str]:
         """Return the recipe ids this week will actually ship."""
@@ -447,7 +504,11 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         return _PrepTicksExtraData([list(entry) for entry in sorted(self._completed)])
 
     async def async_added_to_hass(self) -> None:
-        """Restore saved ticks, then build the list once the entity is live."""
+        """Restore saved ticks, then start building the list in the background.
+
+        The build fetches one recipe per selected meal. Awaited here it held up the whole
+        entry's setup, because Home Assistant waits for every entity to finish being added.
+        """
         await super().async_added_to_hass()
         last = await self.async_get_last_extra_data()
         if last is not None:
@@ -456,8 +517,15 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
                     # Union into the SHARED set: both entities persist the same set, so
                     # whichever restores first seeds it and the second is a no-op.
                     self._completed.add((str(entry[0]), str(entry[1])))
-        await self._async_rebuild()
-        self.async_write_ha_state()
+        self._schedule_rebuild()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop a rebuild still running, or still to come, when the entity goes away."""
+        await super().async_will_remove_from_hass()
+        self._cancel_pending_retry()
+        if self._rebuild_task is not None:
+            self._rebuild_task.cancel()
+            self._rebuild_task = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -469,64 +537,142 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         and writes state when it finishes. Without this the list would be built once at
         startup and then never change as meals are swapped or a new week became the anchor.
         """
-        self.hass.async_create_task(self._async_rebuild_and_write())
+        self._schedule_rebuild()
+
+    @callback
+    def _schedule_rebuild(self) -> None:
+        """Rebuild in a task that belongs to the config entry.
+
+        One rebuild runs at a time: a request that arrives while one is running makes it go
+        round once more when it finishes, so two never write the list over each other. The
+        entry cancels its background tasks when it unloads, so none outlives it either.
+        """
+        if self._rebuild_task is not None and not self._rebuild_task.done():
+            self._rebuild_again = True
+            return
+        self._rebuild_task = self.coordinator.config_entry.async_create_background_task(
+            self.hass,
+            self._async_rebuild_and_write(),
+            name=f"hellofresh prep list {self._slot + 1}",
+        )
 
     async def _async_rebuild_and_write(self) -> None:
         """Rebuild off the event loop's critical path, then publish."""
-        try:
-            await self._async_rebuild()
-        except Exception:  # noqa: BLE001 - a background task must not raise into the loop
-            _LOGGER.exception("Prep list refresh failed")
-            return
-        self.async_write_ha_state()
+        while True:
+            self._rebuild_again = False
+            complete = True
+            try:
+                complete = await self._async_rebuild()
+            except Exception:  # noqa: BLE001 - a background task must not raise into the loop
+                _LOGGER.exception("Prep list refresh failed")
+            else:
+                self.async_write_ha_state()
+            if not self._rebuild_again:
+                break
+        self._cancel_pending_retry()
+        if not complete:
+            # Home Assistant updates the entities only when the account data changed, which
+            # on a quiet week may not happen for days, so the missing recipes are asked for
+            # again on a timer.
+            self._cancel_retry = async_call_later(self.hass, _RETRY_AFTER, self._async_retry)
 
-    async def _async_rebuild(self) -> None:
+    @callback
+    def _async_retry(self, _now: datetime) -> None:
+        """Build again for the recipes the last build could not read."""
+        self._cancel_retry = None
+        self._schedule_rebuild()
+
+    @callback
+    def _cancel_pending_retry(self) -> None:
+        if self._cancel_retry is not None:
+            self._cancel_retry()
+            self._cancel_retry = None
+
+    async def _async_recipe_details(
+        self, recipe_ids: list[str], servings: int | None
+    ) -> list[Any | None]:
+        """Return each recipe's detail, in order; None for one that could not be read.
+
+        Details come from the coordinator's cache when a list has read them before (the same
+        recipe at the same serving count never changes), so swapping one meal fetches one
+        recipe. The rest are fetched a few at a time.
+        """
+        cache = self.coordinator.prep_recipe_details
+        limit = asyncio.Semaphore(_FETCH_CONCURRENCY)
+
+        async def _detail(recipe_id: str) -> Any | None:
+            key = (recipe_id, servings)
+            if key in cache:
+                return cache[key]
+            async with limit:
+                try:
+                    detail = await self.coordinator.client.async_get_recipe_detail(
+                        recipe_id, servings=servings, include_favorite=False
+                    )
+                except Exception as err:  # noqa: BLE001 - one bad recipe must not blank the list
+                    _LOGGER.debug("Prep list could not read recipe %s: %s", recipe_id, err)
+                    return None
+            cache[key] = detail
+            return detail
+
+        return list(await asyncio.gather(*(_detail(recipe_id) for recipe_id in recipe_ids)))
+
+    async def _async_rebuild(self) -> bool:
         """Refresh this week's prep list from its selected meals.
 
         Recipe detail is fetched per selected meal (the week's own recipes carry ingredient
         *names* only, without amounts or the shipped flag), so this is skipped entirely unless
-        the week or its selection actually changed.
+        the week, its selection or the serving count actually changed.
+
+        Returns False when a recipe could not be read, so the list is missing its staples.
         """
         week = self._target_week()
         if week is None:
             self._items = []
             self._built_for = ()
-            return
+            return True
+
+        servings = None
+        subscription = self._subscription_for(week)
+        if subscription is not None:
+            servings = subscription.servings
 
         recipe_ids = self._selected_recipe_ids(week)
-        fingerprint = ((week.week_id, tuple(recipe_ids)),)
+        fingerprint = (_box_key(week), tuple(recipe_ids), servings)
         if fingerprint == self._built_for:
-            return
+            return True
 
         # Ticks belong to a week, not a slot. Dropping weeks NEITHER entity still covers
         # keeps the shared set from growing without bound, while a week shifting from
         # slot 1 to slot 0 (its predecessor landed) arrives with its check-offs intact —
         # the shared set is exactly what makes that survive the entity handover.
-        covered_ids = {w.week_id for w in self._all_covered_weeks()}
+        covered_weeks = self._all_covered_weeks()
+        self._adopt_legacy_ticks(covered_weeks)
+        covered_ids = {_box_key(w) for w in covered_weeks}
         self._completed.intersection_update(
             {entry for entry in self._completed if entry[0] in covered_ids}
         )
+        # The detail cache is pruned the same way: only recipes a covered week still selects,
+        # at the current serving count, are worth keeping.
+        wanted = {rid for w in covered_weeks for rid in self._selected_recipe_ids(w)}
+        cache = self.coordinator.prep_recipe_details
+        for cache_key in [k for k in cache if k[0] not in wanted or k[1] != servings]:
+            del cache[cache_key]
 
-        servings = None
-        subscription = self.coordinator.data.primary_subscription if self.coordinator.data else None
-        if subscription is not None:
-            servings = subscription.servings
+        if len(recipe_ids) > _MAX_RECIPE_FETCHES:
+            _LOGGER.debug(
+                "Prep list reads only the first %s of %s recipes (week %s)",
+                _MAX_RECIPE_FETCHES,
+                len(recipe_ids),
+                week.week_id,
+            )
+        details = await self._async_recipe_details(recipe_ids[:_MAX_RECIPE_FETCHES], servings)
 
         # name -> (display name, [(amount, unit), ...])
         collected: dict[str, tuple[str, list[tuple[Any, Any]]]] = {}
-        fetched = 0
-        for recipe_id in recipe_ids:
-            if fetched >= _MAX_RECIPE_FETCHES:
-                _LOGGER.debug("Prep list stopped after %s recipes (week %s)", fetched, week.week_id)
-                break
-            try:
-                detail = await self.coordinator.client.async_get_recipe_detail(
-                    recipe_id, servings=servings, include_favorite=False
-                )
-            except Exception as err:  # noqa: BLE001 - one bad recipe must not blank the list
-                _LOGGER.debug("Prep list could not read recipe %s: %s", recipe_id, err)
+        for detail in details:
+            if detail is None:
                 continue
-            fetched += 1
             for ingredient in detail.ingredients:
                 # Tri-state: only an explicit False means "you supply this". A missing flag
                 # (None) is unknown, and is treated as in-box — telling someone to buy an
@@ -537,7 +683,7 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
                 if not isinstance(name, str) or not name.strip():
                     continue
                 key = _ingredient_key(name)
-                display, amounts = collected.setdefault(key, (name.strip(), []))
+                _display, amounts = collected.setdefault(key, (name.strip(), []))
                 amounts.append((ingredient.get("amount"), ingredient.get("unit")))
 
         items: list[TodoItem] = []
@@ -548,11 +694,11 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
                 summary = f"{display} — {detail_text}"
             items.append(
                 TodoItem(
-                    uid=f"{week.week_id}:{key}",
+                    uid=f"{_box_key(week)}:{key}",
                     summary=summary,
                     status=(
                         TodoItemStatus.COMPLETED
-                        if (week.week_id, key) in self._completed
+                        if (_box_key(week), key) in self._completed
                         else TodoItemStatus.NEEDS_ACTION
                     ),
                     # The deadline for having these on hand is the day that box arrives.
@@ -561,19 +707,28 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
             )
 
         self._items = items
-        self._built_for = fingerprint
+        # Only a build that read every recipe is final. With one missing (a timeout, a 503),
+        # the list shows what it has and the next build tries again: the recipes already read
+        # come from the cache, so the retry costs only the missing ones. Storing the
+        # fingerprint anyway left that recipe's staples off the list until the selection
+        # changed or Home Assistant restarted.
+        complete = all(detail is not None for detail in details)
+        self._built_for = fingerprint if complete else ()
+        return complete
 
     async def async_update_todo_item(self, item: TodoItem) -> None:
         """Record a check-off (or un-check) for one ingredient in one week."""
         if item.uid is None:
             return
-        week_id, _, key = item.uid.partition(":")
+        # A box key never contains a colon (a subscription id, a slash and a week id), so the
+        # first colon ends it, whatever the ingredient's own name holds.
+        box, _, key = item.uid.partition(":")
         if not key:
             return
         if item.status == TodoItemStatus.COMPLETED:
-            self._completed.add((week_id, key))
+            self._completed.add((box, key))
         else:
-            self._completed.discard((week_id, key))
+            self._completed.discard((box, key))
         for index, existing in enumerate(self._items):
             if existing.uid == item.uid:
                 self._items[index] = TodoItem(

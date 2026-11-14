@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
-from .models import HelloFreshAccountData
+from .models import HelloFreshAccountData, HelloFreshOrder, HelloFreshWeek
 from .parsers import iso_week_label
 
 if TYPE_CHECKING:
@@ -196,6 +196,12 @@ VALUE_GETTERS: dict[str, Callable[[HelloFreshAccountData], Any]] = {
     # percentage for that kind of voucher); unknown when no promise covers it.
     "next_box_discount": _next_box_discount_value,
     "account_credit": lambda data: data.account_credit,
+    # The parts of the credit balance: HelloFresh Cash bought, and bonus credit.
+    "account_credit_cash": lambda data: data.account_credit_cash,
+    "account_credit_bonus": lambda data: data.account_credit_bonus,
+    # Boxes still to go before the loyalty programme's next free box, where HelloFresh
+    # reports it on the subscription.
+    "loyalty_boxes_until_free_box": _sub_value("loyalty_boxes_until_next_freebie"),
     "selected_plan_total_price": lambda data: data.selected_plan_total_price,
     "next_delivery_subscription": _next_order_value("subscription_id"),
     "next_delivery_slot": _next_order_value("slot_label"),
@@ -356,6 +362,54 @@ SUBSCRIPTION_CONTEXT_KEYS = frozenset(
 
 DELIVERY_HISTORY_KEYS = frozenset({"boxes_received", "last_delivery_date"})
 
+# Attributes Home Assistant's recorder must not store. They stay on the live state, where
+# dashboards, templates and automations read them; they are only kept out of the database.
+# Some are personal (a tracking link, a voucher code, who signed for the box). The rest are
+# bulky and rewritten often: whole order and week objects, the scan history, price splits.
+# One list of week summaries could pass the recorder's 16 KB limit by itself, at which point
+# the recorder stores nothing for that state and logs a warning.
+UNRECORDED_SENSOR_ATTRIBUTES = frozenset(
+    {
+        "benefits",
+        "delivery_photo_urls",
+        "delivery_signed_by",
+        "last_delivery_week",
+        "next_selection_week",
+        "order",
+        "price_breakdown",
+        # Counts down with the clock, so it differs on every write.
+        "seconds_remaining",
+        "tracking_events",
+        "tracking_url",
+        "voucher_code",
+        "week",
+        "weeks",
+    }
+)
+
+
+def _week_of(data: HelloFreshAccountData, order: HelloFreshOrder) -> HelloFreshWeek | None:
+    """The week an order belongs to: same week id and the order's own subscription.
+
+    ISO week ids are shared between subscriptions; by week id alone the second
+    subscription's next box was described with the first subscription's week.
+    """
+    if not order.week_id:
+        return None
+    return data.get_week(order.week_id, order.subscription_id)
+
+
+def _order_attribute(order: HelloFreshOrder) -> dict[str, Any]:
+    """An order as a sensor attribute, without its scan history.
+
+    The history is exposed once, as ``tracking_events`` on the two shipment sensors. Left in
+    every embedded order as well, it was stored up to six times over and rewritten on each
+    delivery-watch change.
+    """
+    payload = order.as_dict()
+    payload.pop("tracking_events", None)
+    return payload
+
 
 def sensor_native_value(
     key: str,
@@ -431,7 +485,7 @@ def sensor_extra_state_attributes(
         next_order = data.next_order
         if next_order is None:
             return None
-        next_week = data.get_week(next_order.week_id) if next_order.week_id else None
+        next_week = _week_of(data, next_order)
         return {
             "order_id": next_order.order_id,
             "week_id": next_order.week_id,
@@ -455,7 +509,7 @@ def sensor_extra_state_attributes(
         # to stay under the recorder's 16 KB cap. `tracking_url` is read by the dashboard.
         return {
             "tracked_order_available": True,
-            "order": tracked_order.as_dict(),
+            "order": _order_attribute(tracked_order),
             "tracking_url": tracked_order.tracking_url,
             # Top-level too, so templates can read them without digging into `order`: the
             # finer step, the scan history (newest first), and any proof of delivery.
@@ -490,13 +544,15 @@ def sensor_extra_state_attributes(
 
     if key in ORDER_ATTRIBUTE_KEYS:
         next_order = data.next_order
-        next_week = data.get_week(next_order.week_id) if next_order and next_order.week_id else None
+        next_week = _week_of(data, next_order) if next_order else None
         # `order`/`week` are single objects; the full `orders` list was dropped to stay
         # under the recorder's 16 KB attribute cap and is unused by any consumer. The week
         # uses its recipe-free summary form for the same reason — a single week's recipe
         # catalog alone can exceed the cap, and no consumer reads recipes from attributes.
-        attributes: dict[str, object] = {
-            "order": next_order.as_dict() if next_order else None,
+        # `attributes` is annotated in the week branch above: a name takes one annotation per
+        # function.
+        attributes = {
+            "order": _order_attribute(next_order) if next_order else None,
             "week": next_week.as_summary_dict() if next_week else None,
         }
         if key == "next_box_total_price":
@@ -507,7 +563,24 @@ def sensor_extra_state_attributes(
             # What the billing ledger actually took off this delivery's charges (the wallet
             # voucher, realized) — the calculate split above never shows it.
             attributes["billed_discount"] = data.next_delivery_discount
+        if key == "next_delivery_date":
+            # The day HelloFresh moved this box to, while it is delayed or early; the state
+            # stays the day it was scheduled for.
+            attributes["revised_delivery_date"] = (
+                next_week.revised_delivery_date.isoformat()
+                if next_week is not None and next_week.revised_delivery_date is not None
+                else None
+            )
         return attributes
+
+    if key == "account_credit":
+        # The rest of the balance, in the same currency: the part that is restricted and the
+        # credits that can still be cancelled. Cash and bonus credit have sensors of their own.
+        return {
+            "currency": data.account_credit_currency,
+            "restricted_amount": data.account_credit_restricted,
+            "cancellable_credits": data.account_credit_cancellable,
+        }
 
     if key == "next_box_discount":
         discount = data.next_box_discount or {}

@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, time, timedelta
 from types import SimpleNamespace
 
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 import pytest
 
@@ -255,6 +255,37 @@ async def test_the_plan_survives_a_reload_and_is_removed_with_the_entry(hass) ->
     gone = _plan(hass)
     await gone.async_load()
     assert gone.days == {}
+
+
+async def test_unloading_an_unchanged_plan_writes_nothing(hass, monkeypatch) -> None:
+    """The unload flush wrote the file on every reload, even for an account with no plan."""
+    plan = _plan(hass)
+    await plan.async_load()
+    writes: list[dict] = []
+
+    async def _save(data):
+        writes.append(data)
+
+    monkeypatch.setattr(plan._store, "async_save", _save)
+    await plan.async_flush()
+    assert writes == []
+
+    await plan.async_set(TODAY, recipe_id="shrimp")
+    await plan.async_flush()
+    assert len(writes) == 1
+    await plan.async_flush()
+    assert len(writes) == 1
+
+
+async def test_bad_meal_plan_input_is_a_validation_error(hass) -> None:
+    """Input mistakes are the caller's to fix, so they are reported as validation errors."""
+    plan = _plan(hass)
+    with pytest.raises(ServiceValidationError):
+        await plan.async_set(TODAY, meal="brunch", recipe_id="shrimp")
+    with pytest.raises(ServiceValidationError):
+        await plan.async_set(TODAY, recipe_id="not-in-any-box")
+    with pytest.raises(ServiceValidationError):
+        await plan.async_set(TODAY, text="   ")
 
 
 async def test_days_past_the_history_window_are_forgotten(hass) -> None:

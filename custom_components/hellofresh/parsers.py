@@ -17,6 +17,8 @@ import re
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from homeassistant.util import dt as dt_util
+
 # Maximum recursion depth when heuristically searching nested payloads.
 MAX_SEARCH_DEPTH = 8
 
@@ -27,7 +29,7 @@ _CARRIER_LABELS = {
     "USPS": "USPS",
     "ONTRAC": "OnTrac",
     "LASERSHIP": "LaserShip",
-    # Confirmed in a live SCM tracking response ("carrier": "VEHO", lane "NJ_VEHO-SOMPA");
+    # Confirmed in a live SCM tracking response ("carrier": "VEHO", lane "ZZ_VEHO-ANYTN");
     # the company brands itself "Veho", so the raw code would otherwise shout on the dashboard.
     "VEHO": "Veho",
 }
@@ -62,6 +64,17 @@ _RECIPE_HEADING_DISALLOWED = {
 # ---------------------------------------------------------------------------
 # Value coercion
 # ---------------------------------------------------------------------------
+
+
+def local_today() -> date:
+    """Return today's date in Home Assistant's configured time zone.
+
+    ``date.today()`` reads the process's zone, which is UTC in a container started without
+    ``TZ`` whatever zone Home Assistant is set to, and ``datetime.now(UTC).date()`` is a day
+    ahead every evening in the Americas. Every "is this delivery today, past or upcoming"
+    decision in the integration asks this one clock instead, so they cannot disagree.
+    """
+    return dt_util.now().date()
 
 
 def parse_date(value: Any) -> date | None:
@@ -125,14 +138,59 @@ def iso_week_label(week_id: str | None, fallback: date | None = None) -> str | N
     return None
 
 
-def parse_datetime(value: Any) -> datetime | None:
-    """Parse a datetime-ish value."""
-    if not value or not isinstance(value, str):
+def as_utc(value: datetime) -> datetime:
+    """Return ``value`` as an aware datetime, reading one without an offset as UTC.
+
+    HelloFresh's carrier timestamps are UTC, and the odd one arrives without its offset. Aware
+    and naive datetimes cannot be compared or sorted together, so every comparison goes through
+    here.
+    """
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def local_date(value: datetime) -> date:
+    """Return the calendar day of a moment in Home Assistant's time zone.
+
+    A carrier timestamp is UTC: an evening delivery in the Americas is already the next day
+    there, so its day is read where the household is (an offset-less one counts as UTC).
+    """
+    return dt_util.as_local(as_utc(value)).date()
+
+
+# A box's handle: ``<COUNTRY>-<FAMILY>-<MEALS>-<PEOPLE>-<N>`` (``US-CBU-3-2-0``).
+_BOX_HANDLE_RE = re.compile(r"^(?P<prefix>.+)-(?P<meals>\d+)-(?P<people>\d+)-(?P<n>\d+)$")
+
+
+def box_handle_parts(handle: Any) -> tuple[str, int, int, int] | None:
+    """Split a box handle into (prefix, meals, people, n), or None when it isn't a box's.
+
+    ``US-CBU-3-2-0`` is ``("US-CBU", 3, 2, 0)``: 3 meals for 2 people. A charge or Market
+    handle (``US-CHARGE-0-0-0``) counts no meals or people, so it is not a box.
+    """
+    if not isinstance(handle, str):
+        return None
+    match = _BOX_HANDLE_RE.match(handle.strip())
+    if match is None:
+        return None
+    meals, people = int(match.group("meals")), int(match.group("people"))
+    if meals <= 0 or people <= 0:
+        return None
+    return match.group("prefix"), meals, people, int(match.group("n"))
+
+
+def parse_datetime(value: Any, *, naive_as_utc: bool = False) -> datetime | None:
+    """Parse an ISO-8601 timestamp, or None when it isn't one.
+
+    A trailing ``Z`` and an offset without a colon (``-0700``) both parse. ``naive_as_utc``
+    reads a timestamp without an offset as UTC; otherwise it is returned naive, as written.
+    """
+    if not isinstance(value, str) or not value.strip():
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
+    return as_utc(parsed) if naive_as_utc else parsed
 
 
 def decode_jwt_claims(token: str | None) -> dict[str, Any] | None:
@@ -249,8 +307,51 @@ def coerce_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is int(float("inf")): JSON has no infinity, but Python's parser accepts
+        # a bare ``Infinity``.
         return None
+
+
+def dict_path(node: Any, *keys: str) -> Any:
+    """Follow ``keys`` down through nested dicts, or None where the path stops.
+
+    For reading a field from the one place the API reference documents it
+    (``dict_path(week, "deliveryOption", "type")``) instead of taking the first key of that
+    name found anywhere in the payload.
+    """
+    for key in keys:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def dict_or_empty(value: Any) -> dict[str, Any]:
+    """Return ``value`` when it is a dict, else a new empty dict.
+
+    For a payload object that may be missing or null (``selection: null`` on an unselected
+    add-on), so the fields under it can be read with ``.get`` either way.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def http_url_or_none(value: Any) -> str | None:
+    """Return ``value`` when it is an http(s) URL with a host, else None.
+
+    Every link taken from a payload goes through here before it reaches an entity attribute or
+    a service response, where a template or another card may put it in an ``href`` or ``src``
+    without checking: a ``javascript:`` or ``data:`` value has no business there.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        parts = urlparse(value)
+        usable = parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return None
+    return value if usable else None
 
 
 def _normalize_localized_number(text: str) -> str | None:
@@ -571,24 +672,46 @@ def normalize_carrier_name(carrier: str | None) -> str | None:
 
 
 def extract_tracking_details(raw_week: dict[str, Any]) -> dict[str, str | None]:
-    """Extract shipment tracking details from a delivery payload."""
+    """Extract shipment tracking details from a delivery payload.
+
+    The carrier's status is only ever taken from a field that names one. The week's own
+    ``state`` is the box's lifecycle at HelloFresh (``RUNNING``, ``PREPARING``, ``DELIVERED``),
+    not a carrier scan: read as one, it made every untracked week a "tracked" shipment whose
+    status was "Running", and let a week HelloFresh marked delivered early vouch for itself
+    (issue #18). A ``state`` counts only inside a node that is about the shipment.
+    """
+    tracking = raw_week.get("tracking") or {}
+    shipment = raw_week.get("shipment") or {}
+    carrier_tracking = raw_week.get("carrierTracking") or {}
+    carrier_nodes = [tracking, shipment, carrier_tracking]
     tracking_nodes = [
         raw_week,
-        raw_week.get("tracking") or {},
-        raw_week.get("shipment") or {},
+        tracking,
+        shipment,
         raw_week.get("delivery") or {},
         raw_week.get("box") or {},
-        raw_week.get("carrierTracking") or {},
+        carrier_tracking,
     ]
 
-    def pick(*keys: str) -> str | None:
-        for node in tracking_nodes:
+    def pick(*keys: str, nodes: Sequence[Any] = tracking_nodes) -> str | None:
+        for node in nodes:
             if not isinstance(node, dict):
                 continue
             for key in keys:
                 value = node.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+        return None
+
+    def pick_url(*keys: str) -> str | None:
+        # The first http(s) link wins, so a value that isn't one can't hide a real link.
+        for node in tracking_nodes:
+            if not isinstance(node, dict):
+                continue
+            for key in keys:
+                url = http_url_or_none(node.get(key))
+                if url is not None:
+                    return url
         return None
 
     tracking_status = pick(
@@ -598,14 +721,13 @@ def extract_tracking_details(raw_week: dict[str, Any]) -> dict[str, str | None]:
         "parcelStatus",
         "carrierStatus",
         "internal_status",
-        "state",
-    )
+    ) or pick("state", nodes=carrier_nodes)
     # HelloFresh's placeholder once it stops keeping a box's progress (older weeks): no status.
     if tracking_status and tracking_status.upper() == "UNKNOWN":
         tracking_status = None
 
     return {
-        "tracking_url": pick(
+        "tracking_url": pick_url(
             "trackingUrl",
             "trackingURL",
             "trackingLink",
@@ -671,8 +793,9 @@ def _proof_of_delivery_urls(value: Any) -> list[str]:
                 ),
                 None,
             )
-        if isinstance(item, str) and re.match(r"https?://", item.strip(), re.IGNORECASE):
-            urls.append(item.strip())
+        url = http_url_or_none(item)
+        if url is not None:
+            urls.append(url)
     return list(dict.fromkeys(urls))
 
 
@@ -699,9 +822,8 @@ def _tracking_events(statuses: Any) -> list[dict[str, str | None]]:
                     return value.strip()
             return None
 
-        when = parse_datetime(entry.get("datetime"))
-        if when is not None and when.tzinfo is None:
-            when = when.replace(tzinfo=UTC)  # offset-less scan times are UTC like the rest
+        # Offset-less scan times are UTC like the rest.
+        when = parse_datetime(entry.get("datetime"), naive_as_utc=True)
         status = _scm_status(entry)
         detail = text("status_detail", "internal_status_detail")
         if when is None and status is None and detail is None:
@@ -738,7 +860,7 @@ def _scm_status(node: dict[str, Any]) -> str | None:
 
 def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, Any]:
     """Extract carrier-facing tracking details from an SCM tracking box."""
-    last_status = box.get("last_status") if isinstance(box.get("last_status"), dict) else {}
+    last_status = dict_or_empty(box.get("last_status"))
 
     def pick(node: dict[str, Any], *keys: str) -> str | None:
         for key in keys:
@@ -747,7 +869,11 @@ def extract_scm_tracking_details(box: dict[str, Any]) -> dict[str, Any]:
                 return value.strip()
         return None
 
-    tracking_url = pick(box, "carrier_tracking_url", "public_url") or pick(box, "hf_tracking_url")
+    tracking_url = None
+    for key in ("carrier_tracking_url", "public_url", "hf_tracking_url"):
+        tracking_url = http_url_or_none(box.get(key))
+        if tracking_url is not None:
+            break
     # The carrier's own delivery estimate. It lives on each status entry rather than on the box,
     # so read the most recent status first and fall back to the newest entry that carries one --
     # in the capture every entry repeats the same value, but only ``statuses`` is guaranteed

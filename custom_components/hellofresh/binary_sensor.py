@@ -8,12 +8,11 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
 
 SENSORS: tuple[BinarySensorEntityDescription, ...] = (
@@ -38,10 +37,21 @@ SENSORS: tuple[BinarySensorEntityDescription, ...] = (
     ),
     # On when HelloFresh reports the card on file as expiring or already expired — the most
     # common way a box silently fails to ship. Unavailable until the payments gateway has
-    # answered; attributes carry only the card type/provider and expiry month.
+    # answered; attributes carry the card type/provider, its last four digits and expiry
+    # month. Diagnostic because of those card details: such entities are left out of
+    # generated dashboards and are not offered to voice assistants by default.
     BinarySensorEntityDescription(
         key="payment_method_expiring",
         translation_key="payment_method_expiring",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # On while HelloFresh could not charge a box: a week marked PAYMENT_FAILED, or a charge
+    # the orders ledger reports as failed or charged back, for upcoming boxes and those
+    # delivered in the last two weeks. Its `weeks` attribute lists them.
+    BinarySensorEntityDescription(
+        key="payment_problem",
+        translation_key="payment_problem",
         device_class=BinarySensorDeviceClass.PROBLEM,
     ),
 )
@@ -54,16 +64,21 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh binary sensors."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     async_add_entities(HelloFreshBinarySensor(coordinator, description) for description in SENSORS)
 
 
 class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
     """HelloFresh binary sensor."""
+
+    # The card's last digits and expiry stay on the live state for the dashboard; the
+    # recorder does not keep them. Nor the boxes with a payment problem: what each cost is
+    # personal, and the list is rewritten whenever one changes.
+    _unrecorded_attributes = frozenset({"card_last4", "card_expiry", "weeks"})
 
     def __init__(
         self,
@@ -71,10 +86,7 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
         description: BinarySensorEntityDescription,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
 
     @property
     def available(self) -> bool:
@@ -89,6 +101,8 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
         if self.entity_description.key == "payment_method_expiring":
             data = self.coordinator.data
             return bool(data.payment_method_expiring or data.payment_method_expired)
+        if self.entity_description.key == "payment_problem":
+            return self.coordinator.data.payment_problem
         if self.entity_description.key == "write_actions_available":
             return self.coordinator.data.capabilities.supports_write_actions
         if self.entity_description.key == "tracked_shipment_available":
@@ -114,6 +128,8 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
             return "mdi:alert-octagon" if is_on else "mdi:check-circle-outline"
         if self.entity_description.key == "payment_method_expiring":
             return "mdi:credit-card-clock-outline" if is_on else "mdi:credit-card-check-outline"
+        if self.entity_description.key == "payment_problem":
+            return "mdi:credit-card-remove-outline" if is_on else "mdi:credit-card-check-outline"
         return None
 
     @property
@@ -140,6 +156,9 @@ class HelloFreshBinarySensor(HelloFreshCoordinatorEntity, BinarySensorEntity):
                 "card_last4": data.payment_card_last4,
                 "card_expiry": data.payment_card_expiry,
             }
+        if self.entity_description.key == "payment_problem":
+            # Each box: week_id, delivery_date, status, amount and currency.
+            return {"weeks": data.payment_problem_weeks}
         return {
             "account_data_available": data.account_data_available,
             "capabilities": data.capabilities.as_dict(),

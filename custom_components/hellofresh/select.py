@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.select import (
@@ -9,15 +10,18 @@ from homeassistant.components.select import (
     SelectEntity,
     SelectEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import HelloFreshAuthError, HelloFreshError, HelloFreshSubscription
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import (
+    HelloFreshConfigEntry,
+    HelloFreshDataUpdateCoordinator,
+    async_client_error,
+    async_write_succeeded,
+)
 from .entity import HelloFreshCoordinatorEntity
-from .issues import async_create_write_actions_issue, async_delete_write_actions_issue
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,11 +46,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: HelloFreshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HelloFresh select entities."""
-    coordinator: HelloFreshDataUpdateCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data
     entities: list[SelectEntity] = []
     for description in SELECTS:
         if description.key == "box_size":
@@ -62,8 +66,9 @@ class HelloFreshSelect(HelloFreshCoordinatorEntity, SelectEntity):
     Both act on the primary subscription and write through the same client calls as the
     ``change_plan`` / ``change_delivery_weekday`` services — RECURRING changes affecting every
     future box (and, for the box size, what is billed). The option catalog is not part of the
-    regular poll, so it is fetched when the entity is added and again after each write; until
-    it has loaded the entity is unavailable rather than offering an empty list.
+    regular poll, so it is fetched in the background when the entity is added and again after
+    each write; until it has loaded the entity is unavailable rather than offering an empty
+    list.
     """
 
     def __init__(
@@ -72,14 +77,12 @@ class HelloFreshSelect(HelloFreshCoordinatorEntity, SelectEntity):
         description: SelectEntityDescription,
     ) -> None:
         """Initialize the select."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
-        self._pin_entity_id(ENTITY_ID_FORMAT, description.key)
+        super().__init__(coordinator, ENTITY_ID_FORMAT, description.key, description)
         self._attr_options = []
         # Display label -> HelloFresh handle, in the API's order.
         self._handles_by_label: dict[str, str] = {}
         self._options_loaded = False
+        self._load_task: asyncio.Task[None] | None = None
 
     @property
     def _subscription(self) -> HelloFreshSubscription | None:
@@ -92,16 +95,42 @@ class HelloFreshSelect(HelloFreshCoordinatorEntity, SelectEntity):
         return super().available and self._subscription is not None and bool(self._attr_options)
 
     async def async_added_to_hass(self) -> None:
-        """Load the option catalog once the entity is live."""
+        """Start loading the option catalog once the entity is live.
+
+        Not awaited: Home Assistant waits for every entity to finish being added before the
+        entry counts as set up, and this is a request to HelloFresh.
+        """
         await super().async_added_to_hass()
-        await self._async_load_options()
+        self._schedule_options_load()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop a catalog load still running when the entity goes away."""
+        await super().async_will_remove_from_hass()
+        if self._load_task is not None:
+            self._load_task.cancel()
+            self._load_task = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Retry the catalog load on later polls if the first attempt failed."""
         if not self._options_loaded and self.hass is not None:
-            self.hass.async_create_task(self._async_load_options())
+            self._schedule_options_load()
         super()._handle_coordinator_update()
+
+    @callback
+    def _schedule_options_load(self) -> None:
+        """Load the catalog in a task that belongs to the config entry, one at a time.
+
+        The entry cancels its background tasks when it unloads, so a slow load cannot outlive
+        it, and a second request while one is running is dropped rather than doubled.
+        """
+        if self._load_task is not None and not self._load_task.done():
+            return
+        self._load_task = self.coordinator.config_entry.async_create_background_task(
+            self.hass,
+            self._async_load_options(),
+            name=f"hellofresh {self.entity_description.key} options",
+        )
 
     async def _async_load_options(self) -> None:
         """Fetch the option catalog; a failure leaves the entity unavailable, not broken."""
@@ -158,23 +187,20 @@ class HelloFreshSelect(HelloFreshCoordinatorEntity, SelectEntity):
         handle = self._handles_by_label.get(option)
         subscription = self._subscription
         if handle is None or subscription is None:
-            raise HomeAssistantError(f"Unknown HelloFresh option: {option}")
+            raise ServiceValidationError(f"Unknown HelloFresh option: {option}")
         if handle == self._current_handle(subscription):
             return
         try:
             await self._async_write(handle, subscription)
-            # A write just succeeded — clear any stale "write actions unavailable" warning.
-            async_delete_write_actions_issue(
-                self.coordinator.hass, self.coordinator.config_entry.entry_id
-            )
         except HelloFreshError as err:
-            async_create_write_actions_issue(
-                self.coordinator.hass,
-                self.coordinator.config_entry.entry_id,
-                self.coordinator.config_entry.title,
-            )
-            raise HomeAssistantError(str(err)) from err
-        await self.coordinator.async_request_refresh()
+            # The rule the services use: a rejected sign-in starts reauth, an action HelloFresh
+            # has no endpoint for raises the repair, and anything else (a timeout, a 5xx) is
+            # only reported. A timeout here used to raise the repair as well.
+            raise async_client_error(
+                self.coordinator.hass, self.coordinator.config_entry, err
+            ) from err
+        async_write_succeeded(self.coordinator.hass, self.coordinator.config_entry)
+        await self.coordinator.async_after_write()
         await self._async_load_options()
 
 

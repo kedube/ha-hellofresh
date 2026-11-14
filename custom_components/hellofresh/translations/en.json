@@ -79,14 +79,16 @@
       "password_reset_required": "Your HelloFresh password has expired. Follow the instructions HelloFresh sent to your email to update it, then enter the new password here.",
       "too_many_attempts": "Your HelloFresh account is temporarily locked after too many sign-in attempts. Wait a few minutes, then try again.",
       "wrong_password": "HelloFresh didn't accept this password. If you sign in to HelloFresh with Google, Apple or Facebook, your account may have no password; use the \"Access token (advanced)\" option instead.",
-      "invalid_token": "That token could not be read or was rejected"
+      "invalid_token": "That token could not be read or was rejected",
+      "no_subscription": "HelloFresh accepted these details, but this account has no subscription, so there is nothing for Home Assistant to show. Check that the country is the one your subscription is in."
     },
     "abort": {
       "already_configured": "This HelloFresh account is already configured",
       "reauth_successful": "HelloFresh was reconnected successfully",
       "reconfigure_successful": "HelloFresh was reconfigured successfully",
       "reconfigure_failed": "That HelloFresh entry could no longer be found",
-      "account_mismatch": "Those details are for a different HelloFresh account. Add it as a new integration entry instead of reconfiguring this one."
+      "reauth_failed": "That HelloFresh entry could no longer be found",
+      "account_mismatch": "Those details are for a different HelloFresh account than this entry. To use that account, add it as a new integration entry."
     }
   },
   "options": {
@@ -207,6 +209,15 @@
       },
       "account_credit": {
         "name": "Account credit"
+      },
+      "account_credit_cash": {
+        "name": "HelloFresh Cash"
+      },
+      "account_credit_bonus": {
+        "name": "Bonus credit"
+      },
+      "loyalty_boxes_until_free_box": {
+        "name": "Boxes until a free box"
       },
       "selected_plan": {
         "name": "Selected plan"
@@ -344,6 +355,9 @@
       },
       "payment_method_expiring": {
         "name": "Payment method expiring"
+      },
+      "payment_problem": {
+        "name": "Payment problem"
       }
     },
     "button": {
@@ -371,7 +385,10 @@
               "week_skipped": "Week skipped",
               "week_unskipped": "Week restored",
               "selection_locked": "Selection locked",
-              "menu_published": "Menu published"
+              "menu_published": "Menu published",
+              "box_delayed": "Box delayed",
+              "box_early": "Box arriving early",
+              "selection_deadline_approaching": "Selection deadline approaching"
             }
           }
         }
@@ -412,6 +429,10 @@
       "title": "HelloFresh account payloads changed for {entry_title}",
       "description": "HelloFresh returned authenticated data for **{entry_title}**, but the payload no longer matched the delivery shapes this integration knows how to parse. Diagnostics from this config entry will help confirm whether a regional API variation or a website change needs to be supported."
     },
+    "payment_problem": {
+      "title": "HelloFresh couldn't take a payment for {entry_title}",
+      "description": "HelloFresh reports a problem with the payment for your box of {date} ({amount}) on **{entry_title}**. A box that isn't paid for may not be delivered. Check your payment details on the HelloFresh website (**Learn more**). This notice clears itself once HelloFresh no longer reports the problem."
+    },
     "write_actions_unavailable": {
       "title": "HelloFresh write actions are not verified for {entry_title}",
       "description": "You tried to use a HelloFresh action that changes account data for **{entry_title}**, such as selecting meals or skipping a week. The integration attempted the known best-effort write endpoints for your account, but none accepted the request, so the action was blocked instead of guessing further."
@@ -434,7 +455,7 @@
     },
     "get_weeks": {
       "name": "Get weeks",
-      "description": "Return HelloFresh delivery weeks with full recipe and selection detail. Read-only; returns a response. Optionally filter to a single week.",
+      "description": "Return HelloFresh delivery weeks with full recipe and selection detail. Read-only; returns a response. Optionally filter to a single week, or leave the menus out for a much smaller response.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",
@@ -443,6 +464,10 @@
         "week_id": {
           "name": "Week ID",
           "description": "Optional HelloFresh delivery week identifier to return just that week."
+        },
+        "include_recipes": {
+          "name": "Include recipes",
+          "description": "Whether each week comes with its menu: the recipes, the Market items and the menu's sections and filters. On by default. Turn it off for a much smaller response when only the schedule, the selection counts and the order are needed."
         }
       }
     },
@@ -554,9 +579,27 @@
         }
       }
     },
+    "change_week_servings": {
+      "name": "Change week servings",
+      "description": "Experimental. Change how many people one delivery week's box is for. It keeps its number of meals, and the plan and the other weeks stay as they are. Only sizes your plan offers are accepted. Returns the new box and its price.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "The specific HelloFresh account entry to target when multiple accounts are configured."
+        },
+        "week_id": {
+          "name": "Week ID",
+          "description": "The HelloFresh delivery week identifier."
+        },
+        "servings": {
+          "name": "Servings",
+          "description": "How many people the week's box is for after the change."
+        }
+      }
+    },
     "change_delivery_weekday": {
       "name": "Change delivery weekday",
-      "description": "Change the recurring delivery option and interval for a subscription's plan. Affects all future deliveries.",
+      "description": "Change the recurring delivery day and time slot for a subscription's plan. Affects all future deliveries. It cannot change how often boxes come.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry ID",
@@ -568,7 +611,7 @@
         },
         "delivery_interval": {
           "name": "Delivery interval",
-          "description": "How often deliveries recur, in weeks (1 = every week). Defaults to 1."
+          "description": "Only 1 (every week) is accepted, and it is the default. This action cannot change how often boxes come, so any other value is refused."
         },
         "subscription_id": {
           "name": "Subscription ID",
@@ -647,6 +690,10 @@
         "limit": {
           "name": "Limit",
           "description": "Maximum number of recipes to return (1-200; default 50)."
+        },
+        "offset": {
+          "name": "Offset",
+          "description": "How many recipes to skip before this page starts (default 0). The next page starts at offset + limit."
         }
       }
     },
@@ -932,7 +979,8 @@
           "one": "{count} week needs meal picks",
           "other": "{count} weeks need meal picks"
         },
-        "load_failed": "Couldn't load your deliveries: {error}"
+        "load_failed": "Couldn't load your deliveries: {error}",
+        "view_failed": "This section couldn't be shown: {error}"
       },
       "banner": {
         "refresh_failed": "Couldn't refresh: {error}",
@@ -941,7 +989,14 @@
         "card_expired_date": "Your {card} has expired ({date}). Update it on HelloFresh or your next box may not ship.",
         "card_expiring": "Your {card} expires soon. Update it on HelloFresh before your next box is charged.",
         "card_expiring_date": "Your {card} expires soon ({date}). Update it on HelloFresh before your next box is charged.",
-        "holiday_date": "New delivery date: {date}."
+        "holiday_date": "New delivery date: {date}.",
+        "payment_boxes": {
+          "one": "There's a problem with the payment for your box of {boxes}.",
+          "other": "There's a problem with the payments for {count} boxes: {boxes}."
+        },
+        "payment_any": "There's a problem with a payment on your HelloFresh account.",
+        "payment_box": "{date} ({amount})",
+        "payment_fix": "Update your payment details on HelloFresh"
       },
       "state": {
         "ready": {
@@ -1050,7 +1105,10 @@
         "skipped_title": "This week is skipped.",
         "unskip_to_choose": "Unskip it to choose meals.",
         "autopicked_before": "Keep them or swap any before {date}.",
-        "closed": "Changes are closed for this box — it ships as shown."
+        "closed": "Changes are closed for this box — it ships as shown.",
+        "skip_closed": "The deadline for this week has passed, so it can no longer be changed.",
+        "delayed": "Delayed — now arriving {date}",
+        "early": "Early — now arriving {date}"
       },
       "skip": {
         "title": "Skip {date}?",
@@ -1068,6 +1126,30 @@
         "none": "No other days are available.",
         "failed": "Couldn't change the day: {error}",
         "done": "Delivery day changed for that week."
+      },
+      "undo": {
+        "action": "Undo",
+        "undoing": "Undoing…",
+        "done": "Change undone.",
+        "failed": "Couldn't undo: {error}",
+        "closed": "It's too late to undo: this week's selection deadline has passed."
+      },
+      "servings": {
+        "for": "For {people}",
+        "change": "Change",
+        "change_aria": "Change how many people this box is for",
+        "title": "People in this box",
+        "only_this_box": "Only for the box scheduled {date}",
+        "loading": "Loading the box sizes…",
+        "load_failed": "Couldn't load the box sizes: {error}",
+        "none": "HelloFresh offers no other size for this box.",
+        "confirm_title": "Change this box to {people}?",
+        "confirm_body": "Only your box for {date} changes. Your plan and your other boxes stay as they are.",
+        "confirm_price": "HelloFresh lists {size} at {price}.",
+        "confirm": "Change this box",
+        "saving": "Changing this box…",
+        "done": "This box is now for {people}.",
+        "failed": "Couldn't change this box: {error}"
       },
       "pantry": {
         "update_failed": "Couldn't update the list: {error}",
@@ -1243,6 +1325,9 @@
         "filters": "Filters",
         "in_my_box": "In my box",
         "filtering": "Filtering…",
+        "allergen_checking": "Checking with HelloFresh which meals avoid those ingredients. Until it answers, only the meals in your box are shown.",
+        "allergen_failed": "HelloFresh couldn't check your ingredients to avoid, so meals outside your box are hidden rather than shown unchecked.",
+        "filter_failed": "HelloFresh's filter service didn't answer. These filters are using the menu's own data for now and may miss some meals.",
         "remove_filter": "Remove: {label}",
         "clear_all": "Clear all",
         "no_match_query": "No meals match “{query}”.",
@@ -1368,7 +1453,14 @@
         "min_notice": "Choose at least {min} meals — HelloFresh has no smaller box.",
         "resized_notice": "This week's box is resized to {meals} (your plan has {required}). HelloFresh reprices it; your plan itself doesn't change.",
         "unsaved_lower": "unsaved changes",
-        "keep_editing": "Keep editing"
+        "keep_editing": "Keep editing",
+        "changed_title": "Your saved box changed since you started.",
+        "changed_body": "It was changed somewhere else, such as another device or hellofresh.com. {keep_mine} puts your changes on top of the box as it is saved now; {use_saved} drops them.",
+        "keep_mine": "Keep mine",
+        "use_saved": "Use saved",
+        "changed_toast": "Your saved box changed since you started. Choose “{keep_mine}” or “{use_saved}” before saving.",
+        "estimate_unavailable": "Estimate unavailable",
+        "estimate_unavailable_note": "No price estimate is available right now. HelloFresh calculates the price when it charges the box."
       },
       "market": {
         "group": {
@@ -1454,12 +1546,30 @@
           "one": "{count} result across every category",
           "other": "{count} results across every category"
         },
+        "results_capped": {
+          "one": "Showing the first {count} result across every category",
+          "other": "Showing the first {count} results across every category"
+        },
+        "capped": {
+          "one": "Showing the first {count} recipe",
+          "other": "Showing the first {count} recipes"
+        },
         "cookbook_empty": "Your cookbook is empty. Tap the heart on any recipe to save it here.",
         "no_saved_match": "No saved recipes match “{query}”.",
         "remove_aria": "Remove from cookbook: {name}",
         "save_aria": "Save to cookbook: {name}",
         "remove_title": "Remove from cookbook",
-        "save_title": "Save to cookbook"
+        "save_title": "Save to cookbook",
+        "load_more": "Load more",
+        "loading_more": "Loading more…",
+        "more_failed": "Couldn't load more recipes: {error}",
+        "shown_of": "Showing {count} of {total} recipes",
+        "results_of": "Showing {count} of {total} results across every category",
+        "added": {
+          "one": "{count} more recipe loaded",
+          "other": "{count} more recipes loaded"
+        },
+        "none_added": "No more recipes to load."
       },
       "account": {
         "credit_card": "Credit card",
@@ -1493,10 +1603,19 @@
         "presets_loading": "Loading presets…",
         "presets_none": "No presets available.",
         "yours": "Yours",
-        "presets_note": "What each preset means — HelloFresh uses yours to pick meals. Change it on hellofresh.com."
+        "presets_note": "What each preset means — HelloFresh uses yours to pick meals. Change it on hellofresh.com.",
+        "credit_cash": "HelloFresh Cash",
+        "credit_bonus": "Bonus credit",
+        "rewards": "Rewards",
+        "boxes_until_free": {
+          "one": "{count} box until a free box",
+          "other": "{count} boxes until a free box"
+        },
+        "free_box_earned": "You've earned a free box"
       },
       "plan": {
         "options_loading": "Options load shortly…",
+        "saving": "Updating your plan…",
         "settings": "Plan settings",
         "settings_note": "These change every future box — and what you're billed. To change a single week, use {change_day} or {skip} on that week.",
         "from_to": "From {from} to {to}",
@@ -1689,6 +1808,7 @@
         "save_failed": "Couldn't save your preferences: {error}",
         "tell_us_more": "Tell us more",
         "load_failed": "Couldn't load your food preferences: {error}",
+        "reload_failed": "Couldn't reload your food preferences: {error}",
         "none": "No food profile available.",
         "completion": "Profile {completed} of {total} complete",
         "hero_title": "Meals matched to your taste",
@@ -1775,6 +1895,8 @@
         "something_else_hint": "Leftovers, pizza night, eating out…",
         "saving": "Saving the plan…",
         "save_failed": "Couldn't save the plan: {error}",
+        "save_partial": "Only part of the plan was saved. Saved: {saved}. Not saved: {failed} ({error}).",
+        "start_time": "Start time",
         "saved": "Plan saved",
         "cleared": "Plan cleared",
         "item_title": "Plan {name}",

@@ -1,32 +1,40 @@
-"""HelloFresh cookbook (favorites) operations.
+"""HelloFresh cookbook (favorites) operations, and the read of the separate ``cfs`` store.
 
-Split out of ``client.py`` (which had grown past 4,900 lines) as a mixin: the methods run
-on ``HelloFreshClient`` exactly as before — same ``self`` attributes, same call sites —
-this module only gives the area its own file. ``token_manager.py`` and
-``tls_transport.py`` set the precedent.
+Split out of ``client.py`` (which had grown past 4,900 lines) as a mixin on
+``client_core._ClientCore``: the methods run on ``HelloFreshClient`` exactly as before — same
+``self`` attributes, same call sites — this module only gives the area its own file.
+``token_manager.py`` and ``tls_transport.py`` set the precedent.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 import json
 import logging
 from typing import Any
 
-from aiohttp import ClientError
-
+from .client_core import _ClientCore
 from .const import api_country_code
 from .models import (
+    HelloFreshAuthError,
+    HelloFreshBotBlockedError,
     HelloFreshError,
     HelloFreshFavorite,
+    HelloFreshRateLimitedError,
     HelloFreshWeek,
 )
-from .parsers import _seg, safe_error_summary
+from .parsers import _seg
 
 _LOGGER = logging.getLogger(__name__)
 
+# A rate limit on the cookbook search stops the batches not yet sent (see
+# _async_search_favorites); these two end the call: reauth, or the shared bot cooldown.
+_SEARCH_RAISES = (HelloFreshAuthError, HelloFreshBotBlockedError)
+_HTTP_TOO_MANY_REQUESTS = 429
 
-class FavoritesClientMixin:
+
+class FavoritesClientMixin(_ClientCore):
     """Cookbook bookmark reads/writes; mixed into HelloFreshClient."""
 
     # ---- Cookbook (favorites) -------------------------------------------------
@@ -82,8 +90,8 @@ class FavoritesClientMixin:
 
         Because the endpoint only echoes ids back, the returned favorites carry no title or
         image — they answer "is this a favorite?", which is what a heart badge needs. An empty
-        input short-circuits without a request. Failures are non-fatal: this decorates existing
-        data, so a cookbook outage must not fail the whole poll.
+        input short-circuits without a request. A cookbook outage is non-fatal (this decorates
+        existing data) and leaves the result empty; a rejected sign-in or a bot block is raised.
         """
         favorites, _ = await self._async_search_favorites(recipe_ids)
         return favorites
@@ -130,13 +138,16 @@ class FavoritesClientMixin:
                     params=self._cookbook_params(),
                     json_payload=payload,
                 )
-                if response.status >= 400:
-                    raise HelloFreshError(f"HTTP {response.status}")
                 body = await self._async_response_json(response)
-            except (HelloFreshError, ClientError) as err:
+            except _SEARCH_RAISES:
+                raise
+            except HelloFreshError as err:
                 # Favorites are decoration layered onto already-fetched data, so a cookbook
-                # failure must never fail the poll — record it and leave the state unknown.
-                if getattr(err, "status", None) == 429:
+                # failure leaves the state unknown rather than failing the call.
+                if (
+                    isinstance(err, HelloFreshRateLimitedError)
+                    or err.status == _HTTP_TOO_MANY_REQUESTS
+                ):
                     rate_limited = True
                 self._record_debug_attempt(
                     "cookbook_attempts",
@@ -196,18 +207,39 @@ class FavoritesClientMixin:
         favorite", so a cookbook outage never shows a misleading empty heart; a listing that
         stopped early leaves the recipes it didn't find unknown too.
         """
-        if not self._enable_favorites:
-            return
         if not any(recipe.recipe_id for week in weeks for recipe in week.recipes):
             return
+        cookbook = await self._async_list_cookbook_for_poll()
+        if cookbook is not None:
+            self._apply_cookbook_favorites(weeks, *cookbook)
+
+    async def _async_list_cookbook_for_poll(
+        self,
+    ) -> tuple[list[HelloFreshFavorite], bool] | None:
+        """List the cookbook for the poll's hearts: ``(favorites, complete)``, or None.
+
+        None when favorites are switched off or the cookbook couldn't be read (the hearts then
+        stay unknown). A rejected sign-in, a bot block or a rate limit is raised: the poll
+        stops on those. Needs no menu, so the poll runs it beside the menu stage.
+        """
+        if not self._enable_favorites:
+            return None
         try:
-            favorites, complete = await self._async_list_cookbook()
-        except (HelloFreshError, ClientError) as err:
+            return await self._async_list_cookbook()
+        except (HelloFreshAuthError, HelloFreshBotBlockedError, HelloFreshRateLimitedError):
+            raise
+        except HelloFreshError as err:
             _LOGGER.debug("HelloFresh favorites lookup failed: %s", err)
             self._record_debug_attempt(
                 "cookbook_attempts", {"path": self._COOKBOOK_LIST_PATH, "error": str(err)}
             )
-            return
+            return None
+
+    @staticmethod
+    def _apply_cookbook_favorites(
+        weeks: Sequence[HelloFreshWeek], favorites: Sequence[HelloFreshFavorite], complete: bool
+    ) -> None:
+        """Flag each recipe in the cookbook; with a complete listing, the rest as not."""
         saved = {favorite.recipe_id for favorite in favorites}
         for week in weeks:
             for recipe in week.recipes:
@@ -218,7 +250,11 @@ class FavoritesClientMixin:
                     recipe.is_favorite = False
 
     async def async_add_favorite(self, recipe_id: str) -> HelloFreshFavorite:
-        """Bookmark a recipe. Returns the created favorite (rich: title, image, nutrition)."""
+        """Bookmark a recipe. Returns the created favorite (rich: title, image, nutrition).
+
+        The recipe's heart is set in the account snapshot too (see ``last_account_data``),
+        with no request.
+        """
         payload = {
             "bookmark_id": self._bookmark_id(recipe_id),
             "bookmark_source": "hellofresh",
@@ -229,13 +265,11 @@ class FavoritesClientMixin:
             params=self._cookbook_params(),
             json_payload=payload,
         )
-        if response.status >= 400:
-            details = await response.text()
-            raise HelloFreshError(
-                f"HelloFresh add-favorite failed (HTTP {response.status}): {details[:300]}"
-            )
-        body = await self._async_response_json(response)
-        favorite = HelloFreshFavorite.from_api(body)
+        try:
+            body = await self._async_response_json(response)
+        except HelloFreshError:
+            body = None
+        favorite = HelloFreshFavorite.from_api(body) if isinstance(body, dict) else None
         if favorite is None:
             # A 2xx with an unparseable body still means the bookmark was created, so report
             # success with what we know rather than raising.
@@ -244,7 +278,37 @@ class FavoritesClientMixin:
                 recipe_id=str(recipe_id).split("-", 1)[0],
             )
         _LOGGER.info("HelloFresh favorite added for recipe %s", favorite.recipe_id)
+        self._publish_favorite(favorite.recipe_id, True)
         return favorite
+
+    def _publish_favorite(self, recipe_id: str, is_favorite: bool) -> None:
+        """Store a snapshot with the recipe's heart set, after a cookbook write.
+
+        Only the weeks holding the recipe are copied; the previous snapshot is left as it was.
+        """
+        data = self._last_account_data
+        if data is None:
+            return
+        bare = str(recipe_id).split("-", 1)[0]
+
+        def _matches(recipe_id: str) -> bool:
+            return str(recipe_id).split("-", 1)[0] == bare
+
+        weeks = [
+            replace(
+                week,
+                recipes=[
+                    replace(recipe, is_favorite=is_favorite)
+                    if _matches(recipe.recipe_id)
+                    else recipe
+                    for recipe in week.recipes
+                ],
+            )
+            if any(_matches(recipe.recipe_id) for recipe in week.recipes)
+            else week
+            for week in data.weeks
+        ]
+        self._publish_snapshot(weeks=weeks)
 
     async def async_list_favorites(self, limit: int | None = None) -> list[HelloFreshFavorite]:
         """Return every recipe bookmarked in the customer's cookbook, newest first.
@@ -288,10 +352,6 @@ class FavoritesClientMixin:
             if cursor:
                 params["cursor"] = cursor
             response = await self._async_api_request("GET", self._COOKBOOK_LIST_PATH, params=params)
-            if response.status >= 400:
-                raise HelloFreshError(
-                    f"HelloFresh cookbook listing failed (HTTP {response.status})"
-                )
             payload = await self._async_response_json(response)
             rows = payload.get("data") if isinstance(payload, dict) else None
             if not isinstance(rows, list):
@@ -373,10 +433,16 @@ class FavoritesClientMixin:
         The delete targets the server-assigned row id under the *external*-recipes collection
         (``DELETE /gw/cookbook/v1/external-recipes/{id}`` → HTTP 204), even though the bookmark
         was created under *internal*-recipes. That row id is not the bookmark id, so it has to
-        be resolved first via the search endpoint.
+        be resolved first via the search endpoint. Returns False when HelloFresh answered that
+        the recipe isn't bookmarked; raises HelloFreshError when it didn't answer at all (a
+        failed lookup must not read as "nothing to remove" and leave the bookmark in place).
         """
         bare = str(recipe_id).split("-", 1)[0]
-        existing = await self.async_get_favorite_recipe_ids([bare])
+        existing, answered = await self._async_search_favorites([bare])
+        if not answered:
+            raise HelloFreshError(
+                f"HelloFresh's cookbook could not be read, so recipe {bare} was not removed"
+            )
         favorite = existing.get(bare)
         if favorite is None:
             # Already not a favorite: report a no-op rather than erroring, so callers can call
@@ -388,16 +454,63 @@ class FavoritesClientMixin:
                 f"HelloFresh returned no cookbook row id for recipe {bare}; cannot remove it."
             )
 
-        response = await self._async_api_request(
+        await self._async_api_request(
             "DELETE",
             f"{self._COOKBOOK_LIST_PATH}/{_seg(favorite.favorite_id)}",
             params=self._cookbook_params(),
         )
-        if response.status >= 400:
-            details = await response.text()
-            raise HelloFreshError(
-                f"HelloFresh remove-favorite failed (HTTP {response.status}): "
-                f"{safe_error_summary(details)}"
-            )
         _LOGGER.info("HelloFresh favorite removed for recipe %s", bare)
+        self._publish_favorite(bare, False)
         return True
+
+    # A SECOND, separate favorites service HelloFresh also runs (`cfs`), backing its
+    # /recipes/favorites page. It is NOT the cookbook: different service, different paging
+    # (skip/take/total rather than a cursor), and in captured traffic it reported total=0 while
+    # the cookbook held six bookmarks — so the two stores are not synchronized. HelloFresh's
+    # Android app keeps its favorite "heart" here (it writes PUT/DELETE
+    # `cfs/v2/favorites/recipe/{id}`), with rows `{object_id: <recipe id>}` under `items` (or
+    # `data`/`result`). Read-only here; it never overrides cookbook state.
+    _CFS_FAVORITES_PATH = "/gw/cfs/v2/favorites/recipe"
+
+    async def async_get_cfs_favorites(
+        self, recipe_ids: Sequence[str] | None = None
+    ) -> dict[str, Any]:
+        """Read HelloFresh's secondary ("cfs") favorites store.
+
+        Returns ``{"total", "count", "items", "available"}``. ``available`` is False when the
+        endpoint could not be read at all, which is distinct from an empty-but-working store.
+        Because no populated response has ever been captured, ``items`` are passed through as
+        raw dicts rather than being coerced into a model that might not match.
+        """
+        params = {
+            "country": api_country_code(self._country),
+            "locale": self._locale_for_country(),
+            # The website always sends `ids`, empty when it is not filtering to specific
+            # recipes; mirroring that keeps the request shape identical to a real one. Several
+            # ids are joined with "|", as HelloFresh's Android app sends them.
+            "ids": "|".join(str(r).split("-", 1)[0] for r in recipe_ids) if recipe_ids else "",
+        }
+        payload = await self._async_get_json(
+            self._CFS_FAVORITES_PATH, params, trace_category="cookbook_attempts", optional=True
+        )
+        if payload is None:
+            return {"total": 0, "count": 0, "items": [], "recipe_ids": [], "available": False}
+
+        items = next(
+            (
+                value
+                for key in ("items", "data", "result")
+                if isinstance(value := payload.get(key), list)
+            ),
+            None,
+        )
+        rows = [item for item in items if isinstance(item, dict)] if items else []
+        return {
+            "total": payload.get("total"),
+            "count": payload.get("count"),
+            "items": rows,
+            "recipe_ids": [
+                str(row["object_id"]) for row in rows if isinstance(row.get("object_id"), str)
+            ],
+            "available": True,
+        }

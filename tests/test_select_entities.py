@@ -6,14 +6,16 @@ import asyncio
 from types import SimpleNamespace
 from unittest import mock
 
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 import pytest
 
-from custom_components.hellofresh import select as select_module
+from custom_components.hellofresh import coordinator as coordinator_module
 from custom_components.hellofresh.api import (
     HelloFreshAccountData,
+    HelloFreshAuthError,
     HelloFreshDeliveryOption,
     HelloFreshError,
+    HelloFreshNotImplementedError,
     HelloFreshSubscription,
 )
 from custom_components.hellofresh.select import (
@@ -59,8 +61,12 @@ def _coordinator(client) -> SimpleNamespace:
         client=client,
         hass=None,
         last_update_success=True,
-        config_entry=SimpleNamespace(entry_id="entry-1", title="HelloFresh"),
+        config_entry=SimpleNamespace(
+            entry_id="entry-1", title="HelloFresh", async_start_reauth=mock.Mock()
+        ),
         async_request_refresh=mock.AsyncMock(),
+        async_after_write=mock.AsyncMock(),
+        async_add_listener=lambda *_args, **_kwargs: lambda: None,
     )
 
 
@@ -136,31 +142,70 @@ def test_box_size_select_writes_the_handle_and_refreshes() -> None:
     )
     entity = _box_select(client)
     _run(entity._async_load_options())
-    with mock.patch.object(select_module, "async_delete_write_actions_issue") as cleared:
+    with mock.patch.object(coordinator_module, "async_delete_write_actions_issue") as cleared:
         _run(entity.async_select_option("4 meals for 2 people"))
     client.async_change_plan.assert_awaited_once_with("US-CBU-4-2-0", "sub-1")
-    entity.coordinator.async_request_refresh.assert_awaited_once()
+    entity.coordinator.async_after_write.assert_awaited_once()
     cleared.assert_called_once()
     # Re-selecting the current plan is a no-op, not a write.
     _run(entity.async_select_option("3 meals for 2 people"))
     client.async_change_plan.assert_awaited_once()
 
 
-def test_box_size_select_surfaces_write_failures_as_repairs_issue() -> None:
+def _failing_box_select(error: Exception) -> HelloFreshBoxSizeSelect:
     client = SimpleNamespace(
         async_list_plan_options=mock.AsyncMock(return_value=PLAN_OPTIONS),
-        async_change_plan=mock.AsyncMock(side_effect=HelloFreshError("nope")),
+        async_change_plan=mock.AsyncMock(side_effect=error),
     )
     entity = _box_select(client)
     _run(entity._async_load_options())
+    return entity
+
+
+def test_box_size_select_raises_the_repair_when_the_action_is_unsupported() -> None:
+    """HelloFresh having no endpoint for the change is permanent: that is what the repair is for."""
+    entity = _failing_box_select(HelloFreshNotImplementedError("no verified endpoint"))
     with (
-        mock.patch.object(select_module, "async_create_write_actions_issue") as raised,
-        pytest.raises(HomeAssistantError),
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="no verified endpoint"),
     ):
         _run(entity.async_select_option("2 meals for 2 people"))
-    raised.assert_called_once()
-    with pytest.raises(HomeAssistantError):
+    raised.assert_called_once_with(None, "entry-1", "HelloFresh")
+    entity.coordinator.async_after_write.assert_not_awaited()
+
+
+def test_box_size_select_reports_a_passing_failure_without_a_repair() -> None:
+    """A timeout is reported and nothing more.
+
+    Any failure used to raise the "write actions unavailable" repair, so one slow request
+    left a warning in Repairs saying the account could not be changed at all.
+    """
+    entity = _failing_box_select(HelloFreshError("HelloFresh did not answer"))
+    with (
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="did not answer"),
+    ):
+        _run(entity.async_select_option("2 meals for 2 people"))
+    raised.assert_not_called()
+    entity.coordinator.config_entry.async_start_reauth.assert_not_called()
+
+
+def test_box_size_select_starts_reauth_when_the_sign_in_is_rejected() -> None:
+    entity = _failing_box_select(HelloFreshAuthError("token rejected"))
+    with (
+        mock.patch.object(coordinator_module, "async_create_write_actions_issue") as raised,
+        pytest.raises(HomeAssistantError, match="token rejected"),
+    ):
+        _run(entity.async_select_option("2 meals for 2 people"))
+    entity.coordinator.config_entry.async_start_reauth.assert_called_once()
+    raised.assert_not_called()
+
+
+def test_an_unknown_option_is_a_validation_error() -> None:
+    entity = _failing_box_select(HelloFreshError("never reached"))
+    with pytest.raises(ServiceValidationError, match="Unknown HelloFresh option"):
         _run(entity.async_select_option("not an option"))
+    entity.coordinator.client.async_change_plan.assert_not_awaited()
 
 
 def test_delivery_day_select_uses_the_subscription_handle_and_writes_it() -> None:
@@ -173,7 +218,7 @@ def test_delivery_day_select_uses_the_subscription_handle_and_writes_it() -> Non
     _run(entity._async_load_options())
     assert entity.options == ["Mondays: 8AM - 8PM", "Wednesdays: 8AM - 8PM"]
     assert entity.current_option == "Mondays: 8AM - 8PM"
-    with mock.patch.object(select_module, "async_delete_write_actions_issue"):
+    with mock.patch.object(coordinator_module, "async_delete_write_actions_issue"):
         _run(entity.async_select_option("Wednesdays: 8AM - 8PM"))
     client.async_change_delivery_weekday.assert_awaited_once_with("US-3-0800-2000", 1, "sub-1")
 
@@ -186,3 +231,31 @@ def test_catalog_failure_keeps_the_select_unavailable_without_raising() -> None:
     _run(entity._async_load_options())
     assert entity.options == []
     assert entity.available is False
+
+
+def test_the_catalog_loads_in_the_background_so_setup_does_not_wait_for_it() -> None:
+    """Adding the entity starts the catalog load and returns; it does not await HelloFresh.
+
+    Home Assistant waits for every entity to finish being added before the entry counts as
+    set up, so an awaited load here made each start wait on two extra requests.
+    """
+    client = SimpleNamespace(async_list_plan_options=mock.AsyncMock(return_value=PLAN_OPTIONS))
+    entity = _box_select(client)
+    entity.hass = SimpleNamespace()  # type: ignore[assignment]
+    scheduled: list = []
+    entity.coordinator.config_entry.async_create_background_task = lambda _hass, coro, name: (
+        scheduled.append(coro) or mock.Mock(done=lambda: False)
+    )
+
+    _run(entity.async_added_to_hass())
+
+    client.async_list_plan_options.assert_not_awaited()
+    assert len(scheduled) == 1
+    assert entity.available is False
+
+    # A coordinator update while that load is still running does not start a second one.
+    entity._handle_coordinator_update()
+    assert len(scheduled) == 1
+
+    _run(scheduled[0])
+    assert entity.available is True

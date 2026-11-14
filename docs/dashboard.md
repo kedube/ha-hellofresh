@@ -71,7 +71,7 @@ views:
 | `title` | `HelloFresh` | Header title; `""` hides it. |
 | `logo` | `true` | `false` hides the bundled HelloFresh logo, or give a URL for your own image. |
 | `image_width` | `400` | Width in pixels recipe images are resized to. Larger looks sharper on big screens and costs more data. |
-| `recipes_limit` | `50` | Recipes loaded per category in Recipes (1–200). |
+| `recipes_limit` | `50` | Recipes loaded at a time in Recipes, per category or search (1–200); **Load more** adds the next ones. |
 | `recipes_collection` | Top rated | The category slug Recipes opens on, e.g. `chicken-recipes`. |
 | `spending_months` | `12` | Months in the spending chart (1–24). |
 | `config_entry_id` | — | **Only with more than one HelloFresh account**: which one the card shows. |
@@ -110,7 +110,9 @@ title: Recipes
   as photos, with the option you picked (tap one for its recipe). **Review meals** / **Edit
   meals** / **Choose meals** and **Add extras** go straight to that week in Menu and Market;
   **Change delivery day** and **Skip this week** sit underneath. When HelloFresh picked the meals,
-  it says so; when you have unsaved changes to this box, it offers to finish them.
+  it says so; when you have unsaved changes to this box, it offers to finish them. When HelloFresh
+  moves the box after the fact, it says when it now comes ("Delayed — now arriving Tuesday,
+  October 6", or "Early — …").
 - **Delivery tracking** — once a box has a carrier, a four-step tracker (Preparing → Shipped → Out
   for delivery → Delivered) with the carrier's latest step, its estimate, the linked tracking
   number, a **History (N)** list of every scan, and the delivery photo and signer when the carrier
@@ -135,7 +137,8 @@ title: Recipes
   after its name in short form ("Black Pepper 3 tsp"). Ticks are the same to-do items the
   prep-list entities hold, so they sync with the companion app and voice.
 - **Coming up** — the following weeks as cards (meal photos, state, price, deadline, and
-  Edit / Change day / Skip or Unskip), or switch to **Calendar**.
+  Edit / Change day / Skip or Unskip), or switch to **Calendar**. A box HelloFresh moved says
+  when it now arrives, here and in the calendar's list.
 
 ![The delivery calendar: September as rounded day tiles under a weekday header, each delivery day filled green with "Delivered", today circled, and the month's four boxes with their photos, prices and carrier listed beside it](../images/card-calendar.png)
 
@@ -153,8 +156,9 @@ title: Recipes
 
 - **Delivery details** — tap a delivered or shipped box for the carrier's delivery photo and who
   signed (when the carrier provides them — Veho, HelloFresh's main US carrier, doesn't, and the
-  details say so), the linked tracking number and every scan, newest first, the meals (tap for the
-  recipe) and extras that were in it, and what it cost with any discount.
+  details say so; a photo shows only from a secure https address), the linked tracking number
+  and every scan, newest first, the meals (tap for the recipe) and extras that were in it, and
+  what it cost with any discount.
 
 ## Menu
 
@@ -165,8 +169,13 @@ title: Recipes
   changes carry a dot, and ‹ › step through them. The card opens on the next box.
 - **Week header** — the date, state, voucher and holiday badges, the deadline countdown, and the
   week's own actions: **Pantry**, **Change day**, **Skip week** / **Unskip week**. Notices explain
-  a skipped, auto-picked, locked or downsized box; a settled box (locked, shipped, delivered) shows
-  its order details or tracker.
+  a skipped, auto-picked, locked, downsized or moved box; a settled box (locked, shipped,
+  delivered) shows its order details or tracker.
+- **For 2 people · Change** — while the box can still change, how many people it is for. **Change**
+  lists the sizes HelloFresh offers with the same meals in the same plan family, each with its
+  price; pick one and confirm, and only that week's box changes (your plan and every other box stay
+  as they are). HelloFresh may not offer this for every box: then the card shows HelloFresh's own
+  message.
 - **One tile per dish** — HelloFresh's menu has a separate meal for each way to have a dish (2×
   protein, a protein or vegetable swap, "Added Bacon"), so a week of ~460 meals is really ~85
   dishes. Like the website, the card shows each dish once, as written, in the website's order with
@@ -183,8 +192,8 @@ title: Recipes
   version first under the site's own label ("No Change", "No Protein", or the base protein).
   **Update box** switches a dish in your box to the chosen option, keeping its servings; **Add to
   box** adds a dish as chosen. The cart stores the option's own meal, exactly as the website does.
-  If two versions of one dish are in the box, each gets its own tile. Sold-out options can't be
-  picked.
+  If two versions of one dish are in the box, each gets its own tile. A sold-out option says so and
+  can still be picked, like a sold-out meal (see below).
 
 ![The menu filtered to Seafood: a removable Seafood chip, "13 of 40 meals", and a chicken dish shown as its "Added Shrimp" version](../images/card-filters.png)
 
@@ -201,17 +210,22 @@ title: Recipes
     service (menu recipes carry no allergen data), and so is Main protein: the service places the
     few meals the menu leaves without a protein, such as a beef dish's "2x Tofu" swap under Veggie.
     Lamb, which the site doesn't offer, matches on the menu data alone. Answers are cached per week
-    and filter; a "Filtering…" note shows while one is on its way, and if the service fails the
-    card filters on the menu data rather than blanking the week.
+    and filter, and a "Filtering…" note shows while one is on its way. If the service fails, a
+    note above the meals says so and offers **Retry**, and the card filters on the menu data
+    meanwhile rather than blanking the week.
+  - **Ingredients to avoid** is the exception: the menu data says nothing about ingredients, so
+    until HelloFresh has answered (or when it can't) only the meals already in your box are shown,
+    with a note saying why, rather than meals you asked to avoid.
 - **In my box** — just what's in the box, still with its servings steppers.
 - **Meal tiles** — photo, HelloFresh's own badge in its colours, favourite heart, promo-video play
   button, premium surcharge, protein dot, time / calories / protein, up to two dietary chips (the
   rest on hover), "Ordered 2× · last 2026-W34", your rating, and the per-serving price. Large menus
-  show 60 dishes at a time with **Show more**. Past weeks outside the
+  show 100 dishes at a time with **Show more**. Past weeks outside the
   [Full menu history](../README.md#options) window show just what was delivered.
 
 > **Sold-out meals are advisory.** A meal HelloFresh marks sold out is greyed with a ribbon but
-> stays choosable. The flag comes from HelloFresh's anonymous regional catalog, which hasn't been
+> stays choosable, and so does a sold-out option in the customize drawer, marked "Sold out". The
+> flag comes from HelloFresh's anonymous regional catalog, which hasn't been
 > shown to track what *your* subscription can order, so greying out a meal you could actually pick,
 > with no way past it, would be worse than letting HelloFresh itself decide on save.
 
@@ -236,8 +250,10 @@ the price —
 
 - unchanged: the box's bill (or your plan price, labelled as such);
 - after changing meals: an **estimated total** from HelloFresh's own price calculation for exactly
-  those meals (`hellofresh.preview_meal_price`, asked once you pause) plus your extras;
-- after changing only extras: what the extras add.
+  those meals (`hellofresh.preview_meal_price`, asked once you pause) plus your extras, or
+  "Estimate unavailable" when HelloFresh can't price them (your next change asks again); below the
+  two-meal minimum there is no estimate;
+- after changing only extras: what the change adds or takes off (−$5.99 for an extra removed).
 
 **Save box** writes everything in one go: meals only through `hellofresh.select_meals`, extras only
 through `hellofresh.select_market_items`, and both together through `select_meals` with
@@ -250,6 +266,20 @@ HelloFresh downsizes the box on save, a notice stays on that week until you dism
 Pending changes survive switching tabs and weeks, and the card's own background refreshes — they are
 only dropped when saved, discarded, or no longer possible (the deadline passed).
 
+**Undo.** After a save, the confirmation at the bottom of the card offers **Undo** for about ten
+seconds: it writes the box back as it was saved before (its meals, servings and extras, in one
+write). Skipping or unskipping a week, a new delivery day, a week's number of people and a plan
+change (box size or delivery day) offer it too. A change to a week can be undone only until that
+week's selection deadline, and an undo can't itself be undone. The confirmation stays while the
+pointer or the keyboard is on it; **Undo** comes after the card's own controls in the Tab order
+(it never takes the keyboard by itself), and Escape dismisses it.
+
+If the saved box changes somewhere else while you edit (another device, hellofresh.com), saving
+your draft as it stands would undo that change, so the bar says **Your saved box changed since you
+started** and Save waits for you to choose: **Keep mine** puts what you added, removed and changed
+on top of the box as it is saved now (then review and save as usual), and **Use saved** drops your
+changes. The same goes for extras.
+
 ## Recipes
 
 ![Recipes: a search box for 10,000+ recipes, category chips (Top rated, Cookbook, All categories, Chicken Recipes, Hall of Fame, …) and a grid of recipes with ratings, times and favourite hearts](../images/card-recipes.png)
@@ -261,7 +291,9 @@ sub-categories (Noodle → Ramen / Udon / …), catalog-wide search (the cookboo
 favourite hearts, and the full recipe: ingredients with photos, amounts and allergens, a servings
 switcher, step-by-step instructions with their photos and timers, utensils, nutrition and the
 printable recipe card. Favouriting also refreshes the hearts on the Menu. None of this is tied to
-your subscription.
+your subscription. A category or a search comes `recipes_limit` recipes at a time (50 unless you
+set it, at most 200): the line above the recipes says how many of how many are shown, and **Load
+more** below them adds the next ones (a screen reader hears how many came).
 
 > The recipe listing and categories come from HelloFresh's website rather than a stable API, so
 > they are less robust than the rest of the card; they recover by themselves when HelloFresh
@@ -278,9 +310,9 @@ day, for the box you're eating now and each one after it.
   yet. Tap one to pick its day.
 - **Each day** — its dinner, with the meal's photo (tap it for the recipe), cooking time, and when
   it starts and ends. Tap the day to plan it: a meal from the box, a Market item bought that week,
-  or **Something else** — a note such as "Leftovers" or "Pizza night". Dinner can add an
-  **appetizer** and a **dessert** from that week's Market items, and a day's meal can start at its
-  own time.
+  or **Something else** — a note such as "Leftovers" or "Pizza night" (typing one picks it).
+  Dinner can add an **appetizer** and a **dessert** from that week's Market items, and a day's meal
+  can start at its own time.
 - **Breakfast and lunch** show in a week only when you bought Market breakfast or lunch items for
   it, or already planned one; otherwise each day offers a small **+ Breakfast** / **+ Lunch**. The
   integration's options can show them every week.
@@ -295,29 +327,38 @@ change on your phone appears on the kitchen tablet straight away. It is also the
 calendar, with a timed event for each planned meal, and the **Tonight's dinner** sensor (see
 [Week tab entities](entities.md#week-tab)). When those events start and how long they last are
 set in the integration's options, under **Week tab**: dinner at 5:30 PM for 90 minutes by default,
-or the meal's HelloFresh cooking time plus extra time for eating and clean-up.
+or the meal's HelloFresh cooking time plus extra time for eating and clean-up. Days and times are
+Home Assistant's, in its time zone: a phone set to another zone still shows and plans dinner on
+your home's clock.
 
 ## Account
 
 ![Account › Plan & billing: your plan with its price, credit, card on file and address, upcoming counters, and plan settings for box size and delivery day](../images/card-account.png)
 
 - **Plan & billing** — your plan, meal preference (its full preset name), number of people, meals
-  per box, plan price with its shipping and discount split, credit, card on file (with its expiry
-  state), boxes received, account ID and address; **Upcoming** counters, where "Need picks" and
-  "Next skipped" open their week; **Plan settings** to change your **box size** and **delivery day**
-  (this integration's [select entities](entities.md), behind a confirmation — they change every
-  future box and the bill); the **Meal presets** reference; and **Integration status** (token
-  health, write actions, payload checks, and a **Refresh from HelloFresh** button).
+  per box, plan price with its shipping and discount split, credit (with how much of it is
+  HelloFresh Cash and how much bonus credit), how many boxes until a free one, card on file (with
+  its expiry state), boxes received, account ID and address; **Upcoming** counters, where "Need
+  picks" and "Next skipped" open their week; **Plan settings** to change your **box size** and
+  **delivery day** (this integration's [select entities](entities.md), behind a confirmation —
+  they change every future box and the bill; while a change is on its way the control shows it
+  and neither takes another; the change offers [Undo](#your-box-the-box-bar-and-saving)); the
+  **Meal presets** reference; and **Integration status** (token health, write actions, payload
+  checks, and a **Refresh from HelloFresh** button).
 - **Food preferences** — the food profile HelloFresh uses to pick meals for you, with the site's
   own rules: proteins follow the diet, Like / Dislike weights, up to three personal goals, at least
   one cooking style, "None" where allowed, household size, completion prompts, and Save / Reset.
-  The save bar pins to the bottom only while there are changes.
+  Save sends only the parts you changed. The save bar pins to the bottom only while there are
+  changes.
 - **Spending** — lifetime total, box count, average box and what vouchers saved; a monthly cost
   chart with a trend line (empty months keep their slot); the by-month roll-up; and recent boxes
   with their vouchers. Upcoming boxes are shown but never counted as spent.
 
 Banners across the top of every section warn about an expiring or expired payment card, announce a
-holiday delivery change, and report a failed refresh with **Retry**.
+holiday delivery change, and report a failed refresh with **Retry**. The Overview and Account also
+say when HelloFresh couldn't collect a payment: which boxes (their delivery dates and amounts),
+with a link to update your payment details on your HelloFresh site (the one the integration's
+**API base URL** sensor names).
 
 ## Phones, tablets and themes
 
@@ -334,8 +375,11 @@ It follows Home Assistant's dark mode (the theme's own flag, so a pinned theme w
 setting) and keeps the theme's surfaces and text colours. Only the accent is HelloFresh green, and
 `accent: theme` swaps that for your theme's primary colour.
 
-Everything is keyboard-accessible: tiles, rows and calendar days take Tab and Enter, and dialogs
-take focus when they open, close with Escape and hand focus back.
+Everything is keyboard-accessible: a tile, row or week card is opened by its one button (the
+dish's name, the date) with its other buttons beside it, calendar days take Tab and Enter, the
+Account sections are tabs the arrow keys move between, + and − keep focus where they are, and
+dialogs take focus when they open, keep Tab inside them, close with Escape and hand focus back.
+Focus stays put when the card redraws (a tab switch, a price arriving, a refresh).
 
 <br clear="right">
 
@@ -352,12 +396,18 @@ voucher names, carrier scans) comes in your HelloFresh account's language, whate
 
 ## Stays current
 
-The card reads `hellofresh.get_weeks` once for Overview, Menu and Market, plus
-`get_account_summary` for the header and Account. It re-reads on the integration's
-[Refresh interval](../README.md#options) (or the **Delivery-day watch interval** while a box is on
-the road), when the browser tab comes back after the data has aged, and right after any HelloFresh
-card saves a change. Countdowns tick every minute without re-rendering. Everything else (recipes,
-food profile, spending, presets, delivery-day names) loads when you first open it.
+The card reads `hellofresh.get_weeks` once for Overview, Menu, Market and Week, plus
+`get_account_summary` for the header and Account and `get_meal_plan` for Week. A card without
+those sections (just Recipes, say) skips what it doesn't show, and HelloFresh cards on one page
+share each read. It re-reads on the integration's [Refresh interval](../README.md#options) (or
+the **Delivery-day watch interval** while a box is on the road), when the browser tab comes back
+after the data has aged, and right after any HelloFresh card saves a change; after a box save, a
+skip, a new delivery day or a week's number of people (or the undo of one), only that week is read
+again. A read that fails (Home Assistant
+restarting, say) is tried again after 15 seconds, a minute and five minutes, then on the usual
+interval, and straight away when Home Assistant reconnects or the integration's entities come
+back. Countdowns tick every minute without re-rendering. Everything else (recipes, food profile,
+spending, presets, delivery-day names) loads when you open it.
 
 ## Moving from the classic cards
 

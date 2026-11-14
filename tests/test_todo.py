@@ -11,18 +11,23 @@ implementation quietly does the wrong thing:
    so "1.5 tablespoon" + "2 tbsp" cannot be added without inventing precision.
 3. Check-off state is keyed to ingredient identity, not list position, and is dropped when
    the anchor week rolls over — last week's ticks must not pre-complete a fresh box's list.
+4. A recipe that could not be read must be tried again. Remembering the week as "built"
+   anyway left that recipe's staples off the list until the selection changed.
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 from homeassistant.components.todo import TodoItem, TodoItemStatus
 from homeassistant.const import Platform
 
+from custom_components.hellofresh import todo as todo_module
+from custom_components.hellofresh.parsers import local_today
 from custom_components.hellofresh.todo import (
+    _FETCH_CONCURRENCY,
     HelloFreshPrepListTodo,
     _format_amounts,
     _unit_key,
@@ -32,7 +37,7 @@ from custom_components.hellofresh.todo import (
 # ``_all_covered_weeks`` stays deterministic regardless of when the suite runs — the
 # original fixed literals (2026-08-25 et al.) started failing the day the anchor date
 # passed. Same convention as ``tests/test_entities.py``.
-TODAY = date.today()
+TODAY = local_today()
 DELIVERY_1 = TODAY + timedelta(days=2)
 DELIVERY_2 = DELIVERY_1 + timedelta(days=7)
 DELIVERY_3 = DELIVERY_1 + timedelta(days=14)
@@ -109,12 +114,17 @@ def _make_entity(
         # The tick set lives on the coordinator so both slot entities SHARE it (the week
         # handover between slots is what makes ticks survive a box landing).
         prep_completed=set(),
+        # So does the cache of recipe details already read.
+        prep_recipe_details={},
     )
     entity = HelloFreshPrepListTodo.__new__(HelloFreshPrepListTodo)
     entity.coordinator = coordinator  # type: ignore[attr-defined]
     entity._slot = slot
     entity._items = []
     entity._built_for = ()
+    entity._rebuild_task = None
+    entity._rebuild_again = False
+    entity._cancel_retry = None
     entity.async_write_ha_state = lambda: None  # type: ignore[method-assign]
     entity._calls = calls  # type: ignore[attr-defined]
     return entity
@@ -322,6 +332,255 @@ def test_one_failing_recipe_does_not_blank_the_list() -> None:
     assert [i.summary for i in entity.todo_items] == ["Salt"]
 
 
+def test_a_recipe_that_could_not_be_read_is_tried_again_on_the_next_update() -> None:
+    """A timeout on one recipe must not leave its staples off the list for good.
+
+    The week used to be remembered as built even with a recipe missing, so nothing fetched
+    it again until the selection changed or Home Assistant restarted.
+    """
+    week = _week("2026-W35", [_recipe("r1"), _recipe("r2")])
+    details: dict[str, object] = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": TimeoutError("HelloFresh did not answer"),
+    }
+    entity = _make_entity(week, details)
+    _run(entity._async_rebuild())
+    assert [i.summary for i in entity.todo_items] == ["Salt"]
+
+    # HelloFresh answers again; the next coordinator update, with the selection unchanged.
+    details["r2"] = _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}])
+    _run(entity._async_rebuild())
+
+    assert [i.summary for i in entity.todo_items] == ["Butter — 2 tbsp", "Salt"]
+    # Only the recipe that failed was asked for again.
+    assert [rid for rid, _ in entity._calls] == ["r1", "r2", "r2"]
+
+    # Complete now, so a further update fetches nothing.
+    _run(entity._async_rebuild())
+    assert len(entity._calls) == 3
+
+
+def _run_in_background(entity, tasks: list) -> None:
+    """Let the entity start its rebuilds as real tasks on the running loop, kept in ``tasks``."""
+    entity.hass = SimpleNamespace()  # type: ignore[attr-defined]
+    entity.coordinator.config_entry.async_create_background_task = lambda _hass, coro, name: (
+        tasks.append(asyncio.ensure_future(coro)) or tasks[-1]
+    )
+
+
+def test_a_list_missing_a_recipe_asks_for_it_again_by_itself(monkeypatch) -> None:
+    """An incomplete list tries again on a timer, without waiting for a coordinator update.
+
+    Home Assistant updates the entities only when the account data changed, and on a quiet
+    week it may not change for days. Until then a recipe that failed to load stayed off the
+    list.
+    """
+    week = _week("2026-W35", [_recipe("r1"), _recipe("r2")])
+    details: dict[str, object] = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": TimeoutError("HelloFresh did not answer"),
+    }
+    entity = _make_entity(week, details)
+    timers: list = []
+    monkeypatch.setattr(
+        todo_module,
+        "async_call_later",
+        lambda _hass, delay, action: timers.append((delay, action)) or (lambda: None),
+    )
+    tasks: list[asyncio.Task] = []
+
+    async def scenario() -> None:
+        _run_in_background(entity, tasks)
+        entity._handle_coordinator_update()
+        await asyncio.gather(*tasks)
+        assert [i.summary for i in entity.todo_items] == ["Salt"]
+        assert len(timers) == 1, "an incomplete list must schedule its own retry"
+        assert timers[0][0] > timedelta(0)
+
+        details["r2"] = _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}])
+        timers[0][1](datetime.now(UTC))  # the retry is due
+        await asyncio.gather(*tasks)
+
+    _run(scenario())
+
+    assert [i.summary for i in entity.todo_items] == ["Butter — 2 tbsp", "Salt"]
+    # Only the missing recipe was asked for again, and a complete list sets no further timer.
+    assert [rid for rid, _ in entity._calls] == ["r1", "r2", "r2"]
+    assert len(timers) == 1
+
+
+def test_removing_the_entity_cancels_a_pending_retry(monkeypatch) -> None:
+    """A retry timer must not fire for a list that is gone."""
+    week = _week("2026-W35", [_recipe("r1")])
+    entity = _make_entity(week, {"r1": TimeoutError("HelloFresh did not answer")})
+    cancelled: list[bool] = []
+    monkeypatch.setattr(
+        todo_module,
+        "async_call_later",
+        lambda _hass, _delay, _action: lambda: cancelled.append(True),
+    )
+    tasks: list[asyncio.Task] = []
+
+    async def scenario() -> None:
+        _run_in_background(entity, tasks)
+        entity._handle_coordinator_update()
+        await asyncio.gather(*tasks)
+        assert cancelled == []
+        await entity.async_will_remove_from_hass()
+
+    _run(scenario())
+
+    assert cancelled == [True]
+    assert entity._cancel_retry is None
+
+
+def test_swapping_one_meal_fetches_only_the_new_recipe() -> None:
+    """Details are kept per recipe and serving count, so a changed selection reads one recipe."""
+    week = _week("2026-W35", [_recipe("r1"), _recipe("r2")])
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": _detail([{"name": "Pepper", "shipped": False}]),
+        "r3": _detail([{"name": "Butter", "shipped": False}]),
+    }
+    entity = _make_entity(week, details)
+    _run(entity._async_rebuild())
+
+    week.recipes = [_recipe("r1"), _recipe("r3")]
+    _run(entity._async_rebuild())
+
+    assert [i.summary for i in entity.todo_items] == ["Butter", "Salt"]
+    assert [rid for rid, _ in entity._calls] == ["r1", "r2", "r3"]
+    # The dropped recipe leaves the cache with the selection.
+    assert set(entity.coordinator.prep_recipe_details) == {("r1", 2), ("r3", 2)}
+
+
+def test_a_new_serving_count_rebuilds_with_fresh_amounts() -> None:
+    """Amounts depend on the household size, so a plan change must not reuse the old ones."""
+    week = _week("2026-W35", [_recipe("r1")])
+    entity = _make_entity(week, {"r1": _detail([{"name": "Salt", "shipped": False}])}, servings=2)
+    _run(entity._async_rebuild())
+
+    entity.coordinator.data.primary_subscription.servings = 4
+    _run(entity._async_rebuild())
+
+    assert entity._calls == [("r1", 2), ("r1", 4)]
+    assert set(entity.coordinator.prep_recipe_details) == {("r1", 4)}
+
+
+def test_a_week_changing_slot_does_not_fetch_its_recipes_again() -> None:
+    """The detail cache is shared like the ticks: the week that moves up arrives already read."""
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2)
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": _detail([{"name": "Pepper", "shipped": False}]),
+    }
+    following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+    _run(following._async_rebuild())
+
+    # W35 lands; W36 is now the current box, shown by the slot-0 entity.
+    current = _make_entity(w2, details, weeks=[w2], slot=0)
+    current.coordinator.prep_recipe_details = following.coordinator.prep_recipe_details
+    _run(current._async_rebuild())
+
+    assert [i.uid for i in current.todo_items] == ["2026-W36:pepper"]
+    assert current._calls == []
+
+
+def test_recipes_are_fetched_a_few_at_a_time() -> None:
+    """A week's recipes are read together, but never more than a few at once."""
+    recipe_ids = [f"r{i}" for i in range(8)]
+    week = _week("2026-W35", [_recipe(recipe_id) for recipe_id in recipe_ids])
+    entity = _make_entity(week, {})
+    active = 0
+    peak = 0
+
+    async def slow_detail(recipe_id, *, servings=None, include_favorite=True):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return _detail([{"name": f"Staple {recipe_id}", "shipped": False}])
+
+    entity.coordinator.client.async_get_recipe_detail = slow_detail
+    _run(entity._async_rebuild())
+
+    assert len(entity.todo_items) == 8
+    assert 1 < peak <= _FETCH_CONCURRENCY
+
+
+def test_a_second_update_during_a_rebuild_does_not_start_a_second_rebuild() -> None:
+    """One rebuild runs at a time; a request that arrives meanwhile makes it go round again.
+
+    Two overlapping rebuilds could finish out of order and leave the older selection's list
+    on screen.
+    """
+    week = _week("2026-W35", [_recipe("r1")])
+    entity = _make_entity(week, {})
+    release = asyncio.Event()
+    tasks: list[asyncio.Task] = []
+    writes: list[list[str]] = []
+    entity.async_write_ha_state = lambda: writes.append(  # type: ignore[method-assign]
+        [item.summary for item in entity.todo_items]
+    )
+    staples = {"r1": "Salt", "r2": "Pepper"}
+
+    async def gated_detail(recipe_id, *, servings=None, include_favorite=True):
+        await release.wait()
+        return _detail([{"name": staples[recipe_id], "shipped": False}])
+
+    entity.coordinator.client.async_get_recipe_detail = gated_detail
+
+    async def scenario() -> None:
+        entity.hass = SimpleNamespace()  # type: ignore[attr-defined]
+        entity.coordinator.config_entry.async_create_background_task = lambda _hass, coro, name: (
+            tasks.append(asyncio.ensure_future(coro)) or tasks[-1]
+        )
+        entity._handle_coordinator_update()
+        await asyncio.sleep(0)  # the first rebuild is now waiting on HelloFresh
+        week.recipes = [_recipe("r2")]  # the selection changes meanwhile
+        entity._handle_coordinator_update()
+        entity._handle_coordinator_update()
+        release.set()
+        await asyncio.gather(*tasks)
+
+    _run(scenario())
+
+    assert len(tasks) == 1, "a second rebuild task was started while one was running"
+    # The list ends on the selection as it is now, not on whichever fetch finished last.
+    assert writes[-1] == ["Pepper"]
+
+
+def test_removing_the_entity_cancels_a_running_rebuild() -> None:
+    """A rebuild must not outlive its entity and write state for something that is gone."""
+    week = _week("2026-W35", [_recipe("r1")])
+    entity = _make_entity(week, {})
+    never = asyncio.Event()
+
+    async def stuck_detail(recipe_id, *, servings=None, include_favorite=True):
+        await never.wait()
+
+    entity.coordinator.client.async_get_recipe_detail = stuck_detail
+
+    async def scenario() -> asyncio.Task:
+        entity.hass = SimpleNamespace()  # type: ignore[attr-defined]
+        entity.coordinator.config_entry.async_create_background_task = lambda _hass, coro, name: (
+            asyncio.ensure_future(coro)
+        )
+        entity._handle_coordinator_update()
+        task = entity._rebuild_task
+        await asyncio.sleep(0)
+        await entity.async_will_remove_from_hass()
+        await asyncio.gather(task, return_exceptions=True)
+        return task
+
+    task = _run(scenario())
+
+    assert task.cancelled()
+    assert entity._rebuild_task is None
+
+
 def test_check_off_survives_a_rebuild_of_the_same_week() -> None:
     """Completion is keyed to ingredient identity, not list position."""
     week = _week("2026-W35", [_recipe("r1")])
@@ -423,8 +682,10 @@ def test_coordinator_update_triggers_a_rebuild() -> None:
     entity = _make_entity(week, {"r1": _detail([{"name": "Salt", "shipped": False}])})
 
     scheduled: list = []
-    entity.hass = SimpleNamespace(  # type: ignore[attr-defined]
-        async_create_task=lambda coro: scheduled.append(coro)
+    entity.hass = SimpleNamespace()  # type: ignore[attr-defined]
+    # The rebuild runs as a background task of the config entry, which cancels it on unload.
+    entity.coordinator.config_entry.async_create_background_task = lambda _hass, coro, name: (
+        scheduled.append(coro)
     )
 
     entity._handle_coordinator_update()
@@ -694,3 +955,75 @@ def test_todo_platform_is_not_in_the_base_platform_list() -> None:
     from custom_components.hellofresh.const import PLATFORMS
 
     assert Platform.TODO not in PLATFORMS
+
+
+def _sub_week(week_id: str, subscription_id: str, recipes: list, delivery: date) -> SimpleNamespace:
+    week = _week(week_id, recipes, delivery)
+    week.subscription_id = subscription_id
+    return week
+
+
+def test_two_subscriptions_boxes_in_one_week_each_get_their_own_list() -> None:
+    """A week id is shared by every subscription; one box no longer hides the other.
+
+    Covered weeks were told apart by week id alone, so a second subscription's box in the same
+    week was never listed, and it would have been listed at the first one's serving count.
+    """
+    first = _sub_week("2026-W35", "1111111", [_recipe("r1")], DELIVERY_1)
+    second = _sub_week("2026-W35", "2222222", [_recipe("r2")], DELIVERY_1)
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": _detail([{"name": "Pepper", "shipped": False}]),
+    }
+    current = _make_entity(first, details, weeks=[first, second], slot=0)
+    following = _make_entity(first, details, weeks=[first, second], slot=1)
+    for entity in (current, following):
+        entity.coordinator.data.subscriptions = [
+            SimpleNamespace(subscription_id="1111111", servings=2),
+            SimpleNamespace(subscription_id="2222222", servings=4),
+        ]
+
+    _run(current._async_rebuild())
+    _run(following._async_rebuild())
+
+    assert [i.uid for i in current.todo_items] == ["1111111/2026-W35:salt"]
+    assert [i.uid for i in following.todo_items] == ["2222222/2026-W35:pepper"]
+    assert following._calls == [("r2", 4)]
+    assert following.extra_state_attributes["subscription_id"] == "2222222"
+
+
+def test_ticks_on_one_subscriptions_box_stay_on_that_box() -> None:
+    first = _sub_week("2026-W35", "1111111", [_recipe("r1")], DELIVERY_1)
+    second = _sub_week("2026-W35", "2222222", [_recipe("r1")], DELIVERY_1)
+    details = {"r1": _detail([{"name": "Salt", "shipped": False}])}
+    current = _make_entity(first, details, weeks=[first, second], slot=0)
+    following = _make_entity(first, details, weeks=[first, second], slot=1)
+    following.coordinator.prep_completed = current.coordinator.prep_completed
+    _run(current._async_rebuild())
+    _run(following._async_rebuild())
+
+    salt = current.todo_items[0]
+    _run(
+        current.async_update_todo_item(
+            TodoItem(uid=salt.uid, summary=salt.summary, status=TodoItemStatus.COMPLETED)
+        )
+    )
+    following._built_for = ()
+    _run(following._async_rebuild())
+
+    assert current.todo_items[0].status is TodoItemStatus.COMPLETED
+    assert following.todo_items[0].status is TodoItemStatus.NEEDS_ACTION
+
+
+def test_a_tick_saved_under_a_bare_week_id_is_kept() -> None:
+    """Ticks restored from before boxes were told apart move onto that week's box."""
+    week = _sub_week("2026-W35", "1111111", [_recipe("r1")], DELIVERY_1)
+    details = {"r1": _detail([{"name": "Salt", "shipped": False}])}
+    entity = _make_entity(week, details)
+    entity.coordinator.prep_completed.add(("2026-W35", "salt"))
+
+    _run(entity._async_rebuild())
+
+    assert entity.todo_items[0].uid == "1111111/2026-W35:salt"
+    assert entity.todo_items[0].status is TodoItemStatus.COMPLETED
+    assert entity.coordinator.prep_completed == {("1111111/2026-W35", "salt")}

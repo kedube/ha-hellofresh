@@ -27,3 +27,24 @@ known-first-party = ["custom_components.hellofresh"]
 
 [tool.ruff.format]
 line-ending = "lf"
+
+[tool.coverage.run]
+source = ["custom_components/hellofresh"]
+
+[tool.coverage.report]
+# A floor a little under what the suite reaches, so a change that leaves a path untested
+# fails CI. Raise it as coverage grows; do not lower it to get a change through.
+fail_under = 90
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.mypy]
+# The integration's own code, checked as CI does: `python -m mypy`. Home Assistant and the
+# other libraries it imports ship their own type information, so no import is ignored.
+python_version = "3.14"
+files = ["custom_components/hellofresh"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true

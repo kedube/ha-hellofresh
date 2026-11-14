@@ -1,12 +1,13 @@
 /*
  * HelloFresh shared card helpers
  * ------------------------------
- * Small, pure helpers plus the cross-card sync protocol. The HelloFresh card reaches them through
- * hellofresh-card-logic.js, which re-exports them. They started out as one copy of what had been
- * hand-copied into the seven classic cards (since removed), where the copies drifted: an image
- * resize that silently did nothing, "DELIVERED" in one card and "Delivered" in another, and a
- * cross-card event dispatched with an empty `detail` that every listener dropped on multi-account
- * setups. None of those threw. Keep one definition of each here.
+ * Small helpers plus the cross-card sync protocol. The HelloFresh card reaches them through
+ * hellofresh-card-logic.js, which re-exports them; the recipe sheet (hellofresh-recipe-detail.js)
+ * imports them directly. They started out as one copy of what had been hand-copied into the seven
+ * classic cards (since removed), where the copies drifted: an image resize that silently did
+ * nothing, "DELIVERED" in one card and "Delivered" in another, and a cross-card event dispatched
+ * with an empty `detail` that every listener dropped on multi-account setups. None of those
+ * threw. Keep one definition of each here.
  *
  * ---------------------------------------------------------------------------------------------
  * IMPORTANT — how to import this
@@ -41,22 +42,24 @@ const I18n = await import(
 
 // Escape a value for interpolation into card HTML. Every payload-derived `${…}` must go through
 // this: card markup is built as template strings, so an unescaped recipe name is an injection.
-export function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[c]));
-}
+// Defined in the text layer (which this module imports, and which escapes for ht()), so there is
+// one definition.
+export const { esc } = I18n;
 
-// An href that is safe to place in the DOM: plain http(s) only, then escaped. Returns "" for
-// anything else, so `javascript:`/`data:` URLs from a payload never reach an anchor.
-export function safeUrl(value) {
+// The one URL check for anything a payload names: plain http(s) only, or "" — so a
+// `javascript:`/`data:` URL never reaches an href or src. It returns the URL itself, NOT HTML:
+// `esc()` it where it goes into markup, like any other value, and pass it as it is to
+// setAttribute or window.open.
+//
+// The characters that could end an attribute or start a tag have no business raw in a URL, so
+// they come back percent-encoded (as a browser would send them). That way a sink that forgot its
+// esc() still cannot be broken out of.
+// eslint-disable-next-line no-control-regex -- control characters are among what it must find
+const URL_UNSAFE = /["'<>`\s\u0000-\u001f\u007f]/g;
+export function safeUrl(value, { httpsOnly = false } = {}) {
   const raw = String(value ?? "").trim();
-  if (!/^https?:\/\//i.test(raw)) return "";
-  return esc(raw);
+  if (!(httpsOnly ? /^https:\/\//i : /^https?:\/\//i).test(raw)) return "";
+  return raw.replace(URL_UNSAFE, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }
 
 // ---- images -----------------------------------------------------------------------------
@@ -71,9 +74,8 @@ export function safeUrl(value) {
 export function resizedImage(url, width) {
   // Only plain web URLs may reach an <img src>: an attacker-chosen scheme/host has no business
   // in the DOM even though javascript:/data: are inert there in modern browsers.
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  const raw = String(url);
-  if (!width) return raw;
+  const raw = safeUrl(url);
+  if (!raw || !width) return raw;
   if (raw.includes("/hellofresh_s3/")) {
     // An existing w_NNN (comma- or slash-delimited) is retargeted rather than duplicated.
     if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
@@ -150,9 +152,22 @@ export function titleCase(value) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// "35 min", "1 h 5 min" (time.duration.*).
+export function formatMinutes(minutes) {
+  if (!minutes && minutes !== 0) return "";
+  if (minutes < 60) return I18n.t("time.duration.minutes", { minutes });
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest
+    ? I18n.t("time.duration.hours_minutes", { hours, minutes: rest })
+    : I18n.t("time.duration.hours", { hours });
+}
+
 // Render an amount in its currency, falling back to a plain 2-dp figure WITH the currency code
 // when Intl rejects it — dropping the code entirely would make an unknown currency look like USD.
+// A missing amount is a dash: Number(null) is 0, which would read as a real "$0.00".
 export function fmtPrice(amount, currency) {
+  if (amount == null || amount === "") return "—";
   const num = Number(amount);
   if (!Number.isFinite(num)) return String(amount);
   try {
@@ -211,11 +226,12 @@ export function broadcastWeek(config, weekId) {
 }
 
 // Announce that a write changed account data, so read-only siblings re-pull immediately instead
-// of waiting for their next interval refresh. `source` lets a card ignore its own broadcast.
-export function broadcastDataChanged(config, source) {
+// of waiting for their next interval refresh. `source` lets a card ignore its own broadcast;
+// `weekId`, when the write touched one week's box only, lets them re-read just that week.
+export function broadcastDataChanged(config, source, weekId) {
   window.dispatchEvent(
     new CustomEvent(DATA_CHANGED_EVENT, {
-      detail: { accountKey: accountKey(config), ...(source ? { source } : {}) },
+      detail: { accountKey: accountKey(config), ...(source ? { source } : {}), ...(weekId ? { weekId } : {}) },
     })
   );
 }
@@ -237,4 +253,40 @@ export function refetchIntervalMs(contract) {
     if (Number.isFinite(watch) && watch >= 1 && watch < mins) mins = watch;
   }
   return mins * 60000;
+}
+
+// ---- dialogs -----------------------------------------------------------------------------
+
+// What Tab can reach inside a dialog, in order.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), ' +
+  'textarea:not([disabled]), video[controls], summary, [tabindex]:not([tabindex="-1"])';
+
+export function focusableIn(container) {
+  return [...container.querySelectorAll(FOCUSABLE)].filter(
+    (el) => !el.closest("[inert]") && (el.getClientRects().length > 0 || el === container.ownerDocument.activeElement)
+  );
+}
+
+// Keep Tab inside an open dialog (a keydown listener's body): from its last control Tab goes to
+// its first, and Shift+Tab the other way. `active` is the focused element as the dialog's own
+// root sees it (shadowRoot.activeElement), since document.activeElement stops at the card.
+export function keepTabInside(ev, container, active) {
+  if (ev.key !== "Tab" || !container) return;
+  const stops = focusableIn(container);
+  if (!stops.length) {
+    ev.preventDefault();
+    container.focus({ preventScroll: true });
+    return;
+  }
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  const inside = active && container.contains(active);
+  if (ev.shiftKey && (!inside || active === first || active === container)) {
+    ev.preventDefault();
+    last.focus();
+  } else if (!ev.shiftKey && (!inside || active === last)) {
+    ev.preventDefault();
+    first.focus();
+  }
 }

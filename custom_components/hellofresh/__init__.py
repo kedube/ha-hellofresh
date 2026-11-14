@@ -2,52 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import date, datetime, timedelta
-import inspect
+from datetime import timedelta
 import logging
 
-from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.typing import ConfigType
-import voluptuous as vol
 
-from .api import HelloFreshClient, HelloFreshError, HelloFreshNotImplementedError
+from .api import HelloFreshClient
 from .client import _token_fingerprint
 from .const import (
-    ATTR_COLLECTION,
-    ATTR_CONFIG_ENTRY_ID,
-    ATTR_COURSE,
-    ATTR_DATE,
-    ATTR_DELIVERY_INTERVAL,
-    ATTR_DELIVERY_OPTION,
-    ATTR_FILTERS,
-    ATTR_GOALS,
-    ATTR_HOUSEHOLD,
-    ATTR_LIMIT,
-    ATTR_MARKET_ITEM_ID,
-    ATTR_MARKET_QUANTITIES,
-    ATTR_MEAL,
-    ATTR_PRODUCT_HANDLE,
-    ATTR_QUANTITIES,
-    ATTR_RECIPE_ID,
-    ATTR_RECIPE_IDS,
-    ATTR_SEARCH,
-    ATTR_SERVINGS,
-    ATTR_START_TIME,
-    ATTR_SUBSCRIPTION_ID,
-    ATTR_TASTE,
-    ATTR_TEXT,
-    ATTR_WEEK_ID,
     CONF_ACCESS_TOKEN,
     CONF_COUNTRY,
-    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
-    CONF_DELIVERY_WATCH_INTERVAL_MINUTES,
     CONF_ENABLE_FAVORITES,
     CONF_ENABLE_PREP_LISTS,
     CONF_ENABLE_PUBLIC_MENU_FALLBACK,
@@ -65,8 +34,6 @@ from .const import (
     CONF_TOKEN_TYPE,
     CONF_USE_CURL_CFFI_HEADERS,
     CONF_USERNAME,
-    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
-    DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES,
     DEFAULT_ENABLE_FAVORITES,
     DEFAULT_ENABLE_PREP_LISTS,
     DEFAULT_ENABLE_PUBLIC_MENU_FALLBACK,
@@ -78,38 +45,13 @@ from .const import (
     DEFAULT_USE_CURL_CFFI_HEADERS,
     DOMAIN,
     PLATFORMS,
-    SERVICE_ADD_FAVORITE,
-    SERVICE_CHANGE_DELIVERY_WEEKDAY,
-    SERVICE_CHANGE_PLAN,
-    SERVICE_CLEAR_PLANNED_MEAL,
-    SERVICE_GET_ACCOUNT_SUMMARY,
-    SERVICE_GET_CATALOG_RECIPES,
-    SERVICE_GET_DELIVERY_OPTIONS,
-    SERVICE_GET_DELIVERY_TRACKING,
-    SERVICE_GET_FAVORITES,
-    SERVICE_GET_FOOD_PROFILE,
-    SERVICE_GET_MEAL_PLAN,
-    SERVICE_GET_MENU_COURSES,
-    SERVICE_GET_PLAN_OPTIONS,
-    SERVICE_GET_PLANS,
-    SERVICE_GET_PRESETS,
-    SERVICE_GET_RECIPE_COLLECTIONS,
-    SERVICE_GET_RECIPE_DETAIL,
-    SERVICE_GET_SPENDING,
-    SERVICE_GET_WEEKS,
-    SERVICE_PREVIEW_MEAL_PRICE,
-    SERVICE_REFRESH_DATA,
-    SERVICE_REMOVE_FAVORITE,
-    SERVICE_RESCHEDULE_WEEK,
-    SERVICE_SELECT_MARKET_ITEMS,
-    SERVICE_SELECT_MEALS,
-    SERVICE_SET_FOOD_PROFILE,
-    SERVICE_SET_PLANNED_MEAL,
-    SERVICE_SKIP_WEEK,
-    SERVICE_UNSKIP_WEEK,
     TRACEY_COUNTRIES,
 )
-from .coordinator import HelloFreshDataUpdateCoordinator
+from .coordinator import (
+    HelloFreshConfigEntry,
+    HelloFreshDataUpdateCoordinator,
+    async_remove_fired_events,
+)
 from .frontend import (
     async_add_entry_panel,
     async_register_card,
@@ -118,29 +60,17 @@ from .frontend import (
 from .intent import async_register_intents
 from .issues import (
     async_cleanup_stale_issues,
-    async_create_write_actions_issue,
     async_delete_data_quality_issues,
-    async_delete_write_actions_issue,
+    async_delete_payment_problem_issue,
 )
-from .meal_plan import COURSES, MEALS, MealPlan, async_remove_meal_plan
-from .sensor_helpers import sensor_native_value
-from .tls_transport import async_close_shared_session
+from .meal_plan import MealPlan, async_remove_meal_plan
+from .services import async_register_services
 from .tracey import HelloFreshTraceyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 INTENTS_REGISTERED_KEY = f"{DOMAIN}_intents_registered"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-
-class _DowngradeFlag:
-    """Mutable box shared with a per-coordinator select mutation so the outer service can
-    surface whether *any* target coordinator's write triggered a seamless box downgrade."""
-
-    __slots__ = ("value",)
-
-    def __init__(self) -> None:
-        self.value = False
 
 
 # Credential keys belong in entry.data only. Older entries stored some of these in
@@ -159,83 +89,7 @@ _CREDENTIAL_KEYS = (
 )
 
 
-def _variation_join_debug(week: object) -> dict[str, object]:
-    """Diagnostic: expose why a recipe's variant modifier did (not) resolve for a week.
-
-    Returns the modularity ``index`` -> title map the week carries (from its own payload or the
-    merged ``_menu_payload``), plus each recipe's ``course_index`` and resolved ``variation_title``.
-    A duplicate dish that shows only "Variant" with no modifier means its ``course_index`` is not
-    a key in ``modularity_titles`` for that week — this surfaces exactly that mismatch.
-    """
-    raw = getattr(week, "raw", {}) or {}
-    has_modularity = isinstance(raw.get("modularity"), list)
-    menu_payload = raw.get("_menu_payload") if isinstance(raw.get("_menu_payload"), dict) else {}
-    has_menu_modularity = isinstance(menu_payload.get("modularity"), list)
-    # Reuse the normalizer's own parser so this reflects the real join logic.
-    from .normalizers import HelloFreshPayloadNormalizer
-
-    titles = HelloFreshPayloadNormalizer._build_variation_titles(raw)
-    return {
-        "week_id": getattr(week, "week_id", None),
-        "source": getattr(week, "source", None),
-        "has_modularity_on_week": has_modularity,
-        "has_modularity_in_menu_payload": has_menu_modularity,
-        "modularity_index_count": len(titles),
-        "modularity_titles": titles,
-        "recipes": [
-            {
-                "name": r.name,
-                "course_index": r.course_index,
-                "variation_title": r.variation_title,
-                "matches_modularity": r.course_index in titles
-                if r.course_index is not None
-                else False,
-            }
-            for r in getattr(week, "recipes", [])
-        ],
-        "market": _market_selection_debug(raw, menu_payload),
-    }
-
-
-def _market_selection_debug(raw: dict, menu_payload: dict) -> dict[str, object]:
-    """Diagnostic: surface how selected Market add-ons appear in the raw payload.
-
-    We don't know which raw field marks a chosen add-on (the captured catalog had none selected),
-    so this dumps every addon entry that carries ANY selection-like key, plus the full set of keys
-    seen on addon entries, so the real "selected quantity" field can be identified from live data.
-    """
-    addons = raw.get("addOns")
-    if not isinstance(addons, dict):
-        addons = menu_payload.get("addOns") if isinstance(menu_payload, dict) else None
-    if not isinstance(addons, dict):
-        return {"has_addons": False}
-
-    selection_keys = ("selection", "quantity", "selectedQuantity", "isSelected", "selected")
-    all_item_keys: set[str] = set()
-    selected_samples: list[dict] = []
-    total = 0
-    for group in addons.get("groups") or []:
-        if not isinstance(group, dict):
-            continue
-        for item in group.get("addOns") or []:
-            if not isinstance(item, dict):
-                continue
-            total += 1
-            all_item_keys.update(item.keys())
-            if any(item.get(k) for k in selection_keys):
-                selected_samples.append(
-                    {"group": group.get("groupType"), **{k: item.get(k) for k in item}}
-                )
-    return {
-        "has_addons": True,
-        "addon_item_count": total,
-        "addon_item_keys_seen": sorted(all_item_keys),
-        "selection_keys_probed": list(selection_keys),
-        "items_with_selection_like_field": selected_samples[:10],
-    }
-
-
-def _heal_credential_storage(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _heal_credential_storage(hass: HomeAssistant, entry: HelloFreshConfigEntry) -> None:
     """Consolidate credentials into entry.data and strip them from entry.options.
 
     Idempotent and safe to run on every load. For any credential key present in options:
@@ -263,12 +117,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     if not hass.data.get(INTENTS_REGISTERED_KEY):
         async_register_intents(hass)
         hass.data[INTENTS_REGISTERED_KEY] = True
-    await _async_register_services(hass)
+    async_register_services(hass)
     await async_register_card(hass)
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: HelloFreshConfigEntry) -> bool:
     """Set up HelloFresh from a config entry."""
     # Heal any legacy credentials-in-options before reading them (data-only from here on).
     _heal_credential_storage(hass, entry)
@@ -299,6 +153,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Each account needs its own cookie jar on both the aiohttp and curl_cffi paths.
     session = async_create_clientsession(hass)
+    # Assigned once the client exists. The token callback below reads it when it is called,
+    # not when it is defined: the client needs the callback before the coordinator can be
+    # built around the client.
+    coordinator: HelloFreshDataUpdateCoordinator | None = None
 
     def _persist_refreshed_token(token_data: dict) -> None:
         """Write a refreshed/rotated token back to the config entry so it survives restarts.
@@ -338,6 +196,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_fp == stored_fp,
         )
 
+    def _token_refreshed(token_data: dict) -> None:
+        """Store a rotated token, then let the token-lifetime sensors show it."""
+        _persist_refreshed_token(token_data)
+        if coordinator is not None:
+            coordinator.async_token_updated()
+
     # Credentials live in entry.data ONLY. Options hold user preferences (scan interval,
     # fallback toggle). Reading credentials from a single store removes the data/options
     # split-brain that previously let an options write silently shadow or wipe a refreshed
@@ -370,8 +234,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ),
         history_weeks=entry.options.get(CONF_HISTORY_WEEKS, DEFAULT_HISTORY_WEEKS),
         menu_grace_weeks=entry.options.get(CONF_MENU_GRACE_WEEKS, DEFAULT_MENU_GRACE_WEEKS),
-        token_refresh_callback=_persist_refreshed_token,
+        token_refresh_callback=_token_refreshed,
     )
+    # Registered before anything can fail: Home Assistant runs these hooks after a setup that
+    # raises as well as after an unload, so the pooled curl sessions and their cookies are
+    # released on every path. (It closes the aiohttp session itself.)
+    entry.async_on_unload(client.async_close)
     coordinator = HelloFreshDataUpdateCoordinator(
         hass,
         client,
@@ -383,13 +251,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         ),
     )
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception:
-        await async_close_shared_session(session)
-        raise
+    # What the once-a-week delivery events fired before a restart, read before any poll can
+    # record one.
+    await coordinator.async_load_fired_events()
+    await coordinator.async_config_entry_first_refresh()
     coordinator.async_start_token_refresh()
     coordinator.async_start_delivery_watch()
+    coordinator.async_start_deadline_events()
 
     # Live last-mile tracking is mounted only where the Tracey stack exists (see
     # TRACEY_COUNTRIES) — everywhere else coordinator.tracey stays None, no tracking
@@ -401,7 +269,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await tracey.async_refresh()
         coordinator.tracey = tracey
 
-    # The Week tab's meal plan. Nothing is written to storage until something is planned.
+    # The Week tab's meal plan, kept in Home Assistant's storage.
     meal_plan = MealPlan(hass, entry, coordinator)
     await meal_plan.async_load()
     coordinator.meal_plan = meal_plan
@@ -410,7 +278,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # coordinator from here. HA clears it when the entry unloads.
     entry.runtime_data = coordinator
 
-    await hass.config_entries.async_forward_entry_setups(entry, _entry_platforms(entry))
+    # Remembered for unload, which must ask for these same platforms (see async_unload_entry).
+    coordinator.platforms = _entry_platforms(entry)
+    await hass.config_entries.async_forward_entry_setups(entry, coordinator.platforms)
     # No update listener: the options flow (OptionsFlowWithReload) and the reauth/reconfigure
     # steps (async_update_reload_and_abort) each schedule the one reload their change needs,
     # and token writes need none. A listener on top would reload twice, which Home Assistant
@@ -420,1096 +290,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def _entry_platforms(entry: ConfigEntry) -> list[Platform]:
+def _entry_platforms(entry: HelloFreshConfigEntry) -> list[Platform]:
     """The platforms this entry runs, honouring the optional prep-list to-do platform."""
     if entry.options.get(CONF_ENABLE_PREP_LISTS, DEFAULT_ENABLE_PREP_LISTS):
         return [*PLATFORMS, Platform.TODO]
     return list(PLATFORMS)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: HelloFreshConfigEntry) -> bool:
     """Unload a config entry."""
-    # Always attempt the to-do platform, regardless of the current option value. Toggling the
-    # option OFF triggers a reload, and by the time unload runs the option already reads
-    # False — deriving the list from it here would leave the still-loaded to-do entities
-    # behind for good. Unloading a platform that was never set up is a no-op, so asking for
-    # all of them is both safe and the only way to unload what setup actually created.
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, [*PLATFORMS, Platform.TODO])
+    coordinator = getattr(entry, "runtime_data", None)
+    # Unload exactly the platforms setup forwarded. The list cannot be derived from the
+    # options here: turning the prep lists off reloads the entry, and by then the option
+    # already reads off while the to-do entities are still loaded. Asking for every platform
+    # is not safe either. When the to-do platform was not set up for this entry but another
+    # integration had loaded it, Home Assistant used to fail the unload ("Config entry was
+    # never loaded!"), which left the entry in "Unload failed" with its timers running until
+    # a restart; newer versions log a warning instead.
+    platforms = coordinator.platforms if coordinator is not None else []
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unload_ok:
         await async_remove_entry_panel(hass, entry)
-        # Curl cookies and pooled connections belong to this entry alone. Home Assistant
-        # closes the matching aiohttp session through its config-entry cleanup hook.
-        coordinator = getattr(entry, "runtime_data", None)
         # A plan change still waiting on its delayed save is written now, before a reload's
-        # new plan reads the file.
+        # new plan reads the file. The same for the record of fired delivery events.
         meal_plan = getattr(coordinator, "meal_plan", None)
         if meal_plan is not None:
             await meal_plan.async_flush()
-        client = getattr(coordinator, "client", None)
-        if client is not None:
-            await async_close_shared_session(client._session)
+        fired_events = getattr(coordinator, "fired_events", None)
+        if fired_events is not None:
+            await fired_events.async_flush()
+        # Only a loaded entry polls the account, so only it can say the problem is still
+        # there; a reload raises the warning again on its first poll. An entry that never got
+        # a coordinator never polled, so it raised none.
+        if coordinator is not None:
+            async_delete_payment_problem_issue(hass, entry.entry_id)
+        # The client's curl sessions close through the hook async_setup_entry registered.
     return unload_ok
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Purge the entry's persistent repair issues and its stored meal plan when it is removed.
+async def async_remove_entry(hass: HomeAssistant, entry: HelloFreshConfigEntry) -> None:
+    """Purge the entry's repair issues and what it stored when it is removed.
 
     Without this, issues keyed to the removed entry id survive in the registry
-    forever with no owner left to delete them.
+    forever with no owner left to delete them, and so would the stored meal plan and the
+    record of fired delivery events.
     """
     async_delete_data_quality_issues(hass, entry.entry_id)
+    async_delete_payment_problem_issue(hass, entry.entry_id)
     await async_remove_meal_plan(hass, entry.entry_id)
-
-
-def _loaded_coordinators(hass: HomeAssistant) -> list[HelloFreshDataUpdateCoordinator]:
-    """Every loaded entry's coordinator, read from entry.runtime_data.
-
-    ``getattr`` with a default rather than direct attribute access: entries that are
-    set up but not (yet/anymore) loaded have no runtime_data.
-    """
-    return [
-        coordinator
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        if (coordinator := getattr(entry, "runtime_data", None)) is not None
-    ]
-
-
-def _resolve_target_coordinators(
-    hass: HomeAssistant,
-    service_call: ServiceCall,
-) -> list[HelloFreshDataUpdateCoordinator]:
-    """The coordinators a service call targets: the named entry, or the only loaded one."""
-    target_entry_id = service_call.data.get(ATTR_CONFIG_ENTRY_ID)
-    if target_entry_id:
-        entry = hass.config_entries.async_get_entry(target_entry_id)
-        # Guard the domain: async_get_entry resolves ANY integration's entry id, and a
-        # foreign entry's runtime_data would be some other integration's object.
-        if entry is not None and getattr(entry, "domain", DOMAIN) != DOMAIN:
-            entry = None
-        coordinator = getattr(entry, "runtime_data", None) if entry else None
-        if coordinator is None:
-            raise HomeAssistantError(f"HelloFresh config entry not found: {target_entry_id}")
-        return [coordinator]
-
-    coordinators = _loaded_coordinators(hass)
-    if len(coordinators) == 1:
-        return coordinators
-
-    if not coordinators:
-        raise HomeAssistantError(
-            "No HelloFresh account is currently loaded. Check the integration's "
-            "status on the Devices & services page."
-        )
-    raise HomeAssistantError(
-        "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-    )
-
-
-def _resolve_single_coordinator(
-    hass: HomeAssistant,
-    service_call: ServiceCall,
-) -> HelloFreshDataUpdateCoordinator:
-    """The single coordinator a service call targets, or raise if it is ambiguous."""
-    coordinators = _resolve_target_coordinators(hass, service_call)
-    if len(coordinators) != 1:
-        raise HomeAssistantError(
-            "Multiple HelloFresh accounts are configured. Specify config_entry_id."
-        )
-    return coordinators[0]
-
-
-async def _async_register_services(hass: HomeAssistant) -> None:
-    """Register HelloFresh services once."""
-    if hass.services.has_service(DOMAIN, SERVICE_REFRESH_DATA):
-        return
-
-    async def _for_each_coordinator(
-        service_call: ServiceCall,
-        handler: Callable[[HelloFreshDataUpdateCoordinator, ServiceCall], object],
-    ) -> None:
-        for coordinator in _resolve_target_coordinators(hass, service_call):
-            try:
-                result = handler(coordinator, service_call)
-                if inspect.isawaitable(result):
-                    await result
-            except HelloFreshNotImplementedError as err:
-                async_create_write_actions_issue(
-                    hass,
-                    coordinator.config_entry.entry_id,
-                    coordinator.config_entry.title,
-                )
-                raise HomeAssistantError(str(err)) from err
-            except HelloFreshError as err:
-                raise HomeAssistantError(str(err)) from err
-
-    async def async_refresh_data(service_call: ServiceCall) -> None:
-        """Refresh all configured HelloFresh coordinators."""
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: coordinator.async_request_refresh(),
-        )
-
-    def _refresh_contract(coordinator: HelloFreshDataUpdateCoordinator) -> dict[str, object]:
-        """The auto-refresh contract shared by the get_weeks account payload and the summary.
-
-        Cards re-fetch on ``refresh_interval_minutes`` — fetching more often would return the
-        coordinator's identical cached data. While a box is due or on the road the delivery-day
-        watch updates the data every ``delivery_watch_interval_minutes`` instead, so the cards
-        drop to that cadence for as long as ``delivery_in_progress`` is true; otherwise a
-        dashboard open on delivery day would keep the stale status for hours.
-        """
-        options = coordinator.config_entry.options
-        in_progress = getattr(coordinator, "delivery_in_progress", None)
-        return {
-            "refresh_interval_minutes": options.get(
-                CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES
-            ),
-            "delivery_watch_interval_minutes": options.get(
-                CONF_DELIVERY_WATCH_INTERVAL_MINUTES, DEFAULT_DELIVERY_WATCH_INTERVAL_MINUTES
-            ),
-            "delivery_in_progress": bool(in_progress()) if callable(in_progress) else False,
-        }
-
-    async def async_get_weeks(service_call: ServiceCall) -> ServiceResponse:
-        """Return delivery weeks with full recipe detail for a single account.
-
-        Read-only. Recipes are intentionally absent from sensor attributes (16 KB
-        recorder cap), so this response service is how a dashboard reads per-week
-        recipes/selection on demand. Optionally filter to one ``week_id``.
-        """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        data = coordinator.data
-        week_id = service_call.data.get(ATTR_WEEK_ID)
-        if week_id is not None:
-            week = data.get_week(week_id)
-            weeks = [week] if week is not None else []
-        else:
-            weeks = list(data.weeks)
-
-        def _week_dict(week: object) -> dict[str, object]:
-            # Attach the week's matching order (tracking, status, carrier, order id, price) so a
-            # dashboard card can show shipment/billing detail alongside the recipes for that week.
-            payload = week.as_dict()
-            order = data.get_order_for_week(week.week_id)
-            payload["order"] = order.as_dict() if order is not None else None
-            return payload
-
-        # Account-level fallback fields the card can use when a week has no billed order yet —
-        # e.g. the recurring plan total (matches the selected_plan_total_price sensor). Also
-        # carries the configured menu grace window so the card's past-week gating matches the
-        # integration's (a just-delivered week keeps its browsable menu for this many weeks),
-        # and the configured refresh interval so cards can auto-refetch on the same cadence
-        # the coordinator polls HelloFresh (fetching more often would return the same data).
-        primary_subscription = data.primary_subscription
-        account = {
-            "selected_plan_total_price": data.selected_plan_total_price,
-            "selected_plan_total_price_currency": data.selected_plan_total_price_currency,
-            "menu_grace_weeks": coordinator.client.menu_grace_weeks,
-            **_refresh_contract(coordinator),
-            # The next box's /gw/calculate split (subtotal, shipping, discount, tax, coupon), so
-            # the schedule card can show the discount applied to the box it summarizes.
-            "next_delivery_price_breakdown": data.next_delivery_price_breakdown,
-            "next_delivery_total_currency": data.next_delivery_total_currency,
-            # The wallet promise that applies to the next box ("$10 off premium meals"), for
-            # the schedule card's Voucher row; each week's own list rides on the week.
-            "next_box_discount": data.next_box_discount,
-            # Subscription-level next charge date and coupon (matching the next_payment_date
-            # and next_box_coupon sensors); shown in the schedule card's next-box summary.
-            "next_payment_date": (
-                primary_subscription.next_payment_date.isoformat()
-                if primary_subscription is not None
-                and primary_subscription.next_payment_date is not None
-                else None
-            ),
-            "next_box_coupon": (
-                primary_subscription.coupon_code if primary_subscription is not None else None
-            ),
-        }
-
-        if service_call.data.get("include_debug"):
-            return {
-                "weeks": [_week_dict(week) for week in weeks],
-                "account": account,
-                "variation_debug": [_variation_join_debug(week) for week in weeks],
-            }
-
-        # The common case — no week filter, no debug — is what the dashboard cards call, often
-        # several at once per poll cycle for identical data. Serialize the full weeks list once
-        # per coordinator update and reuse it; the cache self-invalidates on the next poll.
-        if week_id is None:
-            return coordinator.get_weeks_response(
-                lambda: {
-                    "weeks": [_week_dict(week) for week in weeks],
-                    "account": account,
-                }
-            )
-        return {"weeks": [_week_dict(week) for week in weeks], "account": account}
-
-    async def async_get_account_summary(service_call: ServiceCall) -> ServiceResponse:
-        """Return the account/subscription headline values for the subscription card.
-
-        Read-only. Every value comes from the same ``sensor_native_value`` dispatcher that
-        backs the corresponding sensor entity, so the card and the sensors can never
-        disagree. Dates are ISO strings; empty values are null (the sensors' literal
-        "None" placeholder text is normalized back to null for JSON consumers).
-        """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        data = coordinator.data
-
-        def _value(key: str) -> object:
-            value = sensor_native_value(key, data, coordinator.client.base_url)
-            if value == "None":  # NONE_WHEN_EMPTY_KEYS placeholder — null in a response
-                return None
-            if isinstance(value, (datetime, date)):
-                return value.isoformat()
-            return value
-
-        keys = (
-            "subscription_status",
-            "account_id",
-            "selected_plan",
-            "plan_preference",
-            "selected_plan_total_price",
-            "account_credit",
-            "number_of_people",
-            "required_meal_count",
-            "boxes_received",
-            "delivery_address",
-            "upcoming_delivery_count",
-            "weeks_needing_selection",
-            "skipped_week_count",
-            "next_skipped_week",
-            "next_box_coupon",
-            "next_payment_date",
-            "next_selectable_delivery_preselected",
-            "next_holiday_message",
-            "next_holiday_delivery_date",
-        )
-        summary: dict[str, object] = {key: _value(key) for key in keys}
-        summary["selected_plan_total_price_currency"] = data.selected_plan_total_price_currency
-        summary["account_credit_currency"] = data.account_credit_currency
-        # Week ids behind the counters, so the card can make them clickable (the click
-        # broadcasts the cross-card week-sync event to jump the other cards there).
-        summary["weeks_needing_selection_ids"] = [week.week_id for week in data.weeks_auto_picked]
-        summary["next_skipped_week_id"] = (
-            data.next_skipped_week.week_id if data.next_skipped_week else None
-        )
-        # Same auto-refresh contract as get_weeks: the card re-pulls on the poll cadence.
-        summary.update(_refresh_contract(coordinator))
-        # Plan price split and payment-method health (card brand, last four digits and
-        # expiry — never the billing address), for the subscription card's rows and banner.
-        summary["selected_plan_price_breakdown"] = data.selected_plan_price_breakdown
-        summary["payment_method_expiring"] = data.payment_method_expiring
-        summary["payment_method_expired"] = data.payment_method_expired
-        summary["payment_card_type"] = data.payment_card_type
-        summary["payment_card_provider"] = data.payment_card_provider
-        summary["payment_card_brand"] = data.payment_card_brand
-        summary["payment_card_last4"] = data.payment_card_last4
-        summary["payment_card_expiry"] = data.payment_card_expiry
-        summary["next_box_discount"] = data.next_box_discount
-        return summary
-
-    async def async_get_food_profile(service_call: ServiceCall) -> ServiceResponse:
-        """Return the customer's food profile plus the full catalog of selectable options.
-
-        Read-only. Fetched live from HelloFresh's profile-service (it is not part of the
-        regular sensor poll), so the Food Profile card can read current picks and every
-        possible option in one call.
-        """
-        client = _resolve_single_coordinator(hass, service_call).client
-        profile = await client.async_get_food_profile()
-        options = await client.async_get_food_profile_options()
-        # How much of the profile is filled in, so the card can show a progress figure.
-        # Best-effort — None when HelloFresh doesn't answer, and the card just omits it.
-        completion = await client.async_get_food_profile_completion()
-        return {
-            "profile": profile.as_dict(),
-            "options": options.as_dict(),
-            "completion": completion.as_dict() if completion is not None else None,
-        }
-
-    async def async_set_food_profile(service_call: ServiceCall) -> ServiceResponse:
-        """Update the customer's food profile (auto-preselection preferences).
-
-        Accepts partial ``taste`` / ``household`` / ``goals`` sections; only what is provided
-        is changed. Returns the saved profile so the card can re-render from the server's truth.
-        """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        changes: dict[str, object] = {}
-        if ATTR_TASTE in service_call.data:
-            changes["taste"] = service_call.data[ATTR_TASTE]
-        if ATTR_HOUSEHOLD in service_call.data:
-            changes["household"] = service_call.data[ATTR_HOUSEHOLD]
-        if ATTR_GOALS in service_call.data:
-            changes["goals"] = service_call.data[ATTR_GOALS]
-        if not changes:
-            raise HomeAssistantError("Provide at least one of: taste, household, goals.")
-        saved = await coordinator.client.async_update_food_profile(changes)
-        return {"profile": saved.as_dict()}
-
-    def _single_client(service_call: ServiceCall):
-        """Resolve the one target coordinator's client, or raise if ambiguous."""
-        return _resolve_single_coordinator(hass, service_call).client
-
-    async def async_get_delivery_options(service_call: ServiceCall) -> ServiceResponse:
-        """Return the plan's selectable delivery days (weekday, name, price, default).
-
-        Read-only. Richer than a week's ``availableOneOffOptions`` — the full delivery-day
-        picker the web app uses. Fetched live; not part of the sensor poll.
-        """
-        options = await _single_client(service_call).async_get_delivery_options()
-        return {"delivery_options": [option.as_dict() for option in options]}
-
-    async def async_get_plans(service_call: ServiceCall) -> ServiceResponse:
-        """Return the account's plan catalog (product handle, price, status). Read-only."""
-        return {"plans": await _single_client(service_call).async_get_plans()}
-
-    async def async_get_presets(service_call: ServiceCall) -> ServiceResponse:
-        """Return the region's menu presets (Chef's Choice, Veggie, …). Read-only."""
-        return {"presets": await _single_client(service_call).async_get_presets()}
-
-    async def async_get_spending(service_call: ServiceCall) -> ServiceResponse:
-        """Return the customer's spending ledger (weeks, monthly rollup, running total).
-
-        Read-only. Built from the full billing history so the running total reflects lifetime
-        HelloFresh spend, not just the schedule window. Powers the cost card.
-        """
-        return await _single_client(service_call).async_get_spending()
-
-    def _meal_plan(service_call: ServiceCall) -> MealPlan:
-        """The target account's meal plan."""
-        return _resolve_single_coordinator(hass, service_call).meal_plan
-
-    async def async_get_meal_plan(service_call: ServiceCall) -> ServiceResponse:
-        """Return the Week tab's meal plan: its settings and every planned day.
-
-        Read-only. Each planned meal carries its computed ``start`` and ``end``.
-        """
-        return _meal_plan(service_call).as_dict()
-
-    async def async_set_planned_meal(service_call: ServiceCall) -> ServiceResponse:
-        """Plan one course of a day's meal (a box meal, a Market item or a note), and/or move
-        that meal's start time for the day. Returns the updated plan."""
-        meal_plan = _meal_plan(service_call)
-        data = service_call.data
-        await meal_plan.async_set(
-            data[ATTR_DATE],
-            data[ATTR_MEAL],
-            data[ATTR_COURSE],
-            recipe_id=data.get(ATTR_RECIPE_ID),
-            market_item_id=data.get(ATTR_MARKET_ITEM_ID),
-            text=data.get(ATTR_TEXT),
-            week_id=data.get(ATTR_WEEK_ID),
-            start_time=data.get(ATTR_START_TIME),
-        )
-        return meal_plan.as_dict()
-
-    async def async_clear_planned_meal(service_call: ServiceCall) -> ServiceResponse:
-        """Clear one course of a day's meal, or the whole meal. Returns the updated plan."""
-        meal_plan = _meal_plan(service_call)
-        data = service_call.data
-        meal_plan.clear(data[ATTR_DATE], data[ATTR_MEAL], data.get(ATTR_COURSE))
-        return meal_plan.as_dict()
-
-    def _single_coordinator(service_call: ServiceCall):
-        """Resolve the one target coordinator, or raise if ambiguous.
-
-        Distinct from ``_single_client`` above, which unwraps to ``.client``. Services that
-        only read go through that; services that also need to trigger a refresh after a write
-        need the coordinator itself. Keeping the two names distinct matters: an earlier
-        revision defined a second function *also* called ``_single_client`` that returned the
-        coordinator, which silently shadowed the original and broke every read-only service
-        with "'HelloFreshDataUpdateCoordinator' object has no attribute 'async_get_*'".
-        """
-        return _resolve_single_coordinator(hass, service_call)
-
-    async def async_get_favorites(service_call: ServiceCall) -> ServiceResponse:
-        """Return the customer's cookbook bookmarks.
-
-        With no ``recipe_ids``, the whole cookbook is listed with full detail (title, image,
-        times, nutrition). Passing ``recipe_ids`` instead asks the cheaper filter endpoint
-        "which of THESE are bookmarked?", which returns ids only — useful for decorating a
-        menu you already have in hand.
-        """
-        coordinator = _single_coordinator(service_call)
-        recipe_ids = list(service_call.data.get(ATTR_RECIPE_IDS) or [])
-        if not recipe_ids:
-            favorites = await coordinator.client.async_list_favorites()
-            # HelloFresh also runs a second, separate favorites store ("cfs") behind its
-            # /recipes/favorites page. It is reported alongside rather than merged: the two
-            # are not synchronized, and in all captured traffic it was empty while the
-            # cookbook held bookmarks. Surfacing it separately means a user who does have
-            # rows there can see them without the counts silently disagreeing.
-            secondary = await coordinator.client.async_get_cfs_favorites()
-            return {
-                "favorites": [favorite.as_dict() for favorite in favorites],
-                "favorite_recipe_ids": sorted({f.recipe_id for f in favorites}),
-                "total": len(favorites),
-                "secondary_favorites": secondary,
-            }
-        found = await coordinator.client.async_get_favorite_recipe_ids(recipe_ids)
-        return {
-            "favorites": [favorite.as_dict() for favorite in found.values()],
-            "favorite_recipe_ids": sorted(found),
-            "checked_count": len(recipe_ids),
-        }
-
-    async def async_get_recipe_detail(service_call: ServiceCall) -> ServiceResponse:
-        """Return one recipe's full cooking detail.
-
-        Unlike the browse catalog, this reads a plain HelloFresh API rather than the website's
-        Next.js data URLs, so it does not depend on the site's build id.
-        """
-        coordinator = _single_coordinator(service_call)
-        detail = await coordinator.client.async_get_recipe_detail(
-            service_call.data[ATTR_RECIPE_ID],
-            servings=service_call.data.get(ATTR_SERVINGS),
-        )
-        return {"recipe": detail.as_dict()}
-
-    async def async_get_delivery_tracking(service_call: ServiceCall) -> ServiceResponse:
-        """Return the live last-mile tracking snapshot.
-
-        Read-only. Only meaningful for accounts in TRACEY_COUNTRIES (the Netherlands and
-        Germany): elsewhere the response is ``{"available": false}``. When available,
-        this triggers a live fetch of the Tracey endpoint (throttled to one request a
-        minute); the sensors poll it on the configured live-tracking cadence.
-        """
-        coordinator = _single_coordinator(service_call)
-        country = coordinator.config_entry.data.get(CONF_COUNTRY)
-        # The next delivery date gives the card something useful to say while no delivery
-        # is actively trackable ("nothing on the road until Tuesday").
-        next_delivery = sensor_native_value(
-            "next_delivery_date", coordinator.data, coordinator.client.base_url
-        )
-        base: dict[str, object] = {
-            "country": country,
-            "delivery_tracking_refresh_interval_seconds": (
-                coordinator.config_entry.options.get(
-                    CONF_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
-                    DEFAULT_DELIVERY_TRACKING_REFRESH_INTERVAL_SECONDS,
-                )
-                if country in TRACEY_COUNTRIES
-                else None
-            ),
-            "next_delivery_date": (
-                next_delivery.isoformat()
-                if isinstance(next_delivery, (datetime, date))
-                else next_delivery
-            ),
-        }
-        tracey = coordinator.tracey
-        if tracey is None:
-            return {**base, "available": False, "reason": "unsupported_country"}
-        snapshot = await tracey.async_fetch_latest()
-        return {**base, "available": True, **snapshot.as_dict()}
-
-    async def async_add_favorite(service_call: ServiceCall) -> ServiceResponse:
-        """Bookmark a recipe in the customer's cookbook."""
-        coordinator = _single_coordinator(service_call)
-        favorite = await coordinator.client.async_add_favorite(service_call.data[ATTR_RECIPE_ID])
-        await coordinator.async_request_refresh()
-        return {"favorite": favorite.as_dict()}
-
-    async def async_remove_favorite(service_call: ServiceCall) -> ServiceResponse:
-        """Remove a recipe bookmark.
-
-        The delete (``DELETE /gw/cookbook/v1/external-recipes/{id}``) is HAR-verified, and
-        HelloFresh's app uses the same route. A failure is explained in the error.
-        """
-        coordinator = _single_coordinator(service_call)
-        removed = await coordinator.client.async_remove_favorite(service_call.data[ATTR_RECIPE_ID])
-        await coordinator.async_request_refresh()
-        return {"removed": removed}
-
-    async def async_get_recipe_collections(service_call: ServiceCall) -> ServiceResponse:
-        """Return the browsable categories of the public recipe catalog."""
-        coordinator = _single_coordinator(service_call)
-        collections = await coordinator.client.async_get_recipe_collections()
-        return {"collections": [collection.as_dict() for collection in collections]}
-
-    async def async_get_catalog_recipes(service_call: ServiceCall) -> ServiceResponse:
-        """Return recipes from the public catalog, optionally filtered to one collection.
-
-        With ``search``, text-search the WHOLE catalog instead (every category at once, via
-        the recipes-service search API); ``collection`` is ignored then, and no
-        subcollections are returned since results span categories.
-        """
-        coordinator = _single_coordinator(service_call)
-        query = str(service_call.data.get(ATTR_SEARCH) or "").strip()
-        limit = int(service_call.data.get(ATTR_LIMIT, 50))
-        if query:
-            recipes = await coordinator.client.async_search_catalog_recipes(query, limit=limit)
-            return {
-                "collection": None,
-                "search": query,
-                "recipes": [recipe.as_dict() for recipe in recipes],
-                "subcollections": [],
-            }
-        page = await coordinator.client.async_get_catalog_page(
-            service_call.data.get(ATTR_COLLECTION),
-            limit=limit,
-        )
-        return {
-            "collection": page["collection"],
-            "recipes": [recipe.as_dict() for recipe in page["recipes"]],
-            # Child categories of this collection (Noodle -> Ramen/Udon/…). Not present in the
-            # top-level category list, so this is the only way to reach them.
-            "subcollections": [sub.as_dict() for sub in page["subcollections"]],
-        }
-
-    async def async_preview_meal_price(service_call: ServiceCall) -> ServiceResponse:
-        """Price a hypothetical meal selection without saving it."""
-        coordinator = _single_coordinator(service_call)
-        return await coordinator.client.async_preview_meal_price(
-            service_call.data[ATTR_WEEK_ID],
-            list(service_call.data[ATTR_RECIPE_IDS]),
-            dict(service_call.data.get(ATTR_QUANTITIES) or {}),
-        )
-
-    async def async_select_meals(service_call: ServiceCall) -> ServiceResponse:
-        """Submit meal selections.
-
-        Returns ``{"downgraded": bool}`` — ``True`` when HelloFresh accepted the write but
-        silently shrank the box to fit (a seamless downgrade). A card can read this via
-        ``return_response=true`` to show an inline warning right where the edit happened; the
-        server also raises a persistent notification so the surfacing works either way.
-        """
-        week_id = service_call.data[ATTR_WEEK_ID]
-        recipe_ids = list(service_call.data[ATTR_RECIPE_IDS])
-        quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
-        # Present (even empty) = set the Market add-ons in this same cart write; absent = keep
-        # them. An empty map therefore clears them, exactly like select_market_items.
-        market_quantities = (
-            dict(service_call.data[ATTR_MARKET_QUANTITIES])
-            if ATTR_MARKET_QUANTITIES in service_call.data
-            else None
-        )
-        downgraded = _DowngradeFlag()
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_select_mutation(
-                coordinator,
-                coordinator.client.async_select_meals(
-                    week_id, recipe_ids, quantities, market_quantities
-                ),
-                week_id,
-                downgraded,
-            ),
-        )
-        return {"downgraded": downgraded.value}
-
-    async def async_select_market_items(service_call: ServiceCall) -> ServiceResponse:
-        """Submit HelloFresh Market add-on (extras) selections for a week.
-
-        Returns ``{"downgraded": bool}`` (see :func:`async_select_meals`).
-        """
-        week_id = service_call.data[ATTR_WEEK_ID]
-        quantities = dict(service_call.data.get(ATTR_QUANTITIES) or {})
-        downgraded = _DowngradeFlag()
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_select_mutation(
-                coordinator,
-                coordinator.client.async_select_market_items(week_id, quantities),
-                week_id,
-                downgraded,
-            ),
-        )
-        return {"downgraded": downgraded.value}
-
-    async def async_skip_week(service_call: ServiceCall) -> None:
-        """Skip a delivery week."""
-        week_id = service_call.data[ATTR_WEEK_ID]
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_mutation(
-                coordinator,
-                coordinator.client.async_skip_week(week_id),
-            ),
-        )
-
-    async def async_unskip_week(service_call: ServiceCall) -> None:
-        """Restore a skipped delivery week."""
-        week_id = service_call.data[ATTR_WEEK_ID]
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_mutation(
-                coordinator,
-                coordinator.client.async_unskip_week(week_id),
-            ),
-        )
-
-    async def async_reschedule_week(service_call: ServiceCall) -> None:
-        """Reschedule a single delivery week to a different delivery option."""
-        week_id = service_call.data[ATTR_WEEK_ID]
-        delivery_option = service_call.data[ATTR_DELIVERY_OPTION]
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_mutation(
-                coordinator,
-                coordinator.client.async_change_one_off_delivery(week_id, delivery_option),
-            ),
-        )
-
-    async def async_get_menu_courses(service_call: ServiceCall) -> ServiceResponse:
-        """Resolve a week's menu through HelloFresh's own server-side filters.
-
-        Backs the meal-planner card's Cuisine / Dish type / Ingredients-to-avoid groups: menu
-        recipes carry no allergen data and their tag slugs don't match the site's cuisine and
-        dish-type option slugs, so only the site's filter service can answer these exactly.
-        Read-only, fetched live; returns only recipe ids to intersect with the loaded menu.
-        """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        week_id = service_call.data[ATTR_WEEK_ID]
-        filters = service_call.data.get(ATTR_FILTERS) or {}
-        try:
-            recipe_ids = await coordinator.client.async_get_menu_courses(week_id, filters)
-        except HelloFreshError as err:
-            raise HomeAssistantError(str(err)) from err
-        return {
-            "week_id": week_id,
-            "recipe_ids": recipe_ids,
-            "count": len(recipe_ids),
-            "filters": {
-                str(group): (values if isinstance(values, list) else [values])
-                for group, values in filters.items()
-            },
-        }
-
-    async def async_get_plan_options(service_call: ServiceCall) -> ServiceResponse:
-        """Return the box sizes this subscription can switch to.
-
-        Read-only, fetched live (the plan catalog is not part of the regular poll). Pairs with
-        ``change_plan``: the ``handle`` of any returned option is what that service accepts.
-        """
-        coordinator = _resolve_single_coordinator(hass, service_call)
-        subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
-        options = await coordinator.client.async_list_plan_options(subscription_id)
-        return {"options": options}
-
-    async def async_change_plan(service_call: ServiceCall) -> None:
-        """Change the recurring box size (meals per week x servings).
-
-        This changes what the account is billed for every future box, so it is deliberately a
-        separate service from the per-week meal selection.
-        """
-        product_handle = service_call.data[ATTR_PRODUCT_HANDLE]
-        subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_mutation(
-                coordinator,
-                coordinator.client.async_change_plan(product_handle, subscription_id),
-            ),
-        )
-
-    async def async_change_delivery_weekday(service_call: ServiceCall) -> None:
-        """Change the recurring delivery option/interval for a subscription's plan."""
-        delivery_option = service_call.data[ATTR_DELIVERY_OPTION]
-        delivery_interval = service_call.data.get(ATTR_DELIVERY_INTERVAL, 1)
-        subscription_id = service_call.data.get(ATTR_SUBSCRIPTION_ID)
-        await _for_each_coordinator(
-            service_call,
-            lambda coordinator, _: _async_mutation(
-                coordinator,
-                coordinator.client.async_change_delivery_weekday(
-                    delivery_option, delivery_interval, subscription_id
-                ),
-            ),
-        )
-
-    async def _async_mutation(
-        coordinator: HelloFreshDataUpdateCoordinator,
-        coro,
-    ) -> object:
-        """Run a state-changing action and refresh after success.
-
-        Returns whatever the action returned (e.g. the select services' seamless-downgrade
-        flag) so a caller can react to it.
-        """
-        result = await coro
-        # A write endpoint just accepted a request, so any lingering "write actions
-        # unavailable" repair warning is stale — this is its self-clear condition.
-        async_delete_write_actions_issue(hass, coordinator.config_entry.entry_id)
-        await coordinator.async_request_refresh()
-        return result
-
-    def _notify_seamless_downgrade(
-        coordinator: HelloFreshDataUpdateCoordinator, week_id: str
-    ) -> None:
-        """Warn the user that HelloFresh silently shrank the box to fit the new selection.
-
-        The cart write succeeded but HelloFresh applied a seamless downgrade, so fewer meals
-        were saved than requested. A persistent notification is the surfacing that works no
-        matter which path (service call or dashboard card) triggered the write.
-        """
-        persistent_notification.async_create(
-            hass,
-            (
-                f"HelloFresh accepted your meal change for week {week_id} but **downsized the "
-                "box** to fit — fewer meals were saved than you selected. Open the meal planner "
-                "to review the saved selection and re-pick if needed."
-            ),
-            title="HelloFresh box downsized",
-            notification_id=f"{DOMAIN}_seamless_downgrade_{coordinator.config_entry.entry_id}_{week_id}",
-        )
-
-    async def _async_select_mutation(
-        coordinator: HelloFreshDataUpdateCoordinator,
-        coro,
-        week_id: str,
-        downgraded_flag: _DowngradeFlag,
-    ) -> None:
-        """Run a meal/market select write and notify if it triggered a seamless downgrade.
-
-        Records the downgrade on ``downgraded_flag`` so the service can return it to a caller
-        (e.g. a card) in addition to raising the persistent notification.
-        """
-        downgraded = await _async_mutation(coordinator, coro)
-        if downgraded:
-            downgraded_flag.value = True
-            _notify_seamless_downgrade(coordinator, week_id)
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_REFRESH_DATA,
-        async_refresh_data,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_WEEKS,
-        async_get_weeks,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Optional(ATTR_WEEK_ID): str,
-                vol.Optional("include_debug"): bool,
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_MENU_COURSES,
-        async_get_menu_courses,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-                vol.Optional(ATTR_FILTERS): vol.Schema(
-                    {str: vol.Any(str, [str])}, extra=vol.PREVENT_EXTRA
-                ),
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_PLAN_OPTIONS,
-        async_get_plan_options,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Optional(ATTR_SUBSCRIPTION_ID): str,
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_CHANGE_PLAN,
-        async_change_plan,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_PRODUCT_HANDLE): str,
-                vol.Optional(ATTR_SUBSCRIPTION_ID): str,
-            }
-        ),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_ACCOUNT_SUMMARY,
-        async_get_account_summary,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_FOOD_PROFILE,
-        async_get_food_profile,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_DELIVERY_OPTIONS,
-        async_get_delivery_options,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_DELIVERY_TRACKING,
-        async_get_delivery_tracking,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_PLANS,
-        async_get_plans,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_PRESETS,
-        async_get_presets,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_SPENDING,
-        async_get_spending,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_FOOD_PROFILE,
-        async_set_food_profile,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                # Each section is a free-form mapping mirroring the API's profile shape; the
-                # client normalizes weighted taste fields to +/-100 before PATCHing.
-                vol.Optional(ATTR_TASTE): dict,
-                vol.Optional(ATTR_HOUSEHOLD): dict,
-                vol.Optional(ATTR_GOALS): dict,
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_FAVORITES,
-        async_get_favorites,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                # Optional: defaults to every recipe across the known weeks. The cookbook API
-                # is a filter, so something must be supplied to check against.
-                vol.Optional(ATTR_RECIPE_IDS): [str],
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_ADD_FAVORITE,
-        async_add_favorite,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_RECIPE_ID): str,
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_REMOVE_FAVORITE,
-        async_remove_favorite,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_RECIPE_ID): str,
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_RECIPE_DETAIL,
-        async_get_recipe_detail,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_RECIPE_ID): str,
-                # Which yields entry the ingredient amounts are scaled to (2, 4, ...).
-                # Defaults to the smallest the recipe offers.
-                vol.Optional(ATTR_SERVINGS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_RECIPE_COLLECTIONS,
-        async_get_recipe_collections,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_CATALOG_RECIPES,
-        async_get_catalog_recipes,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                # Collection slug from get_recipe_collections; omit for the top-level listing.
-                vol.Optional(ATTR_COLLECTION): str,
-                # Free-text search across the WHOLE catalog; overrides `collection`.
-                vol.Optional(ATTR_SEARCH): str,
-                vol.Optional(ATTR_LIMIT, default=50): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=200)
-                ),
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_PREVIEW_MEAL_PRICE,
-        async_preview_meal_price,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-                vol.Required(ATTR_RECIPE_IDS): vol.All([str], vol.Length(min=1)),
-                vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SELECT_MEALS,
-        async_select_meals,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-                vol.Required(ATTR_RECIPE_IDS): vol.All([str], vol.Length(min=1)),
-                # Optional per-recipe serving counts: {recipe_id: positive int}. Recipes absent
-                # from the map default to one serving.
-                vol.Optional(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=1))},
-                # Optional Market add-ons written in the SAME cart update, with
-                # select_market_items' shape ({item id/sku/index: quantity}, 0 removes).
-                vol.Optional(ATTR_MARKET_QUANTITIES): {
-                    str: vol.All(vol.Coerce(int), vol.Range(min=0))
-                },
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SELECT_MARKET_ITEMS,
-        async_select_market_items,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-                # Map of market item id/sku/index -> quantity (>=1). Items omitted (or set to 0)
-                # are removed from the week's extras.
-                vol.Required(ATTR_QUANTITIES): {str: vol.All(vol.Coerce(int), vol.Range(min=0))},
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_MEAL_PLAN,
-        async_get_meal_plan,
-        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_PLANNED_MEAL,
-        async_set_planned_meal,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_DATE): cv.date,
-                vol.Optional(ATTR_MEAL, default="dinner"): vol.In(MEALS),
-                vol.Optional(ATTR_COURSE, default="main"): vol.In(COURSES),
-                # One of these three: a meal from the box, a Market item, or a note.
-                vol.Optional(ATTR_RECIPE_ID): str,
-                vol.Optional(ATTR_MARKET_ITEM_ID): str,
-                vol.Optional(ATTR_TEXT): str,
-                # The box the meal or item came from, when the date alone is ambiguous.
-                vol.Optional(ATTR_WEEK_ID): str,
-                vol.Optional(ATTR_START_TIME): cv.time,
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_CLEAR_PLANNED_MEAL,
-        async_clear_planned_meal,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_DATE): cv.date,
-                vol.Optional(ATTR_MEAL, default="dinner"): vol.In(MEALS),
-                vol.Optional(ATTR_COURSE): vol.In(COURSES),
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SKIP_WEEK,
-        async_skip_week,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-            }
-        ),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_UNSKIP_WEEK,
-        async_unskip_week,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-            }
-        ),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_RESCHEDULE_WEEK,
-        async_reschedule_week,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_WEEK_ID): str,
-                vol.Required(ATTR_DELIVERY_OPTION): str,
-            }
-        ),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_CHANGE_DELIVERY_WEEKDAY,
-        async_change_delivery_weekday,
-        schema=vol.Schema(
-            {
-                vol.Optional(ATTR_CONFIG_ENTRY_ID): str,
-                vol.Required(ATTR_DELIVERY_OPTION): str,
-                vol.Optional(ATTR_DELIVERY_INTERVAL, default=1): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=4)
-                ),
-                vol.Optional(ATTR_SUBSCRIPTION_ID): str,
-            }
-        ),
-    )
+    await async_remove_fired_events(hass, entry.entry_id)

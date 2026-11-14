@@ -5,6 +5,168 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
+## Unreleased
+
+### New
+- **Undo.** After you save your box, skip or unskip a week, move a week's delivery day, change
+  a week's number of people, or change your plan's box size or delivery day, the confirmation
+  offers **Undo** for about ten seconds (as long as that week's meal deadline hasn't passed).
+- **Change one week's number of people.** The Menu shows how many people each week you can still
+  change is for, with **Change** to switch just that week's box to another size HelloFresh
+  offers, with its price and a confirmation. Also available as the new
+  `hellofresh.change_week_servings` action. HelloFresh's website hasn't been seen using the
+  request it relies on, so it is marked experimental: if HelloFresh refuses it, the action says
+  so.
+- **Payment problems.** A new **Payment problem** binary sensor and a repair tell you when
+  HelloFresh couldn't collect a payment for a box, and the Overview and Account show a warning
+  with the box, the amount and a link to update your payment details on HelloFresh.
+- **Credit and rewards.** New **HelloFresh Cash**, **Bonus credit** and **Boxes until a free
+  box** sensors, also shown in the Account tab.
+- **Delayed or early boxes.** A box HelloFresh delayed or moved earlier says when it now arrives,
+  on the Overview, its week and the Menu, and the event entity fires `box_delayed` or
+  `box_early`.
+- **Meal deadline events.** The event entity fires `selection_deadline_approaching` a day before
+  each week's meal deadline, and `selection_locked` now fires at the deadline itself instead of
+  at the next update. Neither fires twice for a week, even across a restart.
+- **Recipes: Load more.** Categories and searches page on past the first results, and the list
+  says how many of how many recipes are shown. `hellofresh.get_catalog_recipes` takes an
+  `offset` for the same.
+
+### Your box and the card
+- **Saving no longer undoes a change made elsewhere.** Saving meals and then Market add-ons, or
+  saving after changing your box in the HelloFresh app or on another device, could put back
+  what had just been changed, because each save rebuilt the rest of the box from data up to
+  hours old. Each save now reads your box from HelloFresh first. If your saved box changed
+  while you were editing, the card says so and offers **Keep mine** or **Use saved**.
+- **Changes show at once.** A save, a skip, a new delivery day or a favourite now updates the
+  entities and the card straight away, and the rest of the account is re-read in the
+  background. Before, every change waited for a whole account update, and a second change made
+  within a few seconds showed the state from before the first.
+- **A doubled meal counts as two.** A 2-meal box with one doubled meal is complete (2/2) and no
+  longer "needs a selection". Doubled meals and extra add-ons keep their quantities after the
+  box arrives, so the Week tab still lets you plan the second portion, and saving meals without
+  portion counts keeps a doubled meal doubled instead of shrinking the box.
+- **"Ingredients to avoid" fails safe.** While HelloFresh's filter check was slow or down, the
+  menu showed every meal, including the ones you asked to avoid. It now shows only the meals
+  already in your box, with a note and a Retry button.
+- **Box prices stay right.** The price no longer gets stuck on "Updating price…" (it says
+  "Estimate unavailable" when HelloFresh can't price the box), box prices refresh within six
+  hours and right after a change, and removing an extra shows what it takes off.
+- **The card recovers by itself.** A dashboard opened while Home Assistant restarted showed
+  "Couldn't load" for up to three hours. It now tries again after 15 seconds, a minute and five
+  minutes, and at once when Home Assistant reconnects.
+- **Keyboard and screen readers.** Focus stays where you are when you switch tabs, refresh,
+  press + or −, or a price arrives. Dialogs no longer flicker as they update, keep Tab inside
+  them and hand focus back to what opened them. The recipe sheet keeps your place. Tiles have a
+  real button, the Account sections are tabs, and coloured dots have text labels.
+- **Week tab.** A note typed with the keyboard is saved (it was dropped), Save can't go out
+  twice, a save that fails halfway says what was kept, and times and "today" follow Home
+  Assistant's time zone, not the phone's.
+- **Recipes.** No "No recipes found" while a search is still running, picking a category during
+  a load works, `recipes_limit` stays between 1 and 200, and typing no longer redraws the grid.
+- **Lighter on data.** A Recipes-only or Account-only card no longer downloads every week's menu,
+  cards on one page share their requests, and a save, skip or day change re-reads only its week.
+- **Smaller fixes.** Food preferences send only what you changed and never record an unanswered
+  household as 0 adults and 0 kids. A box size or delivery day change shows your choice while
+  HelloFresh processes it and blocks a second change. Switching a card to another account
+  starts clean. Sold-out options in the customize drawer can be picked, like sold-out meals. A
+  delivered box no longer reads "Arriving today". A failed skip or pantry tick shows one error,
+  not two. Plurals read correctly in partly translated languages. The visual editor can clear
+  the title. Delivery photos load only over https, without sending a referrer.
+
+### Sign-in and connection
+- **A server error is no longer taken for a block.** A HelloFresh error page such as "502 Bad
+  Gateway" was mistaken for bot protection and paused every HelloFresh request for up to an
+  hour. Only a real block pauses requests now, and a block on one country's site no longer
+  pauses accounts in other countries.
+- **A refused password is not sent again.** Once HelloFresh refuses your password, or says it
+  has expired, the integration stops sending it until you sign in again. It used to retry every
+  15 minutes on delivery days, which risked locking your HelloFresh account. HelloFresh's "too
+  many attempts" lock, including the wait it asks for, is now respected after a setup retry or a
+  reload too.
+- **Fewer sign-in renewals.** The sign-in is renewed only while it is being used: about 16 times
+  a day at the default refresh interval, down from 64–96, each of which rewrote Home
+  Assistant's configuration file. A renewal is no longer lost if the integration reloads in
+  the middle of it.
+- **Setup, reauthentication and reconfigure.** An account without a HelloFresh subscription is
+  now reported as that, not as "Invalid authentication". Reconfigure can change the country.
+  Reauthentication and reconfigure refuse details for a different HelloFresh account, and
+  reconfiguring with a pasted token replaces the old tokens instead of keeping a stale one.
+- **Sign-in requests never follow redirects,** so your password or token can't be sent anywhere
+  else.
+- **Live tracking (Netherlands and Germany)** sends fewer duplicate requests, no longer fills the
+  log when the tracker answers with a page instead of data, and keeps its tracking token out of
+  the log.
+
+### Home Assistant
+- **Reloading no longer gets stuck in "Unload failed"** when prep lists are off and another to-do
+  integration is installed.
+- **A short HelloFresh outage no longer blanks your sensors.** A failed or rate-limited update
+  replaced your data with an empty account for hours. The last good data is now kept, a start
+  without network retries setup, and the recovery no longer fires a burst of "menu published"
+  events. An expired sign-in noticed anywhere in an update asks you to sign in again.
+- **The delivery calendar is on for the whole delivery day,** and skipped or paused weeks are no
+  longer shown as deliveries.
+- **Actions report failures properly.** A failure is a normal Home Assistant error, a rejected
+  sign-in asks you to sign in again, and the "write actions unavailable" repair appears only
+  when HelloFresh has no way to make the change, not after a timeout or for a week whose menu
+  isn't out yet. `refresh_data` fails when the refresh does. `select_meals` names a recipe that
+  isn't on the week's menu instead of trying unknown HelloFresh addresses, and skip, unskip and
+  delivery-day changes use only the requests HelloFresh's own website uses.
+  `change_delivery_weekday` refuses an interval it can't apply instead of ignoring it. The
+  account field in every action is a picker.
+- **New: `get_weeks` takes `include_recipes: false`** for a much smaller answer without the menus.
+- **Voice answers** give dates and times in your time zone, say statuses in words, and no longer
+  claim a refresh worked when it failed.
+- **Prep lists** load in the background, re-read only the recipes that changed, and retry a
+  recipe HelloFresh didn't answer for. With two subscriptions, each box in the same week gets
+  its own list and its own check-offs.
+- **The token "minutes remaining" sensor counts down** between updates.
+- **Privacy.** Tracking links, voucher codes, card digits, driver and home locations, and other
+  large attributes are no longer stored in Home Assistant's history. Delivery address, account
+  ID and the payment-card sensor are now diagnostic entities.
+- **The delivery-day watch** stops for a box stuck "shipped" more than 3 days past its date, and
+  pauses, asking you to sign in, when HelloFresh rejects the sign-in.
+- **The meal plan** is no longer rewritten on every reload, and a mistake in a meal-plan action
+  is reported as a validation error.
+
+### Your data
+- **Shipment sensors follow only a box with a tracking number or link,** so they no longer show
+  "Running" for weeks that haven't shipped, and a box HelloFresh marks delivered too early stays
+  "on the way" until the carrier confirms it.
+- **Two subscriptions on one account.** One skipping a week no longer hides the other's box, and
+  each keeps its own delivery history and tracking.
+- **The plan sensor shows your plan's name** instead of your state. Past weeks no longer show a
+  recipe tag as their delivery method or list Market add-ons as meals, and weeks where only
+  add-ons were delivered appear in your delivery history.
+- **A Market add-on paired with a meal keeps its own place in the cart,** and two add-ons paired
+  with the same meal are both kept.
+- **Next delivery total on delivery-day evenings.** In the Americas the next delivery's total
+  disappeared every delivery-day evening, when the date in UTC had already moved on. Every
+  "today" now uses Home Assistant's time zone.
+- **A skipped week no longer counts as a delivery this week,** and when several weeks need meals
+  picked, the one whose deadline comes first is shown.
+- **Something HelloFresh sends that can't be read costs only that meal or week,** not the whole
+  update, and only ordinary web links are passed on to attributes and actions.
+- **Removing a favourite when HelloFresh's cookbook can't be reached reports an error** instead of
+  silently doing nothing.
+- **Fewer, smaller requests and less memory.** Delivery history, the recipe catalog, sold-out
+  flags and spending reuse what was already downloaded, large responses are decoded without
+  holding up Home Assistant, and each week keeps only the parts of its menu that are used.
+
+### For contributors
+- CI runs with a read-only token, enforces a coverage floor (90%), type-checks the integration
+  with mypy, lints the card's JavaScript with ESLint, and runs the browser flows on Puppeteer 25. Dependabot also updates the browser
+  tests' npm packages.
+- The release workflow now gives every release a changelog section, written from the commit
+  list when nothing was added under Unreleased (four releases had none).
+- `hacs.json` declares Home Assistant 2025.8 as the minimum, the README says so, and a test
+  keeps the documented service count right.
+- Services live in `services.py` as one table. The 5,000-line `client.py` is split into typed
+  modules by concern (`client_core.py`, `client_cart.py`, `client_menus.py`, …; CONTRIBUTING
+  lists them), and the client reads every response through one helper that keeps sign-in
+  failures, blocks and rate limits from being swallowed.
+
 ## 4.25 — 2026-11-03
 - **A late or lost box no longer shows as delivered.** Once its delivery day had passed, the
   card called a box delivered by its date alone, even while the carrier had it delayed in
@@ -19,6 +181,13 @@ version heading and publishes it as the release's Highlights.
   currency (issue #19). A percentage voucher now reads 10%, and a voucher for a fixed amount
   still shows as money.
 
+## 4.23 — 2026-10-30
+- **Ready for Home Assistant 2026.11 and 2026.12.** Saving options, reauthenticating or
+  reconfiguring reloads the integration once instead of twice (Home Assistant rejects the
+  double reload from 2026.12), the sidebar panel lets the theme's own panel background show
+  through, and the card finds its account on Home Assistant 2026.8 and later, where a device
+  has one `config_entry_id` instead of a list.
+
 ## 4.22 — 2026-10-20
 - **Boxes don't show as delivered before they arrive.** On delivery day HelloFresh can mark a
   box delivered while the carrier still has it out for delivery, and the card then showed
@@ -26,12 +195,23 @@ version heading and publishes it as the release's Highlights.
   and Last delivery day moved to that day. While the carrier says the box is still coming, it
   now shows as on the way, and it turns delivered when the carrier delivers it.
 
+## 4.21 — 2026-10-17
+- **Prices keep their currency.** When a delivery came without a currency of its own, the card
+  showed its price in the wrong one. It now falls back to the plan's currency.
+
+## 4.20 — 2026-10-16
+- **Diagnostics leave out more personal information.** A downloaded diagnostics report now
+  redacts personal details that could still appear inside the request log it includes.
+
 ## 4.19 — 2026-10-15
 - **Meals in your box don't show as sold out.** A meal you'd already chosen could show "Sold
   out" in the Menu tab once it sold out, though HelloFresh keeps it for you and its website
   shows it as usual. Meals and Market add-ons in your saved box now look as usual, and ones you
   haven't chosen still show as sold out. A sold-out add-on you take out before saving can go
   back in, but no more can be added.
+
+## 4.18 — 2026-10-14
+- No user-facing changes (a re-release of 4.17).
 
 ## 4.17 — 2026-10-14
 - **Week tiles keep their size.** Since 4.16 the week tiles at the top of the Menu, Market and

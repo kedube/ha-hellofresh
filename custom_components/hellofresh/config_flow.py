@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import section
+from homeassistant.data_entry_flow import AbortFlow, section
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
@@ -15,7 +16,15 @@ from homeassistant.helpers.selector import (
     NumberSelectorMode,
     TimeSelector,
 )
-import voluptuous as vol
+
+if TYPE_CHECKING:
+    # From 2026.10 Home Assistant validates with probatio and, as it starts, installs it under
+    # the name voluptuous, so `vol` is probatio at runtime and the flow signatures name
+    # probatio's Schema. mypy cannot follow that swap: it would read the separate voluptuous
+    # package, whose Schema is unrelated to the one async_show_form takes.
+    import probatio as vol
+else:
+    import voluptuous as vol
 
 from .api import (
     HelloFreshAuthError,
@@ -98,8 +107,22 @@ from .const import (
     OPTIONS_SECTION_WEEK_TAB,
     TRACEY_COUNTRIES,
 )
+from .models import HelloFreshNoSubscriptionError
 from .parsers import token_payload_to_entry_data
-from .tls_transport import async_close_shared_session
+
+
+def _account_unique_id(country: str, account: dict[str, object]) -> str:
+    """Return the unique id of an entry: its country and its HelloFresh account id."""
+    account_id = account.get("account_id") or account.get("subscription_id")
+    return f"{country}::{account_id}"
+
+
+def _account_id_of(unique_id: str | None) -> str | None:
+    """Return the account part of an entry's unique id, or None when it has no unique id.
+
+    Entries from before the country was part of the id carry the bare account id.
+    """
+    return unique_id.rpartition("::")[2] if unique_id else None
 
 
 def _entry_data_from_credentials(
@@ -267,10 +290,14 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 tokens=tokens,
             )
             if account is not None:
-                await self._async_guard_same_account(country, account)
+                unique_id = await self._async_guard_same_account(
+                    entry, country, account, new_unique_id=True
+                )
                 # Credentials live in entry.data only; never write them into options.
                 return self.async_update_reload_and_abort(
                     entry,
+                    # The id names the country too, so a corrected country changes it.
+                    unique_id=unique_id,
                     data_updates=_entry_data_from_credentials(
                         user_input[CONF_USERNAME], user_input[CONF_PASSWORD], country, tokens
                     ),
@@ -311,10 +338,15 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 account = await self._async_validate_token(country, token_data, errors)
                 if account is not None:
-                    await self._async_guard_same_account(country, account)
+                    unique_id = await self._async_guard_same_account(
+                        entry, country, account, new_unique_id=True
+                    )
+                    # Replace the token fields, as reauth does. Merging kept the old refresh
+                    # token when a bare access token was pasted, and dated it as new.
                     return self.async_update_reload_and_abort(
                         entry,
-                        data_updates={CONF_COUNTRY: country, **token_data},
+                        unique_id=unique_id,
+                        data={CONF_COUNTRY: country, **token_data},
                         title=f"HelloFresh ({country.upper()})",
                         reason="reconfigure_successful",
                     )
@@ -339,17 +371,42 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _async_guard_same_account(self, country: str, account: dict[str, object]) -> None:
-        """Abort unless the re-validated login points at the entry's own account.
+    async def _async_guard_same_account(
+        self,
+        entry: config_entries.ConfigEntry,
+        country: str,
+        account: dict[str, object],
+        *,
+        new_unique_id: bool = False,
+    ) -> str:
+        """Abort unless the re-validated login is the entry's own account; return its id.
 
-        Reconfigure must not silently repoint an entry at a different HelloFresh account: the
-        entities, history, and unique ID already on disk belong to the original one. A
-        genuinely different account is a new config entry, not an edit to this one. Raises
-        HA's ``AbortFlow`` via ``_abort_if_unique_id_mismatch``; it never returns a result.
+        Reconfigure and reauth must not silently repoint an entry at a different HelloFresh
+        account: the entities, history, and unique ID already on disk belong to the original
+        one. A genuinely different account is a new config entry, not an edit to this one.
+        Raises HA's ``AbortFlow`` via ``_abort_if_unique_id_mismatch``.
+
+        Only the account part of the id is compared. The id also names the country, so
+        comparing all of it made every change of country look like another account. An entry
+        with no unique id at all (a very old one) has nothing to compare and is let through.
+
+        ``new_unique_id`` says the caller is about to give the entry the returned id
+        (reconfigure, where the country can change), so it must not belong to another entry.
         """
-        account_id = account.get("account_id") or account.get("subscription_id")
-        await self.async_set_unique_id(f"{country}::{account_id}")
+        unique_id = _account_unique_id(country, account)
+        known_account = _account_id_of(entry.unique_id)
+        same_account = known_account is None or known_account == _account_id_of(unique_id)
+        # Home Assistant compares the flow's id with the entry's whole id. The same account
+        # is therefore presented under the entry's own id, whatever country it now names.
+        await self.async_set_unique_id(
+            entry.unique_id if same_account else unique_id, raise_on_progress=False
+        )
         self._abort_if_unique_id_mismatch(reason="account_mismatch")
+        if new_unique_id and unique_id != entry.unique_id:
+            other = self.hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, unique_id)
+            if other is not None and other.entry_id != entry.entry_id:
+                raise AbortFlow("already_configured")
+        return unique_id
 
     async def async_step_reauth(self, entry_data: dict[str, str]):
         """Handle reauth flow start.
@@ -368,7 +425,8 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Collect (or re-collect) credentials for an existing entry."""
         errors: dict[str, str] = {}
         if self._reauth_entry is None:
-            return self.async_abort(reason="invalid_auth")
+            # The entry was removed while the form was open.
+            return self.async_abort(reason="reauth_failed")
 
         if user_input is not None:
             result = await self._async_finish_reauth(
@@ -397,7 +455,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Re-collect a token for a token-only entry whose tokens have expired."""
         errors: dict[str, str] = {}
         if self._reauth_entry is None:
-            return self.async_abort(reason="invalid_auth")
+            return self.async_abort(reason="reauth_failed")
 
         if user_input is not None:
             country = self._selected_country
@@ -407,6 +465,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 account = await self._async_validate_token(country, token_data, errors)
                 if account is not None:
+                    await self._async_guard_same_account(self._reauth_entry, country, account)
                     # Replace the stale token fields; drop any older timing keys not present
                     # in the new payload so expiry math reflects only the fresh token.
                     return self.async_update_reload_and_abort(
@@ -434,8 +493,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if account is None:
             return None
 
-        account_id = account.get("account_id") or account.get("subscription_id")
-        await self.async_set_unique_id(f"{country}::{account_id}")
+        await self.async_set_unique_id(_account_unique_id(country, account))
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
@@ -454,8 +512,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if account is None:
             return None
 
-        account_id = account.get("account_id") or account.get("subscription_id")
-        await self.async_set_unique_id(f"{country}::{account_id}")
+        await self.async_set_unique_id(_account_unique_id(country, account))
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=f"HelloFresh ({country.upper()})",
@@ -471,7 +528,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ):
         """Validate credentials and update the existing config entry."""
         if self._reauth_entry is None:
-            return self.async_abort(reason="invalid_auth")
+            return self.async_abort(reason="reauth_failed")
 
         country = self._selected_country
         tokens: dict[str, object] = {}
@@ -489,6 +546,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if account is None:
             return None
 
+        await self._async_guard_same_account(self._reauth_entry, country, account)
         # Credentials live in entry.data only; never write them into options.
         return self.async_update_reload_and_abort(
             self._reauth_entry,
@@ -510,46 +568,14 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         The auth object the login obtains is written into ``tokens`` in place, so the caller
         can persist it with the credentials.
         """
-        session = async_create_clientsession(self.hass, auto_cleanup=False)
-        client = HelloFreshClient(
-            session=session,
-            country=country,
+        return await self._async_validate_sign_in(
+            errors,
             username=username,
+            country=country,
             password=password,
             enable_public_menu_fallback=enable_public_menu_fallback,
-            use_curl_cffi_headers=self._existing_header_option(),
-            log_auth_diagnostics=self._existing_auth_logging_option(),
             token_refresh_callback=tokens.update if tokens is not None else None,
         )
-        try:
-            return await client.async_validate_credentials()
-        except HelloFreshPasswordResetRequiredError:
-            errors["base"] = "password_reset_required"
-            return None
-        except HelloFreshLoginRejectedError:
-            # Tell an unknown email (or the wrong country) from a wrong password when HelloFresh
-            # answers; asked only now, so a successful sign-in sends no extra request.
-            registered = await client.async_email_registered(username)
-            if registered is None:
-                errors["base"] = "invalid_auth"
-            else:
-                errors["base"] = "wrong_password" if registered else "email_not_registered"
-            return None
-        except HelloFreshAuthError:
-            errors["base"] = "invalid_auth"
-            return None
-        except HelloFreshBotBlockedError:
-            errors["base"] = "bot_blocked"
-            return None
-        except HelloFreshRateLimitedError:
-            errors["base"] = "too_many_attempts"
-            return None
-        except HelloFreshError:
-            errors["base"] = "cannot_connect"
-            return None
-        finally:
-            await async_close_shared_session(session)
-            session.detach()
 
     async def _async_validate_token(
         self,
@@ -565,38 +591,72 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ``token_data`` in place, so callers persist the LIVE token pair — persisting the
         pre-rotation pair stored a dead refresh token and 401'd minutes after setup.
         """
+        return await self._async_validate_sign_in(
+            errors,
+            country=country,
+            access_token=token_data.get(CONF_ACCESS_TOKEN),
+            refresh_token=token_data.get(CONF_REFRESH_TOKEN),
+            # Pass the pasted timing so a genuinely fresh token isn't rotated needlessly.
+            token_issued_at=token_data.get(CONF_ISSUED_AT),
+            token_expires_in=token_data.get(CONF_EXPIRES_IN),
+            refresh_expires_in=token_data.get(CONF_REFRESH_EXPIRES_IN),
+            refresh_token_issued_at=token_data.get(CONF_REFRESH_TOKEN_ISSUED_AT),
+            token_type=token_data.get(CONF_TOKEN_TYPE),
+            token_refresh_callback=token_data.update,
+        )
+
+    async def _async_validate_sign_in(
+        self, errors: dict[str, str], **client_options: Any
+    ) -> dict | None:
+        """Read the account with a throwaway client; on failure set ``errors`` and return None.
+
+        Shared by the email-and-password and the token paths: one client lifecycle and one
+        mapping from what went wrong to the message shown. Only the credentials path passes
+        a ``username``, which picks its wording over the token path's.
+        """
+        username: str | None = client_options.get("username")
         session = async_create_clientsession(self.hass, auto_cleanup=False)
         client = HelloFreshClient(
             session=session,
-            country=country,
             use_curl_cffi_headers=self._existing_header_option(),
             log_auth_diagnostics=self._existing_auth_logging_option(),
-            access_token=token_data.get(CONF_ACCESS_TOKEN),  # type: ignore[arg-type]
-            refresh_token=token_data.get(CONF_REFRESH_TOKEN),  # type: ignore[arg-type]
-            # Pass the pasted timing so a genuinely fresh token isn't rotated needlessly.
-            token_issued_at=token_data.get(CONF_ISSUED_AT),  # type: ignore[arg-type]
-            token_expires_in=token_data.get(CONF_EXPIRES_IN),  # type: ignore[arg-type]
-            refresh_expires_in=token_data.get(CONF_REFRESH_EXPIRES_IN),  # type: ignore[arg-type]
-            refresh_token_issued_at=token_data.get(  # type: ignore[arg-type]
-                CONF_REFRESH_TOKEN_ISSUED_AT
-            ),
-            token_type=token_data.get(CONF_TOKEN_TYPE),  # type: ignore[arg-type]
-            token_refresh_callback=token_data.update,
+            **client_options,
         )
         try:
             return await client.async_validate_credentials()
-        except HelloFreshAuthError:
-            errors["base"] = "invalid_token"
-            return None
+        except HelloFreshNoSubscriptionError:
+            # The sign-in worked; there is just no subscription to show.
+            errors["base"] = "no_subscription"
+        except HelloFreshAuthError as err:
+            errors["base"] = await self._async_auth_error_key(client, err, username)
         except HelloFreshBotBlockedError:
-            errors["base"] = "bot_blocked_token"
-            return None
+            errors["base"] = "bot_blocked" if username is not None else "bot_blocked_token"
+        except HelloFreshRateLimitedError:
+            errors["base"] = "too_many_attempts"
         except HelloFreshError:
             errors["base"] = "cannot_connect"
-            return None
         finally:
-            await async_close_shared_session(session)
+            # Closes the curl sessions pooled for this one-off aiohttp session.
+            await client.async_close()
             session.detach()
+        return None
+
+    @staticmethod
+    async def _async_auth_error_key(
+        client: HelloFreshClient, err: HelloFreshAuthError, username: str | None
+    ) -> str:
+        """Pick the message for a sign-in HelloFresh refused."""
+        if username is None:
+            return "invalid_token"
+        if isinstance(err, HelloFreshPasswordResetRequiredError):
+            return "password_reset_required"
+        if isinstance(err, HelloFreshLoginRejectedError):
+            # Tell an unknown email (or the wrong country) from a wrong password when HelloFresh
+            # answers; asked only now, so a successful sign-in sends no extra request.
+            registered = await client.async_email_registered(username)
+            if registered is not None:
+                return "wrong_password" if registered else "email_not_registered"
+        return "invalid_auth"
 
     def _existing_header_option(self) -> bool:
         """Use an existing entry's header setting during reauth and reconfigure."""
@@ -627,7 +687,7 @@ class HelloFreshOptionsFlow(config_entries.OptionsFlowWithReload):
     reloads the entry so they take effect; saving them unchanged does not.
     """
 
-    async def async_step_init(self, user_input: dict[str, str] | None = None):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage options.
 
         Options store ONLY user preferences (refresh interval, past-history window, public
@@ -820,15 +880,19 @@ def _week_tab_fields() -> list[tuple[str, object, object]]:
     ]
 
 
-def _week_tab_schema(options: dict[str, object]) -> dict[vol.Marker, object]:
+def _week_tab_schema(options: Mapping[str, object]) -> dict[vol.Marker, object]:
     return {
         vol.Required(key, default=options.get(key, default)): selector
         for key, default, selector in _week_tab_fields()
     }
 
 
-def _week_tab_options(values: dict[str, object]) -> dict[str, object]:
-    """The Week tab section's submitted values, as flat options (minutes as whole numbers)."""
+def _week_tab_options(values: Mapping[str, Any]) -> dict[str, object]:
+    """The Week tab section's submitted values, as flat options (minutes as whole numbers).
+
+    ``values`` is what the form submitted, already checked by the section's schema: a number
+    for each minutes field, so ``int`` can take it.
+    """
     out: dict[str, object] = {}
     for key, default, _selector in _week_tab_fields():
         value = values.get(key, default)

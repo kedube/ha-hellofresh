@@ -1,17 +1,17 @@
 /*
- * HelloFresh shared recipe-detail overlay
- * ---------------------------------------
+ * HelloFresh recipe sheet
+ * -----------------------
  * A tap-through "full recipe" sheet — ingredients with amounts, a servings switcher that
  * rescales them (each with its photo and the allergens it contains), step-by-step instructions
  * with HelloFresh's bold ingredient names, step photos and timers, utensils, allergens, the
- * per-serving nutrition table, the recipe video and the printable recipe-card PDF — used by the
- * Recipes, Meal planner and Market cards.
+ * per-serving nutrition table, the recipe video and the printable recipe-card PDF. The
+ * HelloFresh card opens it from the Menu, the Market, Recipes, the Week tab and a delivery's
+ * details; it loads in the background, so the card's first paint never waits on it.
  *
- * Extracted so the three cards share one implementation. Several non-obvious details are baked
- * in here that were each a shipped bug at some point:
+ * Several non-obvious details are baked in here that were each a shipped bug at some point:
  *
  *   * The overlay is appended to the SHADOW ROOT, beside <ha-card>, so the grid's overflow
- *     cannot clip it. That also means a host card's delegated click listener never sees the
+ *     cannot clip it. That also means the card's delegated click listener never sees the
  *     overlay's clicks, so it binds its own.
  *   * The backdrop is matched by IDENTITY (`ev.target === overlay`), never by a marker
  *     attribute on the overlay: `closest()` walks *up* from the event target, so a marker there
@@ -20,69 +20,37 @@
  *   * No propagation guard on `.detailbox` — the ✕ lives inside it, so swallowing clicks there
  *     also swallows the close button.
  *   * Step text is escaped BEFORE newlines become <br>, or the break markup is escaped away.
+ *   * The sheet is drawn in place: the dialog is built once, a tap on Add / + / − redraws the
+ *     footer alone, and a change of servings keeps the recipe on screen (dimmed, at the same
+ *     scroll position) until the rescaled one arrives. Redrawing the whole sheet sent a reader
+ *     at step 6 back to the top on every tap.
  *
- * The host card supplies a `callService(service, data)` function and its shadow root; this
- * module owns everything else, including its own styles.
+ * The card supplies a `callService(service, data)` function and its shadow root; this module
+ * owns everything else, including its own styles. Escaping, URL checks, image resizing and
+ * durations are the shared helpers' (hellofresh-shared.js), as everywhere in the card.
  *
- * A host may also supply `getSelection()` — consulted on every render while the sheet is
- * open. Returning null renders a plain read-only sheet; returning
- * `{ qty, maxQty, add, inc, dec }` pins a selection footer to the sheet ("+ Add" when
- * qty is 0, a ± servings stepper otherwise), completing the "read it, then decide" flow
- * on the meal planner's editable weeks. The callbacks mutate the HOST's pending selection
- * (the host re-renders its own grid); the sheet only re-renders its footer. An optional
- * `unit` ("item") relabels the stepper for things counted rather than served, like Market
- * add-ons; without it the footer reads in servings, as it always has.
+ * The card may also supply:
+ *
+ *   * `getSelection()` — consulted while the sheet is open. Returning null renders a plain
+ *     read-only sheet; returning `{ qty, maxQty, add, inc, dec }` pins a selection footer to the
+ *     sheet ("+ Add" when qty is 0, a ± servings stepper otherwise), completing the "read it,
+ *     then decide" flow on an editable week. The callbacks mutate the CARD's pending selection
+ *     (the card re-renders its own grid). An optional `unit` ("item") relabels the stepper for
+ *     things counted rather than served, like Market add-ons.
+ *   * `captureFocus()` / `returnFocus(state)` — what had focus when the sheet opened, and how to
+ *     give it back on close. The card re-renders behind the sheet, so only it can find the
+ *     control again; without these the element itself is remembered.
+ *   * `onToggle()` — called when the sheet opens and closes (the card makes what is behind it
+ *     inert meanwhile).
  */
 
-// The card text layer (hellofresh-i18n.js), loaded with this module's own ?v= stamp: the sheet
-// reads in the HelloFresh card's language.
-const I18n = await import(
-  new URL(
-    `./hellofresh-i18n.js?v=${encodeURIComponent(new URL(import.meta.url).searchParams.get("v") || "unknown")}`,
-    import.meta.url
-  ).href
-);
+// The shared helpers and the card text layer (hellofresh-i18n.js), loaded with this module's own
+// ?v= stamp: the sheet reads in the HelloFresh card's language.
+const DETAIL_VERSION = encodeURIComponent(new URL(import.meta.url).searchParams.get("v") || "unknown");
+const I18n = await import(new URL(`./hellofresh-i18n.js?v=${DETAIL_VERSION}`, import.meta.url).href);
+const shared = await import(new URL(`./hellofresh-shared.js?v=${DETAIL_VERSION}`, import.meta.url).href);
 const { t, ht } = I18n;
-
-// ---- helpers (self-contained: this module must not depend on a host card's internals) ------
-
-export function escapeHtml(value) {
-  return String(value == null ? "" : value).replace(
-    /[&<>"']/g,
-    (ch) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch],
-  );
-}
-
-export function safeHttpUrl(url) {
-  return url && /^https?:\/\//i.test(String(url)) ? String(url) : "";
-}
-
-// Request a HelloFresh image at the width actually displayed: the hero JPEGs are ~1.7 MB
-// untransformed and ~73 KB at w_640. Mirrors the recipes card's resizer, including the
-// `hellofresh_s3` path segment the CDN requires.
-export function resizedImage(url, width) {
-  if (!url || !/^https?:\/\//i.test(String(url))) return "";
-  const raw = String(url);
-  if (!width) return raw;
-  if (raw.includes("/hellofresh_s3/")) {
-    if (/[/,]w_\d+/.test(raw)) return raw.replace(/([/,])w_\d+/, `$1w_${width}`);
-    if (/\/(?:[a-z]{1,2}_[^/]+)\/hellofresh_s3\//.test(raw)) {
-      return raw.replace("/hellofresh_s3/", `,w_${width}/hellofresh_s3/`);
-    }
-    return raw.replace("/hellofresh_s3/", `/f_auto,fl_lossy,q_auto,w_${width}/hellofresh_s3/`);
-  }
-  if (raw.includes("/q_auto/")) return raw.replace("/q_auto/", `/q_auto,w_${width}/`);
-  return raw.replace(/\/\d+,\d+\/image\//, `/${width},0/image/`);
-}
-
-export function formatMinutes(minutes) {
-  if (!minutes && minutes !== 0) return "";
-  if (minutes < 60) return t("time.duration.minutes", { minutes });
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? t("time.duration.hours_minutes", { hours, minutes: rest }) : t("time.duration.hours", { hours });
-}
+const { esc, safeUrl, resizedImage, formatMinutes, keepTabInside } = shared;
 
 // Step timers arrive in seconds so a short "rest 30 sec" timer survives; whole minutes read
 // exactly like the recipe times above.
@@ -130,6 +98,12 @@ export const DETAIL_STYLES = `
     color: var(--secondary-text-color); padding: 4px 8px; border-radius: 6px;
   }
   .detailclose:hover { background: var(--divider-color); }
+  /* The dialog takes focus when it opens so Tab starts inside it; its controls show their own
+     focus rings. */
+  .detailbox:focus { outline: none; }
+  /* A change of servings: the recipe stays, dimmed, until the rescaled amounts arrive. */
+  .detailscroll.busy { opacity: 0.5; transition: opacity 0.15s; }
+  .detailnote { padding: 8px 14px 0; font-size: 0.85em; color: var(--error-color, #db4437); }
   /* The panel itself is capped at 88vh; only the body scrolls, so the title and close
      button stay reachable on a long recipe. */
   .detailscroll { overflow-y: auto; padding: 12px 14px 16px; }
@@ -228,18 +202,27 @@ export const DETAIL_STYLES = `
  * @param {(service: string, data: object) => Promise<object>} options.callService
  * @param {(() => ({qty: number, maxQty: number, add: Function, inc: Function, dec: Function}|null))=} options.getSelection
  *        optional: selection state + mutators for the OPEN recipe, or null for read-only
+ * @param {(() => object|null)=} options.captureFocus    optional: what has focus, for returnFocus
+ * @param {((state: object) => void)=} options.returnFocus
+ * @param {(() => void)=} options.onToggle               optional: the sheet opened or closed
  */
 export class RecipeDetailOverlay {
-  constructor({ getRoot, callService, getSelection }) {
+  constructor({ getRoot, callService, getSelection, captureFocus, returnFocus, onToggle }) {
     this._getRoot = getRoot;
     this._callService = callService;
     this._getSelection = getSelection || null;
+    this._captureFocus = captureFocus || null;
+    this._returnFocus = returnFocus || null;
+    this._onToggle = onToggle || null;
     this._id = null;
     this._servings = null;
     this._detail = null;
     this._error = null;
     this._loading = false;
     this._overlay = null;
+    this._box = null; // the dialog inside the overlay
+    this._shown = null; // the recipe id the dialog last drew (its scroll position is kept)
+    this._opener = null; // what had focus when the sheet opened
     this._keyHandler = null;
     this._seq = 0; // stale-response guard: comparing ids alone can't tell servings apart
   }
@@ -255,9 +238,11 @@ export class RecipeDetailOverlay {
     // several fetches for the SAME id, and whichever response lands last would otherwise
     // win — showing amounts for a serving size the user has already switched away from.
     const seq = ++this._seq;
+    // The same recipe at another serving size stays on screen until the new amounts arrive;
+    // another recipe has nothing worth keeping.
+    if (this._id !== String(recipeId)) this._detail = null;
     this._id = String(recipeId);
     this._servings = servings || null;
-    this._detail = null;
     this._error = null;
     this._loading = true;
     this._render();
@@ -284,10 +269,12 @@ export class RecipeDetailOverlay {
   /** Tear the sheet down, including its document-level key listener. */
   close() {
     this._seq += 1; // orphan any in-flight fetch
+    const wasOpen = Boolean(this._overlay);
     this._id = null;
     this._detail = null;
     this._error = null;
     this._loading = false;
+    this._shown = null;
     if (this._keyHandler) {
       document.removeEventListener("keydown", this._keyHandler);
       this._keyHandler = null;
@@ -295,7 +282,15 @@ export class RecipeDetailOverlay {
     if (this._overlay) {
       this._overlay.remove();
       this._overlay = null;
+      this._box = null;
     }
+    if (!wasOpen) return;
+    // What is behind the sheet becomes reachable again first, then focus goes back to it.
+    if (this._onToggle) this._onToggle();
+    const opener = this._opener;
+    this._opener = null;
+    if (this._returnFocus) this._returnFocus(opener);
+    else if (opener && opener.isConnected) opener.focus({ preventScroll: true });
   }
 
   _render() {
@@ -306,8 +301,15 @@ export class RecipeDetailOverlay {
       return;
     }
     if (!this._overlay) {
+      this._opener = this._captureFocus ? this._captureFocus() : root.activeElement;
       const overlay = document.createElement("div");
       overlay.className = "detailwrap";
+      const box = document.createElement("div");
+      box.className = "detailbox";
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-modal", "true");
+      box.tabIndex = -1;
+      overlay.append(box);
       // The overlay sits beside <ha-card> in the shadow root, so the host card's delegated
       // listener never sees these clicks — it binds its own. Backdrop matched by identity;
       // see the module header for why a marker attribute would be wrong.
@@ -317,8 +319,8 @@ export class RecipeDetailOverlay {
           this.open(this._id, Number(servingsBtn.getAttribute("data-servings")));
           return;
         }
-        // Selection footer: mutate the host's pending selection, then re-render so the
-        // footer reflects the new quantity (the host re-renders its own grid itself).
+        // Selection footer: mutate the host's pending selection, then redraw the footer alone
+        // (the host re-renders its own grid itself). The recipe above it is not touched.
         const selBtn = ev.target.closest("[data-sel]");
         if (selBtn && !selBtn.disabled) {
           const sel = this._getSelection && this._getSelection();
@@ -327,34 +329,91 @@ export class RecipeDetailOverlay {
             if (action === "add") sel.add();
             else if (action === "inc") sel.inc();
             else if (action === "dec") sel.dec();
-            this._render();
+            this._renderFooter(action);
           }
           return;
         }
         if (ev.target === overlay || ev.target.closest(".detailclose")) this.close();
       });
+      // Tab stays inside the sheet while it is open.
+      overlay.addEventListener("keydown", (ev) => keepTabInside(ev, this._box, this._getRoot().activeElement));
       root.appendChild(overlay);
       this._overlay = overlay;
+      this._box = box;
       this._keyHandler = (ev) => {
         if (ev.key === "Escape") this.close();
       };
       document.addEventListener("keydown", this._keyHandler);
+      if (this._onToggle) this._onToggle();
+      box.focus({ preventScroll: true });
     }
-    this._overlay.innerHTML = this._body();
+    const box = this._box;
+    const hadFocus = box.contains(root.activeElement);
+    const focused = hadFocus ? this._focusSelector(root.activeElement) : "";
+    // The same recipe drawn again (other amounts, a failed re-read) keeps its place.
+    const scroller = this._shown === this._id ? box.querySelector(".detailscroll") : null;
+    const top = scroller ? scroller.scrollTop : 0;
+    this._shown = this._id;
+    box.setAttribute("aria-label", (this._detail && this._detail.name) || t("recipe.loading"));
+    box.setAttribute("aria-busy", String(this._loading));
+    box.innerHTML = this._body();
+    const next = box.querySelector(".detailscroll");
+    if (next && top) next.scrollTop = top;
+    if (hadFocus && !root.activeElement) {
+      // The pressed control was redrawn: back onto its replacement, else the dialog itself.
+      const again = focused ? box.querySelector(focused) : null;
+      (again || box).focus({ preventScroll: true });
+    }
   }
 
+  // How to find a control of the sheet again after it has been redrawn.
+  _focusSelector(el) {
+    if (!el || !el.getAttribute) return "";
+    for (const name of ["data-servings", "data-sel"]) {
+      if (el.hasAttribute(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
+    }
+    if (el.classList.contains("detailclose")) return ".detailclose";
+    return el.localName === "a" && el.getAttribute("href") ? `a[href="${CSS.escape(el.getAttribute("href"))}"]` : "";
+  }
+
+  // Redraw the Add/servings footer in place after a tap on it (`pressed`: add, inc or dec).
+  _renderFooter(pressed) {
+    const box = this._box;
+    const root = this._getRoot();
+    if (!box || !root) return;
+    const old = box.querySelector(".selfooter");
+    const hadFocus = Boolean(old) && old.contains(root.activeElement);
+    const template = document.createElement("template");
+    template.innerHTML = this._selectionBar().trim();
+    const fresh = template.content.firstElementChild;
+    if (old && fresh) old.replaceWith(fresh);
+    else if (old) old.remove();
+    else if (fresh) box.append(fresh);
+    if (!hadFocus || !fresh) return;
+    // The pressed control may be gone: "+ Add" turns into the stepper, and − at one serving
+    // brings "+ Add" back. Focus goes to the control standing in for it.
+    const stand = { add: ["inc", "dec"], inc: ["inc", "dec"], dec: ["dec", "add", "inc"] }[pressed] || [];
+    for (const name of stand) {
+      const el = fresh.querySelector(`[data-sel="${name}"]:not([disabled])`);
+      if (el) {
+        el.focus({ preventScroll: true });
+        return;
+      }
+    }
+  }
+
+  // What goes inside the dialog.
   _body() {
-    const close = `<button class="detailclose" title="${ht("common.close")}" aria-label="${ht("recipe.close")}">✕</button>`;
-    if (this._loading && !this._detail) {
-      return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg">${ht("recipe.loading")}</div></div>`;
-    }
-    if (this._error) {
-      return `<div class="detailbox"><div class="detailhead">${close}</div>
-                <div class="msg err">${escapeHtml(this._error)}</div></div>`;
-    }
+    const close = `<button class="detailclose" title="${ht("common.close")}" aria-label="${ht("recipe.close")}"><span aria-hidden="true">✕</span></button>`;
     const r = this._detail;
-    if (!r) return `<div class="detailbox"><div class="detailhead">${close}</div></div>`;
+    if (!r) {
+      const message = this._loading
+        ? `<div class="msg" role="status">${ht("recipe.loading")}</div>`
+        : this._error
+          ? `<div class="msg err" role="alert">${esc(this._error)}</div>`
+          : "";
+      return `<div class="detailhead">${close}</div>${message}`;
+    }
 
     const facts = [];
     if (r.total_time_minutes || r.prep_time_minutes) {
@@ -366,6 +425,8 @@ export class RecipeDetailOverlay {
 
     // Serving switcher: amounts are resolved server-side per yield, so changing this refetches.
     const yields = Array.isArray(r.available_yields) ? r.available_yields : [];
+    // While the rescaled amounts are on their way, the size just picked is the one marked.
+    const shownYield = this._loading && this._servings ? this._servings : r.servings;
     const servingsBar =
       yields.length > 1
         ? `<div class="servings">
@@ -373,8 +434,8 @@ export class RecipeDetailOverlay {
              ${yields
                .map(
                  (y) =>
-                   `<button class="sbtn ${y === r.servings ? "active" : ""}"
-                      data-servings="${escapeHtml(y)}">${escapeHtml(y)}</button>`,
+                   `<button class="sbtn ${y === shownYield ? "active" : ""}" aria-pressed="${y === shownYield}"
+                      data-servings="${esc(y)}">${esc(y)}</button>`,
                )
                .join("")}
            </div>`
@@ -392,9 +453,9 @@ export class RecipeDetailOverlay {
         // without one keeps an empty 32px slot so the names stay aligned.
         const thumb = resizedImage(i.image_url, INGREDIENT_IMAGE_WIDTH);
         const pic = thumb
-          ? `<img class="ingimg" src="${escapeHtml(thumb)}" alt="" loading="lazy" decoding="async">`
+          ? `<img class="ingimg" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`
           : `<span class="ingimg"></span>`;
-        return `<li>${pic}<span class="ingtext">${escapeHtml(amount)}${escapeHtml(
+        return `<li>${pic}<span class="ingtext">${esc(amount)}${esc(
           i.name || "",
         )}${pantry}${contains}</span></li>`;
       })
@@ -413,33 +474,33 @@ export class RecipeDetailOverlay {
                   `<p class="steppara">${runs
                     .map((run) =>
                       run && run.bold
-                        ? `<strong>${escapeHtml(run.text)}</strong>`
-                        : escapeHtml(run && run.text),
+                        ? `<strong>${esc(run.text)}</strong>`
+                        : esc(run && run.text),
                     )
                     .join("")}</p>`,
               )
               .join("")
-          : escapeHtml(s.instructions || "").replace(/\n/g, "<br>");
+          : esc(s.instructions || "").replace(/\n/g, "<br>");
         const photo = resizedImage(s.image_url, STEP_IMAGE_WIDTH);
         const caption = photo && s.caption ? String(s.caption) : "";
         const timers = (Array.isArray(s.timers) ? s.timers : [])
-          .map((t) => {
-            const time = formatSeconds(t && t.seconds);
+          .map((timer) => {
+            const time = formatSeconds(timer && timer.seconds);
             if (!time) return "";
             // HelloFresh names a timer after its step, so beside a captioned photo the name
             // would just repeat the caption; show only the time then.
             const name =
-              t.name && String(t.name).trim().toLowerCase() !== caption.trim().toLowerCase()
-                ? t.name
+              timer.name && String(timer.name).trim().toLowerCase() !== caption.trim().toLowerCase()
+                ? timer.name
                 : "";
-            return `<span class="steptimer">⏱ ${escapeHtml(name ? `${name} · ${time}` : time)}</span>`;
+            return `<span class="steptimer">⏱ ${esc(name ? `${name} · ${time}` : time)}</span>`;
           })
           .join("");
         const figure = photo
           ? `<figure class="stepfig">
-               <img class="stepimg" src="${escapeHtml(photo)}" alt="${ht("recipe.step", { number: i + 1 })}"
+               <img class="stepimg" src="${esc(photo)}" alt="${ht("recipe.step", { number: i + 1 })}"
                  loading="lazy" decoding="async">
-               ${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}
+               ${caption ? `<figcaption>${esc(caption)}</figcaption>` : ""}
              </figure>`
           : "";
         return `<li><div class="step">
@@ -456,33 +517,33 @@ export class RecipeDetailOverlay {
     const nutritionTable = nutrition.length
       ? `<h4>${ht("recipe.nutrition")} <span class="slabel">${ht("recipe.per_serving")}</span></h4>
          <dl class="nutri">${nutrition
-           .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
+           .map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`)
            .join("")}</dl>`
       : "";
     const labels = (Array.isArray(r.labels) ? r.labels : []).filter(Boolean);
 
     const img = resizedImage(r.image_url, 640);
-    const link = safeHttpUrl(r.url);
-    const card = safeHttpUrl(r.card_url);
-    const video = safeHttpUrl(r.video_url);
+    const link = safeUrl(r.url);
+    const card = safeUrl(r.card_url);
+    const video = safeUrl(r.video_url);
     return `
-      <div class="detailbox">
         <div class="detailhead">
-          <span class="detailtitle">${escapeHtml(r.name)}</span>
+          <span class="detailtitle">${esc(r.name)}</span>
           ${close}
         </div>
-        <div class="detailscroll">
-          ${img ? `<img class="detailimg" src="${escapeHtml(img)}" alt="${escapeHtml(r.name)}">` : ""}
-          ${r.headline ? `<div class="detailheadline">${escapeHtml(r.headline)}</div>` : ""}
+        ${this._error ? `<div class="detailnote" role="alert">${esc(this._error)}</div>` : ""}
+        <div class="detailscroll${this._loading ? " busy" : ""}">
+          ${img ? `<img class="detailimg" src="${esc(img)}" alt="${esc(r.name)}">` : ""}
+          ${r.headline ? `<div class="detailheadline">${esc(r.headline)}</div>` : ""}
           ${
             labels.length
               ? `<div class="detaillabels">${labels
-                  .map((l) => `<span class="detaillabel">${escapeHtml(l)}</span>`)
+                  .map((l) => `<span class="detaillabel">${esc(l)}</span>`)
                   .join("")}</div>`
               : ""
           }
-          ${facts.length ? `<div class="facts">${escapeHtml(facts.join(" · "))}</div>` : ""}
-          ${r.description ? `<p class="detaildesc">${escapeHtml(r.description)}</p>` : ""}
+          ${facts.length ? `<div class="facts">${esc(facts.join(" · "))}</div>` : ""}
+          ${r.description ? `<p class="detaildesc">${esc(r.description)}</p>` : ""}
           ${
             (r.allergens || []).length
               ? `<div class="allerg">${ht("recipe.allergens", { allergens: r.allergens.join(", ") })}</div>`
@@ -492,19 +553,18 @@ export class RecipeDetailOverlay {
           ${ingredients ? `<h4>${ht("recipe.ingredients")}</h4><ul class="ing">${ingredients}</ul>` : ""}
           ${
             (r.utensils || []).length
-              ? `<h4>${ht("recipe.utensils")}</h4><div class="utensils">${escapeHtml(r.utensils.join(" · "))}</div>`
+              ? `<h4>${ht("recipe.utensils")}</h4><div class="utensils">${esc(r.utensils.join(" · "))}</div>`
               : ""
           }
           ${steps ? `<h4>${ht("recipe.instructions")}</h4><ol class="steps">${steps}</ol>` : ""}
           ${nutritionTable}
           <div class="detaillinks">
-            ${video ? `<a href="${escapeHtml(video)}" target="_blank" rel="noopener noreferrer">${ht("recipe.video")}</a>` : ""}
-            ${card ? `<a href="${escapeHtml(card)}" target="_blank" rel="noopener noreferrer">${ht("recipe.card_pdf")}</a>` : ""}
-            ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${ht("recipe.view_site")}</a>` : ""}
+            ${video ? `<a href="${esc(video)}" target="_blank" rel="noopener noreferrer">${ht("recipe.video")}</a>` : ""}
+            ${card ? `<a href="${esc(card)}" target="_blank" rel="noopener noreferrer">${ht("recipe.card_pdf")}</a>` : ""}
+            ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${ht("recipe.view_site")}</a>` : ""}
           </div>
         </div>
-        ${this._selectionBar()}
-      </div>`;
+        ${this._selectionBar()}`;
   }
 
   // The pinned Add/servings footer, rendered only when the host supplies selection state for

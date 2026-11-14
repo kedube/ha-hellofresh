@@ -7,9 +7,13 @@ This platform shipped with **no test coverage at all**, and two defects were sit
    00:00 local, so any window that did not begin exactly at midnight dropped that day's
    delivery — a calendar card asking for ``Aug 20 08:00 → Aug 21`` returned nothing even
    though the box arrives on Aug 20.
-2. Both ``async_get_events`` and ``_event_sort_key`` built *naive* datetimes from all-day
+2. Both ``async_get_events`` and the next-event sort built *naive* datetimes from all-day
    ``date`` values and compared them against Home Assistant's *aware* bounds, which raises
    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+
+A later review found two more: the entity's ``event`` skipped today's delivery (so the
+calendar was never on during delivery day), and skipped or paused weeks showed up as
+deliveries.
 
 The tests below exercise the entity's real methods against stub coordinator data.
 """
@@ -21,8 +25,16 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.const import STATE_OFF, STATE_ON
 
+from custom_components.hellofresh.api import (
+    HelloFreshAccountData,
+    HelloFreshOrder,
+    HelloFreshSubscription,
+    HelloFreshWeek,
+)
 from custom_components.hellofresh.calendar import HelloFreshDeliveryCalendar
+from custom_components.hellofresh.parsers import local_today
 
 UTC = timezone.utc
 
@@ -41,10 +53,16 @@ def _order(order_id: str, delivery_date: date | None, **extra: object) -> Simple
     )
 
 
-def _calendar(orders: list[SimpleNamespace]) -> HelloFreshDeliveryCalendar:
-    """Build the real entity around a stub coordinator, bypassing HA's entity plumbing."""
+def _calendar(orders: list, data: object | None = None) -> HelloFreshDeliveryCalendar:
+    """Build the real entity around a stub coordinator, bypassing HA's entity plumbing.
+
+    ``data`` is real account data for the tests that need weeks; the rest get a stub with
+    just the orders and no weeks to look up.
+    """
+    if data is None:
+        data = SimpleNamespace(orders=orders, weeks=[], get_week=lambda *_args: None)
     coordinator = SimpleNamespace(
-        data=SimpleNamespace(orders=orders),
+        data=data,
         config_entry=SimpleNamespace(entry_id="entry1"),
     )
     cal = HelloFreshDeliveryCalendar.__new__(HelloFreshDeliveryCalendar)
@@ -112,7 +130,7 @@ def test_get_events_does_not_raise_on_all_day_events() -> None:
 
 def test_next_event_prefers_the_soonest_upcoming_delivery() -> None:
     """`event` drives the entity state and must sort all-day events without raising."""
-    today = date.today()
+    today = local_today()
     cal = _calendar(
         [
             _order("past", today - timedelta(days=14)),
@@ -128,6 +146,143 @@ def test_next_event_prefers_the_soonest_upcoming_delivery() -> None:
 def test_next_event_is_none_without_orders() -> None:
     """An account with no dated orders has no calendar event."""
     assert _calendar([]).event is None
+
+
+def test_todays_delivery_is_the_current_event_and_turns_the_calendar_on() -> None:
+    """On delivery day the calendar is on and describes today's box, not next week's.
+
+    An all-day delivery starts at local midnight, so one second later it no longer counted
+    as "upcoming": ``event`` moved on to next week's delivery and the entity stayed off for
+    the whole delivery day.
+    """
+    today = local_today()
+    cal = _calendar(
+        [
+            _order("past", today - timedelta(days=7)),
+            _order("today", today),
+            _order("next", today + timedelta(days=7)),
+        ]
+    )
+    assert cal.event is not None
+    assert cal.event.start == today
+    assert cal.state == STATE_ON
+
+
+def test_no_event_once_every_delivery_is_behind_us() -> None:
+    """With nothing left to deliver there is no event; the oldest order is not "next"."""
+    today = local_today()
+    cal = _calendar(
+        [_order("old", today - timedelta(days=70)), _order("last", today - timedelta(days=1))]
+    )
+    assert cal.event is None
+    assert cal.state == STATE_OFF
+
+
+def _week_and_order(week_id: str, day: date, **week_fields: object) -> tuple:
+    week = HelloFreshWeek(
+        week_id=week_id,
+        display_name=week_id,
+        subscription_id="sub-1",
+        delivery_date=day,
+        **week_fields,
+    )
+    order = HelloFreshOrder(
+        order_id=f"order-{week_id}",
+        week_id=week_id,
+        status=str(week_fields.get("status") or "RUNNING"),
+        subscription_id="sub-1",
+        delivery_date=day,
+    )
+    return week, order
+
+
+def test_skipped_and_paused_weeks_are_not_deliveries() -> None:
+    """HelloFresh lists an order for every week; only the ones that ship go on the calendar.
+
+    A skipped week used to appear as an all-day "HelloFresh delivery: PAUSED" on a day no box
+    arrives, so calendar-trigger automations fired for it and ``event`` could point at it.
+    """
+    today = local_today()
+    skipped = _week_and_order("2026-W47", today + timedelta(days=4), is_skipped=True)
+    paused = _week_and_order("2026-W48", today + timedelta(days=11), status="PAUSED")
+    shipping = _week_and_order("2026-W49", today + timedelta(days=18), status="RUNNING")
+    data = HelloFreshAccountData(
+        weeks=[skipped[0], paused[0], shipping[0]],
+        orders=[skipped[1], paused[1], shipping[1]],
+        subscriptions=[HelloFreshSubscription(subscription_id="sub-1")],
+    ).finalize()
+
+    cal = _calendar([], data)
+
+    assert [event.start for event in cal._events] == [today + timedelta(days=18)]
+    assert cal.event is not None
+    assert cal.event.summary == "HelloFresh delivery: RUNNING"
+
+
+def test_a_skipped_week_only_hides_its_own_subscriptions_order() -> None:
+    """Two subscriptions share ISO week ids: one skipping a week must not hide the other's box."""
+    day = local_today() + timedelta(days=4)
+    skipped = HelloFreshWeek(
+        week_id="2026-W47",
+        display_name="W47",
+        subscription_id="sub-1",
+        delivery_date=day,
+        is_skipped=True,
+    )
+    shipping = HelloFreshWeek(
+        week_id="2026-W47", display_name="W47", subscription_id="sub-2", delivery_date=day
+    )
+    orders = [
+        HelloFreshOrder(
+            order_id=f"order-{sub}",
+            week_id="2026-W47",
+            status="RUNNING",
+            subscription_id=sub,
+            delivery_date=day,
+        )
+        for sub in ("sub-1", "sub-2")
+    ]
+    data = HelloFreshAccountData(
+        weeks=[skipped, shipping],
+        orders=orders,
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1"),
+            HelloFreshSubscription(subscription_id="sub-2"),
+        ],
+    ).finalize()
+
+    cal = _calendar([], data)
+
+    assert [event.uid for event in cal._events] == ["entry1_order_order-sub-2"]
+
+
+def test_another_subscriptions_skipped_week_never_hides_an_order() -> None:
+    """An order whose own subscription has no week entry is not judged by another's week."""
+    day = local_today() + timedelta(days=4)
+    skipped = HelloFreshWeek(
+        week_id="2026-W47",
+        display_name="W47",
+        subscription_id="sub-1",
+        delivery_date=day,
+        is_skipped=True,
+    )
+    order = HelloFreshOrder(
+        order_id="order-sub-2",
+        week_id="2026-W47",
+        status="RUNNING",
+        subscription_id="sub-2",
+        delivery_date=day,
+    )
+    data = HelloFreshAccountData(
+        weeks=[skipped],
+        orders=[order],
+        subscriptions=[
+            HelloFreshSubscription(subscription_id="sub-1"),
+            HelloFreshSubscription(subscription_id="sub-2"),
+        ],
+    ).finalize()
+
+    assert [event.uid for event in _calendar([], data)._events] == ["entry1_order_order-sub-2"]
 
 
 def test_orders_without_a_delivery_date_are_skipped() -> None:

@@ -27,12 +27,14 @@ every request.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from importlib import util
 import json as _json
 import logging
 import re
 from typing import Any
 from urllib.parse import urlsplit
+from weakref import WeakSet
 
 from aiohttp import ClientError, ClientResponse, ClientSession
 
@@ -349,9 +351,15 @@ async def async_auth_post(
     needless reauth. aiohttp is used only when curl_cffi never attempted the request; a
     mid-request failure surfaces as ``aiohttp.ClientError`` for callers to treat as
     transient.
+
+    Redirects are never followed, on either transport. The body is the email and password or
+    the refresh token, and a 307 or 308 would have it posted again to wherever the redirect
+    points. The 3xx comes back to the caller as the failed request it is.
     """
     if not tls_impersonation_available():
-        return await session.post(url, params=params, json=json_payload, headers=headers)
+        return await session.post(
+            url, params=params, json=json_payload, headers=headers, allow_redirects=False
+        )
     try:
         response = await _curl_cffi_request(
             "POST",
@@ -362,13 +370,23 @@ async def async_auth_post(
             use_curl_cffi_headers=use_curl_cffi_headers,
             kind="login" if login else "auth",
             owner=session,
+            allow_redirects=False,
         )
     except Exception as err:
+        # Callers see only ClientError; the curl error's own type is what tells a timeout
+        # from a refused connection.
+        _LOGGER.debug(
+            "curl_cffi auth POST to %s failed (%s)",
+            _template_debug_path(urlsplit(url).path),
+            type(err).__name__,
+        )
         raise ClientError(f"curl_cffi auth POST failed: {type(err).__name__}") from err
     if response is None:
         # The impersonating session class vanished between the availability check and the
         # call (import raced/broken) — the request was never sent, so aiohttp is safe.
-        return await session.post(url, params=params, json=json_payload, headers=headers)
+        return await session.post(
+            url, params=params, json=json_payload, headers=headers, allow_redirects=False
+        )
     return response
 
 
@@ -388,6 +406,22 @@ async def async_auth_post(
 # cookie jar, as a browser's page and its XHRs do.
 _SHARED_SESSIONS: dict[tuple[Any, str, ClientSession | None], Any] = {}
 
+# Owners whose pooled sessions were closed for good (see async_close_shared_session). Weak, so
+# a closed aiohttp session is not kept alive just to be remembered here.
+_CLOSED_OWNERS: WeakSet[ClientSession] = WeakSet()
+
+
+class OwnerClosedError(RuntimeError):
+    """Raised when a request arrives for an entry whose curl sessions were already closed."""
+
+
+def _owner_closed(owner: ClientSession | None) -> bool:
+    """Return whether this owner's pooled sessions were closed for good."""
+    try:
+        return owner is not None and owner in _CLOSED_OWNERS
+    except TypeError:  # an owner that cannot be weakly referenced was never recorded
+        return False
+
 
 def _shared_curl_session(
     use_curl_cffi_headers: bool = False,
@@ -395,14 +429,21 @@ def _shared_curl_session(
     *,
     kind: str = "xhr",
 ) -> Any | None:
-    """Return the pooled curl_cffi session for this entry, event loop and header profile."""
-    if _ASYNC_SESSION_CLS is None:
+    """Return the pooled curl_cffi session for this entry, event loop and header profile.
+
+    Raises ``OwnerClosedError`` for an owner that was closed: a request still running when
+    its entry unloads would otherwise open a new pooled session that nothing ever closes.
+    """
+    # The two are imported together (see above), so they are set or unset together.
+    if _ASYNC_SESSION_CLS is None or _CURL_OPT is None:
         return None
     loop = asyncio.get_running_loop()
     profile = "curl" if use_curl_cffi_headers else kind
     key = (loop, profile, owner)
     session = _SHARED_SESSIONS.get(key)
     if session is None:
+        if _owner_closed(owner):
+            raise OwnerClosedError("the HelloFresh entry this request belongs to was closed")
         options: dict[str, Any] = {}
         if profile != "curl":
             options["curl_options"] = {_CURL_OPT.HTTPHEADER_ORDER: _HEADER_ORDERS[profile]}
@@ -427,7 +468,15 @@ async def async_close_shared_session(owner: ClientSession | None = None) -> None
 
     Called from the integration's unload path. Closing is best-effort: a session that already
     failed or whose loop is going away must not turn unload into an error.
+
+    A named owner stays closed: a request of its that is still running fails with a
+    connection error instead of opening a new pooled session. Home Assistant gives a reloaded
+    entry a new aiohttp session, so this never shuts out a live entry.
     """
+    if owner is not None:
+        # A stub that cannot be weakly referenced has nothing to remember.
+        with suppress(TypeError):
+            _CLOSED_OWNERS.add(owner)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - no loop means nothing was ever created
@@ -442,7 +491,8 @@ async def async_close_shared_session(owner: ClientSession | None = None) -> None
         try:
             await session.close()
         except Exception as err:  # noqa: BLE001 - a failed close must never block unload
-            _LOGGER.debug("Closing pooled curl_cffi session failed: %s", err)
+            # The type only: curl's messages can carry the URL of the last request.
+            _LOGGER.debug("Closing pooled curl_cffi session failed: %s", type(err).__name__)
 
 
 async def _curl_cffi_request(
@@ -455,12 +505,15 @@ async def _curl_cffi_request(
     use_curl_cffi_headers: bool = False,
     kind: str = "xhr",
     owner: ClientSession | None = None,
+    allow_redirects: bool = True,
 ) -> AuthResponse | None:
     """Perform the request through curl_cffi with Chrome impersonation.
 
     Returns ``None`` when the curl_cffi AsyncSession class is unavailable, so the caller falls
     back to aiohttp. The class is imported once at module load (off the event loop), and the
     session itself is pooled per entry (see ``_shared_curl_session``) so connections are reused.
+    ``allow_redirects`` is curl_cffi's own default for data and page requests; the auth POSTs
+    turn it off (see ``async_auth_post``).
     """
     curl_session = _shared_curl_session(use_curl_cffi_headers, owner, kind=kind)
     if curl_session is None:
@@ -468,7 +521,8 @@ async def _curl_cffi_request(
 
     # Let libcurl advertise and decode zstd itself. The integration's header only lists
     # decoders available to aiohttp, which lacks zstd on many Home Assistant installs.
-    curl_headers = {
+    # A None value tells curl_cffi to leave that header out (see below).
+    curl_headers: dict[str, str | None] = {
         name: value for name, value in (headers or {}).items() if name.lower() != "accept-encoding"
     }
     if use_curl_cffi_headers and kind == "navigation":
@@ -517,6 +571,7 @@ async def _curl_cffi_request(
         # credentials/tokens (the /gw auth POSTs), so the security-critical setting is made
         # explicit rather than relying on a library default that a future version could change.
         verify=True,
+        allow_redirects=allow_redirects,
     )
     return AuthResponse(
         status=response.status_code,
