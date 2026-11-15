@@ -125,6 +125,8 @@ version heading and publishes it as the release's Highlights.
 - **Privacy.** Tracking links, voucher codes, card digits, driver and home locations, and other
   large attributes are no longer stored in Home Assistant's history. Delivery address, account
   ID and the payment-card sensor are now diagnostic entities.
+- **Diagnostics downloads are about half the size:** each week's menu was written out twice.
+  They also no longer include the ID of a wallet discount, which is tied to your account.
 - **The delivery-day watch** stops for a box stuck "shipped" more than 3 days past its date, and
   pauses, asking you to sign in, when HelloFresh rejects the sign-in.
 - **The meal plan** is no longer rewritten on every reload, and a mistake in a meal-plan action
@@ -144,6 +146,9 @@ version heading and publishes it as the release's Highlights.
 - **Next delivery total on delivery-day evenings.** In the Americas the next delivery's total
   disappeared every delivery-day evening, when the date in UTC had already moved on. Every
   "today" now uses Home Assistant's time zone.
+- **A week resized for one delivery is no longer labelled with your plan.** The next week you can
+  change took your plan's name, so a week cut to 2 meals on a 3-meal plan said "3 meals per week"
+  on the card, in voice answers and in events.
 - **A skipped week no longer counts as a delivery this week,** and when several weeks need meals
   picked, the one whose deadline comes first is shown.
 - **Something HelloFresh sends that can't be read costs only that meal or week,** not the whole

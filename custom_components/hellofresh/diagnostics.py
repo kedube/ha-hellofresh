@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any
+
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -13,6 +16,7 @@ from .const import (
     CONF_USERNAME,
 )
 from .frontend import async_get_frontend_diagnostics
+from .models import HelloFreshAccountData
 
 # async_redact_data scrubs these keys at ANY nesting depth, so listing a key name covers it
 # wherever it appears (entry data, serialized models, AND the debug_trace request-param blobs).
@@ -55,6 +59,10 @@ TO_REDACT = {
     "subscriptionId",
     "planId",
     "public_id",  # tracking public id — reconstructs the unauthenticated tracking page
+    # A wallet benefit's id (each week's ``benefits``): the same per-account id on every week
+    # the benefit covers. Its label, amount and status carry the diagnostic signal.
+    "promise_id",
+    "promiseId",
     # Proof of delivery: a photo of the customer's door and the name of whoever signed. The
     # photo URLs may also be bearer-style links anyone holding them can open.
     "delivery_photo_urls",
@@ -145,11 +153,36 @@ async def async_get_config_entry_diagnostics(
             "orders": getattr(data, "serialized_orders", []),
             "weeks": getattr(data, "serialized_weeks", []),
             "weeks_needing_selection": getattr(data, "serialized_weeks_needing_selection", []),
-            "public_menu_weeks": getattr(data, "serialized_public_menu_weeks", []),
+            "public_menu_weeks": _menu_weeks(data),
         },
     }
 
     return async_redact_data(diagnostics, TO_REDACT)
+
+
+def _menu_weeks(data: HelloFreshAccountData | None) -> list[dict[str, Any]]:
+    """The fetched menu weeks, without the recipe catalogs ``weeks`` already lists.
+
+    When the account menu API answers, each menu week's catalog becomes its account week's
+    recipe list (the same list), so writing it here as well doubled the export: with eight
+    weeks of menus, nearly half the file was this second copy. Such a week gives its recipe
+    count instead. A catalog no account week took, such as the public menu fallback's, is
+    written in full.
+    """
+    if data is None:
+        return []
+    listed = {id(week.recipes) for week in data.weeks if week.recipes}
+    rows: list[dict[str, Any]] = []
+    for week in data.public_menu_weeks:
+        if week.recipes and id(week.recipes) in listed:
+            row = replace(week, recipes=[]).as_dict()
+            del row["recipes"]
+            row["recipe_count"] = len(week.recipes)
+            row["recipes_listed_in"] = "weeks"
+            rows.append(row)
+        else:
+            rows.append(week.as_dict())
+    return rows
 
 
 def _meal_plan_summary(coordinator: object) -> dict[str, object]:

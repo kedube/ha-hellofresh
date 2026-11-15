@@ -15,7 +15,12 @@ from homeassistant.components.diagnostics import async_redact_data
 import pytest
 
 from custom_components.hellofresh import diagnostics as diagnostics_module
-from custom_components.hellofresh.api import HelloFreshClient
+from custom_components.hellofresh.api import (
+    HelloFreshAccountData,
+    HelloFreshClient,
+    HelloFreshRecipe,
+    HelloFreshWeek,
+)
 from custom_components.hellofresh.diagnostics import TO_REDACT
 from custom_components.hellofresh.normalizers import _template_debug_path
 
@@ -267,21 +272,60 @@ def test_proof_of_delivery_redacted() -> None:
     assert attempt["signed_by"] == "**REDACTED**"
 
 
-def _token_health(monkeypatch, client) -> dict:
-    """Run the real export for an entry holding ``client`` and return its token_health."""
+def _export(monkeypatch, *, client=None, data=None) -> dict:
+    """Run the real export for an entry holding ``client`` and ``data``."""
     monkeypatch.setattr(diagnostics_module, "async_get_frontend_diagnostics", lambda _hass: {})
     entry = SimpleNamespace(
         entry_id="entry-1",
         title="HelloFresh (US)",
         data={"username": "user@example.com", "password": "pw", "refresh_token": "r"},
         options={},
-        runtime_data=SimpleNamespace(client=client, data=None, meal_plan=None),
+        runtime_data=SimpleNamespace(client=client, data=data, meal_plan=None),
     )
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    export = loop.run_until_complete(
-        diagnostics_module.async_get_config_entry_diagnostics(None, entry)  # type: ignore[arg-type]
-    )
+    try:
+        return loop.run_until_complete(
+            diagnostics_module.async_get_config_entry_diagnostics(None, entry)  # type: ignore[arg-type]
+        )
+    finally:
+        loop.close()
+
+
+def test_a_menu_the_weeks_already_list_is_not_exported_twice(monkeypatch) -> None:
+    """A menu week's catalog is its account week's recipe list; writing both doubled the export.
+
+    A catalog no account week took (the public menu fallback's) is still written in full.
+    """
+    shared = [HelloFreshRecipe("r1", "Salmon"), HelloFreshRecipe("r2", "Tacos")]
+    data = HelloFreshAccountData(
+        weeks=[HelloFreshWeek("2026-W48", "2026-W48", recipes=shared)],
+        public_menu_weeks=[
+            HelloFreshWeek("2026-W48", "2026-W48", recipes=shared, source="account_menu_api"),
+            HelloFreshWeek(
+                "2026-W49",
+                "2026-W49",
+                recipes=[HelloFreshRecipe("r3", "Soup")],
+                source="public_menu",
+            ),
+        ],
+    ).finalize()
+
+    runtime = _export(monkeypatch, data=data)["runtime"]
+
+    assert [recipe["recipe_id"] for recipe in runtime["weeks"][0]["recipes"]] == ["r1", "r2"]
+    listed, fallback = runtime["public_menu_weeks"]
+    assert "recipes" not in listed
+    assert (listed["recipe_count"], listed["recipes_listed_in"]) == (2, "weeks")
+    assert (listed["week_id"], listed["source"]) == ("2026-W48", "account_menu_api")
+    assert [recipe["recipe_id"] for recipe in fallback["recipes"]] == ["r3"]
+    # The export leaves the live week as it was.
+    assert data.public_menu_weeks[0].recipes is shared
+
+
+def _token_health(monkeypatch, client) -> dict:
+    """Run the real export for an entry holding ``client`` and return its token_health."""
+    export = _export(monkeypatch, client=client)
     assert export["config_entry"]["data"] == {
         "username": "**REDACTED**",
         "password": "**REDACTED**",

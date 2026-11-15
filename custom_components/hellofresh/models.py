@@ -1839,7 +1839,6 @@ class HelloFreshAccountData:
     _summarized_weeks_needing_selection: list[dict[str, Any]] | None = field(
         default=None, compare=False
     )
-    _serialized_public_menu_weeks: list[dict[str, Any]] | None = field(default=None, compare=False)
     _serialized_subscriptions: list[dict[str, Any]] | None = field(default=None, compare=False)
     _next_order: HelloFreshOrder | None = None
     _upcoming_orders: list[HelloFreshOrder] = field(default_factory=list)
@@ -2015,13 +2014,6 @@ class HelloFreshAccountData:
                 week.as_summary_dict() for week in self._weeks_needing_selection
             ]
         return self._summarized_weeks_needing_selection
-
-    @property
-    def serialized_public_menu_weeks(self) -> list[dict[str, Any]]:
-        """Return serialized public menu weeks, computed once per finalize cycle."""
-        if self._serialized_public_menu_weeks is None:
-            self._serialized_public_menu_weeks = [week.as_dict() for week in self.public_menu_weeks]
-        return self._serialized_public_menu_weeks
 
     @property
     def serialized_subscriptions(self) -> list[dict[str, Any]]:
@@ -2388,6 +2380,5 @@ class HelloFreshAccountData:
         self._serialized_weeks = None
         self._serialized_weeks_needing_selection = None
         self._summarized_weeks_needing_selection = None
-        self._serialized_public_menu_weeks = None
         self._serialized_subscriptions = None
         return self

@@ -1707,12 +1707,20 @@ class HelloFreshPayloadNormalizer:
                 weeks_by_key[key] = fallback_week
                 continue
 
-            existing_week.display_name = (
-                existing_week.display_name
-                if existing_week.display_name
-                and existing_week.display_name != existing_week.week_id
-                else fallback_week.display_name
-            )
+            # A week the deliveries list names only by its id takes the plan's name, but only
+            # while its box is the plan's: a week resized to 2 meals on a "3 meals per week"
+            # plan was labelled with the plan's 3 meals. Such a week keeps its id.
+            resized = existing_week.meals_required not in (
+                None,
+                fallback_week.meals_required,
+            ) or existing_week.servings not in (None, fallback_week.servings)
+            if (
+                not existing_week.display_name
+                or existing_week.display_name == existing_week.week_id
+            ):
+                existing_week.display_name = (
+                    existing_week.week_id if resized else fallback_week.display_name
+                )
             existing_week.delivery_date = existing_week.delivery_date or fallback_week.delivery_date
             existing_week.selection_deadline = (
                 existing_week.selection_deadline or fallback_week.selection_deadline

@@ -560,6 +560,38 @@ def test_a_subscription_is_named_after_its_plan_not_its_address() -> None:
     assert subscription.status == "active"
 
 
+@pytest.mark.parametrize(
+    ("meals", "servings", "name"),
+    [
+        (3, 2, "Classic - 3 meals per week for 2 people"),
+        (None, None, "Classic - 3 meals per week for 2 people"),
+        (2, 2, "2026-W48"),
+        (3, 4, "2026-W48"),
+    ],
+)
+def test_the_next_week_takes_the_plans_name_only_while_its_box_is_the_plans(
+    meals: int | None, servings: int | None, name: str
+) -> None:
+    """A week resized to 2 meals on a 3-meal plan was labelled "3 meals per week"."""
+    client = _client()
+    subscription = client._subscription_from_raw_subscription(
+        {**_documented_subscription(), "nextModifiableDeliveryWeek": "2026-W48"}
+    )
+    week = HelloFreshWeek(
+        week_id="2026-W48",
+        display_name="2026-W48",
+        subscription_id=subscription.subscription_id,
+        meals_required=meals,
+        servings=servings,
+    )
+
+    (merged,) = client._backfill_account_weeks_from_subscriptions(
+        subscriptions=[subscription], weeks=[week]
+    )
+
+    assert merged.display_name == name
+
+
 # ---- 8. Unexpected shapes cost one entry, not the refresh --------------------------------------
 
 

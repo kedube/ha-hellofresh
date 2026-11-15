@@ -166,6 +166,10 @@ def test_wallet_benefits_land_on_weeks_and_the_next_box() -> None:
     assert "weeks" not in benefit
     # The week summary (what get_weeks and the cards read) carries it.
     assert by_id["2026-W38"].as_summary_dict()["benefits"] == [benefit]
+    # A shared diagnostics export carries neither the code nor the promise's per-account id.
+    exported = repr(async_redact_data(by_id["2026-W38"].as_dict(), TO_REDACT))
+    assert "RX-9BNR6" not in exported and PROMISE_ID not in exported
+    assert "$10 off premium meals" in exported
 
     # Account-level: every promise with its available weeks, and the next box's discount.
     assert [p["weeks"] for p in data.wallet_benefits] == [["2026-W38"]]
