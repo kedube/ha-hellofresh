@@ -7,6 +7,7 @@ version heading and publishes it as the release's Highlights.
 
 ## Unreleased
 
+## 4.26 — 2026-11-15
 ### New
 - **Undo.** After you save your box, skip or unskip a week, move a week's delivery day, change
   a week's number of people, or change your plan's box size or delivery day, the confirmation
