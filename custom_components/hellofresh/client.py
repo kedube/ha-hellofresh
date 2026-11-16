@@ -647,8 +647,13 @@ class HelloFreshClient(
             except HelloFreshError as err:
                 last_error = str(err)
                 if not _refused_with(err, *_FALLBACK_STATUSES):
-                    # A server error or a timeout: the next candidate would only add load.
-                    break
+                    # A server error or a timeout: the next candidate would only add load, and
+                    # answering with no weeks would publish an account without any for a whole
+                    # interval (and lose the events of that time). The poll fails instead, so
+                    # the last good data is kept.
+                    raise HelloFreshError(
+                        f"HelloFresh upcoming deliveries unavailable: {err}", status=err.status
+                    ) from err
                 if is_fallback:
                     self._mark_endpoint_dead("deliveries", subscription_id, candidate)
                 continue

@@ -20,9 +20,12 @@ from .client_core import (
     _FALLBACK_STATUSES,
     _HTTP_BAD_REQUEST,
     _HTTP_NOT_FOUND,
+    _async_await_shared,
     _ClientCore,
     _dict_at,
     _refused_with,
+    _shared_task_joinable,
+    _start_shared_task,
 )
 from .const import api_country_code, api_locale
 from .models import (
@@ -867,17 +870,16 @@ class MenusClientMixin(_ClientCore):
 
         # The per-week menu fetches run 6-wide and each needs the preference; before the
         # first resolution lands, every concurrent task missed the cache and issued its own
-        # preference GET(s). Share ONE in-flight resolution per subscription instead.
+        # preference GET(s). Share ONE in-flight resolution per subscription instead. A cart
+        # write shares it too, so a write its automation stops must not fail the poll's menus.
         task = self._preference_resolutions.get(subscription_id)
-        if task is None:
-            task = asyncio.ensure_future(
-                self._async_fetch_subscription_plan_preference(subscription)
-            )
+        if task is None or not _shared_task_joinable(task):
+            task = _start_shared_task(self._async_fetch_subscription_plan_preference(subscription))
             self._preference_resolutions[subscription_id] = task
         try:
-            return await task
+            return await _async_await_shared(task)
         finally:
-            if task.done():
+            if task.done() and self._preference_resolutions.get(subscription_id) is task:
                 self._preference_resolutions.pop(subscription_id, None)
 
     async def _async_fetch_subscription_plan_preference(

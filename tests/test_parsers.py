@@ -22,6 +22,7 @@ from custom_components.hellofresh.parsers import (
     iso_week_label,
     looks_like_recipe_collection,
     looks_like_recipe_heading,
+    money_to_cents,
     normalize_candidate_dict_list,
     normalize_carrier_name,
     parse_date,
@@ -139,9 +140,31 @@ def test_coerce_float_handles_localized_decimal_strings() -> None:
     assert coerce_float("inf") is None
     assert coerce_float("nan") is None
     assert coerce_float(float("inf")) is None
+    # An integer too big for a float (JSON integers have no limit) raised OverflowError.
+    assert coerce_float(10**400) is None
     # Garbage still coerces to None rather than raising.
     assert coerce_float("€") is None
     assert coerce_float("2026-08-06") is None
+
+
+def test_money_to_cents_reads_units_and_nanos() -> None:
+    assert money_to_cents({"currencyCode": "USD", "units": 17, "nanos": 980000000}) == 1798
+    assert money_to_cents({"currencyCode": "USD", "units": "10", "nanos": 990000000}) == 1099
+    assert money_to_cents({"currencyCode": "USD", "nanos": 500000000}) == 50
+    assert money_to_cents({"currencyCode": "USD"}) is None
+    assert money_to_cents("17.98") is None
+
+
+def test_a_money_amount_that_is_not_a_finite_number_is_no_amount() -> None:
+    """round() of an infinite total raised OverflowError, which no payload guard caught."""
+    # Python's JSON parser accepts a bare Infinity.
+    assert money_to_cents(json.loads('{"currencyCode": "USD", "units": Infinity}')) is None
+    assert money_to_cents({"currencyCode": "USD", "units": 17, "nanos": float("inf")}) is None
+    assert money_to_cents({"currencyCode": "USD", "units": float("nan")}) is None
+    # Finite units that overflow once in cents, and an integer too big for a float.
+    assert money_to_cents({"currencyCode": "USD", "units": 1e307}) is None
+    assert money_to_cents({"currencyCode": "USD", "units": 10**400}) is None
+    assert money_to_cents({"currencyCode": "USD", "units": 1, "nanos": 10**400}) is None
 
 
 # ---------------------------------------------------------------------------

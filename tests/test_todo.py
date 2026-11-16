@@ -54,8 +54,11 @@ def _run(coro):
     return loop.run_until_complete(coro)
 
 
-def _recipe(recipe_id: str, *, selected: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(recipe_id=recipe_id, is_selected=selected)
+def _recipe(
+    recipe_id: str, *, selected: bool = True, quantity: int | None = None
+) -> SimpleNamespace:
+    # ``quantity`` is HelloFreshRecipe.selected_quantity: None reads as one, 2 a doubled meal.
+    return SimpleNamespace(recipe_id=recipe_id, is_selected=selected, selected_quantity=quantity)
 
 
 def _week(
@@ -64,13 +67,16 @@ def _week(
     delivery: date | None = DELIVERY_1,
     *,
     is_skipped: bool = False,
+    servings: int | None = None,
 ) -> SimpleNamespace:
+    # ``servings`` is the week's own box size, set only when it was resized apart from the plan.
     return SimpleNamespace(
         week_id=week_id,
         recipes=recipes,
         delivery_date=delivery,
         is_skipped=is_skipped,
         display_name=week_id,
+        servings=servings,
     )
 
 
@@ -465,6 +471,97 @@ def test_a_new_serving_count_rebuilds_with_fresh_amounts() -> None:
 
     assert entity._calls == [("r1", 2), ("r1", 4)]
     assert set(entity.coordinator.prep_recipe_details) == {("r1", 4)}
+
+
+def test_a_week_resized_apart_from_the_plan_is_read_at_its_own_size() -> None:
+    """A 4-person week on a 2-person plan needs four people's staples.
+
+    The week's own box size is what ships. Reading the plan's count listed half the butter,
+    and resizing the week never rebuilt the list.
+    """
+    week = _week("2026-W35", [_recipe("r1")], servings=4)
+    entity = _make_entity(week, {"r1": _detail([{"name": "Salt", "shipped": False}])}, servings=2)
+    _run(entity._async_rebuild())
+    assert entity._calls == [("r1", 4)]
+
+    # Resized back: with no size of its own the week follows the plan again.
+    week.servings = None
+    _run(entity._async_rebuild())
+
+    assert entity._calls == [("r1", 4), ("r1", 2)]
+    assert set(entity.coordinator.prep_recipe_details) == {("r1", 2)}
+
+
+def test_each_covered_week_keeps_its_recipes_read_at_its_own_size() -> None:
+    """Rebuilding one list must not throw away the other week's recipes read at another size.
+
+    The cache was pruned to the rebuilding week's serving count, so with the next box resized
+    each list dropped the other's recipes and they were read again on every rebuild.
+    """
+    w1 = _week("2026-W35", [_recipe("r1")], DELIVERY_1)
+    w2 = _week("2026-W36", [_recipe("r2")], DELIVERY_2, servings=4)
+    details = {
+        "r1": _detail([{"name": "Salt", "shipped": False}]),
+        "r2": _detail([{"name": "Pepper", "shipped": False}]),
+    }
+    following = _make_entity(w1, details, weeks=[w1, w2], slot=1)
+    _run(following._async_rebuild())
+    current = _make_entity(w1, details, weeks=[w1, w2], slot=0)
+    current.coordinator.prep_recipe_details = following.coordinator.prep_recipe_details
+    _run(current._async_rebuild())
+
+    assert following._calls == [("r2", 4)]
+    assert current._calls == [("r1", 2)]
+    assert set(current.coordinator.prep_recipe_details) == {("r1", 2), ("r2", 4)}
+
+
+def test_a_meal_selected_twice_needs_its_staples_twice() -> None:
+    """A meal selected twice ships two kits and counts as two meals.
+
+    Its amounts were listed once. Only what can be counted is doubled: a number, and a unit
+    with no amount (one of it). A range can't be doubled without guessing, so it is kept as
+    written, like it is never summed.
+    """
+    week = _week("2026-W35", [_recipe("r1", quantity=2), _recipe("r2")])
+    details = {
+        "r1": _detail(
+            [
+                {"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"},
+                {"name": "Salt", "shipped": False, "amount": None, "unit": "teaspoon"},
+                {"name": "Chili Flakes", "shipped": False, "amount": "1-2", "unit": "pinch"},
+                {"name": "Pepper", "shipped": False},
+            ]
+        ),
+        "r2": _detail([{"name": "Butter", "shipped": False, "amount": 1, "unit": "tablespoon"}]),
+    }
+    entity = _make_entity(week, details)
+    _run(entity._async_rebuild())
+
+    assert [i.summary for i in entity.todo_items] == [
+        "Butter — 3 tablespoon",
+        "Chili Flakes — 1-2 pinch",
+        "Pepper",
+        "Salt — 2 teaspoon",
+    ]
+    # Both kits are the same recipe at the same size: it is read once.
+    assert [rid for rid, _ in entity._calls] == ["r1", "r2"]
+
+
+def test_selecting_a_meal_a_second_time_rebuilds_the_list() -> None:
+    """Doubling a meal changes the amounts without changing which recipes are selected."""
+    week = _week("2026-W35", [_recipe("r1")])
+    entity = _make_entity(
+        week, {"r1": _detail([{"name": "Butter", "shipped": False, "amount": 2, "unit": "tbsp"}])}
+    )
+    _run(entity._async_rebuild())
+    assert [i.summary for i in entity.todo_items] == ["Butter — 2 tbsp"]
+
+    week.recipes = [_recipe("r1", quantity=2)]
+    _run(entity._async_rebuild())
+
+    assert [i.summary for i in entity.todo_items] == ["Butter — 4 tbsp"]
+    # The recipe read for the first kit serves the second.
+    assert len(entity._calls) == 1
 
 
 def test_a_week_changing_slot_does_not_fetch_its_recipes_again() -> None:

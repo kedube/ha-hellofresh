@@ -362,7 +362,8 @@ async def test_an_unknown_recipe_is_refused_by_name_and_nothing_is_written() -> 
         await client.async_select_meals(account.week_id, ["recipe-11", "recipe-18", "recipe-TYPO"])
 
     assert not isinstance(raised.value, HelloFreshNotImplementedError)
-    assert server.paths(start) == ["/gw/my-deliveries/menu"]
+    # Reads only: the week's box as HelloFresh has it now, then its menu. Nothing is written.
+    assert server.paths(start) == ["/gw/api/customers/me/deliveries", "/gw/my-deliveries/menu"]
 
 
 async def test_a_week_without_a_menu_yet_writes_nothing_and_is_not_a_broken_account() -> None:
@@ -991,14 +992,15 @@ async def test_a_fallback_route_that_404s_rests_for_a_day(monkeypatch) -> None:
     assert len(server.requests) == 13
 
 
-async def test_a_server_error_ends_the_probing_for_the_poll() -> None:
+async def test_a_server_error_ends_the_probing_and_fails_the_poll() -> None:
     server = FakeHelloFresh()
     server.route("GET", "/gw/api/customers/me/deliveries", (503, {"error": "busy"}))
     client = make_client(server)
 
-    assert await client._async_get_upcoming_deliveries(
-        HelloFreshSubscription(subscription_id=SUB)
-    ) == ([], [])
+    # Not ([], []): an account without weeks would be published as a good poll.
+    with pytest.raises(HelloFreshError, match="upcoming deliveries unavailable") as raised:
+        await client._async_get_upcoming_deliveries(HelloFreshSubscription(subscription_id=SUB))
+    assert raised.value.status == 503
     assert len(server.requests) == 1
 
 
@@ -1128,9 +1130,13 @@ async def test_no_subscription_id_reaches_a_log_line_or_an_error(caplog) -> None
     client = make_client(server)
     client._cached_subscriptions = [HelloFreshSubscription(subscription_id=SUB)]
 
-    with caplog.at_level(logging.DEBUG, logger="custom_components.hellofresh"):
+    with (
+        caplog.at_level(logging.DEBUG, logger="custom_components.hellofresh"),
+        pytest.raises(HelloFreshError) as raised_deliveries,
+    ):
         await client._async_get_upcoming_deliveries(HelloFreshSubscription(subscription_id=SUB))
-    assert "unavailable" in caplog.text
+    assert "unavailable" in str(raised_deliveries.value)
+    assert SUB not in str(raised_deliveries.value)
     assert SUB not in caplog.text
 
     with pytest.raises(HelloFreshError) as raised:

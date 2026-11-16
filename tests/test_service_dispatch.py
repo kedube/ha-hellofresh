@@ -714,6 +714,53 @@ def test_get_favorites_reads_both_stores_together() -> None:
     assert overlap.peak == 2, "the two requests ran one after another"
 
 
+class _Unanswered:
+    """A read HelloFresh never answers, noting whether it was cancelled."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def __call__(self, *_args, **_kwargs):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+async def _fails(*_args, **_kwargs):
+    raise HelloFreshError("HelloFresh answered HTTP 503")
+
+
+def test_get_food_profile_stops_its_other_reads_when_one_fails() -> None:
+    options, completion = _Unanswered(), _Unanswered()
+    client = SimpleNamespace(
+        async_get_food_profile=_fails,
+        async_get_food_profile_options=options,
+        async_get_food_profile_completion=completion,
+    )
+    hass = _hass({"entry1": _coordinator("entry1", client=client)})
+    handlers = _register(hass)
+
+    with pytest.raises(HomeAssistantError):
+        _call(handlers["get_food_profile"], {}, hass)
+
+    assert options.cancelled, "the options read kept running after the call failed"
+    assert completion.cancelled, "the completion read kept running after the call failed"
+
+
+def test_get_favorites_stops_the_other_store_read_when_one_fails() -> None:
+    secondary = _Unanswered()
+    client = SimpleNamespace(async_list_favorites=_fails, async_get_cfs_favorites=secondary)
+    hass = _hass({"entry1": _coordinator("entry1", client=client)})
+    handlers = _register(hass)
+
+    with pytest.raises(HomeAssistantError):
+        _call(handlers["get_favorites"], {}, hass)
+
+    assert secondary.cancelled, "the second store read kept running after the call failed"
+
+
 def test_registration_is_idempotent() -> None:
     """Setting up a second account must not re-register (or duplicate) the services."""
     hass = _hass({"entry1": _coordinator("entry1")})

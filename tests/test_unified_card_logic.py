@@ -489,7 +489,7 @@ def test_tracking_steps() -> None:
     assert result[:6] == [-1, 0, 0, 1, 2, 3]
 
 
-def test_meal_write_translates_course_indexes_and_skips_default_quantities() -> None:
+def test_meal_write_translates_course_indexes_and_states_every_quantity() -> None:
     body = """
       const w = { recipes: [
         { recipe_id: "a", course_index: 1 }, { recipe_id: "b", course_index: 2 },
@@ -498,7 +498,9 @@ def test_meal_write_translates_course_indexes_and_skips_default_quantities() -> 
       return L.buildMealWrite(w, new Map([[1, 1], [2, 3], [7, 1], [99, 1]]));
     """
     # Unknown indexes are dropped; a recipe id is written once even if two indexes share it.
-    assert _run(body) == {"recipe_ids": ["a", "b"], "quantities": {"b": 3}}
+    # A count of 1 is written too: select_meals keeps a left-out meal at the count it has, so
+    # a doubled meal lowered to one would otherwise stay doubled.
+    assert _run(body) == {"recipe_ids": ["a", "b"], "quantities": {"a": 1, "b": 3}}
 
 
 def test_market_write_is_the_full_desired_state() -> None:
@@ -1537,7 +1539,7 @@ def test_undoing_a_save_writes_the_old_box_back_with_the_same_service() -> None:
             "data": {
                 "week_id": "W",
                 "recipe_ids": ["r1", "r2", "r3"],
-                "quantities": {"r2": 2},
+                "quantities": {"r1": 1, "r2": 2, "r3": 1},
                 "market_quantities": {"m1": 2},
             },
         },
@@ -1546,7 +1548,7 @@ def test_undoing_a_save_writes_the_old_box_back_with_the_same_service() -> None:
             "data": {
                 "week_id": "W",
                 "recipe_ids": ["r1", "r2", "r3"],
-                "quantities": {"r2": 2},
+                "quantities": {"r1": 1, "r2": 2, "r3": 1},
                 "market_quantities": {"m1": 2},
             },
         },

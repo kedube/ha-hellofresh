@@ -840,7 +840,8 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
       let sub = 0;
       for (const id of recipe_ids) {
         const r = w.recipes.find((x) => x.recipe_id === id);
-        const q = (quantities && quantities[id]) || 1;
+        // As the integration does: a meal left out keeps the count the box has.
+        const q = (quantities && quantities[id]) || (r && r.is_selected && r.selected_quantity) || 1;
         sub += (r ? r.price : 11.99) * 2 * q;
       }
       return { meal_count: recipe_ids.length, grand_total: Number((sub + 10.99 - 10).toFixed(2)), sub_total: Number(sub.toFixed(2)), shipping_amount: 10.99, tax_amount: 0, discount_amount: 10, coupon_code: "PREMIUM10", surcharges: [] };
@@ -849,8 +850,10 @@ export function buildHass(origin, { dark = false, scenario = "default", latency 
       const w = week(week_id);
       for (const r of w.recipes) {
         const on = recipe_ids.includes(r.recipe_id);
+        // As the integration does: a meal left out of `quantities` keeps the count it has.
+        const kept = r.is_selected && r.selected_quantity > 0 ? r.selected_quantity : 1;
         r.is_selected = on;
-        r.selected_quantity = on ? (quantities && quantities[r.recipe_id]) || 1 : null;
+        r.selected_quantity = on ? (quantities && quantities[r.recipe_id]) || kept : null;
       }
       // A variant sharing a recipe id with its base must not double-select.
       w.meals_selected = recipe_ids.length;

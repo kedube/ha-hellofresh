@@ -7,10 +7,12 @@ validation) to stay consistent with the suite's lightweight, hass-free style.
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 from pathlib import Path
 import re
+import time
 from types import SimpleNamespace
 from urllib.parse import quote
 
@@ -54,6 +56,7 @@ from custom_components.hellofresh.const import (
     DEFAULT_USE_CURL_CFFI_HEADERS,
     OPTIONS_SECTION_WEEK_TAB,
 )
+from custom_components.hellofresh.tls_transport import AuthResponse
 
 
 def _run(coro):
@@ -1052,6 +1055,175 @@ def test_validation_closes_its_client_before_letting_go_of_the_session(monkeypat
     _run(_make_flow().async_step_credentials({CONF_COUNTRY: "us", **_SIGN_IN}))
     # The email check still needs the client's connection, so it runs before the close.
     assert events == ["validate", "email_check", "client_closed", "session_detached"]
+
+
+# ---- a pasted token that validation renews -----------------------------------------------
+
+_JSON = {"content-type": "application/json"}
+
+
+def _jwt(issued_at: int, expires_at: int) -> str:
+    """An unsigned access token whose claims say when it was issued and when it expires."""
+
+    def segment(claims: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+
+    return f"{segment({'alg': 'none'})}.{segment({'iat': issued_at, 'exp': expires_at})}.sig"
+
+
+def _paste_past_half_life() -> str:
+    """A token copied from the browser 20 minutes after it was issued.
+
+    Still valid, but past half its life, so the client renews it before the account read.
+    """
+    now = int(time.time())
+    return json.dumps(
+        {
+            "access_token": _jwt(now - 1200, now + 600),
+            "refresh_token": "refresh-1",
+            "expires_in": 1800,
+            "refresh_expires_in": 5184000,
+            "token_type": "Bearer",
+        }
+    )
+
+
+class _RotatingHelloFresh:
+    """HelloFresh's sign-in as the API reference describes it: a refresh token works once.
+
+    ``/gw/refresh`` answers a live refresh token with a new pair and refuses a spent one with
+    400 ``invalid_grant``. The account read lists one subscription, or answers 503 while
+    ``failing_reads`` lasts. The real client and token manager run against it.
+    """
+
+    def __init__(self, live_refresh: str, *, failing_reads: int = 0) -> None:
+        self.live_refresh = {live_refresh}
+        self.failing_reads = failing_reads
+        self.refresh_posts: list[str] = []
+        self._issued = 1
+
+    def session(self) -> _RotatingHelloFreshSession:
+        """A new session, as Home Assistant creates one for each validation."""
+        return _RotatingHelloFreshSession(self)
+
+    def refresh(self, refresh_token: str) -> AuthResponse:
+        self.refresh_posts.append(refresh_token)
+        if refresh_token not in self.live_refresh:
+            return AuthResponse(400, _JSON, json.dumps({"error": "invalid_grant"}))
+        self.live_refresh.discard(refresh_token)
+        self._issued += 1
+        new_refresh = f"refresh-{self._issued}"
+        self.live_refresh.add(new_refresh)
+        now = int(time.time())
+        auth = {
+            "access_token": _jwt(now, now + 1800),
+            "refresh_token": new_refresh,
+            "expires_in": 1800,
+            "refresh_expires_in": 5184000,
+            "token_type": "Bearer",
+        }
+        return AuthResponse(200, _JSON, json.dumps(auth))
+
+    def read_account(self) -> AuthResponse:
+        if self.failing_reads:
+            self.failing_reads -= 1
+            return AuthResponse(503, _JSON, json.dumps({"error": "unavailable"}))
+        subscriptions = {"items": [{"id": "sub-1", "customer": {"id": "acct-1"}}]}
+        return AuthResponse(200, _JSON, json.dumps(subscriptions))
+
+
+class _RotatingHelloFreshSession:
+    def __init__(self, server: _RotatingHelloFresh) -> None:
+        self._server = server
+
+    async def post(self, url, **kwargs):
+        assert url.endswith("/gw/refresh")  # no credentials, so never a login
+        return self._server.refresh(kwargs["json"]["refresh_token"])
+
+    async def request(self, method, url, **_kwargs):
+        return self._server.read_account()
+
+    def detach(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("path", "step", "user_input"),
+    [
+        ("token", "async_step_token", {CONF_COUNTRY: "us"}),
+        ("reauth_token", "async_step_reauth_token", {}),
+        ("reconfigure_token", "async_step_reconfigure_token", {CONF_COUNTRY: "us"}),
+    ],
+)
+def test_a_pasted_refresh_token_that_hellofresh_refuses_is_not_stored(
+    monkeypatch, path, step, user_input
+) -> None:
+    """The browser had already spent the pasted refresh token (it renews on its own).
+
+    Validation renewed the access token first and HelloFresh refused the refresh token; the
+    account read still passed on the access token's last minutes, and the entry was saved with
+    the dead refresh token, asking for reauth within the quarter hour.
+    """
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+
+    server = _RotatingHelloFresh(live_refresh="refresh-the-browser-holds")
+    monkeypatch.setattr(
+        config_flow, "async_create_clientsession", lambda _hass, **_kw: server.session()
+    )
+    flow = _flow_for(path)
+
+    result = _run(getattr(flow, step)({**user_input, CONF_TOKEN: _paste_past_half_life()}))
+
+    assert server.refresh_posts == ["refresh-1"]
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_token"}
+    assert getattr(flow, "_updated", {}) == {}
+
+
+def test_a_token_renewed_during_validation_is_stored_in_its_place(monkeypatch) -> None:
+    """The pasted refresh token is spent by the renewal; the entry keeps the new one."""
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+
+    server = _RotatingHelloFresh(live_refresh="refresh-1")
+    monkeypatch.setattr(
+        config_flow, "async_create_clientsession", lambda _hass, **_kw: server.session()
+    )
+
+    result = _run(
+        _make_flow().async_step_token({CONF_COUNTRY: "us", CONF_TOKEN: _paste_past_half_life()})
+    )
+
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_REFRESH_TOKEN] == "refresh-2"
+    assert server.live_refresh == {"refresh-2"}
+
+
+def test_submitting_the_same_token_again_starts_from_the_one_it_was_renewed_to(
+    monkeypatch,
+) -> None:
+    """The renewal worked, then the account read failed (a 503), and the user submits again.
+
+    The new refresh token went with the failed attempt, so the second one posted the spent
+    paste, was refused, passed on the old access token, and stored the dead refresh token.
+    """
+    from custom_components.hellofresh import config_flow  # noqa: PLC0415
+
+    server = _RotatingHelloFresh(live_refresh="refresh-1", failing_reads=1)
+    monkeypatch.setattr(
+        config_flow, "async_create_clientsession", lambda _hass, **_kw: server.session()
+    )
+    flow = _make_flow()
+    paste = _paste_past_half_life()
+
+    first = _run(flow.async_step_token({CONF_COUNTRY: "us", CONF_TOKEN: paste}))
+    assert first["errors"] == {"base": "cannot_connect"}
+    assert server.live_refresh == {"refresh-2"}  # HelloFresh honours only the new one now
+
+    second = _run(flow.async_step_token({CONF_COUNTRY: "us", CONF_TOKEN: paste}))
+
+    assert second["type"] == "create_entry"
+    assert second["data"][CONF_REFRESH_TOKEN] == "refresh-2"
+    assert server.refresh_posts == ["refresh-1"]  # the spent token is not posted again
 
 
 # ---- every message the flow can show exists ----------------------------------------------

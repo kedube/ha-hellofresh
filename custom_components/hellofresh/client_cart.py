@@ -12,6 +12,7 @@ from typing import Any
 from aiohttp import ClientResponse
 
 from .client_core import (
+    _ALWAYS_RAISED,
     _FALLBACK_STATUSES,
     _HTTP_BAD_REQUEST,
     _LOGGER,
@@ -78,6 +79,7 @@ class CartClientMixin(_ClientCore):
         subscription = await self._async_get_subscription_for_week(week)
 
         async with self._week_lock(week):
+            week = await self._async_week_now(subscription, week)
             menu = await self._async_read_week_for_write(subscription, week)
             meals = self._build_cart_selected_meals(menu, deduplicated_recipe_ids, quantities)
             # A week can be resized to a different box for that delivery: picking more or
@@ -128,6 +130,45 @@ class CartClientMixin(_ClientCore):
                 week.week_id,
                 names,
             )
+
+    async def _async_week_now(
+        self, subscription: HelloFreshSubscription, week: HelloFreshWeek
+    ) -> HelloFreshWeek:
+        """The week as HelloFresh has it now, for a cart write built under the week's lock.
+
+        ``week`` is the snapshot from before the lock, from the last poll. Its box (meal count
+        and number of people) is what the menu is read with and what the cart PUT writes back,
+        so a box changed since then in the app, or by a write that held the lock just before,
+        must not come from it: a menu read with the wrong box shows the plan box's default
+        picks, and the PUT would save those over the real selection.
+
+        HelloFresh's read can lag a box-size write (see ``_show_written_box``), so a box this
+        client wrote while the caller waited for the lock wins over a read that does not show
+        it yet. A failed read falls back to the snapshot as it is now.
+        """
+        key = (week.week_id, week.subscription_id)
+        data = self._last_account_data
+        shown = (data.get_week(*key) if data is not None else None) or week
+        try:
+            fresh_weeks, _orders = await self._async_read_account_weeks(subscription)
+        except _ALWAYS_RAISED:
+            raise
+        except HelloFreshError as err:
+            _LOGGER.debug("Week %s not re-read before its cart write: %s", week.week_id, err)
+            return shown
+        fresh = next(
+            (c for c in fresh_weeks if (c.week_id, c.subscription_id) == key),
+            None,
+        )
+        if fresh is None:
+            return shown
+        before = self._week_box_handle(week, subscription)
+        if (
+            self._week_box_handle(shown, subscription) != before
+            and self._week_box_handle(fresh, subscription) == before
+        ):
+            return shown
+        return fresh
 
     async def _async_read_week_for_write(
         self, subscription: HelloFreshSubscription, week: HelloFreshWeek
@@ -210,6 +251,7 @@ class CartClientMixin(_ClientCore):
         week = self._get_known_week_or_raise(week_id)
         subscription = await self._async_get_subscription_for_week(week)
         async with self._week_lock(week):
+            week = await self._async_week_now(subscription, week)
             menu = await self._async_read_week_for_write(subscription, week)
             if not menu.market_items:
                 raise HelloFreshError(f"Week {week_id} has no market catalog to select from")
@@ -235,11 +277,20 @@ class CartClientMixin(_ClientCore):
         removed for this week stays in the cart at ``oneOffQuantity: 0``; leaving it out would
         not cancel the recurring order.
         """
-        by_key: dict[str, HelloFreshMarketItem] = {}
+        # Item id first, then index; a SKU only when one item has it. Every add-on in a group
+        # carries the group's SKU, and one without a recipe id takes that SKU as its item id,
+        # so a single first-come map of all three handed a key to its sibling: the card's
+        # salmon ordered the trout listed before it.
+        by_id: dict[str, HelloFreshMarketItem] = {}
+        by_index: dict[str, HelloFreshMarketItem] = {}
+        by_sku: dict[str, list[HelloFreshMarketItem]] = {}
         for candidate in week.market_items:
-            for key in (candidate.item_id, candidate.sku, str(candidate.index)):
-                if key:
-                    by_key.setdefault(str(key), candidate)
+            if candidate.item_id:
+                by_id.setdefault(str(candidate.item_id), candidate)
+            if candidate.index is not None:
+                by_index.setdefault(str(candidate.index), candidate)
+            if candidate.sku:
+                by_sku.setdefault(str(candidate.sku), []).append(candidate)
 
         resolved: list[tuple[HelloFreshMarketItem, int, int]] = []
         kept: set[int] = set()
@@ -247,11 +298,22 @@ class CartClientMixin(_ClientCore):
             quantity = coerce_int(raw_qty) or 0
             if quantity <= 0:
                 continue
-            item = by_key.get(str(raw_key))
+            key = str(raw_key)
+            item = by_id.get(key) or by_index.get(key)
+            if item is None:
+                same_sku = by_sku.get(key, [])
+                if len(same_sku) > 1:
+                    raise HelloFreshError(
+                        f"Market SKU {key!r} names {len(same_sku)} items in week "
+                        f"{week.week_id}; use an item id or index instead"
+                    )
+                item = same_sku[0] if same_sku else None
             if item is None or item.index is None:
                 raise HelloFreshError(
                     f"Market item {raw_key!r} is not in week {week.week_id}'s catalog"
                 )
+            if item.index in kept:
+                raise HelloFreshError(f"Market item {item.name!r} is given more than once")
             if item.max_quantity is not None and quantity > item.max_quantity:
                 raise HelloFreshError(
                     f"Market item {item.name!r} allows at most {item.max_quantity}, got {quantity}"

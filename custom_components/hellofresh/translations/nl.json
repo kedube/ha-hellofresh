@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Aantallen",
-          "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal). Recepten die ontbreken krijgen standaard één portie; het minimum aantal maaltijden wordt getoetst aan het totaal aantal porties."
+          "description": "Optionele koppeling van recept-ID aan aantal porties (positief geheel getal). Recepten die ontbreken behouden het aantal dat ze in de box hebben (één als ze nieuw zijn); het minimum aantal maaltijden wordt getoetst aan het totaal aantal porties."
         },
         "market_quantities": {
           "name": "Markt-aantallen",

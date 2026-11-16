@@ -7,7 +7,6 @@ which account a call acts on, and what a HelloFresh failure turns into.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -35,6 +34,7 @@ else:
     import voluptuous as vol
 
 from .api import HelloFreshAccountData, HelloFreshError, HelloFreshWeek
+from .client_core import async_gather_or_cancel
 from .const import (
     ATTR_COLLECTION,
     ATTR_CONFIG_ENTRY_ID,
@@ -583,7 +583,7 @@ async def _get_food_profile(
     sent together.
     """
     client = coordinator.client
-    profile, options, completion = await asyncio.gather(
+    profile, options, completion = await async_gather_or_cancel(
         client.async_get_food_profile(),
         client.async_get_food_profile_options(),
         # How much of the profile is filled in, so the card can show a progress figure.
@@ -741,7 +741,7 @@ async def _get_favorites(
         # cookbook held bookmarks. Surfacing it separately means a user who does have
         # rows there can see them without the counts silently disagreeing. The two stores
         # are read together.
-        favorites, secondary = await asyncio.gather(
+        favorites, secondary = await async_gather_or_cancel(
             client.async_list_favorites(), client.async_get_cfs_favorites()
         )
         return {
@@ -1124,8 +1124,8 @@ SERVICES: tuple[ServiceSpec, ...] = (
         {
             vol.Required(ATTR_WEEK_ID): str,
             vol.Required(ATTR_RECIPE_IDS): vol.All([str], vol.Length(min=1)),
-            # Optional per-recipe serving counts: {recipe_id: positive int}. Recipes absent
-            # from the map default to one serving.
+            # Optional per-recipe serving counts: {recipe_id: positive int}. A recipe absent
+            # from the map keeps the count it has in the box (one if it is new).
             vol.Optional(ATTR_QUANTITIES): _SERVING_COUNTS,
             # Optional Market add-ons written in the SAME cart update, with
             # select_market_items' shape ({item id/sku/index: quantity}, 0 removes).

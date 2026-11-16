@@ -289,11 +289,22 @@ def _note_snapshot(text: str) -> dict[str, Any]:
 
 
 def _same_item(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two planned courses are the same meal or Market item from the same box.
+
+    A box is one subscription's week, not the week alone: two subscriptions can each ship the
+    same meal in one ISO week, and each box's copy is planned on its own. Keyed on the week
+    alone, the second box's meal counted as already planned and could never be. A course
+    planned before snapshots recorded the subscription has none, and is taken to be the same
+    box as any other, so an existing plan still counts against what it was planned from.
+    """
+    a_subscription = a.get("subscription_id")
+    b_subscription = b.get("subscription_id")
     return (
         a.get("kind") == b.get("kind")
         and a.get("kind") != KIND_NOTE
         and a.get("id") == b.get("id")
         and a.get("week_id") == b.get("week_id")
+        and (not a_subscription or not b_subscription or a_subscription == b_subscription)
     )
 
 
@@ -484,35 +495,80 @@ class MealPlan:
         data = getattr(self.coordinator, "data", None)
         return list(getattr(data, "weeks", None) or [])
 
+    def _has_room(
+        self,
+        kind: str,
+        item_id: str,
+        week: HelloFreshWeek,
+        quantity: int,
+        skip: tuple[str, str, str],
+    ) -> bool:
+        """Whether a box's meal or Market item is planned fewer times than the box holds."""
+        planned = {
+            "kind": kind,
+            "id": item_id,
+            "week_id": week.week_id,
+            "subscription_id": week.subscription_id,
+        }
+        return planned_count(self.days, planned, skip=skip) < quantity
+
     def _resolve_recipe(
-        self, recipe_id: str, day: date, week_id: str | None
+        self, recipe_id: str, day: date, week_id: str | None, skip: tuple[str, str, str]
     ) -> tuple[HelloFreshWeek, HelloFreshRecipe, int]:
+        """The box a meal planned for ``day`` comes from, and how many of it that box holds.
+
+        The first box (best first, see :func:`_candidate_weeks`) that still has one to plan.
+        With two subscriptions shipping the same meal in one week, taking the first box that
+        held it at all sent every plan to that box, so the second box's meal could never be
+        planned. When every box's copies are planned, the first box is returned and the
+        caller reports it as fully planned.
+        """
         weeks = self._weeks()
         if week_id is not None:
             weeks = [week for week in weeks if week.week_id == week_id]
+        first: tuple[HelloFreshWeek, HelloFreshRecipe, int] | None = None
         for week in _candidate_weeks(weeks, day):
-            for recipe in week.recipes:
-                if recipe.recipe_id == recipe_id and recipe_quantity(recipe) > 0:
-                    return week, recipe, recipe_quantity(recipe)
+            recipe = next(
+                (r for r in week.recipes if r.recipe_id == recipe_id and recipe_quantity(r) > 0),
+                None,
+            )
+            if recipe is None:
+                continue
+            quantity = recipe_quantity(recipe)
+            if self._has_room(KIND_MEAL, recipe.recipe_id, week, quantity, skip):
+                return week, recipe, quantity
+            if first is None:
+                first = (week, recipe, quantity)
+        if first is not None:
+            return first
         raise ServiceValidationError(
             f"Meal {recipe_id} isn't in any of your boxes, so it can't be planned."
         )
 
     def _resolve_market_item(
-        self, item_id: str, day: date, week_id: str | None
+        self, item_id: str, day: date, week_id: str | None, skip: tuple[str, str, str]
     ) -> tuple[HelloFreshWeek, HelloFreshMarketItem, int]:
+        """The box a Market item planned for ``day`` comes from, chosen as for a meal."""
         weeks = self._weeks()
         if week_id is not None:
             weeks = [week for week in weeks if week.week_id == week_id]
+        first: tuple[HelloFreshWeek, HelloFreshMarketItem, int] | None = None
         for week in _candidate_weeks(weeks, day):
-            for item in week.market_items:
-                if item.item_id != item_id or market_quantity(item) <= 0:
-                    continue
-                if (item.group_type or "") in EXCLUDED_MARKET_GROUPS:
-                    raise ServiceValidationError(
-                        f"{item.name} isn't something to plan a meal around."
-                    )
-                return week, item, market_quantity(item)
+            item = next(
+                (i for i in week.market_items if i.item_id == item_id and market_quantity(i) > 0),
+                None,
+            )
+            if item is None:
+                continue
+            if (item.group_type or "") in EXCLUDED_MARKET_GROUPS:
+                raise ServiceValidationError(f"{item.name} isn't something to plan a meal around.")
+            quantity = market_quantity(item)
+            if self._has_room(KIND_MARKET, item.item_id, week, quantity, skip):
+                return week, item, quantity
+            if first is None:
+                first = (week, item, quantity)
+        if first is not None:
+            return first
         raise ServiceValidationError(
             f"Market item {item_id} wasn't bought in any of your boxes, so it can't be planned."
         )
@@ -566,24 +622,32 @@ class MealPlan:
             )
 
         key = day.isoformat()
+        # The course being set: what it holds now is replaced, so it never counts as a use.
+        skip = (key, meal, course)
         item: dict[str, Any] | None = None
         quantity = 0
         if recipe_id is not None:
-            week, recipe, quantity = self._resolve_recipe(recipe_id, day, week_id)
+            week, recipe, quantity = self._resolve_recipe(recipe_id, day, week_id, skip)
             item = {
                 "kind": KIND_MEAL,
                 "id": recipe.recipe_id,
                 "week_id": week.week_id,
+                # Which subscription's box it came from: every box delivered in a week shares
+                # its week id (see _same_item).
+                "subscription_id": week.subscription_id,
                 "name": recipe.name,
                 "image_url": recipe.image_url,
                 "minutes": headline_minutes(recipe),
             }
         elif market_item_id is not None:
-            week, market_item, quantity = self._resolve_market_item(market_item_id, day, week_id)
+            week, market_item, quantity = self._resolve_market_item(
+                market_item_id, day, week_id, skip
+            )
             item = {
                 "kind": KIND_MARKET,
                 "id": market_item.item_id,
                 "week_id": week.week_id,
+                "subscription_id": week.subscription_id,
                 "name": market_item.name,
                 "image_url": market_item.image_url,
                 "minutes": await self._market_minutes(market_item),
@@ -599,7 +663,7 @@ class MealPlan:
             raise ServiceValidationError("Plan something for this meal before changing its time.")
 
         if item is not None and item["kind"] != KIND_NOTE:
-            used = planned_count(self.days, item, skip=(key, meal, course))
+            used = planned_count(self.days, item, skip=skip)
             if used >= quantity:
                 raise ServiceValidationError(
                     f"{item['name']} is already planned {used} time(s), as many as your box has."

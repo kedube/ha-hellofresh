@@ -252,9 +252,12 @@ def delivery_in_progress(data: HelloFreshAccountData, today: date) -> bool:
         status = (week.status or "").strip().upper()
         if week.delivered_at is not None or status == "DELIVERED":
             continue
-        if status in WEEK_SHIPPED_STATUSES and week.delivery_date >= today - SHIPPED_WATCH_GRACE:
+        # A box HelloFresh delayed or moved earlier keeps its scheduled date; the day it now
+        # comes is the one to watch.
+        due = week.revised_delivery_date or week.delivery_date
+        if status in WEEK_SHIPPED_STATUSES and due >= today - SHIPPED_WATCH_GRACE:
             return True
-        if today - timedelta(days=1) <= week.delivery_date <= today:
+        if today - timedelta(days=1) <= due <= today:
             return True
     return any(
         (order.tracking_status or "").strip().lower() in SHIPMENT_ACTIVE_STATUSES
@@ -457,6 +460,9 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         # of the tick's in-place change, and both then recorded the same box_shipped or
         # box_delivered event.
         self._refresh_lock = asyncio.Lock()
+        # How many writes have published their snapshot. A poll compares it before and after
+        # its read: one that changed means the read may predate a write already on screen.
+        self._writes = 0
         self._last_full_refresh: datetime | None = None
         # Lifecycle events detected between polls, as (serial, type, attributes). The event
         # entity consumes them by serial so a late subscriber never replays history and a
@@ -842,11 +848,16 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
         Favourites pass False: a heart changes nothing a poll reads. When the client could not
         re-read what it wrote, the write waits for that poll, as every write used to.
         """
+        self._writes += 1
         snapshot = self.client.last_account_data
         if snapshot is None or snapshot is self.data:
             if full_refresh:
                 await self.async_request_refresh()
             return
+        # The events the write caused (a skip, a box that shipped since the last poll) are
+        # recorded here: the poll that follows compares against this snapshot and sees none.
+        if self.data is not None:
+            self._record_transitions(delivery_snapshot(self.data), snapshot)
         self.async_set_updated_data(snapshot)
         if full_refresh:
             self.config_entry.async_create_background_task(
@@ -885,6 +896,7 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
     async def _async_update_data(self) -> HelloFreshAccountData:
         """Fetch latest data from HelloFresh."""
         async with self._refresh_lock:
+            writes = self._writes
             previous = self.data
             old_snapshot = delivery_snapshot(previous) if previous is not None else None
             try:
@@ -893,7 +905,24 @@ class HelloFreshDataUpdateCoordinator(DataUpdateCoordinator[HelloFreshAccountDat
                 raise ConfigEntryAuthFailed(str(err)) from err
             except HelloFreshError as err:
                 raise UpdateFailed(str(err)) from err
-            self._require_usable_data(previous, data)
+            if self._writes != writes:
+                # A write landed during this read and its snapshot is already shown, but the
+                # read may predate it: publishing it would put the change back for hours if
+                # the debouncer then drops the write's own refresh (it does when a refresh is
+                # still running as its cooldown ends). Keep the write's snapshot, for the
+                # client's next write too, and read the account again once this poll is done.
+                self.client.restore_account_data(self.data)
+                self.config_entry.async_create_background_task(
+                    self.hass, self.async_refresh(), name="hellofresh refresh after a write"
+                )
+                return self.data
+            try:
+                self._require_usable_data(previous, data)
+            except UpdateFailed:
+                # The client keeps every poll's result as the snapshot its writes build on, so
+                # a write after this refused one would publish the empty account.
+                self.client.restore_account_data(previous)
+                raise
             self._last_full_refresh = dt_util.utcnow()
             self._record_transitions(old_snapshot, data)
 

@@ -968,7 +968,9 @@ export function buildMealWrite(week, selection) {
     const recipeId = byIndex.get(idx);
     if (!recipeId || recipeIds.includes(recipeId)) continue;
     recipeIds.push(recipeId);
-    if (qty > 1) quantities[recipeId] = qty;
+    // Every count, 1 included: select_meals keeps a left-out meal at the count the box has, so
+    // lowering a doubled meal to one (or undoing a doubling) must say so.
+    quantities[recipeId] = qty;
   }
   return { recipe_ids: recipeIds, quantities };
 }

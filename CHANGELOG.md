@@ -6,6 +6,56 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+### Your box and the card
+- **Lowering a doubled meal to one is saved.** The card left out every meal at one when it
+  saved, and a meal left out keeps the count it has in the box, so lowering a doubled meal, or
+  undoing a doubling, saved it doubled again. The card now sends every count, and the price
+  preview prices a meal left out the way the save does.
+- **Saving keeps the box HelloFresh has now.** A save took the box's size from the last update,
+  so a change of people or meals made in the HelloFresh app since then, or a resize just
+  before, was written back over, and the save could replace your meals with the box's default
+  picks. The week's box is read from HelloFresh first.
+- **A Market add-on is ordered as picked.** An add-on sharing its group's code with the one
+  listed before it ordered that one instead. A code that names several add-ons is now refused,
+  as is an item given twice.
+- **A week changed to more or fewer people is priced for them,** not for the plan's number.
+
+### Sign-in and connection
+- **A pasted token's refresh token is checked during setup.** One HelloFresh had already used
+  up was stored anyway, and Home Assistant asked you to sign in again within minutes; it is now
+  refused at once. Trying the same token again after a failed attempt uses the token it was
+  renewed to, instead of the spent one.
+
+### Home Assistant
+- **A HelloFresh outage on one read no longer empties your weeks.** A server error or timeout
+  while reading your deliveries made a successful update with no weeks: every week vanished
+  until the next update, and a box delivered meanwhile was never announced. The last good data
+  is kept now.
+- **Skips made in Home Assistant fire `week_skipped` and `week_unskipped` again.** Since 4.26 a
+  skip from the switch, an action or the card fired nothing; only one seen by an update did.
+- **A change saved during an update is no longer undone by it.** The update put back what it
+  had read before the change, and when it ran past the refresh cooldown nothing read your
+  account again until the next scheduled update.
+- **An update HelloFresh answered without your account stays out of view.** The next change,
+  such as a favourite, published that empty account on every entity.
+- **The delivery-day watch follows a delayed or early box** on the day it now comes, so
+  `box_shipped` and `box_delivered` are not hours late.
+- **Prep lists** are for the number of people the week's box is for, list a doubled meal's
+  staples twice, and update when a meal is doubled.
+- **`set_planned_meal` plans the same meal from two subscriptions' boxes in one week.** The
+  second box's copy counted as already planned.
+- **Changing your box and an update no longer cancel each other.** When an automation was
+  stopped or restarted in the middle of a change to your box, an update running at the same
+  moment could fail with it and leave the HelloFresh entities unavailable until the next update.
+  The other way round, an update stopped by a HelloFresh rate limit could cancel a change to
+  your box instead of reporting why it failed.
+- **`get_food_profile` and `get_favorites` stop their other requests when one fails,** instead
+  of leaving them running after the action has already failed.
+
+### Your data
+- **A box moved in New Zealand shows its new day,** not the day after.
+- **A malformed price or week status no longer fails every update;** only that price or week
+  is left out.
 
 ## 4.26 — 2026-11-15
 ### New

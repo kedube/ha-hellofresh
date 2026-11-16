@@ -493,6 +493,35 @@ def test_a_moved_box_has_the_day_it_now_comes(new_york_time, sub_status, trackin
     )
 
 
+@pytest.fixture
+def auckland_time():
+    previous = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(ZoneInfo("Pacific/Auckland"))
+    yield
+    dt_util.set_default_time_zone(previous)
+
+
+@pytest.mark.parametrize(
+    ("tracking", "revised"),
+    [
+        # HelloFresh's noon-UTC placeholder is 01:00 the next day in Auckland (UTC+13).
+        ({"delivery_date": "2026-11-17T12:00:00+0000"}, date(2026, 11, 17)),
+        ({"estimated_delivery_time": "2026-11-17T12:00:00Z"}, date(2026, 11, 17)),
+        # Any other moment is still read where the household is.
+        ({"delivery_date": "2026-11-17T11:30:00+0000"}, date(2026, 11, 18)),
+        ({"delivery_date": "2026-11-17T12:00:00-0500"}, date(2026, 11, 18)),
+    ],
+)
+def test_a_moved_box_in_new_zealand_keeps_its_day(auckland_time, tracking, revised):
+    """A moved box's new day comes as noon UTC, HelloFresh's placeholder, not a moment.
+
+    Read in Home Assistant's time zone, east of UTC+12 it was the next day, so every moved box
+    in New Zealand came out a day late.
+    """
+    week = _week(subStatus="EARLY", tracking=tracking, deliveryDate="2026-11-18T12:00:00+1300")
+    assert week.revised_delivery_date == revised
+
+
 def test_the_next_delivery_sensor_names_the_day_a_moved_box_now_comes() -> None:
     day = local_today() + timedelta(days=2)
     week = HelloFreshWeek(

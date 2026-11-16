@@ -157,6 +157,10 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reconfigure_entry: config_entries.ConfigEntry | None = None
         self._selected_country = DEFAULT_COUNTRY
         self._initial_log_auth_diagnostics = DEFAULT_LOG_AUTH_DIAGNOSTICS
+        # Tokens a validation attempt rotated to, keyed by the refresh token that was pasted.
+        # HelloFresh has spent the pasted one by then, so another attempt with the same paste
+        # starts from these instead (see _async_validate_token).
+        self._rotated_tokens: dict[str, dict[str, Any]] = {}
 
     async def async_step_user(self, user_input: dict[str, str] | None = None):
         """Present a menu choosing how to authenticate."""
@@ -590,7 +594,21 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         invalidates the old refresh token on use). Any rotation is captured back into
         ``token_data`` in place, so callers persist the LIVE token pair — persisting the
         pre-rotation pair stored a dead refresh token and 401'd minutes after setup.
+
+        A rotation is also kept on the flow, under the refresh token that was pasted, and
+        the next attempt with that paste starts from it. When the account read failed after a
+        rotation (a 503), the new token went with the failed attempt, and submitting the same
+        paste again posted the spent one.
         """
+        pasted_refresh = token_data.get(CONF_REFRESH_TOKEN)
+        if isinstance(pasted_refresh, str):
+            token_data.update(self._rotated_tokens.get(pasted_refresh, {}))
+
+        def adopt_rotation(tokens: dict[str, Any]) -> None:
+            token_data.update(tokens)
+            if isinstance(pasted_refresh, str):
+                self._rotated_tokens[pasted_refresh] = dict(tokens)
+
         return await self._async_validate_sign_in(
             errors,
             country=country,
@@ -602,7 +620,7 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             refresh_expires_in=token_data.get(CONF_REFRESH_EXPIRES_IN),
             refresh_token_issued_at=token_data.get(CONF_REFRESH_TOKEN_ISSUED_AT),
             token_type=token_data.get(CONF_TOKEN_TYPE),
-            token_refresh_callback=token_data.update,
+            token_refresh_callback=adopt_rotation,
         )
 
     async def _async_validate_sign_in(
@@ -623,7 +641,16 @@ class HelloFreshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             **client_options,
         )
         try:
-            return await client.async_validate_credentials()
+            account = await client.async_validate_credentials()
+            if client_options.get("refresh_token") and not client.has_refresh_token:
+                # HelloFresh refused the refresh token when the read renewed an access token
+                # past half its life (the browser had already spent it), and the client
+                # forgot it. The read still passed on the access token's last minutes, but
+                # the entry would have stored the dead refresh token and asked for reauth
+                # as soon as those ran out.
+                errors["base"] = "invalid_token"
+                return None
+            return account
         except HelloFreshNoSubscriptionError:
             # The sign-in worked; there is just no subscription to show.
             errors["base"] = "no_subscription"

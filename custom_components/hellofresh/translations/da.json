@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Antal",
-          "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal). Opskrifter, der udelades, får som standard én portion; minimumsantallet af retter kontrolleres mod det samlede antal portioner."
+          "description": "Valgfri sammenkobling af opskrifts-id og antal portioner (positivt heltal). Opskrifter, der udelades, beholder det antal, de har i kassen (én, hvis de er nye); minimumsantallet af retter kontrolleres mod det samlede antal portioner."
         },
         "market_quantities": {
           "name": "Antal tillægsprodukter",

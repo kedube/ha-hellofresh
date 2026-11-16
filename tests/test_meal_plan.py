@@ -38,10 +38,13 @@ from custom_components.hellofresh.sensor import HelloFreshMealSensor
 TODAY = date(2026, 10, 14)  # a Wednesday; the box arrived on Monday the 12th
 
 
-def _week(delivery: date, week_id: str = "2026-W42") -> HelloFreshWeek:
+def _week(
+    delivery: date, week_id: str = "2026-W42", subscription_id: str | None = None
+) -> HelloFreshWeek:
     return HelloFreshWeek(
         week_id=week_id,
         display_name="Classic Box",
+        subscription_id=subscription_id,
         delivery_date=delivery,
         recipes=[
             HelloFreshRecipe(
@@ -133,7 +136,7 @@ def test_a_malformed_start_option_falls_back_to_the_default() -> None:
 
 
 async def test_a_planned_meal_is_snapshotted_and_timed(hass) -> None:
-    plan = _plan(hass)
+    plan = _plan(hass, weeks=[_week(date(2026, 10, 12), subscription_id="sub-A")])
     await plan.async_set(TODAY, recipe_id="shrimp")
 
     day = plan.as_dict()["days"]["2026-10-14"]["dinner"]
@@ -141,6 +144,8 @@ async def test_a_planned_meal_is_snapshotted_and_timed(hass) -> None:
         "kind": "meal",
         "id": "shrimp",
         "week_id": "2026-W42",
+        # The box it came from: every subscription's box that week shares the week id.
+        "subscription_id": "sub-A",
         "name": "Butter Shrimp",
         "image_url": "https://img/shrimp.jpg",
         # The headline time the tile shows (the payload's swapped prep/total naming).
@@ -163,6 +168,56 @@ async def test_a_meal_is_planned_no_more_often_than_it_was_ordered(hass) -> None
     await plan.async_set(TODAY + timedelta(days=2), recipe_id="couscous")
     with pytest.raises(HomeAssistantError):
         await plan.async_set(TODAY + timedelta(days=3), recipe_id="couscous")
+
+
+async def test_the_same_meal_in_two_boxes_of_one_week_can_be_planned_twice(hass) -> None:
+    """Two subscriptions' boxes in one week each hold one Butter Shrimp and one Gyoza.
+
+    Planned courses were told apart by week id alone, and a meal was always taken from the
+    first box that held it, so the second box's copy counted as already planned and could
+    never be planned.
+    """
+    delivery = date(2026, 10, 12)
+    plan = _plan(
+        hass,
+        weeks=[_week(delivery, subscription_id="sub-A"), _week(delivery, subscription_id="sub-B")],
+    )
+    tomorrow = TODAY + timedelta(days=1)
+    await plan.async_set(TODAY, recipe_id="shrimp")
+    await plan.async_set(tomorrow, recipe_id="shrimp")
+    await plan.async_set(TODAY, course="appetizer", market_item_id="m2")
+    await plan.async_set(tomorrow, course="appetizer", market_item_id="m2")
+
+    boxes = [
+        (dinner["main"]["subscription_id"], dinner["appetizer"]["subscription_id"])
+        for dinner in (plan.slot(TODAY, "dinner"), plan.slot(tomorrow, "dinner"))
+    ]
+    assert boxes == [("sub-A", "sub-A"), ("sub-B", "sub-B")]
+    # Both boxes' copies are planned: a third has no box to come from.
+    with pytest.raises(HomeAssistantError, match="already planned 1 time"):
+        await plan.async_set(TODAY + timedelta(days=2), recipe_id="shrimp")
+    with pytest.raises(HomeAssistantError, match="already planned 1 time"):
+        await plan.async_set(TODAY + timedelta(days=2), course="appetizer", market_item_id="m2")
+    # Planning a course again with what it holds keeps it on its own box.
+    await plan.async_set(tomorrow, recipe_id="shrimp")
+    assert plan.slot(tomorrow, "dinner")["main"]["subscription_id"] == "sub-B"
+
+
+async def test_a_meal_planned_before_boxes_were_told_apart_still_counts(hass) -> None:
+    """A course saved without its subscription still uses up the meal it was planned from."""
+    plan = _plan(hass, weeks=[_week(date(2026, 10, 12), subscription_id="sub-A")])
+    plan.days = {
+        "2026-10-14": {
+            "dinner": {
+                "main": {"kind": "meal", "id": "shrimp", "week_id": "2026-W42", "name": "Shrimp"}
+            }
+        }
+    }
+    with pytest.raises(HomeAssistantError, match="already planned 1 time"):
+        await plan.async_set(TODAY + timedelta(days=1), recipe_id="shrimp")
+    # Its own course can still be planned again, and now records the box.
+    await plan.async_set(TODAY, recipe_id="shrimp")
+    assert plan.slot(TODAY, "dinner")["main"]["subscription_id"] == "sub-A"
 
 
 async def test_only_what_is_in_a_box_can_be_planned(hass) -> None:

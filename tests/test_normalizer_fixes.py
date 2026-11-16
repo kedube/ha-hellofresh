@@ -647,6 +647,111 @@ def test_a_menu_with_an_infinite_number_still_loads() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "price_per_unit",
+    [
+        {"currencyCode": "USD", "units": float("inf")},
+        {"currencyCode": "USD", "units": 1e307},  # overflows once in cents
+        {"currencyCode": "USD", "units": 17, "nanos": float("inf")},
+    ],
+)
+def test_a_menu_meal_with_an_infinite_price_loads_without_a_price(
+    price_per_unit: dict[str, Any],
+) -> None:
+    """round() of the price raised OverflowError, which no guard caught: every poll failed."""
+    (week,) = _client()._normalize_menu_weeks(
+        [
+            {
+                "week": "2026-W48",
+                "meals": [
+                    {
+                        "index": 1,
+                        "selection": {"quantity": 1},
+                        "recipe": {"id": "a", "name": "A"},
+                        "itemPrice": {"group": "classic", "pricePerUnit": price_per_unit},
+                    },
+                    {
+                        "index": 2,
+                        "selection": {"quantity": 1},
+                        "recipe": {"id": "b", "name": "B"},
+                        "itemPrice": {
+                            "group": "classic",
+                            "pricePerUnit": {"currencyCode": "USD", "units": 9, "nanos": 990000000},
+                        },
+                    },
+                ],
+            }
+        ],
+        subscription=_subscription(),
+    )
+    assert [(recipe.name, recipe.price_cents) for recipe in week.recipes] == [
+        ("A", None),
+        ("B", 999),
+    ]
+
+
+def test_a_menu_meal_whose_number_overflows_costs_only_that_meal() -> None:
+    """An OverflowError the parsers miss is a malformed meal too, not a failed refresh."""
+    client = _client()
+    client._reset_debug_trace()
+    build = client._recipe_from_raw_meal
+
+    def overflowing(raw_meal: dict[str, Any], **options: Any) -> HelloFreshRecipe:
+        if raw_meal.get("index") == 1:
+            raise OverflowError("cannot convert float infinity to integer")
+        return build(raw_meal, **options)
+
+    client._recipe_from_raw_meal = overflowing  # type: ignore[method-assign]
+    meals = [{"index": i, "recipe": {"id": f"r{i}", "name": f"Meal {i}"}} for i in (1, 2)]
+    (week,) = client._normalize_menu_weeks(
+        [{"week": "2026-W48", "meals": meals}], subscription=_subscription()
+    )
+    assert [recipe.name for recipe in week.recipes] == ["Meal 2"]
+    assert client._debug_trace["skipped_entries"] == [
+        {"entry": "1 meal(s) in HelloFresh menu week 2026-W48", "error": "OverflowError"}
+    ]
+
+
+def test_a_week_whose_status_is_not_text_does_not_fail_the_refresh() -> None:
+    """A status of another shape passed the per-week guard, then failed every poll.
+
+    The week was built with the object as its status, and the passes that strip a week's
+    status (``is_paused``, ``reconcile_premature_deliveries``) raised AttributeError.
+    """
+    client = _client()
+    subscription = _subscription()
+    today = local_today()
+    weeks_payload = {
+        "items": [
+            {
+                "id": _iso_week(today + timedelta(weeks=1)),
+                "subscriptionId": SUBSCRIPTION_ID,
+                "deliveryDate": f"{(today + timedelta(weeks=1)).isoformat()}T12:00:00-0700",
+                "status": "RUNNING",
+                "state": "RUNNING",
+            },
+            {
+                # No live state, so the status is what the week reads.
+                "id": _iso_week(today + timedelta(weeks=2)),
+                "subscriptionId": SUBSCRIPTION_ID,
+                "deliveryDate": f"{(today + timedelta(weeks=2)).isoformat()}T12:00:00-0700",
+                "status": {"code": "RUNNING"},
+                "deliveryStatus": 3,
+            },
+        ]
+    }
+    weeks, orders = client._normalize_weeks_payload(weeks_payload, subscription=subscription)
+    # The client's own pass over the weeks, then the account's, as a poll runs them.
+    client._clear_paused_week_selection(weeks)
+    data = HelloFreshAccountData(
+        weeks=weeks, orders=orders, subscriptions=[subscription]
+    ).finalize()
+    assert [(week.week_id, week.status) for week in data.weeks] == [
+        (_iso_week(today + timedelta(weeks=1)), "RUNNING"),
+        (_iso_week(today + timedelta(weeks=2)), "scheduled"),
+    ]
+
+
 def test_a_meal_whose_name_is_not_text_does_not_break_the_merges() -> None:
     (week,) = _client()._normalize_menu_weeks(
         [

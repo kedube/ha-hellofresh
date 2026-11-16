@@ -67,7 +67,11 @@ class PricingClientMixin(_ClientCore):
             if recipe is None or recipe.course_index is None:
                 unknown.append(str(recipe_id))
                 continue
-            requested = (quantities or {}).get(str(recipe_id), 1)
+            requested = (quantities or {}).get(str(recipe_id))
+            if requested is None:
+                # As select_meals saves it: a meal left out keeps how many of it the box has,
+                # so the price shown is the price of the box the same call would save.
+                requested = (recipe.selected_quantity or 1) if recipe.is_selected else 1
             course_quantities[recipe.course_index] = max(1, int(requested))
         if unknown:
             raise HelloFreshError(
@@ -253,8 +257,13 @@ class PricingClientMixin(_ClientCore):
 
         customer_id = coerce_int(subscription.account_id) or subscription.account_id
         customer_plan_id = subscription.raw.get("customerPlanId")
+        # The week's own number of people first, as for its box handle below: a week resized
+        # apart from the plan was priced as the box it is with the plan's people count.
         box_size = coerce_int(
-            self._find_first_nested_value(subscription.raw, ("size", "servings", "numberOfPersons"))
+            week.servings
+            or self._find_first_nested_value(
+                subscription.raw, ("size", "servings", "numberOfPersons")
+            )
             or subscription.servings
         )
         main_product_handle = self._find_first_nested_value(week.raw.get("product"), ("handle",))

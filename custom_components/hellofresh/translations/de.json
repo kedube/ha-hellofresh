@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Mengen",
-          "description": "Optionale Zuordnung von Rezept-ID zu Portionsanzahl (positive ganze Zahl). Nicht aufgeführte Rezepte erhalten standardmäßig eine Portion; die Mindestanzahl an Gerichten wird anhand der Gesamtportionen geprüft."
+          "description": "Optionale Zuordnung von Rezept-ID zu Portionsanzahl (positive ganze Zahl). Nicht aufgeführte Rezepte behalten die Anzahl, die sie in der Box haben (eine, wenn sie neu sind); die Mindestanzahl an Gerichten wird anhand der Gesamtportionen geprüft."
         },
         "market_quantities": {
           "name": "Markt-Mengen",

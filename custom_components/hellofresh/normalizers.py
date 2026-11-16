@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 import logging
 import re
 from typing import Any, NamedTuple
@@ -146,8 +146,17 @@ def _safe_css_color(value: Any) -> str | None:
 
 # What building a model from an entry of an unexpected shape raises (a string where an object
 # was expected, a missing key, ...). Caught per entry, so one bad week or meal is left out
-# instead of failing the whole refresh.
-_MALFORMED_PAYLOAD_ERRORS = (AttributeError, KeyError, TypeError, ValueError, IndexError)
+# instead of failing the whole refresh. OverflowError is a number that cannot be converted: an
+# infinity to an int (Python's JSON parser accepts a bare ``Infinity``) or an int too big for a
+# float. The parsers read one as "no number"; this catches any they miss.
+_MALFORMED_PAYLOAD_ERRORS = (
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    IndexError,
+    OverflowError,
+)
 # How many skipped entries one diagnostics trace keeps.
 _MAX_SKIPPED_ENTRIES = 50
 
@@ -207,7 +216,12 @@ class HelloFreshPayloadNormalizer:
         sub_status = str(raw_week.get("subStatus") or "").strip().upper()
         if sub_status in cls._DELIVERED_SUB_STATUSES and not cls._raw_week_is_skipped(raw_week):
             return "DELIVERED"
-        status = raw_week.get("status") or raw_week.get("deliveryStatus")
+        # Text only, as for ``state``: a status of another shape passed the per-week guard and
+        # then failed every poll where the week's status is stripped (``is_paused``,
+        # ``reconcile_premature_deliveries``).
+        status = clean_optional_str(raw_week.get("status")) or clean_optional_str(
+            raw_week.get("deliveryStatus")
+        )
         return status or (state if state_key not in ("", "UNKNOWN") else "scheduled")
 
     @staticmethod
@@ -1239,6 +1253,11 @@ class HelloFreshPayloadNormalizer:
 
         The new date is a carrier timestamp, so its day is read in Home Assistant's time zone,
         as "Last delivery day" reads the arrival; a bare date is taken as it is.
+
+        Exactly noon UTC (``2026-11-17T12:00:00+0000``) is HelloFresh's placeholder for a day
+        with no time yet (the week's scheduled-noon anchor), so it is taken as that day. Read
+        as a moment, it was the next day east of UTC+12: every moved box in New Zealand came
+        out a day late.
         """
         sub_status = str(raw_week.get("subStatus") or "").strip().upper()
         if sub_status not in cls._MOVED_SUB_STATUSES:
@@ -1250,7 +1269,11 @@ class HelloFreshPayloadNormalizer:
         if isinstance(value, str) and "T" not in value:
             return parse_date(value)
         moved = parse_datetime(value)
-        return local_date(moved) if moved is not None else None
+        if moved is None:
+            return None
+        if moved.utcoffset() == timedelta(0) and moved.time() == time(12):
+            return moved.date()
+        return local_date(moved)
 
     @staticmethod
     def _week_servings(raw_week: dict[str, Any]) -> int | None:

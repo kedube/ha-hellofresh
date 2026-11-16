@@ -132,7 +132,7 @@ def test_meals_only_save_calls_select_meals_without_market() -> None:
             {
                 "week_id": "2026-W41",
                 "recipe_ids": ["r1", "r2", "r3", "r4"],
-                "quantities": {"r1": 2},
+                "quantities": {"r1": 2, "r2": 1, "r3": 1, "r4": 1},
             },
         ]
     ]
@@ -168,6 +168,7 @@ def test_meals_and_extras_save_in_one_write() -> None:
             {
                 "week_id": "2026-W41",
                 "recipe_ids": ["r1", "r2", "r3", "r5"],
+                "quantities": {"r1": 1, "r2": 1, "r3": 1, "r5": 1},
                 "market_quantities": {},
             },
         ]
@@ -262,7 +263,11 @@ def test_customizing_a_dish_swaps_in_the_option_keeping_its_servings() -> None:
     assert got["calls"] == [
         [
             "select_meals",
-            {"week_id": "2026-W41", "recipe_ids": ["r3", "r5"], "quantities": {"r5": 3}},
+            {
+                "week_id": "2026-W41",
+                "recipe_ids": ["r3", "r5"],
+                "quantities": {"r3": 1, "r5": 3},
+            },
         ]
     ]
 
@@ -322,7 +327,7 @@ def test_a_saved_box_offers_undo_which_writes_the_old_box_back_in_one_write() ->
             {
                 "week_id": "2026-W41",
                 "recipe_ids": ["r1", "r2", "r3"],
-                "quantities": {"r1": 2},
+                "quantities": {"r1": 2, "r2": 1, "r3": 1},
                 "market_quantities": {"m1": 1},
             },
         ]
@@ -552,7 +557,7 @@ def test_keep_mine_puts_the_users_own_changes_on_top_of_the_box_saved_now() -> N
     [(service, data)] = got["calls"]
     assert service == "select_meals"
     assert sorted(data.pop("recipe_ids")) == ["r1", "r4", "r5"]  # a set; the order is the draft's
-    assert data == {"week_id": "2026-W41", "quantities": {"r1": 2}}
+    assert data == {"week_id": "2026-W41", "quantities": {"r1": 2, "r4": 1, "r5": 1}}
 
 
 def test_use_saved_drops_the_draft_and_an_identical_box_needs_no_choice() -> None:

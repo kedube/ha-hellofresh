@@ -135,6 +135,7 @@ def _coordinator(data: HelloFreshAccountData, client) -> HelloFreshDataUpdateCoo
         entry_id="entry-1", title="HelloFresh", async_start_reauth=mock.Mock()
     )
     coordinator._refresh_lock = asyncio.Lock()
+    coordinator._writes = 0
     coordinator._last_full_refresh = None
     coordinator._cancel_delivery_watch = None
     coordinator._delivery_watch_interval = timedelta(minutes=15)

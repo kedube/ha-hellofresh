@@ -40,6 +40,7 @@ from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
 from .coordinator import HelloFreshConfigEntry, HelloFreshDataUpdateCoordinator
 from .entity import HelloFreshCoordinatorEntity
+from .meal_plan import recipe_quantity
 from .models import HelloFreshWeek
 from .parsers import local_today
 
@@ -136,6 +137,24 @@ def _coerce_amount(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _scaled_amount(amount: Any, unit: Any, quantity: int) -> Any:
+    """Return one recipe's ``amount`` for ``quantity`` kits of it.
+
+    A meal selected twice ships two kits, and each needs its own staples. A number is
+    multiplied, and so is a unit with no amount, which :func:`_format_amounts` reads as one of
+    it. Anything else (a range like "1-2", a word, or no amount and no unit at all) is returned
+    as written: it can't be multiplied without guessing, the same reason it is never summed.
+    """
+    if quantity <= 1:
+        return amount
+    number = _coerce_amount(amount)
+    if number is not None:
+        return number * quantity
+    if amount in (None, "") and unit not in (None, ""):
+        return float(quantity)
+    return amount
 
 
 def _trim_number(value: float) -> str:
@@ -372,7 +391,8 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
         self._slot = slot
         self._attr_translation_key = key
         self._items: list[TodoItem] = []
-        # What the current items were built from: (week id, selected recipe ids, servings).
+        # What the current items were built from: (box key, selected recipes with how many of
+        # each, servings).
         # Empty until a build has read every recipe, so an incomplete one is tried again.
         self._built_for: tuple[Any, ...] = ()
         self._rebuild_task: asyncio.Task[None] | None = None
@@ -459,8 +479,8 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
     def _subscription_for(self, week: HelloFreshWeek) -> Any | None:
         """Return the subscription the week's box belongs to, else the account's first.
 
-        Its serving count sets the amounts. Reading the first subscription's count for every
-        week gave a second subscription's box the wrong amounts.
+        Its serving count sets the amounts when the week has none of its own. Reading the first
+        subscription's count for every week gave a second subscription's box the wrong amounts.
         """
         data = self.coordinator.data
         if data is None:
@@ -470,6 +490,20 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
             if subscription_id and subscription.subscription_id == subscription_id:
                 return subscription
         return data.primary_subscription
+
+    def _servings_for(self, week: HelloFreshWeek) -> int | None:
+        """Return how many people the week's box is for: its own size, else its plan's.
+
+        A week can be resized apart from the plan (a 4-person box on a 2-person plan), and the
+        staples follow the box that actually ships. Reading the subscription's count alone
+        listed half the butter for a week doubled that way. The card prefers the week's own
+        size the same way.
+        """
+        servings = week.servings
+        if isinstance(servings, int) and servings > 0:
+            return servings
+        subscription = self._subscription_for(week)
+        return subscription.servings if subscription is not None else None
 
     def _adopt_legacy_ticks(self, covered_weeks: list[HelloFreshWeek]) -> None:
         """Move check-offs saved under a bare week id onto that week's box.
@@ -487,16 +521,23 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
                 self._completed.discard((box, key))
                 self._completed.add((adopted, key))
 
-    def _selected_recipe_ids(self, week: HelloFreshWeek) -> list[str]:
-        """Return the recipe ids this week will actually ship."""
-        ids: list[str] = []
+    def _selected_recipes(self, week: HelloFreshWeek) -> list[tuple[str, int]]:
+        """Return the recipes this week will actually ship, each with how many were ordered.
+
+        A meal selected twice ships two kits and counts as two meals (the meal plan's rule),
+        so it needs its staples twice. The quantity is part of the build's fingerprint too:
+        doubling a meal changes the list without changing which recipes are in it.
+        """
+        selected: dict[str, int] = {}
         for recipe in week.recipes:
-            if not recipe.is_selected:
+            quantity = recipe_quantity(recipe)
+            if quantity <= 0:
                 continue
             recipe_id = getattr(recipe, "recipe_id", None)
-            if isinstance(recipe_id, str) and recipe_id and recipe_id not in ids:
-                ids.append(recipe_id)
-        return ids
+            if isinstance(recipe_id, str) and recipe_id:
+                # A recipe listed twice keeps its first entry, as the card and the plan do.
+                selected.setdefault(recipe_id, quantity)
+        return list(selected.items())
 
     @property
     def extra_restore_state_data(self) -> ExtraStoredData:
@@ -622,7 +663,8 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
 
         Recipe detail is fetched per selected meal (the week's own recipes carry ingredient
         *names* only, without amounts or the shipped flag), so this is skipped entirely unless
-        the week, its selection or the serving count actually changed.
+        the week, its selection (how many of each meal, too) or the box's serving count
+        actually changed.
 
         Returns False when a recipe could not be read, so the list is missing its staples.
         """
@@ -632,13 +674,9 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
             self._built_for = ()
             return True
 
-        servings = None
-        subscription = self._subscription_for(week)
-        if subscription is not None:
-            servings = subscription.servings
-
-        recipe_ids = self._selected_recipe_ids(week)
-        fingerprint = (_box_key(week), tuple(recipe_ids), servings)
+        servings = self._servings_for(week)
+        selected = self._selected_recipes(week)
+        fingerprint = (_box_key(week), tuple(selected), servings)
         if fingerprint == self._built_for:
             return True
 
@@ -653,24 +691,34 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
             {entry for entry in self._completed if entry[0] in covered_ids}
         )
         # The detail cache is pruned the same way: only recipes a covered week still selects,
-        # at the current serving count, are worth keeping.
-        wanted = {rid for w in covered_weeks for rid in self._selected_recipe_ids(w)}
+        # at that week's own serving count, are worth keeping. Each week is matched against
+        # its own count, not this one's: the two covered boxes can be for different numbers
+        # of people (a resized week, a second subscription), and pruning to one count threw
+        # the other list's recipes away on every rebuild.
+        wanted = {
+            (recipe_id, self._servings_for(w))
+            for w in covered_weeks
+            for recipe_id, _quantity in self._selected_recipes(w)
+        }
         cache = self.coordinator.prep_recipe_details
-        for cache_key in [k for k in cache if k[0] not in wanted or k[1] != servings]:
+        for cache_key in [k for k in cache if k not in wanted]:
             del cache[cache_key]
 
-        if len(recipe_ids) > _MAX_RECIPE_FETCHES:
+        if len(selected) > _MAX_RECIPE_FETCHES:
             _LOGGER.debug(
                 "Prep list reads only the first %s of %s recipes (week %s)",
                 _MAX_RECIPE_FETCHES,
-                len(recipe_ids),
+                len(selected),
                 week.week_id,
             )
-        details = await self._async_recipe_details(recipe_ids[:_MAX_RECIPE_FETCHES], servings)
+        fetched = selected[:_MAX_RECIPE_FETCHES]
+        details = await self._async_recipe_details(
+            [recipe_id for recipe_id, _quantity in fetched], servings
+        )
 
         # name -> (display name, [(amount, unit), ...])
         collected: dict[str, tuple[str, list[tuple[Any, Any]]]] = {}
-        for detail in details:
+        for (_recipe_id, quantity), detail in zip(fetched, details, strict=True):
             if detail is None:
                 continue
             for ingredient in detail.ingredients:
@@ -684,7 +732,10 @@ class HelloFreshPrepListTodo(HelloFreshCoordinatorEntity, TodoListEntity, Restor
                     continue
                 key = _ingredient_key(name)
                 _display, amounts = collected.setdefault(key, (name.strip(), []))
-                amounts.append((ingredient.get("amount"), ingredient.get("unit")))
+                # The detail is one kit at the box's serving count; a meal selected twice
+                # ships two kits, so its staples are needed twice.
+                unit = ingredient.get("unit")
+                amounts.append((_scaled_amount(ingredient.get("amount"), unit, quantity), unit))
 
         items: list[TodoItem] = []
         for key, (display, amounts) in sorted(collected.items(), key=lambda kv: kv[1][0].lower()):

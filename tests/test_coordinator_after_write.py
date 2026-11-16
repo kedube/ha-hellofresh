@@ -33,13 +33,31 @@ def _coordinator(*, data: object, snapshot: object) -> SimpleNamespace:
         async_request_refresh=mock.AsyncMock(),
         config_entry=SimpleNamespace(async_create_background_task=_background),
         background=tasks,
+        _writes=0,
+        _record_transitions=mock.Mock(),
     )
 
 
 def _run(coro) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(coro)
+    # The sentinels stand in for account data; the snapshot of one is just a label for it.
+    with mock.patch(
+        "custom_components.hellofresh.coordinator.delivery_snapshot",
+        side_effect=lambda data: ("snapshot of", data),
+    ):
+        loop.run_until_complete(coro)
+
+
+def test_a_write_records_the_events_it_caused_against_what_was_shown() -> None:
+    """The poll after a write compares against the write's snapshot, so it sees no change."""
+    old, fresh = object(), object()
+    coordinator = _coordinator(data=old, snapshot=fresh)
+
+    _run(after_write(coordinator))
+
+    coordinator._record_transitions.assert_called_once_with(("snapshot of", old), fresh)
+    assert coordinator._writes == 1
 
 
 def test_a_write_with_a_fresh_snapshot_is_shown_at_once_and_refreshed_behind() -> None:

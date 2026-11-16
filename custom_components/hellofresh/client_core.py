@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 import json
 import logging
 from time import monotonic
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 from aiohttp import ClientError, ClientResponse, ClientSession
 
@@ -95,6 +96,69 @@ def _dict_at(node: Mapping[str, Any], key: str) -> dict[str, Any]:
     """
     value = node.get(key)
     return value if isinstance(value, dict) else {}
+
+
+async def async_gather_or_cancel(*coros: Awaitable[Any]) -> list[Any]:
+    """Await ``coros`` together; when one raises, cancel the rest and raise its error.
+
+    A bare ``asyncio.gather`` raises the first error but leaves the others running, still
+    sending requests for a poll (or a service call) that has already failed.
+    """
+    tasks = [asyncio.ensure_future(coro) for coro in coros]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+# How many callers are waiting on each shared task (see _async_await_shared). Weak, so a
+# finished task is not kept alive by its count.
+_SHARED_TASK_WAITERS: WeakKeyDictionary[asyncio.Task[Any], int] = WeakKeyDictionary()
+
+
+def _read_outcome(task: asyncio.Task[Any]) -> None:
+    """Mark a shared task's failure as seen.
+
+    A cancelled waiter's shield lets go of the task, so a failure that lands after every
+    waiter has gone would otherwise be logged by asyncio as an exception nobody retrieved.
+    """
+    if not task.cancelled():
+        task.exception()
+
+
+def _start_shared_task[T](coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+    """Start a task that several callers will wait on through ``_async_await_shared``."""
+    task = asyncio.get_running_loop().create_task(coro)
+    task.add_done_callback(_read_outcome)
+    return task
+
+
+def _shared_task_joinable(task: asyncio.Task[Any]) -> bool:
+    """Return whether a cached shared task can still be joined: it has not been cancelled."""
+    return not task.cancelled() and not task.cancelling()
+
+
+async def _async_await_shared[T](task: asyncio.Task[T]) -> T:
+    """Wait on a task other callers share, so that cancelling one caller cancels only it.
+
+    Awaiting a shared task directly passes a caller's cancellation on to the task, and so to
+    every other caller waiting on it: a meal change stopped by its automation failed the poll
+    that shared its plan-preference lookup with ``CancelledError``. The task itself is
+    cancelled only when its last waiter leaves, so a fetch nobody waits for any more still
+    stops instead of running on.
+    """
+    _SHARED_TASK_WAITERS[task] = _SHARED_TASK_WAITERS.get(task, 0) + 1
+    try:
+        return await asyncio.shield(task)
+    finally:
+        remaining = _SHARED_TASK_WAITERS.pop(task, 1) - 1
+        if remaining:
+            _SHARED_TASK_WAITERS[task] = remaining
+        elif not task.done():
+            task.cancel()
 
 
 # Browser headers of a same-origin fetch() XHR. Accept is fetch's default, which nearly every
@@ -456,6 +520,14 @@ class _ClientCore(HelloFreshPayloadNormalizer):
                 return subscription.locale
         return api_locale(self._country)
 
+    def restore_account_data(self, data: HelloFreshAccountData | None) -> None:
+        """Make ``data`` the snapshot later writes build on: the one the coordinator shows.
+
+        Every poll's result is kept as that snapshot, including one the coordinator then
+        refuses (an empty account) or sets aside (a read that predates a write).
+        """
+        self._last_account_data = data
+
     def _publish_week(self, week: HelloFreshWeek, orders: Sequence[HelloFreshOrder] | None) -> None:
         """Store a snapshot with ``week`` (and, when given, its orders) replaced."""
         current = self._last_account_data
@@ -516,17 +588,19 @@ class _ClientCore(HelloFreshPayloadNormalizer):
         multi-week body is needed by every subscription's read of its weeks, and was
         previously downloaded and parsed once per subscription. Callers must treat the shared
         payload as read-only. A failure is raised to every caller (see ``_async_get_json``).
+        A caller that is cancelled leaves the fetch to the others; one that every caller left
+        is cancelled, and the next caller fetches again.
         """
         key = (path, tuple(sorted((params or {}).items())))
         task = self._shared_get_tasks.get(key)
-        if task is None:
-            task = asyncio.ensure_future(
+        if task is None or not _shared_task_joinable(task):
+            task = _start_shared_task(
                 self._async_get_json(
                     path, params, trace_category=trace_category, trace={"params": params}
                 )
             )
             self._shared_get_tasks[key] = task
-        return await task
+        return await _async_await_shared(task)
 
     def _verified_deliveries_request(self) -> tuple[str, dict[str, Any]]:
         """The ranged weeks request the website makes, for every subscription at once."""
@@ -574,21 +648,7 @@ class _ClientCore(HelloFreshPayloadNormalizer):
 
         return await self._async_gather_or_cancel(*(_run(coro) for coro in coros))
 
-    @staticmethod
-    async def _async_gather_or_cancel(*coros: Awaitable[Any]) -> list[Any]:
-        """Await ``coros`` together; when one raises, cancel the rest and raise its error.
-
-        A bare ``asyncio.gather`` raises the first error but leaves the others running, still
-        sending requests for a poll that has already failed.
-        """
-        tasks = [asyncio.ensure_future(coro) for coro in coros]
-        try:
-            return list(await asyncio.gather(*tasks))
-        except BaseException:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+    _async_gather_or_cancel = staticmethod(async_gather_or_cancel)
 
     async def _async_api_get(
         self,

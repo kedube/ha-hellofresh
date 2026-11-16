@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Antal",
-          "description": "Valfri koppling mellan recept-ID och antal portioner (positivt heltal). Recept som utelämnas får en portion som standard; minimiantalet rätter kontrolleras mot det totala antalet portioner."
+          "description": "Valfri koppling mellan recept-ID och antal portioner (positivt heltal). Recept som utelämnas behåller det antal de har i lådan (en om de är nya); minimiantalet rätter kontrolleras mot det totala antalet portioner."
         },
         "market_quantities": {
           "name": "Antal tilläggsprodukter",

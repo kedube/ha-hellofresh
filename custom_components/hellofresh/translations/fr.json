@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Quantités",
-          "description": "Correspondance facultative entre identifiant de recette et nombre de parts (entier positif). Les recettes omises reçoivent une part par défaut ; le minimum de repas requis est vérifié sur le total des parts."
+          "description": "Correspondance facultative entre identifiant de recette et nombre de parts (entier positif). Les recettes omises gardent le nombre qu'elles ont dans la box (une si elles sont nouvelles) ; le minimum de repas requis est vérifié sur le total des parts."
         },
         "market_quantities": {
           "name": "Quantités d'extras",

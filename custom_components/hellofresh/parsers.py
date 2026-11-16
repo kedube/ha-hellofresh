@@ -401,7 +401,8 @@ def coerce_float(value: Any) -> float | None:
             return result if math.isfinite(result) else None
     try:
         result = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is an int too big for a float (JSON integers have no limit).
         return None
     return result if math.isfinite(result) else None
 
@@ -418,6 +419,10 @@ def money_to_cents(value: Any) -> int | None:
     — units are whole currency, nanos are billionths. 17 + 0.98 -> 1798 cents. Rounding is
     done on the combined value so a price like 10.99 can't land on 1098 through float error.
     Returns None for anything that isn't a usable money object.
+
+    An amount that is not a finite number (a bare ``Infinity`` parses, and ``1e307`` units
+    overflow to it once in cents) is no amount either: ``round()`` of it raised
+    OverflowError, which failed every poll instead of costing the one price.
     """
     if not isinstance(value, dict):
         return None
@@ -431,7 +436,12 @@ def money_to_cents(value: Any) -> int | None:
         nanos = 0
     if units is None:
         return None
-    return round(units * 100 + nanos / 10_000_000)
+    try:
+        # An int too big for a float raises here rather than overflowing to infinity.
+        total = units * 100 + nanos / 10_000_000
+    except OverflowError:
+        return None
+    return round(total) if math.isfinite(total) else None
 
 
 def clean_optional_str(value: Any) -> str | None:

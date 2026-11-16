@@ -507,7 +507,7 @@
         },
         "quantities": {
           "name": "Antall",
-          "description": "Valgfri kobling mellom oppskrifts-ID og antall porsjoner (positivt heltall). Oppskrifter som utelates får én porsjon som standard; minimumsantallet retter kontrolleres mot det totale antallet porsjoner."
+          "description": "Valgfri kobling mellom oppskrifts-ID og antall porsjoner (positivt heltall). Oppskrifter som utelates, beholder antallet de har i kassen (én hvis de er nye); minimumsantallet retter kontrolleres mot det totale antallet porsjoner."
         },
         "market_quantities": {
           "name": "Antall tilleggsprodukter",
