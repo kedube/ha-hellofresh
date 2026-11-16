@@ -6,6 +6,8 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+
+## 4.27 — 2026-11-16
 ### Your box and the card
 - **Lowering a doubled meal to one is saved.** The card left out every meal at one when it
   saved, and a meal left out keeps the count it has in the box, so lowering a doubled meal, or
