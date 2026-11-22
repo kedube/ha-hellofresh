@@ -6,6 +6,8 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+
+## 4.28 — 2026-11-22
 ### Sign-in and connection
 - **Signing in works when Home Assistant has loaded an older curl_cffi.** Home Assistant keeps
   one copy of curl_cffi for every integration, so another integration can leave one older than
