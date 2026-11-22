@@ -8,7 +8,9 @@ requiring curl_cffi to be installed: the curl_cffi path is simulated by injectin
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -1018,3 +1020,57 @@ def test_login_and_app_token_each_use_their_pinned_chrome_order(monkeypatch) -> 
     assert login["url"].endswith("/gw/login")
     assert login["curl_options"] == {"HTTPHEADER_ORDER": tls_transport._CHROME_LOGIN_HEADER_ORDER}
     assert login["headers"]["Accept"] == "application/json, text/plain, */*"
+
+
+def test_a_curl_cffi_without_header_ordering_still_sends_the_request(monkeypatch, caplog) -> None:
+    """An older curl_cffi than the manifest asks for is used unpinned, and said so once.
+
+    Home Assistant keeps every integration's packages in one environment, so another
+    integration's older curl_cffi can be the one that is loaded. ``CurlOpt.HTTPHEADER_ORDER``
+    arrived in 0.16; reading it from an older one failed every auth POST before it was sent,
+    logged as ``transport error: ClientError (AttributeError)`` on refresh, app token and login.
+    """
+    seen: list[dict] = []
+
+    async def fake_request(**kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(
+            status_code=200, headers={"Content-Type": "application/json"}, text="{}"
+        )
+
+    _install_fake_curl_cffi(monkeypatch, post=fake_request)
+    monkeypatch.setattr(tls_transport, "_CURL_OPT", SimpleNamespace())  # as curl_cffi 0.15 has it
+    monkeypatch.setattr(tls_transport, "_CURL_CFFI_VERSION", "0.15.0")
+    monkeypatch.setattr(tls_transport, "_OLD_CURL_CFFI_REPORTED", [False])
+    session = _FakeAiohttpSession()
+
+    async def sign_in() -> list[int]:
+        base = "https://www.hellofresh.com/gw"
+        responses = [
+            await async_auth_post(session, f"{base}/refresh", json_payload={"refresh_token": "r"}),  # type: ignore[arg-type]
+            await async_auth_post(session, f"{base}/auth/token"),  # type: ignore[arg-type]
+            await async_auth_post(session, f"{base}/login", json_payload={"a": "b"}, login=True),  # type: ignore[arg-type]
+            await async_request(session, "GET", f"{base}/api/customers/me"),  # type: ignore[arg-type]
+        ]
+        return [response.status for response in responses]
+
+    with caplog.at_level(logging.WARNING, logger=tls_transport.__name__):
+        assert _run(sign_in()) == [200, 200, 200, 200]
+
+    # Still curl_cffi's Chrome fingerprint, never the aiohttp session; only the order is unset.
+    assert session.calls == []
+    assert [call["curl_options"] for call in seen] == [None, None, None, None]
+    assert {call["impersonate"] for call in seen} == {tls_transport._IMPERSONATE_TARGET}
+    # Three sessions were made (auth, login, xhr): the warning is logged for the first only.
+    warnings = [record.getMessage() for record in caplog.records]
+    assert len(warnings) == 1
+    assert "curl_cffi 0.16.3 or newer, but version 0.15.0 is loaded" in warnings[0]
+
+
+def test_the_curl_cffi_version_in_the_warning_is_the_manifests() -> None:
+    """The version the old-curl_cffi warning asks for is the manifest's minimum."""
+    manifest = json.loads(
+        (Path(tls_transport.__file__).parent / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert f"curl_cffi>={tls_transport._MIN_CURL_CFFI_VERSION}" in manifest["requirements"]

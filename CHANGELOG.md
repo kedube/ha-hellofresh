@@ -6,6 +6,13 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 version heading and publishes it as the release's Highlights.
 
 ## Unreleased
+### Sign-in and connection
+- **Signing in works when Home Assistant has loaded an older curl_cffi.** Home Assistant keeps
+  one copy of curl_cffi for every integration, so another integration can leave one older than
+  HelloFresh asks for (0.16.3). Every sign-in, token refresh and update then failed before
+  anything was sent, logged as `transport error: ClientError (AttributeError)`. Requests are
+  now sent with the curl_cffi that is loaded, without Chrome's header order, and a warning
+  names its version.
 
 ## 4.27 — 2026-11-16
 ### Your box and the card

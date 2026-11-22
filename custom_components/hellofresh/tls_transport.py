@@ -61,14 +61,23 @@ _HAS_CURL_CFFI = util.find_spec("curl_cffi") is not None
 # curl_cffi is unavailable or failed to import, signalling callers to use the aiohttp fallback.
 _ASYNC_SESSION_CLS: type | None = None
 _CURL_OPT: Any | None = None
+# The version of the curl_cffi that was loaded, which is not always the one the manifest asks
+# for (see _header_order_option).
+_CURL_CFFI_VERSION = "unknown"
 if _HAS_CURL_CFFI:
     try:
+        import curl_cffi as _curl_cffi  # noqa: PLC0415
         from curl_cffi import CurlOpt as _CURL_OPT  # noqa: PLC0415
         from curl_cffi.requests import AsyncSession as _ASYNC_SESSION_CLS  # noqa: PLC0415
     except Exception:  # noqa: BLE001 - a broken optional dep degrades to the aiohttp fallback
         _LOGGER.debug("curl_cffi present but failed to import; using aiohttp fallback")
         _ASYNC_SESSION_CLS = None
         _CURL_OPT = None
+    else:
+        _CURL_CFFI_VERSION = str(getattr(_curl_cffi, "__version__", _CURL_CFFI_VERSION))
+
+# The oldest curl_cffi the manifest accepts. Keep in step with manifest.json.
+_MIN_CURL_CFFI_VERSION = "0.16.3"
 
 # Header orders captured from Chrome 154 itself, running the web app's fetch() calls (HTTP/2
 # order matches). Chrome's XHR order has three parts: content-length first, then the client
@@ -244,6 +253,38 @@ if _ASYNC_SESSION_CLS is not None:
 def tls_impersonation_available() -> bool:
     """Return True when curl_cffi is installed and the TLS-impersonation path is usable."""
     return _HAS_CURL_CFFI and _ASYNC_SESSION_CLS is not None
+
+
+# Whether the warning about a curl_cffi without header ordering has been logged.
+_OLD_CURL_CFFI_REPORTED = [False]
+
+
+def _header_order_option() -> Any | None:
+    """Return curl's header-order option, or None when the loaded curl_cffi has none.
+
+    ``CurlOpt.HTTPHEADER_ORDER`` arrived in curl_cffi 0.16. The manifest asks for a newer
+    one, but Home Assistant keeps every integration's packages in one environment, so an
+    older curl_cffi pinned by another integration, or by a package one depends on, can be the
+    one that is loaded. Reading the option unguarded then failed every request before it was
+    sent, with an ``AttributeError`` reported as a transport error on each sign-in attempt.
+
+    Without the option a session is made unpinned: it keeps Chrome's TLS and HTTP/2
+    fingerprint and sends the same headers, in the order they are given instead of Chrome's.
+    That is said once, as a warning, since the header order is one of the things HelloFresh's
+    bot protection can look at.
+    """
+    option = getattr(_CURL_OPT, "HTTPHEADER_ORDER", None)
+    if option is None and not _OLD_CURL_CFFI_REPORTED[0]:
+        _OLD_CURL_CFFI_REPORTED[0] = True
+        _LOGGER.warning(
+            "HelloFresh needs curl_cffi %s or newer, but version %s is loaded: another "
+            "integration probably installed the older one. Requests are sent without "
+            "Chrome's header order until a newer curl_cffi is loaded, and HelloFresh may "
+            "refuse them",
+            _MIN_CURL_CFFI_VERSION,
+            _CURL_CFFI_VERSION,
+        )
+    return option
 
 
 def impersonated_chrome_major() -> int | None:
@@ -445,8 +486,8 @@ def _shared_curl_session(
         if _owner_closed(owner):
             raise OwnerClosedError("the HelloFresh entry this request belongs to was closed")
         options: dict[str, Any] = {}
-        if profile != "curl":
-            options["curl_options"] = {_CURL_OPT.HTTPHEADER_ORDER: _HEADER_ORDERS[profile]}
+        if profile != "curl" and (header_order := _header_order_option()) is not None:
+            options["curl_options"] = {header_order: _HEADER_ORDERS[profile]}
         sibling = next(
             (
                 pooled
